@@ -10,6 +10,8 @@
 
 **SuperContext is the context backbone for AI coding agents in microservice organizations.** It builds and serves a unified, real-time graph of how services call, consume, share, and deploy with each other — so that when Claude Code, Cursor, or Copilot makes a change in service A, it understands the blast radius across services B through Z before the diff is even written.
 
+This PRD defines **Product 1** of a broader SuperContext platform: the code and service-graph layer for engineering teams. The broader platform may later extend the same provenance-first model to docs, tickets, files, and other enterprise systems, but those are intentionally out of scope here.
+
 ---
 
 ## 2. Problem statement
@@ -34,6 +36,8 @@ The category is real, the gap is widening, and no tool today fills it.
 
 SuperContext makes the service graph a first-class input to every AI coding interaction. Within three years, asking Claude Code or Cursor to "change this endpoint" without SuperContext in the loop should feel as reckless as deploying without tests.
 
+In the broader company vision, this service graph is the first high-trust slice of a larger enterprise context layer. Product 1 earns the right to expand by solving engineering change-safety first.
+
 ---
 
 ## 4. Goals and non-goals
@@ -53,6 +57,7 @@ SuperContext makes the service graph a first-class input to every AI coding inte
 - We are not an IDE. We feed Cursor/Claude Code/Copilot via MCP; we don't ship our own editor.
 - We are not a code-generation model. We make existing models smarter; we don't train one.
 - We are not a CI/CD platform.
+- We are not, in v1, a general enterprise knowledge layer across Confluence, Jira, OneDrive, or SharePoint.
 
 ---
 
@@ -88,6 +93,8 @@ Monolith shops, orgs <10 services, prototype teams, shops with no schema discipl
 ## 6. Functional requirements
 
 SuperContext is delivered through **three surfaces** backed by **one engine**.
+
+For Product 1, that engine is intentionally limited to engineering-system sources. The broader platform can later add docs, tickets, files, and decision systems onto the same graph model.
 
 ### 6.1 The engine — multi-modal service graph
 
