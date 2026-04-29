@@ -1,5 +1,7 @@
 # Graph Storage Research for SuperContext Product 1
 
+> **✅ RESOLVED — 2026-04-29.** The final storage decision is captured in [`GRAPH-STORAGE-RECOMMENDATION.md`](./GRAPH-STORAGE-RECOMMENDATION.md) and [`../adr/0003-postgres-age-as-initial-graph-storage.md`](../adr/0003-postgres-age-as-initial-graph-storage.md). This note is preserved as research history and as a technical counterpoint considered during the decision. Its Neo4j recommendation is not the adopted project decision.
+
 **Status:** Draft v0.1
 **Date:** 2026-04-28
 **Scope:** Choose the graph database for Product 1 based on the current MCP tools, likely future tools, and the graph model implied by the PRD.

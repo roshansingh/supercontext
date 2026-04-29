@@ -1,5 +1,7 @@
 # Graph Storage Research — SuperContext Product 1
 
+> **✅ RESOLVED — 2026-04-29.** The binding decision now lives in [`GRAPH-STORAGE-RECOMMENDATION.md`](./GRAPH-STORAGE-RECOMMENDATION.md) and [`../adr/0003-postgres-age-as-initial-graph-storage.md`](../adr/0003-postgres-age-as-initial-graph-storage.md). This document is preserved as a research input that supported the final decision; do not treat it as the final authority.
+
 - **Status:** Recommendation
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal
