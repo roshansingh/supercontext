@@ -23,10 +23,18 @@ This ADR closes the architectural posture for graph building.
 
 ## Decision
 
-**Build Product 1 and the early platform around two graph layers:**
+**Build Product 1 and the early platform around two logical graph layers:**
 
 1. **Canonical typed graph**
 2. **Candidate / enrichment sidecar**
+
+For Product 1, the binding implementation scope is:
+
+- the canonical typed graph required by the accepted v1 ontology
+- a minimal candidate-fact state model for uncertain facts that must not enter canonical answers yet
+- provenance, confidence / derivation class, and promotion metadata sufficient to keep those layers separated
+
+Product 1 does **not** require a broad enrichment subsystem, prose-heavy GraphRAG layer, clustering pipeline, or general-purpose discovery graph.
 
 ### Canonical typed graph
 
@@ -44,9 +52,11 @@ It must have:
 
 ### Candidate / enrichment sidecar
 
-The sidecar is where uncertain, inferred, ambiguous, or prose-derived relationships live.
+The sidecar is the logical home for uncertain, inferred, ambiguous, or prose-derived relationships.
 
-It may contain:
+In v1, it should be implemented as the smallest storage / state boundary needed to preserve trust: candidate facts, confidence / derivation class, provenance, and promotion status. It is not a mandate to build a broad enrichment product.
+
+Over time, it may contain:
 
 - LLM-assisted extraction output
 - alias hypotheses
@@ -57,20 +67,19 @@ It may contain:
 
 The sidecar must **not** silently contaminate the canonical graph.
 
-## Explicit non-decision
+## Relationship to ADR-0006
 
-This ADR **does not finalize the full canonical entity and relation vocabulary yet**.
+This ADR did not originally finalize the full canonical entity and relation vocabulary. That was intentional: the ontology needed focused prior-art research before implementation.
 
-That research remains open on purpose.
-
-We still need a focused follow-up pass on the exact node and edge set because there is a real possibility that useful prior art already exists and can be borrowed to avoid preventable ontology mistakes. Likely inputs include service-catalog models, code-fact schemas, lineage models, schema registries, and other operational graph precedents.
+ADR-0006 now closes that follow-up. It defines the Product 1 v1 canonical ontology, Entity + Fact + Evidence metadata envelope, coverage sidecar, derivation classes, and promotion / demotion rules.
 
 So the architectural posture is now closed:
 
 - **strict canonical graph**
 - **separate candidate / enrichment sidecar**
+- **v1 ontology and fact metadata envelope defined by ADR-0006**
 
-But the exact canonical ontology for v1 remains a tracked follow-up item, not a guessed-in-ADR item.
+Any future ontology expansion must be additive and must preserve this canonical-versus-candidate separation.
 
 ## Why this decision
 
@@ -86,7 +95,7 @@ But the exact canonical ontology for v1 remains a tracked follow-up item, not a 
 
 - **More moving parts than a single mixed graph.** Canonical and candidate layers require explicit promotion rules and query discipline.
 - **Some useful fuzzy knowledge is delayed.** Product 1 will not get the broadest possible discovery behavior on day one.
-- **Ontology work is still required.** Closing the architectural posture does not remove the need to design the actual entity and edge vocabulary carefully.
+- **Ontology work moved into a separate binding ADR.** Closing the architectural posture required a separate ontology decision, now captured by ADR-0006.
 
 ### Neutral
 
@@ -100,7 +109,7 @@ Implementation guardrails:
 
 - Deterministic / authoritative extractors run first.
 - Candidate generation runs only after deterministic extraction has had its chance.
-- Every fact, canonical or candidate, must carry provenance and freshness in a stable shape. Source-code-backed facts must also carry evidence metadata compatible with ADR-0005's coordinate-fetch contract.
+- Every fact, canonical or candidate, must carry provenance and freshness in the Entity + Fact + Evidence shape defined by ADR-0006. Source-code-backed facts must also carry evidence metadata compatible with ADR-0005's coordinate-fetch contract.
 - Canonical facts must have explicit identity and semantics.
 - Derived edges must be marked as derived, not confused with direct evidence.
 - Candidate facts must be labeled by source and confidence class.
@@ -111,7 +120,7 @@ Implementation guardrails:
 
 ### Canonical graph
 
-Examples:
+Eligible canonical sources, when explicitly selected by the v1 ontology or later module ADRs:
 
 - service ownership from authoritative catalogs or CODEOWNERS
 - endpoints and operations from OpenAPI / proto / GraphQL / AsyncAPI
@@ -122,7 +131,7 @@ Examples:
 
 ### Candidate / enrichment sidecar
 
-Examples:
+Eligible candidate / enrichment sources, most of which are outside Product 1 unless explicitly pulled into v1:
 
 - LLM-inferred alias mappings
 - unresolved or ambiguous topic mappings
@@ -140,9 +149,9 @@ Examples:
 
 **Canonical graph only, no sidecar** — rejected. Too rigid for future platform expansion and for practical handling of ambiguous evidence.
 
-## Follow-up work still required
+## Follow-up work resolved by ADR-0006
 
-These items remain open and should not be mistaken as resolved by this ADR:
+The following items were intentionally left open by this ADR and are now resolved by ADR-0006:
 
 1. **Research and finalize the exact canonical entities and relations for v1.**
 2. **Look for prior art worth borrowing** so we avoid avoidable ontology mistakes.
@@ -150,7 +159,7 @@ These items remain open and should not be mistaken as resolved by this ADR:
 4. **Define confidence / derivation classes** consistently across graph-building and query layers.
 5. **Define the shared graph fact evidence record shape** that both canonical and candidate facts will use, building on ADR-0005's evidence retrieval contract.
 
-The first item is especially important and intentionally called out here: **do not improvise the final entity/edge vocabulary without checking what existing systems already got right or wrong.**
+ADR-0006 should be treated as the binding follow-up for these items.
 
 ## Consequences
 
@@ -158,7 +167,7 @@ The first item is especially important and intentionally called out here: **do n
 
 - Product 1 can proceed assuming canonical operational queries run on the typed graph, not on a mixed noisy graph.
 - LLM-assisted extraction can proceed, but only into candidate / enrichment paths unless explicitly promoted.
-- The next design step is ontology research and schema definition, not another debate about GraphRAG versus typed graph.
+- Ontology research and schema definition are closed by ADR-0006; the next design steps are graph-building implementation boundaries, extractor selection, and query/tool contracts.
 
 ### Medium-term
 
@@ -176,5 +185,6 @@ The first item is especially important and intentionally called out here: **do n
 - `PRD.md` §6.1 (engine), §6.2 (8 MCP tools), §7 (provenance, refusal)
 - `PLATFORM-PRD.md` §8 (generic graph model), §10 (architecture principles)
 - `adr/0003-postgres-age-as-initial-graph-storage.md`
+- `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
 - `graph-building/codex-graph-building-research.md`
 - `graph-building/claude-graph-building-research.md`

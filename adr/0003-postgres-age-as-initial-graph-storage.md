@@ -36,6 +36,8 @@ More specifically:
 - **Graph traversal layer:** Apache AGE over PostgreSQL for graph-shaped queries
 - **Initial deployment target:** one Postgres instance per environment / region, with one AGE graph per tenant (or one graph per self-hosted customer)
 
+ADR-0006 later refines the canonical table shape as Entity + Fact + Evidence + Coverage rows. In particular, `valid_from` / `valid_to` live on evidence rows, and AGE nodes / edges are projections whose validity is derived at projection time.
+
 This is an **initial storage choice, not a permanent storage lock-in**.
 
 SuperContext will keep the storage layer modular so that additional graph/storage adapters can be supported later if justified by customer needs or platform evolution.
@@ -126,3 +128,4 @@ Implementation guardrails:
 - `graph-building/claude-graph-building-research.md` §1, §6, §14 (strict canonical graph + candidate/enrichment separation)
 - `graph-storage/claude-graph-storage-research.md` (recommended Postgres + Apache AGE)
 - `graph-storage/codex-graph-storage-research.md` (recommended Neo4j; useful counterpoint)
+- `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

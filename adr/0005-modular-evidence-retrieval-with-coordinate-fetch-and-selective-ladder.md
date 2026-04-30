@@ -18,6 +18,7 @@ The previous accepted decisions define the surrounding system:
 - `ADR-0002`: MCP as the public customer-facing protocol
 - `ADR-0003`: PostgreSQL + Apache AGE as the initial graph storage layer
 - `ADR-0004`: canonical typed graph plus candidate / enrichment sidecar
+- `ADR-0006`: Product 1 canonical ontology and Entity + Fact + Evidence metadata envelope
 
 Evidence retrieval is the layer that grounds graph claims in raw source material. It must work for enterprise customers with many repositories, multiple programming languages, and self-hosted / no-egress deployment requirements.
 
@@ -145,7 +146,7 @@ Required interfaces:
 - `AgenticExplorer`
 - `EvidenceContract`
 
-`EvidenceContract` is the retrieval-facing contract for fetched evidence, absent evidence, and refusal metadata. The shared graph fact evidence record shape remains a follow-up under ADR-0004 and should build on this contract.
+`EvidenceContract` is the retrieval-facing contract for fetched evidence, absent evidence, and refusal metadata. The shared graph Entity + Fact + Evidence record shape is defined by ADR-0006; evidence-retrieval outputs must be mappable into that envelope.
 
 The default v1 stack is:
 
@@ -165,7 +166,7 @@ Polyglot support is layered:
 - Structural search is intentionally targeted in v1 and improves incrementally by language and framework.
 - Agentic exploration covers gaps, but its output must be treated as lower-confidence evidence unless promoted by validation.
 
-This means Product 1 can serve polyglot enterprises early through coordinate fetch, lexical search, source parsers, and graph evidence, while deeper structural precision grows by language and framework over time.
+This means Product 1 can serve polyglot enterprises early through coordinate fetch, lexical search, targeted source parsers, and graph evidence, while deeper structural precision grows by language and framework over time.
 
 ## Runtime orchestration
 
@@ -217,6 +218,7 @@ Runtime behavior:
 - `ADR-0002`
 - `ADR-0003`
 - `ADR-0004`
+- `ADR-0006`
 - `evidence-retrieval/claude-evidence-retrieval-research.md`
 - `evidence-retrieval/codex-evidence-retrieval-research.md`
 - `evidence-retrieval/codex-runtime-retrieval-patterns.md`

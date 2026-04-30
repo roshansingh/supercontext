@@ -12,7 +12,7 @@
 
 SuperContext Product 1 has three distinct agentic layers:
 
-- **Layer A — Ingestion worker.** Per-repo agent that walks the filesystem, parses contracts (OpenAPI / proto / GraphQL / AsyncAPI), runs structural pattern matchers (tree-sitter + ast-grep for typed-client call sites; Opengrep only where cross-function flow analysis is needed), parses Helm/k8s manifests, normalizes Kafka topic names, and writes canonical or candidate graph upserts with provenance according to promotion rules.
+- **Layer A — Ingestion worker.** Per-repo agent that walks the filesystem, orchestrates the bounded v1 extractors selected by the graph ontology / graph-building work, and writes canonical or candidate graph upserts with provenance according to promotion rules.
 - **Layer B — Server-side reasoning agent.** PR-bot blast-radius synthesizer plus the budgeted Explorer used for uninstrumented graph coverage, evidence-led queries, conceptual / cross-repo ambiguity, and safety-critical grounding.
 - **Layer C — Customer-facing agentic surface.** The IDE host (Claude Code, Cursor, Continue, Cody, Zed, Windsurf, JetBrains AI Assistant, Copilot in VS Code) — see `PRD.md` §6.2.
 
@@ -28,15 +28,24 @@ This decision is needed now because the ingestion worker is the first piece of b
 
 Implementation guardrails:
 - Internal runtime only — the public Layer C contract is MCP per ADR-0002 and must remain SDK-agnostic.
-- Self-hosted execution — all built-in tools (Glob, Grep, Read, Edit, Bash, Monitor, WebFetch) run in-process inside the customer's environment.
+- Self-hosted execution — SDK tools run in-process inside the customer's environment.
+- Production agents must use narrow tool allowlists by role. Ingestion and evidence paths are read-mostly by default (`Glob`, `Grep`, `Read`); `Edit`, broad `Bash`, and network-capable tools such as `WebFetch` are not part of the default v1 ingestion path.
 - Permission mode defaults to `default`; `bypassPermissions` is forbidden in production paths.
 - Hooks (`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`) are the canonical hook for `last_indexed_at` checks, audit logging, and refusal-on-uninstrumented logic.
 - A `SessionStore` adapter is required for the multi-tenant SaaS plane; default JSONL-on-disk persistence is acceptable only for the self-hosted plane.
 
+## V1 scope boundary
+
+This ADR decides the internal agent runtime, not the full extractor catalog.
+
+For Product 1, Layer A may orchestrate only the bounded extractors needed for the accepted v1 graph ontology in ADR-0006 and first design-partner workflows. Examples such as OpenAPI, proto, GraphQL, AsyncAPI, Helm / Kubernetes manifests, Kafka topic normalization, tree-sitter, ast-grep, and Opengrep are eligible extractor families, not commitments that all must ship in v1.
+
+Broad cross-language structural indexing, broad Opengrep flow analysis, and every enterprise integration implied by the platform PRD remain outside this ADR's v1 implementation scope unless a later graph-building ADR explicitly pulls them in.
+
 ## Consequences
 
 ### Positive
-- Built-in `Glob`, `Grep` (ripgrep-backed), `Read`, `Edit`, `Bash`, `Monitor`, `WebFetch` are exactly the toolset Layer A needs. A code-walking agent compiles in ~30 lines vs. writing 4–6 ripgrep wrappers around `subprocess.run` with OpenAI Agents SDK.
+- Built-in `Glob`, `Grep` (ripgrep-backed), `Read`, `Bash`, `Monitor`, and optional tools such as `Edit` / `WebFetch` give us the runtime surface needed across Layers A and B, while production allowlists keep each path narrow. A code-walking agent compiles in ~30 lines vs. writing 4–6 ripgrep wrappers around `subprocess.run` with OpenAI Agents SDK.
 - Local-first execution. No customer code uploaded to a hosted vector store or sandbox. Required for `PRD.md` §8's "no code leaves the customer environment in self-hosted mode" promise and for fintech/health ICP qualification.
 - Five-mode permission system (`default` / `dontAsk` / `acceptEdits` / `bypassPermissions` / `plan`) plus per-tool allow/deny rules plus a `canUseTool` callback. Maps directly to `PRD.md` §7's "refuse when unsafe" requirement.
 - First-class hooks. Native home for the audit and refusal logic the product's trust posture depends on.
@@ -70,3 +79,4 @@ Implementation guardrails:
 - `agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude vs OpenAI SDK side-by-side comparison), §4 (why V2 differs from v0.1), §5 (skills resolution), §6 (operational implications), §7 (swap clause)
 - `agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` v0.1 (Codex, 2026-04-27, superseded — preserved for attribution; alternatives weighing that V2 rebalances)
 - `agentic-layer/AGENTIC-SKILLS-NOTE.md` v0.1 (2026-04-27, deferred question now resolved in V2 §5)
+- `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
