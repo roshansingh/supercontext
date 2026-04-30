@@ -1,5 +1,7 @@
 # Graph-Building Research — SuperContext Product 1
 
+> **✅ RESOLVED — 2026-04-29.** The binding decision now lives in [`GRAPH-BUILDING-RECOMMENDATION.md`](./GRAPH-BUILDING-RECOMMENDATION.md) and [`../adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md`](../adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md). This document is preserved as a research input that supported the final decision; do not treat it as the final authority. The architecture is closed, but the exact canonical entity and relation vocabulary remains a follow-up research item.
+
 - **Status:** Recommendation
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal

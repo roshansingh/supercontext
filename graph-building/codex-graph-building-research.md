@@ -1,5 +1,7 @@
 # Graph Building Research for SuperContext Product 1
 
+> **✅ RESOLVED — 2026-04-29.** The final decision is captured in [`GRAPH-BUILDING-RECOMMENDATION.md`](./GRAPH-BUILDING-RECOMMENDATION.md) and [`../adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md`](../adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md). This note is preserved as research history and as a supporting input to the accepted architecture. Its core posture is adopted, while the exact canonical entity and relation vocabulary remains open for targeted follow-up research.
+
 **Status:** Draft v0.1
 **Date:** 2026-04-28
 **Scope:** Decide how the Product 1 graph should be built, and whether it should be a strict typed operational graph or a looser GraphRAG-style graph.

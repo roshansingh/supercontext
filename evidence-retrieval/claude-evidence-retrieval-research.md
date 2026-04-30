@@ -1,5 +1,7 @@
 # Evidence Retrieval Research — SuperContext Product 1
 
+> **RESOLVED — 2026-04-29.** The binding decision now lives in [`EVIDENCE-RETRIEVAL-RECOMMENDATION.md`](./EVIDENCE-RETRIEVAL-RECOMMENDATION.md) and [`../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`](../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md). This document is preserved as a research input; do not treat it as the final authority.
+
 - **Status:** Recommendation
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal

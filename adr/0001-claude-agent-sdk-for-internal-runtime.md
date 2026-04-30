@@ -12,8 +12,8 @@
 
 SuperContext Product 1 has three distinct agentic layers:
 
-- **Layer A — Ingestion worker.** Per-repo agent that walks the filesystem, parses contracts (OpenAPI / proto / GraphQL / AsyncAPI), runs structural pattern matchers (tree-sitter + Opengrep) for typed-client call sites, parses Helm/k8s manifests, normalizes Kafka topic names, and writes typed graph upserts with provenance.
-- **Layer B — Server-side reasoning agent.** PR-bot blast-radius synthesizer plus the agentic-fallback explorer that runs when the graph returns "uninstrumented" for a queried edge.
+- **Layer A — Ingestion worker.** Per-repo agent that walks the filesystem, parses contracts (OpenAPI / proto / GraphQL / AsyncAPI), runs structural pattern matchers (tree-sitter + ast-grep for typed-client call sites; Opengrep only where cross-function flow analysis is needed), parses Helm/k8s manifests, normalizes Kafka topic names, and writes canonical or candidate graph upserts with provenance according to promotion rules.
+- **Layer B — Server-side reasoning agent.** PR-bot blast-radius synthesizer plus the budgeted Explorer used for uninstrumented graph coverage, evidence-led queries, conceptual / cross-repo ambiguity, and safety-critical grounding.
 - **Layer C — Customer-facing agentic surface.** The IDE host (Claude Code, Cursor, Continue, Cody, Zed, Windsurf, JetBrains AI Assistant, Copilot in VS Code) — see `PRD.md` §6.2.
 
 Layers A and B run server-side under our control. Layer C is whatever the customer uses; we expose MCP (see ADR-0002).
@@ -60,7 +60,7 @@ Implementation guardrails:
 
 **Build custom orchestration on raw Anthropic / OpenAI model APIs** — rejected. Loses MCP integration, hooks, permission modes, and session resume/fork. Months of plumbing work to recreate what either SDK gives us in days.
 
-**Embeddings-first retrieval with no agentic SDK** — rejected as architecture-level direction; see `overall-architecture/claude-code-research.md` §5 (industry has moved away — Cody deprecated embeddings, Anthropic dropped RAG, Bloop archived) and `overall-architecture/codex-code-research.md` §7 Recommendation 2. Will be formalized as a separate ADR if needed.
+**Embeddings-first retrieval with no agentic SDK** — rejected as architecture-level direction; see `overall-architecture/claude-code-research.md` §5 (industry has moved away — Cody deprecated embeddings, Anthropic dropped RAG, Bloop archived), `overall-architecture/codex-code-research.md` §7 Recommendation 2, ADR-0004 (canonical graph plus candidate / enrichment sidecar), and ADR-0005 (modular evidence retrieval with coordinate fetch and selective ladder).
 
 ## References
 

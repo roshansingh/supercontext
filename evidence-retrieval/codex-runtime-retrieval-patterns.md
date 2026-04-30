@@ -1,5 +1,7 @@
 # Runtime Retrieval Patterns
 
+> **RESOLVED — 2026-04-29.** The final runtime decision is captured in [`EVIDENCE-RETRIEVAL-RECOMMENDATION.md`](./EVIDENCE-RETRIEVAL-RECOMMENDATION.md) and [`../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`](../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md). This document is preserved as research history. The accepted rule is graph and evidence as first-class substrates, with Mode A always for surfaced/safety-critical facts and Mode B selectively invoked by query class, coverage, ambiguity, and budget.
+
 **Status:** Draft v0.1
 **Date:** 2026-04-28
 **Scope:** Define how runtime evidence retrieval should interact with graph retrieval in SuperContext Product 1.

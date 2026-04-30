@@ -1,5 +1,7 @@
 # Evidence Retrieval Research
 
+> **RESOLVED — 2026-04-29.** The final decision is captured in [`EVIDENCE-RETRIEVAL-RECOMMENDATION.md`](./EVIDENCE-RETRIEVAL-RECOMMENDATION.md) and [`../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`](../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md). This note is preserved as research history. Its exact-index emphasis is adopted as a platform extension path via `Zoekt`, while the default v1 stack uses a modular coordinate-fetch plus selective retrieval ladder.
+
 **Status:** Draft v0.1
 **Date:** 2026-04-28
 **Scope:** Research how the evidence retrieval layer should work for SuperContext Product 1, with emphasis on exact indexed code search systems and Claude Code’s agentic search behavior.
