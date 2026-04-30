@@ -15,18 +15,23 @@
 The final architecture:
 
 - **Mode A:** commit-pinned coordinate fetch for surfaced and safety-critical claims
-- **Mode B:** selective retrieval ladder: `ripgrep` -> `ast-grep` / `tree-sitter` -> budgeted Claude Agent SDK Explorer
+- **Mode B:** selective retrieval ladder: `ripgrep` -> targeted `ast-grep` / `tree-sitter` only when required -> budgeted Claude Agent SDK Explorer
 - **Runtime model:** graph retrieval and evidence retrieval are both first-class; graph gives structure, evidence gives grounding
 
 ## OSS posture
 
-Use OSS primitives:
+V1 binding choices:
 
 - `go-git` / `pygit2`
 - `ripgrep`
+- Claude Agent SDK built-ins
+
+Targeted v1 only:
+
 - `tree-sitter`
 - `ast-grep`
-- Claude Agent SDK built-ins
+
+These are used only for specific framework or syntax patterns required by the first design partner, not as broad language coverage.
 
 Build ourselves:
 
@@ -42,9 +47,9 @@ Build ourselves:
 This is an open-source enterprise platform decision, not a fixed v1 script.
 
 - `ripgrep` is the default lexical backend.
-- `Zoekt` should be supported later as the scalable indexed lexical backend when measured scale requires it.
+- `Zoekt` is a planned scale extension after benchmarks show `ripgrep` is insufficient at target repo scale.
 - `Sourcebot` is reference-only, not the runtime dependency.
-- `Semble` is optional / experimental for fuzzy code search, not the evidence backbone.
+- `Semble` is future research only, not a v1 component or evidence backbone.
 - Code-chunk embeddings are not the primary evidence path.
 
 ## Historical inputs
@@ -55,4 +60,3 @@ This is an open-source enterprise platform decision, not a fixed v1 script.
 - [`../debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md`](../debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md)
 
 Read those as research and debate history, not as open decisions.
-

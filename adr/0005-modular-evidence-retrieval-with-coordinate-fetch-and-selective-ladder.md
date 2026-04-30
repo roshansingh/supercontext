@@ -25,7 +25,7 @@ The evidence-retrieval research and debate converged on four points:
 
 - Evidence retrieval is a first-class runtime substrate, not just a fallback after graph retrieval.
 - Commit-pinned coordinate fetch is mandatory for surfaced or safety-critical claims.
-- Search should use a budgeted ladder: lexical, then structural, then agentic exploration.
+- Search should use a budgeted ladder: lexical first, targeted structural search only where v1 needs it, then agentic exploration.
 - SuperContext should reuse OSS primitives but own the orchestration, provenance contract, refusal semantics, and adapter interfaces.
 
 ## Decision
@@ -79,8 +79,10 @@ The ladder:
    - Used for names, exact strings, symbols, errors, endpoints, topics, configs, and manifests
 
 2. **Structural search**
-   - Default v1 backend: `ast-grep` over `tree-sitter`
-   - Used for definitions, call sites, imports, route declarations, framework patterns, and typed code shapes
+   - V1 status: targeted only, not broad default coverage
+   - Backend when needed: `ast-grep` over `tree-sitter`
+   - Used only for specific framework or syntax patterns required by the first design partner
+   - Broad definitions, references, imports, and cross-language code intelligence are not evidence-retrieval v1 requirements
 
 3. **Agentic exploration**
    - Default v1 backend: Claude Agent SDK Explorer subagent with a narrow tool allowlist such as `Glob`, `Grep`, and `Read`
@@ -93,9 +95,12 @@ The ladder:
 
 - `go-git` / `pygit2` for commit-pinned coordinate fetch
 - `ripgrep` for default lexical search
-- `tree-sitter` as the parsing substrate
-- `ast-grep` for structural search
 - Claude Agent SDK Explorer subagent for budgeted agentic exploration
+
+### Use only for targeted v1 patterns
+
+- `tree-sitter` as the parsing substrate
+- `ast-grep` for specific framework / syntax patterns required by the first design partner
 
 ### Build ourselves
 
@@ -109,10 +114,9 @@ The ladder:
 - Contract tests for the evidence layer
 - Contract tests for graph/evidence merge and refusal behavior
 
-### Support later / optional
+### Planned scale extension
 
 - `Zoekt` as the scalable indexed lexical-search backend when measured repo scale or p95 latency requires it
-- `Semble` as an optional / experimental fuzzy code-search adapter or benchmark, not as the primary evidence backbone
 
 ### Reference only
 
@@ -120,12 +124,14 @@ The ladder:
 
 Sourcebot is a useful reference architecture for code search, MCP exposure, and indexed-search ergonomics. It should not be the runtime dependency for Product 1 because it brings a larger product surface and does not own SuperContext's graph model, provenance contract, or refusal semantics.
 
-### Skip as primary path
+### Explicitly out of v1
 
 - Code-chunk embeddings
 - Embeddings-first evidence retrieval
 - Sourcebot as the runtime backbone
-- Semble as the core evidence layer
+- Semble
+- Broad `tree-sitter` / `ast-grep` structural coverage across languages
+- SCIP / language-indexer integration in the evidence-retrieval v1 stack
 
 ## Adapter boundaries
 
@@ -145,7 +151,7 @@ The default v1 stack is:
 
 - `CoordinateFetcher`: `go-git` or `pygit2`
 - `LexicalSearchBackend`: `ripgrep`
-- `StructuralSearchBackend`: `ast-grep` / `tree-sitter`
+- `StructuralSearchBackend`: no broad default backend; `ast-grep` / `tree-sitter` only for targeted v1 patterns
 - `AgenticExplorer`: Claude Agent SDK
 
 The platform must allow later adapters, including `Zoekt`, without changing MCP tool contracts or graph query semantics.
@@ -156,10 +162,10 @@ Polyglot support is layered:
 
 - Coordinate fetch works for any Git-tracked text file.
 - Lexical search works across all text languages.
-- Structural search support improves incrementally by language and framework.
+- Structural search is intentionally targeted in v1 and improves incrementally by language and framework.
 - Agentic exploration covers gaps, but its output must be treated as lower-confidence evidence unless promoted by validation.
 
-This means Product 1 can serve polyglot enterprises early, while deeper structural precision grows by language and framework over time.
+This means Product 1 can serve polyglot enterprises early through coordinate fetch, lexical search, source parsers, and graph evidence, while deeper structural precision grows by language and framework over time.
 
 ## Runtime orchestration
 
@@ -167,7 +173,7 @@ Runtime behavior:
 
 - Graph retrieval provides typed operational structure.
 - Evidence retrieval provides exact raw grounding.
-- Mode A runs for surfaced and safety-critical graph facts.
+- Mode A runs for surfaced source-code-backed graph facts and safety-critical code claims.
 - Mode B runs selectively based on query class, coverage, ambiguity, and budget.
 - Answer synthesis merges graph structure and evidence results.
 - Missing bytes, missing grounding, or exhausted budget must return explicit refusal metadata rather than a silent best guess.
@@ -179,7 +185,7 @@ Runtime behavior:
 - Preserves provenance-first trust.
 - Keeps the system self-hosted and no-egress friendly.
 - Avoids adopting a full external code-search product as a core dependency.
-- Gives a clear path from simple v1 search to indexed enterprise-scale search.
+- Keeps the v1 evidence stack small while preserving a clear path to indexed enterprise-scale search and deeper code intelligence.
 - Keeps the product surface centered on SuperContext's graph and evidence contracts.
 
 ### Negative
@@ -187,7 +193,7 @@ Runtime behavior:
 - Requires us to build orchestration and adapter interfaces.
 - Requires benchmarks before choosing hard budget defaults.
 - `ripgrep` may not be enough for large enterprise repo fleets; `Zoekt` should be planned as a measured scale extension.
-- Structural precision will vary by language and framework until rule coverage matures.
+- Structural precision will be intentionally shallow in v1 except for targeted framework patterns.
 
 ### Neutral
 
@@ -199,9 +205,9 @@ Runtime behavior:
 
 1. Benchmark `ripgrep` p95 across representative multi-repo enterprise fixtures.
 2. Define the first `Zoekt` adapter boundary before scale requires it.
-3. Decide the initial language/framework coverage for `ast-grep` rules.
+3. Decide whether the first design partner requires any targeted `ast-grep` / `tree-sitter` framework patterns.
 4. Define default agentic exploration budgets from measured latency and token data.
-5. Evaluate Semble only as a fuzzy-search benchmark or optional adapter, not as a core dependency or provenance-critical retrieval path.
+5. Track Semble as future fuzzy-search research only; no v1 implementation and no provenance-critical retrieval role.
 
 ## References
 
