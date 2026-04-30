@@ -25,8 +25,8 @@ Concretely:
 - **Tool surface:** the eight tools defined in `PRD.md` §6.2 — `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, `deploy_blockers_for`.
 - **Resource:** `supercontext://service/{name}/brief` per `PRD.md` §6.2 — a small (~2 KB) push-attachable brief for prompt-cache-friendly auto-attachment when the user opens a file in that service.
 - **Schema discipline:** structured JSON with stable IDs, depth limits (default `depth=1`), cursor pagination, summary-then-drill-down for any neighborhood >10 nodes (per `PRD.md` §6.2).
-- **Provenance contract:** every fact returned carries `commit_sha + file:line` (code), `topic + schema_version + last_seen_at` (events), or `trace_id + observed_at` (runtime), per `PRD.md` §6.1 and §7.
-- **SDK-agnostic on the consumer side:** tool schemas, JSON shapes, freshness fields, and refusal semantics must behave identically under any MCP-compliant host.
+- **Provenance / evidence contract:** every fact returned carries `commit_sha + file:line` (code), `topic + schema_version + last_seen_at` (events), or `trace_id + observed_at` (runtime), per `PRD.md` §6.1 and §7. Surfaced and safety-critical code facts also return evidence / refusal metadata consistent with ADR-0005's coordinate-fetch contract.
+- **Implementation-agnostic on the consumer side:** tool schemas, JSON shapes, freshness fields, evidence fields, and refusal semantics must behave identically under any MCP-compliant host. The public MCP contract must not expose assumptions from the internal SDK, storage engine, retrieval backend, or query language.
 
 ## Consequences
 
@@ -34,7 +34,7 @@ Concretely:
 - One server reaches all eight named hosts in `PRD.md` §6.2 with zero per-host adapter work. Distribution scales at the cost of a single integration.
 - MCP is the de facto standard for agent-tool integration as of 2026. Betting on the protocol matches the industry's direction and the eight named hosts' announced commitments.
 - Decouples public contract from internal runtime. The Claude Agent SDK choice in ADR-0001 can be swapped without breaking any customer integration, preserving the swap clause in ADR-0001.
-- Multiple OSS precedents confirm the pattern works for code-context tooling — Sourcebot's MCP server, ast-grep's MCP server, Multiplayer's MCP server (per `overall-architecture/claude-code-research.md` §3 and §6).
+- Multiple OSS precedents confirm the pattern works for code-context tooling — Sourcebot's MCP server, ast-grep's MCP server, Multiplayer's MCP server (per `overall-architecture/claude-code-research.md` §3 and §6). These are references and precedents, not runtime dependencies.
 - The CLI and REST surfaces (`PRD.md` §6.4) can be layered on top of the same engine without forking the protocol — the engine answers questions; MCP, CLI, and REST are three projections.
 - Forces healthy discipline on tool schemas: small surface (~8 tools), structured JSON, depth limits, cursor pagination. This is desirable for prompt-cache friendliness regardless of protocol.
 

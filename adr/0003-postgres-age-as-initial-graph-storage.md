@@ -32,7 +32,7 @@ This ADR closes that decision.
 
 More specifically:
 
-- **Canonical source of truth:** PostgreSQL tables for normalized facts, evidence, metadata, and surrounding application state
+- **Canonical source of truth:** PostgreSQL tables for normalized facts, evidence metadata / records, graph metadata, and surrounding application state. Raw source bytes are fetched from source control through the evidence layer defined in ADR-0005.
 - **Graph traversal layer:** Apache AGE over PostgreSQL for graph-shaped queries
 - **Initial deployment target:** one Postgres instance per environment / region, with one AGE graph per tenant (or one graph per self-hosted customer)
 
@@ -50,6 +50,7 @@ Implementation guardrails:
 - MCP, PR bot, CLI, and REST surfaces must expose **product queries and stable JSON contracts**, not raw AGE/Cypher semantics.
 - Ingestion workers must write **normalized facts, provenance, and freshness metadata**, not backend-specific graph tricks.
 - Graph edges should be treated as a **queryable projection / materialization over facts**, so a future backend can be introduced without changing connector semantics.
+- Candidate / enrichment facts may live in separate tables, schemas, or stores, but they must stay explicitly separated from canonical graph projections unless promoted by validated promotion rules.
 - The core Product 1 query semantics must be covered by **contract tests** for at least:
   - `search_services`
   - `get_service_brief`
@@ -103,6 +104,7 @@ Implementation guardrails:
 - The next implementation work can define:
   - canonical fact tables
   - evidence/provenance model
+  - candidate / enrichment storage and promotion-state model
   - AGE graph projection strategy
   - query contract tests for the 8 Product 1 tools
 
@@ -124,4 +126,3 @@ Implementation guardrails:
 - `graph-building/claude-graph-building-research.md` §1, §6, §14 (strict canonical graph + candidate/enrichment separation)
 - `graph-storage/claude-graph-storage-research.md` (recommended Postgres + Apache AGE)
 - `graph-storage/codex-graph-storage-research.md` (recommended Neo4j; useful counterpoint)
-

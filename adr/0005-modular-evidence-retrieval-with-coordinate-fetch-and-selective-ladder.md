@@ -47,7 +47,7 @@ Mode A fetches raw bytes from source control using a pinned coordinate:
 
 Mode A must run for:
 
-- every graph fact surfaced in a final answer
+- every source-code-backed graph fact surfaced in a final answer
 - every cited code fact
 - every safety-critical claim that affects refusal, blocking, blast radius, or deploy sequencing
 
@@ -107,6 +107,7 @@ The ladder:
 - Merge logic between graph retrieval and evidence retrieval
 - Query-class routing and budget gates
 - Contract tests for the evidence layer
+- Contract tests for graph/evidence merge and refusal behavior
 
 ### Support later / optional
 
@@ -137,6 +138,8 @@ Required interfaces:
 - `StructuralSearchBackend`
 - `AgenticExplorer`
 - `EvidenceContract`
+
+`EvidenceContract` is the retrieval-facing contract for fetched evidence, absent evidence, and refusal metadata. The shared graph fact evidence record shape remains a follow-up under ADR-0004 and should build on this contract.
 
 The default v1 stack is:
 
@@ -198,7 +201,7 @@ Runtime behavior:
 2. Define the first `Zoekt` adapter boundary before scale requires it.
 3. Decide the initial language/framework coverage for `ast-grep` rules.
 4. Define default agentic exploration budgets from measured latency and token data.
-5. Evaluate Semble as a fuzzy-search benchmark or optional adapter, not as a core dependency.
+5. Evaluate Semble only as a fuzzy-search benchmark or optional adapter, not as a core dependency or provenance-critical retrieval path.
 
 ## References
 
@@ -212,4 +215,3 @@ Runtime behavior:
 - `evidence-retrieval/codex-evidence-retrieval-research.md`
 - `evidence-retrieval/codex-runtime-retrieval-patterns.md`
 - `debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md`
-

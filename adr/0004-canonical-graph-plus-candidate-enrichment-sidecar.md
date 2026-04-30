@@ -100,11 +100,11 @@ Implementation guardrails:
 
 - Deterministic / authoritative extractors run first.
 - Candidate generation runs only after deterministic extraction has had its chance.
-- Every fact, canonical or candidate, must carry provenance and freshness in a stable shape.
+- Every fact, canonical or candidate, must carry provenance and freshness in a stable shape. Source-code-backed facts must also carry evidence metadata compatible with ADR-0005's coordinate-fetch contract.
 - Canonical facts must have explicit identity and semantics.
 - Derived edges must be marked as derived, not confused with direct evidence.
 - Candidate facts must be labeled by source and confidence class.
-- Promotion from candidate to canonical must require validation, corroboration, or repeated evidence, depending on edge type.
+- Promotion from candidate to canonical must require validation, corroboration, or repeated evidence, depending on edge type, and the promotion decision must be recorded as auditable state / metadata.
 - Product surfaces must query the canonical graph by default for operational workflows.
 
 ## What belongs where
@@ -148,7 +148,7 @@ These items remain open and should not be mistaken as resolved by this ADR:
 2. **Look for prior art worth borrowing** so we avoid avoidable ontology mistakes.
 3. **Define promotion rules** from candidate to canonical by edge type.
 4. **Define confidence / derivation classes** consistently across graph-building and query layers.
-5. **Define the evidence record shape** that both canonical and candidate facts will share.
+5. **Define the shared graph fact evidence record shape** that both canonical and candidate facts will use, building on ADR-0005's evidence retrieval contract.
 
 The first item is especially important and intentionally called out here: **do not improvise the final entity/edge vocabulary without checking what existing systems already got right or wrong.**
 
@@ -178,4 +178,3 @@ The first item is especially important and intentionally called out here: **do n
 - `adr/0003-postgres-age-as-initial-graph-storage.md`
 - `graph-building/codex-graph-building-research.md`
 - `graph-building/claude-graph-building-research.md`
-
