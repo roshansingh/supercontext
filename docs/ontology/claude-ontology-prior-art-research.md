@@ -4,7 +4,7 @@
 - **Date:** 2026-04-30
 - **Author:** Claude
 - **Purpose:** Identify ontology prior art SuperContext should borrow before defining the v1 canonical graph ontology. Companion to `codex-ontology-prior-art-research.md`.
-- **Anchors:** `PRD.md` §6.1 (engine + provenance), §7 (refusal), `adr/0003-postgres-age-as-initial-graph-storage.md` (storage substrate, schema sketch with `valid_from`/`valid_to`), `adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md` (open ontology question), `graph-building/claude-graph-building-research.md` §7 (multi-source facts and reconciliation), `graph-building/codex-graph-building-research.md` §6, §8, §10 (canonical/candidate split, entity model, confidence model)
+- **Anchors:** `PRD.md` §6.1 (engine + provenance), §7 (refusal), `adr/0003-postgres-age-as-initial-graph-storage.md` (storage substrate, schema sketch with `valid_from`/`valid_to`), `adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md` (open ontology question), `docs/graph-building/claude-graph-building-research.md` §7 (multi-source facts and reconciliation), `docs/graph-building/codex-graph-building-research.md` §6, §8, §10 (canonical/candidate split, entity model, confidence model)
 
 ---
 
@@ -101,7 +101,7 @@ Codex's note specifies promotion *exists* (canonical vs candidate) but defers th
 
 Backstage's pipeline: **EntityProvider → EntityProcessor → Stitcher → final entity**. Providers fetch from sources. Processors transform, validate, and emit relations. The Stitcher merges processor output deterministically — last-write-wins per source, with explicit precedence rules for which source wins on conflict. Critically, processors are idempotent and the stitched entity is a *materialized view* over processor output, not a primary write target.
 
-Source: `graph-building/codex-graph-building-research.md` §5.2 for the same finding distilled from Backstage docs.
+Source: `docs/graph-building/codex-graph-building-research.md` §5.2 for the same finding distilled from Backstage docs.
 
 This is the right shape for SuperContext: ingestion workers write Facts; canonical edges are the stitched view.
 
@@ -111,7 +111,7 @@ In Datomic / XTDB, all writes go through a transactor that timestamps each fact.
 
 Source: https://docs.datomic.com/transactions/transactions.html, https://xtdb.com/
 
-This pattern matches the Fact-row + materialized-edge approach already proposed in `graph-building/claude-graph-building-research.md` §7. Promotion in this model becomes "a higher-confidence Fact supersedes a lower-confidence Fact for the same `(predicate, subject, object, valid_from)` slot." No data is destroyed.
+This pattern matches the Fact-row + materialized-edge approach already proposed in `docs/graph-building/claude-graph-building-research.md` §7. Promotion in this model becomes "a higher-confidence Fact supersedes a lower-confidence Fact for the same `(predicate, subject, object, valid_from)` slot." No data is destroyed.
 
 ### 3.3 Confluent Schema Registry compatibility checks
 
@@ -177,7 +177,7 @@ Concrete v1 mapping (Postgres + AGE):
 - `Evidence` row: `(evidence_id, fact_id, source_system, source_ref, extractor, extractor_version, observed_at, confidence, derivation_class)`. Many `Evidence` rows per `Fact`.
 - Materialized edge in AGE: aggregates over `Evidence` rows for each `Fact`.
 
-This is the same shape `graph-building/claude-graph-building-research.md` §7 already proposed (separate `Fact` rows per source). PROV-O qualified relations gives us the vocabulary to justify it.
+This is the same shape `docs/graph-building/claude-graph-building-research.md` §7 already proposed (separate `Fact` rows per source). PROV-O qualified relations gives us the vocabulary to justify it.
 
 ### 4.3 What to skip
 
@@ -223,7 +223,7 @@ Future XTDB swap remains viable per `ADR-0003` §5 if bitemporal becomes hot.
 
 ## 6. Confidence aggregation — prior art
 
-`graph-building/claude-graph-building-research.md` §8 open question #6 explicitly flagged confidence aggregation across sources as undecided. Prior art suggests three approaches:
+`docs/graph-building/claude-graph-building-research.md` §8 open question #6 explicitly flagged confidence aggregation across sources as undecided. Prior art suggests three approaches:
 
 ### 6.1 Max confidence
 

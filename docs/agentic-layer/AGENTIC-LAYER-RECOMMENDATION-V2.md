@@ -4,7 +4,7 @@
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal
 - **Supersedes:** `AGENTIC-LAYER-RECOMMENDATION.md` (v0.1, Codex, 2026-04-27) and `AGENTIC-SKILLS-NOTE.md` (v0.1, 2026-04-27, deferred)
-- **Anchors:** `overall-architecture/adr/0001-claude-agent-sdk-for-internal-runtime.md`
+- **Anchors:** `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 
 ---
 
@@ -26,7 +26,7 @@ Layers A and B run server-side under our control. Layer C is whatever the custom
 | **B — Server-side reasoning** | Claude Agent SDK | Operational simplicity (one SDK across A+B) + hooks for refusal-on-uninstrumented + same audit-log shape |
 | **C — Customer-facing surface** | MCP protocol, SDK-agnostic on the consumer side | One server reaches all eight host IDEs in `PRD.md` §6.2; do not couple the public contract to any SDK |
 
-Captured formally in `overall-architecture/adr/0001-claude-agent-sdk-for-internal-runtime.md` (layers A+B) and `overall-architecture/adr/0002-mcp-protocol-for-external-surface.md` (layer C).
+Captured formally in `adr/0001-claude-agent-sdk-for-internal-runtime.md` (layers A+B) and `adr/0002-mcp-protocol-for-external-surface.md` (layer C).
 
 ## 3. SDK comparison — Claude Agent SDK vs OpenAI Agents SDK
 
@@ -131,12 +131,12 @@ The MCP contract for Layer C (per ADR-0002) is unaffected by any future swap. Th
 
 - `PRD.md` §3 (vision), §6.1 (engine — typed graph + provenance), §6.2 (MCP server, eight tools, host IDEs), §6.3 (PR bot), §6.4 (CLI + REST, deferred IDE extension), §7 (UX principles), §8 (architecture, no-egress posture), §13 (risks)
 - `PLATFORM-PRD.md` §9 (surfaces — MCP / agent tools)
-- `overall-architecture/claude-code-research.md` §3 (OSS landscape), §4 (Claude Agent SDK detail), §5 (embeddings — industry away), §7 (architecture)
-- `overall-architecture/codex-code-research.md` §4 (Claude Agent SDK assessment), §7 (recommendations), §8 (5-layer architecture), §11 (final posture)
-- `overall-architecture/adr/0001-claude-agent-sdk-for-internal-runtime.md`
-- `overall-architecture/adr/0002-mcp-protocol-for-external-surface.md`
-- `agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` (v0.1, superseded — preserved for attribution and audit trail)
-- `agentic-layer/AGENTIC-SKILLS-NOTE.md` (v0.1, deferred decision now resolved here)
+- `docs/overall-architecture/claude-code-research.md` §3 (OSS landscape), §4 (Claude Agent SDK detail), §5 (embeddings — industry away), §7 (architecture)
+- `docs/overall-architecture/codex-code-research.md` §4 (Claude Agent SDK assessment), §7 (recommendations), §8 (5-layer architecture), §11 (final posture)
+- `adr/0001-claude-agent-sdk-for-internal-runtime.md`
+- `adr/0002-mcp-protocol-for-external-surface.md`
+- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` (v0.1, superseded — preserved for attribution and audit trail)
+- `docs/agentic-layer/AGENTIC-SKILLS-NOTE.md` (v0.1, deferred decision now resolved here)
 
 ### External sources consulted
 

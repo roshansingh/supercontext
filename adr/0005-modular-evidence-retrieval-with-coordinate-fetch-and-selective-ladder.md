@@ -219,7 +219,7 @@ Runtime behavior:
 - `ADR-0003`
 - `ADR-0004`
 - `ADR-0006`
-- `evidence-retrieval/claude-evidence-retrieval-research.md`
-- `evidence-retrieval/codex-evidence-retrieval-research.md`
-- `evidence-retrieval/codex-runtime-retrieval-patterns.md`
+- `docs/evidence-retrieval/claude-evidence-retrieval-research.md`
+- `docs/evidence-retrieval/codex-evidence-retrieval-research.md`
+- `docs/evidence-retrieval/codex-runtime-retrieval-patterns.md`
 - `debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md`

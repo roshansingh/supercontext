@@ -19,8 +19,8 @@ The storage decision therefore has to satisfy two constraints at once:
 
 The storage research produced two serious final candidates:
 
-- `graph-storage/claude-graph-storage-research.md` recommends **PostgreSQL + Apache AGE**
-- `graph-storage/codex-graph-storage-research.md` recommends **Neo4j**
+- `docs/graph-storage/claude-graph-storage-research.md` recommends **PostgreSQL + Apache AGE**
+- `docs/graph-storage/codex-graph-storage-research.md` recommends **Neo4j**
 
 Both notes agree on the graph model shape: a typed operational graph with rich edge metadata, provenance, and freshness. The disagreement is primarily about implementation tradeoffs: graph-native ergonomics versus operational simplicity, license posture, and modularity for a self-hosted / multi-tenant platform.
 
@@ -125,7 +125,7 @@ Implementation guardrails:
 
 - `PRD.md` §6.1 (engine), §6.2 (8 MCP tools), §7 (provenance, refusal), §8 (architecture)
 - `PLATFORM-PRD.md` §8 (generic entity-edge-metadata model), §9 (shared surfaces), §10 (architecture principles)
-- `graph-building/claude-graph-building-research.md` §1, §6, §14 (strict canonical graph + candidate/enrichment separation)
-- `graph-storage/claude-graph-storage-research.md` (recommended Postgres + Apache AGE)
-- `graph-storage/codex-graph-storage-research.md` (recommended Neo4j; useful counterpoint)
+- `docs/graph-building/claude-graph-building-research.md` §1, §6, §14 (strict canonical graph + candidate/enrichment separation)
+- `docs/graph-storage/claude-graph-storage-research.md` (recommended Postgres + Apache AGE)
+- `docs/graph-storage/codex-graph-storage-research.md` (recommended Neo4j; useful counterpoint)
 - `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

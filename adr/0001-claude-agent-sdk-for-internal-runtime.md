@@ -65,18 +65,18 @@ Broad cross-language structural indexing, broad Opengrep flow analysis, and ever
 
 **OpenAI Agents SDK** — rejected. Strongest hosted tools (`FileSearchTool`, `CodeInterpreterTool`, `HostedMCPTool`, `WebSearchTool`) are server-side and bill per call; using them in Layer A would ship customer code to OpenAI Vector Stores, violating `PRD.md` §8's no-egress posture and disqualifying us from regulated-buyer ICPs. For Layer B, functional parity exists but no positive differentiator over Claude Agent SDK, and operational simplicity (one SDK across A+B) tilts the call toward Claude.
 
-**Pure agent-over-local-files (no SDK)** — rejected. Per `overall-architecture/codex-code-research.md` §7 Recommendation 3: weak moat, harder permissioning, harder central audit, doesn't scale across multiple repos and tenants without rebuilding orchestration we'd otherwise get for free.
+**Pure agent-over-local-files (no SDK)** — rejected. Per `docs/overall-architecture/codex-code-research.md` §7 Recommendation 3: weak moat, harder permissioning, harder central audit, doesn't scale across multiple repos and tenants without rebuilding orchestration we'd otherwise get for free.
 
 **Build custom orchestration on raw Anthropic / OpenAI model APIs** — rejected. Loses MCP integration, hooks, permission modes, and session resume/fork. Months of plumbing work to recreate what either SDK gives us in days.
 
-**Embeddings-first retrieval with no agentic SDK** — rejected as architecture-level direction; see `overall-architecture/claude-code-research.md` §5 (industry has moved away — Cody deprecated embeddings, Anthropic dropped RAG, Bloop archived), `overall-architecture/codex-code-research.md` §7 Recommendation 2, ADR-0004 (canonical graph plus candidate / enrichment sidecar), and ADR-0005 (modular evidence retrieval with coordinate fetch and selective ladder).
+**Embeddings-first retrieval with no agentic SDK** — rejected as architecture-level direction; see `docs/overall-architecture/claude-code-research.md` §5 (industry has moved away — Cody deprecated embeddings, Anthropic dropped RAG, Bloop archived), `docs/overall-architecture/codex-code-research.md` §7 Recommendation 2, ADR-0004 (canonical graph plus candidate / enrichment sidecar), and ADR-0005 (modular evidence retrieval with coordinate fetch and selective ladder).
 
 ## References
 
 - `PRD.md` §3 (vision), §6.2 (MCP server surface), §6.3 (PR bot), §7 (UX principles — refusal, provenance), §8 (architecture, no-egress posture), §13 (risks: MCP fork mitigation)
-- `overall-architecture/claude-code-research.md` §3 (OSS code-search landscape), §4 (Claude Agent SDK detail — hooks, subagents, MCP, permissions), §7 (Product 1 architecture diagram showing layers A/B/C), §8 (open questions)
-- `overall-architecture/codex-code-research.md` §4 (Claude Agent SDK assessment — strong orchestration, weak as sole retrieval substrate), §7 Recommendation 3 (do not ship pure agent-over-local-files), §8 Layer 4 (agentic interface), §11 (final architectural posture)
-- `agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude vs OpenAI SDK side-by-side comparison), §4 (why V2 differs from v0.1), §5 (skills resolution), §6 (operational implications), §7 (swap clause)
-- `agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` v0.1 (Codex, 2026-04-27, superseded — preserved for attribution; alternatives weighing that V2 rebalances)
-- `agentic-layer/AGENTIC-SKILLS-NOTE.md` v0.1 (2026-04-27, deferred question now resolved in V2 §5)
+- `docs/overall-architecture/claude-code-research.md` §3 (OSS code-search landscape), §4 (Claude Agent SDK detail — hooks, subagents, MCP, permissions), §7 (Product 1 architecture diagram showing layers A/B/C), §8 (open questions)
+- `docs/overall-architecture/codex-code-research.md` §4 (Claude Agent SDK assessment — strong orchestration, weak as sole retrieval substrate), §7 Recommendation 3 (do not ship pure agent-over-local-files), §8 Layer 4 (agentic interface), §11 (final architectural posture)
+- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude vs OpenAI SDK side-by-side comparison), §4 (why V2 differs from v0.1), §5 (skills resolution), §6 (operational implications), §7 (swap clause)
+- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` v0.1 (Codex, 2026-04-27, superseded — preserved for attribution; alternatives weighing that V2 rebalances)
+- `docs/agentic-layer/AGENTIC-SKILLS-NOTE.md` v0.1 (2026-04-27, deferred question now resolved in V2 §5)
 - `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

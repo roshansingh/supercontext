@@ -107,7 +107,7 @@ Specs / contracts used across runtime blocks:
 
 ## ADR Coverage Summary
 
-- Covered: internal agent runtime, external MCP protocol, initial graph storage, canonical/candidate graph posture, evidence retrieval, ontology/fact metadata.
+- Covered: internal agent runtime, external MCP protocol, initial graph storage, canonical/candidate graph posture, evidence retrieval, docs/ontology/fact metadata.
 - Partially covered: graph-building implementation, source evidence model, query/refusal behavior, storage modularity.
 - Not yet covered: source connector architecture, concrete v1 extractor list, tool execution engine, PR bot design, CLI/REST design, auth/tenancy/deployment, observability, testing/evaluation.
 

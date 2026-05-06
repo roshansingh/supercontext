@@ -187,4 +187,4 @@ Symbols are implementation-side evidence/query-resolution artifacts. They may be
 - ADR-0001: `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
 - ADR-0006: `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
-- `graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md`
+- `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md`

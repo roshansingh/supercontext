@@ -34,7 +34,7 @@ Concretely:
 - One server reaches all eight named hosts in `PRD.md` §6.2 with zero per-host adapter work. Distribution scales at the cost of a single integration.
 - MCP is the de facto standard for agent-tool integration as of 2026. Betting on the protocol matches the industry's direction and the eight named hosts' announced commitments.
 - Decouples public contract from internal runtime. The Claude Agent SDK choice in ADR-0001 can be swapped without breaking any customer integration, preserving the swap clause in ADR-0001.
-- Multiple OSS precedents confirm the pattern works for code-context tooling — Sourcebot's MCP server, ast-grep's MCP server, Multiplayer's MCP server (per `overall-architecture/claude-code-research.md` §3 and §6). These are references and precedents, not runtime dependencies.
+- Multiple OSS precedents confirm the pattern works for code-context tooling — Sourcebot's MCP server, ast-grep's MCP server, Multiplayer's MCP server (per `docs/overall-architecture/claude-code-research.md` §3 and §6). These are references and precedents, not runtime dependencies.
 - The CLI and REST surfaces (`PRD.md` §6.4) can be layered on top of the same engine without forking the protocol — the engine answers questions; MCP, CLI, and REST are three projections.
 - Forces healthy discipline on tool schemas: small surface (~8 tools), structured JSON, depth limits, cursor pagination. This is desirable for prompt-cache friendliness regardless of protocol.
 
@@ -55,7 +55,7 @@ Concretely:
 
 **Custom REST or GraphQL API as primary surface** — rejected as primary. Each IDE host would then need its own integration to consume our API; defeats `PRD.md` §6.2's "one integration reaches every IDE" thesis. Retained as a *secondary* surface per `PRD.md` §6.4 for shell agents (Claude Code subagents, custom scripts), oncall humans, and CI gates.
 
-**OpenCtx (Sourcegraph's earlier protocol)** — rejected as primary. Smaller host adoption than MCP and momentum has stalled since Sourcegraph's 2024 license change and pivot to Cody/Amp (per `overall-architecture/claude-code-research.md` §3). Retained as a fallback option per `PRD.md` §13's "MCP loses to a proprietary spec" mitigation.
+**OpenCtx (Sourcegraph's earlier protocol)** — rejected as primary. Smaller host adoption than MCP and momentum has stalled since Sourcegraph's 2024 license change and pivot to Cody/Amp (per `docs/overall-architecture/claude-code-research.md` §3). Retained as a fallback option per `PRD.md` §13's "MCP loses to a proprietary spec" mitigation.
 
 **Push-only context (auto-attach without tool calls)** — rejected as the only mechanism. Pull-by-default with one push-style brief is the chosen model per `PRD.md` §7 ("Pull by default, push for orientation"). The `supercontext://service/{name}/brief` resource captures the push case; everything else is pull.
 
@@ -63,6 +63,6 @@ Concretely:
 
 - `PRD.md` §3 (vision), §6.1 (engine — typed graph + provenance), §6.2 (MCP server, eight tools, resource shape, list of host IDEs), §6.3 (PR bot — separate surface, same engine), §6.4 (CLI + REST as secondary surfaces; rationale for deferring bespoke IDE extension), §7 (UX principles — provenance, pull-by-default, refuse when unsafe), §8 (architecture diagram showing MCP, PR bot, CLI as parallel surfaces over one engine), §12 (competitive positioning — MCP as the API, "Hosts" row), §13 (risks — MCP fork mitigation; OpenCtx fallback)
 - `PLATFORM-PRD.md` §9 (surfaces — MCP / agent tools as one of four interfaces over the unified context graph)
-- `overall-architecture/claude-code-research.md` §3 (Sourcebot, ast-grep MCP precedents), §4 (MCP-as-first-class consumer in Claude Agent SDK), §6 (Multiplayer's MCP, Sourcebot's MCP), §7 (Product 1 architecture diagram — MCP, PR bot, CLI as parallel surfaces)
-- `overall-architecture/codex-code-research.md` §4 (Sourcebot MCP — pragmatic stack reference), §8 Layer 4 (agentic interface — MCP tools, PR bot, CLI), §11 (final architectural posture endorses MCP as substrate)
+- `docs/overall-architecture/claude-code-research.md` §3 (Sourcebot, ast-grep MCP precedents), §4 (MCP-as-first-class consumer in Claude Agent SDK), §6 (Multiplayer's MCP, Sourcebot's MCP), §7 (Product 1 architecture diagram — MCP, PR bot, CLI as parallel surfaces)
+- `docs/overall-architecture/codex-code-research.md` §4 (Sourcebot MCP — pragmatic stack reference), §8 Layer 4 (agentic interface — MCP tools, PR bot, CLI), §11 (final architectural posture endorses MCP as substrate)
 - ADR-0001 (Claude Agent SDK as internal runtime — internal/external split this ADR enforces)

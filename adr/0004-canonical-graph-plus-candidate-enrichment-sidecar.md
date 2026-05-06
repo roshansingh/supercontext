@@ -16,8 +16,8 @@
 
 The graph-building research converged against that temptation:
 
-- `graph-building/codex-graph-building-research.md` recommends a **strict canonical operational graph** with a **candidate / enrichment layer** for uncertain facts.
-- `graph-building/claude-graph-building-research.md` recommends a **precise, typed knowledge graph** built from deterministic extractors first, with Claude Agent SDK used only as a gap-filler and candidate producer.
+- `docs/graph-building/codex-graph-building-research.md` recommends a **strict canonical operational graph** with a **candidate / enrichment layer** for uncertain facts.
+- `docs/graph-building/claude-graph-building-research.md` recommends a **precise, typed knowledge graph** built from deterministic extractors first, with Claude Agent SDK used only as a gap-filler and candidate producer.
 
 This ADR closes the architectural posture for graph building.
 
@@ -186,5 +186,5 @@ ADR-0006 should be treated as the binding follow-up for these items.
 - `PLATFORM-PRD.md` §8 (generic graph model), §10 (architecture principles)
 - `adr/0003-postgres-age-as-initial-graph-storage.md`
 - `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
-- `graph-building/codex-graph-building-research.md`
-- `graph-building/claude-graph-building-research.md`
+- `docs/graph-building/codex-graph-building-research.md`
+- `docs/graph-building/claude-graph-building-research.md`

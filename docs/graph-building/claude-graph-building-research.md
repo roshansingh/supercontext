@@ -5,7 +5,7 @@
 - **Status:** Recommendation
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal
-- **Anchors:** `PRD.md` §6.1 (engine + 5 ingestion sources), §6.2 (8 MCP tools), §7 (UX — provenance, refusal), `overall-architecture/adr/0001-claude-agent-sdk-for-internal-runtime.md`, `graph/claude-graph-storage-research.md` (storage), `agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` (ingestion runtime is Claude Agent SDK)
+- **Anchors:** `PRD.md` §6.1 (engine + 5 ingestion sources), §6.2 (8 MCP tools), §7 (UX — provenance, refusal), `adr/0001-claude-agent-sdk-for-internal-runtime.md`, `docs/graph-storage/claude-graph-storage-research.md` (storage), `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` (ingestion runtime is Claude Agent SDK)
 
 ---
 
@@ -42,7 +42,7 @@ For each of the 5 PRD §6.1 ingestion sources, the concrete picks:
 - **`github/stack-graphs`** (MIT/Apache) — file-incremental cross-file name resolution, powers GitHub's Precise Code Navigation in production. Use for languages not yet covered by SCIP and for incremental re-indexing on change.
 - **Tree-sitter + ast-grep** (MIT) for typed-client call-site patterns (Retrofit, gRPC stubs, OpenAPI-generated SDKs). Rust, fast, dedicated MCP server, AST-driven not regex. **Pick ast-grep over Opengrep for pattern matching.**
 - **Opengrep** (LGPL 2.1, forked Jan 2025 from Semgrep CE by Aikido + Endor + Jit + Orca) for taint-analysis-style rules where we need cross-function flow. **Avoid Semgrep** — license moved cross-function taint and other features behind commercial; LGPL is acceptable for distribution but Opengrep keeps the OSS feature set intact. Note Opengrep rules fork lags Dec 13, 2024 baseline of `semgrep-rules`.
-- **Glean schemas** (BSD) — *steal the Angle schema definitions* (`codemarkup.angle` etc.) for code facts even though we won't run Glean itself. Per `graph/claude-graph-storage-research.md` §3, asking customers to operate Haskell/RocksDB is a non-starter; the schema borrow is the value.
+- **Glean schemas** (BSD) — *steal the Angle schema definitions* (`codemarkup.angle` etc.) for code facts even though we won't run Glean itself. Per `docs/graph-storage/claude-graph-storage-research.md` §3, asking customers to operate Haskell/RocksDB is a non-starter; the schema borrow is the value.
 
 **4. Kubernetes / Helm manifests**
 - **`helm template` (subprocess) + `kustomize build`** to fully render manifests, then parse the rendered YAML with **`kubernetes-sigs/yaml`** (Go) or `pyyaml` + the **`kubernetes` Python client** typed models. There is no library that does "parse Helm chart and tell me what services it deploys" without rendering it — the rendering step is unavoidable. The PRD wedge claim of "ConfigMap-injected URLs (the declarative edge nobody mines)" requires the rendered output, not the chart source.
@@ -166,7 +166,7 @@ Wrong tool for our typed service graph. Right tool for prose Q&A in Phase 2+.
 
 The same `Service.calls.Endpoint` edge will be proven by static analysis (SCIP says service A's TypeScript types reference service B's OpenAPI client), by manifest analysis (k8s ConfigMap injects `B_BASE_URL` into A), and by trace analysis (10K spans last hour from A → B). These three pieces of evidence are not redundant — they are different kinds of evidence with different provenance and different lifetimes.
 
-**No off-the-shelf library handles this for our shape.** Senzing-style entity resolution is for entity duplicates ("Microsoft" vs "MSFT"), not multi-source edge proofs. GraphRAG community summaries collapse evidence rather than preserve it. Datomic and XTDB v2 (covered in `graph/claude-graph-storage-research.md`) preserve bitemporal lineage but don't aggregate confidence.
+**No off-the-shelf library handles this for our shape.** Senzing-style entity resolution is for entity duplicates ("Microsoft" vs "MSFT"), not multi-source edge proofs. GraphRAG community summaries collapse evidence rather than preserve it. Datomic and XTDB v2 (covered in `docs/graph-storage/claude-graph-storage-research.md`) preserve bitemporal lineage but don't aggregate confidence.
 
 **Recommendation: separate Fact rows per source, edge as a derived view.**
 

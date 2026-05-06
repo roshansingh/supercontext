@@ -5,7 +5,7 @@
 - **Status:** Recommendation
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal
-- **Anchors:** `PRD.md` §6.1 (engine + provenance), §6.2 (MCP tools), §7 (UX — provenance, refusal), `overall-architecture/adr/0001-claude-agent-sdk-for-internal-runtime.md`, `agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude Agent SDK built-in tools), `graph-building/claude-graph-building-research.md` §4 (Claude strict-mode tool use)
+- **Anchors:** `PRD.md` §6.1 (engine + provenance), §6.2 (MCP tools), §7 (UX — provenance, refusal), `adr/0001-claude-agent-sdk-for-internal-runtime.md`, `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude Agent SDK built-in tools), `docs/graph-building/claude-graph-building-research.md` §4 (Claude strict-mode tool use)
 
 ---
 

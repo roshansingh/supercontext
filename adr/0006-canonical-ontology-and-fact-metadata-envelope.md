@@ -14,16 +14,16 @@ ADR-0004 closed the graph-building posture: Product 1 uses a strict canonical ty
 
 That ADR intentionally left the exact ontology open. We have now completed the ontology prior-art research and debate:
 
-- `ontology/claude-ontology-prior-art-research.md`
-- `ontology/codex-ontology-prior-art-research.md`
+- `docs/ontology/claude-ontology-prior-art-research.md`
+- `docs/ontology/codex-ontology-prior-art-research.md`
 - `debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md`
-- `ontology/ONTOLOGY-RECOMMENDATION.md`
+- `docs/ontology/ONTOLOGY-RECOMMENDATION.md`
 
 This ADR closes the Product 1 v1 ontology and the shared Entity + Fact + Evidence metadata envelope.
 
 ## Decision
 
-**Use the ontology defined in `ontology/ONTOLOGY-RECOMMENDATION.md` as the binding Product 1 v1 canonical ontology.**
+**Use the ontology defined in `docs/ontology/ONTOLOGY-RECOMMENDATION.md` as the binding Product 1 v1 canonical ontology.**
 
 The binding shape is:
 
@@ -79,7 +79,7 @@ Source-code-backed entity or fact evidence must carry `bytes_ref` compatible wit
 - Hash-backed URNs are stable machine IDs; UI surfaces must render human-readable identity tuples as the primary display text.
 - URNs are tenant-scoped, not globally unique across tenants.
 - Partial coverage policy is owned by tool contracts. Safety-critical / completeness-sensitive tools must refuse unless missing scope is irrelevant to the requested answer.
-- High-precision static `CALLS` promotion depends on the typed-client extractor allowlist in `graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md`.
+- High-precision static `CALLS` promotion depends on the typed-client extractor allowlist in `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md`.
 
 ## Consequences
 
@@ -102,13 +102,31 @@ Source-code-backed entity or fact evidence must carry `bytes_ref` compatible wit
 - This ADR does not define the MCP tool schemas in full.
 - This ADR does not make broad language indexing, SCIP, GraphRAG, docs, tickets, incidents, databases, or feature flags part of Product 1 v1.
 
+## Implementation Status (v0, 2026-05-06)
+
+A first implementation slice in `source/` runs the ontology shape locally against a Python repository. The slice is intentionally narrower than the binding spec; the divergences below are tracked in `BACKLOG.md` and are not amendments to this ADR.
+
+- **Substrate.** v0 writes JSONL files (`entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, `manifest.json`) in `data/kg_runs/`. Postgres + Apache AGE per ADR-0003 not yet wired.
+- **Tenancy.** Single hardcoded `tenant_id="local-dev"`. Per-tenant isolation collapses to a single value as expected for self-hosted scaffolding.
+- **Extractor.** One deterministic Python AST extractor (`source.kg.python_ast_extractor`). No catalog, manifest, contract-spec, or trace ingestion yet.
+- **Code-level entity types introduced.** `CodeModule`, `CodeSymbol`, `ExternalPackage` are emitted by the v0 extractor. ADR-0006 §"Deferred families" listed `CodeSymbol` / `CodeOccurrence` as deferred. v0 needs them to drive function-level `find_callers` and `modules-importing` queries. **Status pending decision** — promote to canonical (10 → 13 nodes), keep candidate-only enrichment, or model as a sub-layer below the canonical 10. Tracked in `BACKLOG.md`.
+- **`IMPORTS` relation introduced.** `CodeModule → ExternalPackage`. Not in the canonical 15. Same pending decision as above.
+- **`CALLS` grain.** Spec: `Service → Endpoint` (operation-level, cross-service). v0: `CodeSymbol → CodeSymbol` (function-level, intra-repo). Both useful; the roll-up rule from function-level to Service-level CALLS for multi-service blast-radius is undefined. Tracked in `BACKLOG.md`.
+- **URN scheme.** Spec §3: per-kind human-readable patterns (e.g., `supercontext://service/{namespace}/{slug}`); opaque hash only for kinds with unsafe URL characters (`Endpoint`, `EventChannel`). v0 uses `supercontext://{kind}/{stable_hash}` for **all** kinds. To be honored when MCP / UI surfaces ship.
+- **Evidence `valid_from` / `valid_to`.** Spec mandates both columns on every evidence row. v0 has only `ingested_at`. Add when bitemporal or freshness queries land.
+- **Promotion rules.** Spec §6: candidate→canonical via per-edge thresholds. v0 defaults `canonical_status='canonical'` on every entity and fact because only one deterministic extractor exists. Enforce when multi-source or `inferred_llm` evidence enters.
+- **Coverage row shape.** Spec §7 fields include `subject_id`, `last_seen_at`, `window_start`, `window_end`. v0 collapses to `tenant_id, predicate, scope_ref, state, source_system, checked_at`. Restore the full shape when Tool Query Contract ADR locks coverage semantics.
+- **Polyglot ingestion.** v0 only handles Python. Other languages emit no entities or facts; loud-refusal-at-ingestion (per `BACKLOG.md`) not yet wired.
+
+The v0 slice is sufficient to validate the ontology shape against a real codebase (smoke tests in `source/KG-QUERY-SMOKE-TESTS.md`). Each gap above carries a revisit trigger in `BACKLOG.md`.
+
 ## References
 
-- `ontology/ONTOLOGY-RECOMMENDATION.md`
-- `ontology/claude-ontology-prior-art-research.md`
-- `ontology/codex-ontology-prior-art-research.md`
+- `docs/ontology/ONTOLOGY-RECOMMENDATION.md`
+- `docs/ontology/claude-ontology-prior-art-research.md`
+- `docs/ontology/codex-ontology-prior-art-research.md`
 - `debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md`
-- `graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md`
+- `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md`
 - ADR-0003: `adr/0003-postgres-age-as-initial-graph-storage.md`
 - ADR-0004: `adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md`
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
