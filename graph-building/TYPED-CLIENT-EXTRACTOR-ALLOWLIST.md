@@ -22,6 +22,8 @@ An extractor may be allowlisted only when it:
 - records extractor name and version in evidence rows
 - does not rely on broad language-indexer coverage or probabilistic inference
 
+Each allowlisted extractor requires a dedicated ruleset, correctness fixtures, and ongoing maintenance per language/framework. Broad upfront coverage is non-trivial; the allowlist expands by design-partner demand, not on a fixed roadmap. When ingestion encounters code in a language/framework with no allowlisted extractor, it must emit an `uninstrumented` coverage row for the extractor's declared scope, such as repo, service, language/framework, or path prefix (see `BACKLOG.md` "Loud refusal at ingestion") rather than silently skip — preserving the refusal-on-uninstrumented contract from PRD §7.
+
 ## Initial Entries
 
 No extractor is allowlisted yet.
@@ -43,4 +45,3 @@ Each added entry must include:
 - evidence coordinates emitted
 - test fixture path
 - promotion rationale
-

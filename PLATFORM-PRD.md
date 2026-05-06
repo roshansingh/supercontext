@@ -209,7 +209,7 @@ Repos, contracts, runtime edges, deploy topology, MCP, PR bot, CLI.
 Runbooks, incidents, schema registries, deployment gates, change-management signals.
 
 **Phase 3 — enterprise knowledge expansion.**
-Confluence, Jira, OneDrive / SharePoint, decisions, planning, and operational docs.
+Confluence, Jira, OneDrive / SharePoint, decisions, planning, and operational docs. Also: cross-tenant federation for cross-org service graphs (post-merger transitional period and permanently federated subsidiaries that own their own DevOps stacks).
 
 **Phase 4 — cross-system agents and workflows.**
 Planning, migration orchestration, impact memos, incident investigation, and enterprise copilots built on the shared graph.

@@ -1,0 +1,96 @@
+# SuperContext Backlog
+
+Status: living index of deferred work and open follow-ups across the project.
+Last updated: 2026-05-01.
+
+This file is the single place to scan "what's deferred and why." Per-ADR open-follow-up sections are the authoritative source; this is the index. Refresh when ADRs change.
+
+Format: `Item | Source | Trigger to revisit`.
+
+---
+
+## Next ADRs (priority order per TECHNICAL-BUILDING-BLOCKS.md)
+
+| Item | Source | Trigger to revisit |
+|---|---|---|
+| Tool Query Contract ADR — semantics for the 8 MCP tools, partial coverage rules, pagination, refusal metadata | TECHNICAL-BUILDING-BLOCKS.md "Next ADR Candidates" | Before Source Connector ADR; needed to drive what facts the engine must serve |
+| Source Connector + Extractor ADR — exact v1 inputs, parser stack, typed-client allowlist ownership | TECHNICAL-BUILDING-BLOCKS.md | After Tool Query Contract ADR locks the fact requirements |
+| Deployment / Auth / Tenancy ADR — SaaS vs self-hosted boundary, tenant isolation, SSO/SCIM, secrets, audit | TECHNICAL-BUILDING-BLOCKS.md | Parallel to Source Connector ADR |
+| Testing / Evaluation ADR — golden graphs, evidence replay, graph/evidence merge tests, p95 benchmarks | TECHNICAL-BUILDING-BLOCKS.md | After Tool Query Contract ADR locks the semantics to test against |
+| AGE Projection / Materialization Runtime ADR — projection cadence, incremental vs full rebuild, bulk-write strategy | TECHNICAL-BUILDING-BLOCKS.md | Before scale benchmarks force the choice |
+
+## Implementation discipline (cross-cutting)
+
+| Item | Source | Trigger to revisit |
+|---|---|---|
+| Loud refusal at ingestion — when Layer A encounters a source scope with no allowlisted extractor, emit `coverage` row with `state='uninstrumented'` for the extractor's declared scope, such as repo, service, language/framework, or path prefix. Never silent-skip | This document, design discussion 2026-05-01 | Land as a hard rule in Source Connector + Extractor ADR |
+| `.supercontext/config.json` per-repo customer steering (identity overrides, manual relations, coverage hints, deferred-extractor opt-out) | claude-deepwiki-analysis.md §3 | Source Connector + Extractor ADR |
+| Typed-client allowlist seeding — pick first design partner's stack, allowlist their typed clients (TS/JS, Go, Java/Kotlin per PRD) | TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md "Initial Entries" | When first design partner signed |
+| MCP install one-liner pattern documented (mirror `claude mcp add -s user -t http supercontext https://...`) | claude-deepwiki-analysis.md §2 | Tool Query Contract ADR or MCP install docs |
+| Mermaid in PR-bot blast-radius comments | claude-deepwiki-analysis.md §7 | Future PR-bot ADR |
+
+## Per-ADR open follow-ups
+
+### ADR-0003 (Postgres + AGE storage)
+
+| Item | Trigger to revisit |
+|---|---|
+| AGE bulk-edge-insert performance benchmark on 500-service / 100k-edge fixture | Before first design-partner load test |
+| AGE 4-hop blast_radius p95 < 500 ms validation | Before first design-partner load test |
+| openCypher coverage gap audit (AGE vs Neo4j) for our 8 tools | Before locking Tool Query Contract ADR |
+| AGE upgrade story (1.5 → 1.7), PG 18 + AGE 1.7 production fitness | Before any version upgrade |
+| Dgraph ownership stability post-Istari acquisition | Q3 2026 review |
+| Bitemporal modeling depth — `valid_from`/`valid_to` columns vs XTDB swap | When `oncall_context_for(since=1h)`-style tools become hot |
+
+### ADR-0005 (Evidence retrieval)
+
+| Item | Trigger to revisit |
+|---|---|
+| ripgrep p95 benchmark across multi-repo enterprise fixtures | Before deciding Zoekt adapter timing |
+| First Zoekt adapter boundary definition | When ripgrep p95 fails at target scale |
+| Targeted ast-grep / tree-sitter framework patterns for first design partner | When first design partner signed |
+| Default agentic exploration budgets from measured latency / token data (DeepWiki uses a 5-iteration ceiling as one data point) | After first instrumented design-partner runs; DeepWiki's 5-iteration ceiling is input data, not a binding default |
+| Semble future fuzzy-search research | Phase 2+ if alias / discovery gap forces it |
+
+### ADR-0006 (Ontology)
+
+| Item | Trigger to revisit |
+|---|---|
+| Per-relation runtime freshness window defaults — currently 10/14/30 days, expect adjustment | After first design partner trace-data cadence known |
+| Probabilistic entity resolution (Splink) for alias reconciliation | Phase 2+ when deterministic Alias table conflicts grow |
+| Conflict-resolution policy when two evidence rows assert mutually exclusive mappings (beyond `manual_override` + candidate status) | When such conflicts surface in production |
+| Schema compatibility policy (BACKWARD/FORWARD/FULL/transitive) for `EVOLVES_TO` lineage | When schema-evolution campaigns become a Product 1 feature, likely Phase 2 |
+
+## Phase 2 / 3 candidates
+
+| Item | Phase | Source |
+|---|---|---|
+| Cross-tenant federation for cross-org service graphs (post-merger transitional + permanently federated subsidiaries) | Phase 3 | PLATFORM-PRD.md §11; ONTOLOGY-RECOMMENDATION.md §11 |
+| `get_service_wiki(service_id)` MCP tool generating DeepWiki-style narrative from typed graph + evidence | Phase 2/3 | claude-deepwiki-analysis.md §6 |
+| Free hosted MCP for OSS repos as viral acquisition channel (mirror DeepWiki's `mcp.deepwiki.com` model) | GTM strategy, not technical | claude-deepwiki-analysis.md §5 |
+| GraphRAG-style enrichment in candidate / sidecar layer (prose / docs / runbooks / incidents) | Phase 2+ | ADR-0004 candidate / enrichment sidecar |
+| SCIP / language-indexer integration for symbol-level evidence | Phase 2+ | ADR-0005 §"Explicitly out of v1" |
+| Database / FeatureFlag node types | Phase 2+ | ONTOLOGY-RECOMMENDATION.md §8 deferred families |
+| Document / Ticket / Decision / Runbook / Incident / File node types | Phase 3 | ONTOLOGY-RECOMMENDATION.md §8 |
+| GATES / MIGRATES_WITH / SHARES_DB_WITH / IMPACTED_BY relations | Phase 2+ | ONTOLOGY-RECOMMENDATION.md §8 |
+
+## Open product / strategy questions
+
+| Item | Source | Owner |
+|---|---|---|
+| Naming finalization — `SuperContext` vs `BetterContext` vs other | PRD.md §14 #1 | Roshan |
+| First-language priority — TS/JS, Go, or Java/Kotlin (drives extractor allowlist seeding) | PRD.md §14 #2 | First design partner |
+| Tracing source for MVP — Datadog vs Tempo vs Jaeger (or all three) | PRD.md §14 #3 | First design partner |
+| Pricing model — per-seat vs per-service vs platform-team flat fee | PRD.md §14 #4 | After 2 design partners |
+| Self-host vs SaaS-first | PRD.md §14 #5 | Strategic call |
+| Buyer entry point — platform team vs single feature team | PRD.md §14 #6 | GTM motion |
+| Training-data policy — pre-commit "no model training on customer code" or stay flexible | PRD.md §14 #7 | Legal + GTM |
+
+---
+
+## How to use this file
+
+- **Adding an item:** include source ADR/doc + the trigger condition that should bring it back into scope.
+- **Closing an item:** delete the row. The originating ADR's open-follow-up section is the audit trail.
+- **Refreshing:** every time an ADR is updated or a new debate converges, sync this file. Drift is the failure mode.
+- **Not in scope:** day-to-day implementation tasks, bugs, sprint planning. This is for decisions and capabilities deferred at the architectural level.

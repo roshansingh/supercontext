@@ -19,6 +19,8 @@ Closed; no further design work needed before `ADR-0006`.
 
 ## 1. Canonical node types (10)
 
+A **node type** is an entity kind the v1 graph models — a real-world thing (a service, a repo, an endpoint). Each node carries an identity tuple (§3), evidence rows backing its existence (§4), and a `canonical_status`.
+
 | # | Node | Semantic definition |
 |---|---|---|
 | 1 | `Service` | A logical software service deployed and owned by a team. The unit `find_callers` / `blast_radius` / `deploy_blockers_for` operate on. |
@@ -35,6 +37,8 @@ Closed; no further design work needed before `ADR-0006`.
 ---
 
 ## 2. Canonical relation types (15)
+
+A **relation type** is an edge kind connecting two nodes — a directed verb (OWNS, CALLS, PRODUCES). Subject and object node types are constrained per relation. Names align with Backstage well-known relations where they fit, with explicit additions for runtime, contracts, and events.
 
 | # | Relation | From → To | One-line semantics |
 |---|---|---|---|
@@ -58,6 +62,10 @@ Closed; no further design work needed before `ADR-0006`.
 
 ## 3. Identity tuples (all per-tenant)
 
+An **identity tuple** is the set of fields whose values together make a node *that specific node*, distinct from any other node of the same type. Like a primary key, but constructed from semantic fields rather than an opaque UUID. Two records with the same identity tuple collapse to one canonical entity; each contributing source becomes an `evidence` row.
+
+A **tenant** is one customer organization — the unit of isolation. Every tuple starts with `tenant_id` so two customers can both have a `payments` service without colliding. ADR-0003 commits to one AGE graph per tenant or self-hosted customer; the exact Postgres schema, RLS, and session-boundary strategy is deferred to the Deployment / Auth / Tenancy ADR. Product code must treat tenant scope as enforced by platform and storage boundaries, not as an ad hoc filter callers remember to add.
+
 | Node | Identity tuple |
 |---|---|
 | `Service` | `(tenant_id, namespace, slug)` — Backstage URN scheme; namespace defaults to `"default"`. |
@@ -70,6 +78,26 @@ Closed; no further design work needed before `ADR-0006`.
 | `Deployment` | `(tenant_id, deployable_id, deployed_at)` |
 | `Environment` | `(tenant_id, name)` |
 | `Owner` | `(tenant_id, kind, slug)` — `kind` ∈ `{team, person}` |
+
+### Worked examples
+
+**Cross-source merging into one canonical Service.** Three sources for tenant `t1` describing the same payments service:
+
+| Source | Raw record | Computed tuple |
+|---|---|---|
+| Backstage | `Component { namespace: "default", name: "payments" }` | `(t1, "default", "payments")` |
+| OTel trace | span with `service.namespace="default"`, `service.name="payments"` | `(t1, "default", "payments")` |
+| k8s manifest | Deployment in namespace `default` with label `app.kubernetes.io/name="payments"` | `(t1, "default", "payments")` |
+
+All three collapse to **one** canonical `Service` entity. Each source contributes a separate `evidence` row pointing at the same `entity_id`.
+
+**Same logical service, different name → separate entities until aliased.** If the OTel trace had `service.name="payments-svc"` instead, its tuple would be `(t1, "default", "payments-svc")` — a *different* entity. The two stay separate until an `Alias` row links them (deterministic rule, manual override, or future probabilistic ER).
+
+**Two tenants, same name → separate entities by construction.** Acme's `(uuid-acme, "default", "payments")` and Beta's `(uuid-beta, "default", "payments")` are two different canonical entities. Tenant boundary is hard; aliases cannot bridge it (§9 Q7).
+
+**Endpoint identity ignores cosmetic differences.** Two OpenAPI specs declare `GET /users/{userId}` and `GET /users/{id}` for the same API. After REST normalization both yield `(t1, api_X, "/users/{}", "GET")` — one canonical `Endpoint`. The identity rule explicitly avoids splitting on path-parameter naming conventions.
+
+**Schema identity is content-addressed.** Two repos commit byte-identical OpenAPI schema bodies. After canonical-form normalization, both produce the same `content_hash`, yielding tuple `(t1, "openapi", sha256(...))` — one `Schema` entity, two `evidence` rows pinning the bytes to different `(repo, commit_sha, path)` coordinates.
 
 External URN IDs are per-node-kind, not one global pattern:
 
@@ -103,6 +131,8 @@ For hash-backed URNs such as `Endpoint` and `EventChannel`, UI surfaces must ren
 ---
 
 ## 4. Entity + Fact + Evidence row shape
+
+Three Postgres tables that store the graph. `entities` = nodes. `facts` = edges (with optional qualifier). `evidence` = proof rows attached to either an entity or a fact (PROV-O qualified-relation pattern: separate *what we believe* from *why we believe it*). AGE nodes/edges are derived projections over them.
 
 PROV-O qualified-relation pattern:
 
@@ -198,6 +228,8 @@ An entity is auto-demoted when no active evidence row remains, using the same `v
 
 ## 5. Derivation classes
 
+A **derivation class** is a tag on every evidence row stating *how we got this evidence* — what kind of source proved it. Five discrete tiers from strongest to weakest. The tier picks the strongest evidence backing a fact (§4 `best_tier()`) and drives per-edge promotion rules (§6).
+
 Tier order from strongest to weakest (used by `best_tier()` in the AGE projection):
 
 | # | Class | Source examples |
@@ -217,6 +249,8 @@ Tier order from strongest to weakest (used by `best_tier()` in the AGE projectio
 ---
 
 ## 6. Promotion rules
+
+A **promotion rule** is the per-edge-type criterion for moving a row from `canonical_status='candidate'` to `'canonical'`. Candidate rows stay isolated from operational answers; canonical rows feed MCP tools and the PR bot. Rule of thumb: ≥2 sources or one high-tier deterministic source promotes; LLM alone never promotes.
 
 Promotion is `canonical_status: candidate → canonical` on the Entity or Fact row.
 
@@ -254,7 +288,7 @@ The allowlist for high-precision `deterministic_static` call-site extractors is 
 
 ## 7. Coverage representation
 
-Refusal-on-uninstrumented (PRD §7) requires the graph to know `(subject, predicate, scope)` *coverage*, not just facts.
+A sidecar table answering "do we have data for this region of the graph?" Lets tools refuse cleanly when they lack evidence to answer, instead of silently returning empty results. Refusal-on-uninstrumented (PRD §7) requires the graph to know `(subject, predicate, scope)` *coverage*, not just facts.
 
 ### `coverage` table (sidecar; not a graph node)
 
@@ -302,7 +336,7 @@ Per `PRD.md:215-223` (MVP non-goals) and `PLATFORM-PRD.md:106-126` (Phase 2/3 sc
 
 | # | Question | Resolution |
 |---|---|---|
-| 1 | Per-tenant vs global namespace | Within-tenant grouping; default `"default"`. Tenant isolation is connection-level per ADR-0003 §6, not a query predicate. |
+| 1 | Per-tenant vs global namespace | Within-tenant grouping; default `"default"`. ADR-0003 commits to one AGE graph per tenant/customer; exact Postgres schema, RLS, and session-boundary enforcement is deferred to the Deployment / Auth / Tenancy ADR. |
 | 2 | Slug normalization | Lowercase + hyphenate (`a-z0-9-`); **do not** strip suffixes like `-svc`/`-service`. Aliases handle the merge. |
 | 3 | Min corroboration thresholds | v1 defaults: N=2 distinct `source_system` values, OR ≥10 `runtime_observed` rows within 14 days. Per-tenant configurable. |
 | 4 | Operation vs Endpoint | **Collapse.** `Endpoint` *is* the operation. |
@@ -340,6 +374,7 @@ Per `PLATFORM-PRD.md` §11 (Phase 3) and `ADR-0004`'s candidate / enrichment sid
 - The 10 v1 nodes and 15 v1 relations are **additive**: Phase 2/3 expansion to docs / tickets / decisions / runbooks / incidents / files joins via new node types and new relations on the same `facts`/`evidence`/`coverage` substrate. No schema rewrite.
 - The candidate / enrichment sidecar (ADR-0004) lives next to the canonical graph and reuses the same Entity + Fact + Evidence shape, with `canonical_status='candidate'` on every row.
 - Bitemporal queries (`oncall_context_for(since=1h)`-style) become possible because `evidence.valid_from` / `valid_to` plus `evidence.ingested_at` cover the two time axes. XTDB swap (`ADR-0003` §5) remains viable if bitemporal becomes hot.
+- v1 is **strictly per-tenant**: one tenant = one KG, no cross-tenant aliases or queries. Within a tenant, sub-organizations are modeled via `namespace`. Cross-org service graphs spanning legally-separate entities (post-merger subsidiaries, federated parent-child orgs that operate their own DevOps stacks) are deferred to Phase 3 cross-tenant federation per `PLATFORM-PRD.md` §11. v1 customers in those situations accept blast-radius blindness across the org boundary until federation lands.
 
 ---
 
