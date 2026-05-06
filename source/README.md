@@ -25,6 +25,8 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 python -m source.scripts.build_kg --repo ~/work/mercury_ml --out data/kg_runs/mercury_ml
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml summary
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-dependencies --limit 10
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml find-callers predict --limit 5
 ```
 

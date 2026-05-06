@@ -101,7 +101,7 @@ Low-tier queries must have concrete expected outputs for the active fixture. For
 | Q012 | Includes `sklearn.model_selection` imports in `frustration_classification/train.py:2` and `session_train_test_split.py:5`, mapped to distribution `scikit-learn` when alias mapping lands. |
 | Q013 | Direct callers of `write_result_on_disk` include `predict_intent.predict_on_session` at `batch_predict.py:88`. |
 | Q014 | For a default query over an `inferred_llm` `CALLS` fact with `canonical_status='candidate'`, default `find_callers` must not return the candidate fact; explicit candidate/enrichment mode may return it. |
-| Q015 | Compact summary reports 225 Python files, 1443 entities, 3604 facts, 6453 evidence rows, and 2 coverage rows for the current v0 snapshot, or explains why counts changed after extractor changes. |
+| Q015 | Compact summary reports 225 Python files, 1266 entities, 3653 facts, 6567 evidence rows, and 2 coverage rows for the current v0 snapshot, or explains why counts changed after extractor changes. |
 
 Goldens are fixture-specific. Regenerate them when the active test corpus or extractor behavior changes, and record the reason for the change.
 

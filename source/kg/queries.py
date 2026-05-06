@@ -84,11 +84,61 @@ class KgSnapshot:
             module = self.entities_by_id.get(fact["subject_id"])
             if not package or not module:
                 continue
-            if package_name.lower() in str(package["identity"].get("name", "")).lower():
+            if self._import_matches(fact, package, package_name):
                 results.append(self._fact_result(fact, module, package))
                 if len(results) >= limit:
                     return results
         return results
+
+    def top_dependencies(self, limit: int = 25, exclude_stdlib: bool = True, exclude_unknown: bool = True) -> list[JsonObject]:
+        counts: dict[str, JsonObject] = {}
+        for fact in self.facts:
+            if fact["predicate"] != "IMPORTS":
+                continue
+            qualifier = fact.get("qualifier", {})
+            category = qualifier.get("category")
+            if exclude_stdlib and category == "stdlib":
+                continue
+            if exclude_unknown and category == "unknown":
+                continue
+            package = self.entities_by_id.get(fact["object_id"])
+            if not package or package["kind"] != "ExternalPackage":
+                continue
+            name = str(package["identity"].get("name"))
+            row = counts.setdefault(
+                name,
+                {
+                    "name": name,
+                    "category": category,
+                    "import_root": qualifier.get("import_root"),
+                    "distribution_name": qualifier.get("distribution_name"),
+                    "importer_count": 0,
+                    "sample_evidence": [],
+                },
+            )
+            row["importer_count"] += 1
+            if len(row["sample_evidence"]) < 3:
+                row["sample_evidence"].extend(self.evidence_by_target.get(fact["fact_id"], [])[:1])
+        return sorted(counts.values(), key=lambda row: (-row["importer_count"], row["name"]))[:limit]
+
+    def dependency_info(self, package_name: str) -> list[JsonObject]:
+        seen: dict[str, JsonObject] = {}
+        for fact in self.facts:
+            if fact["predicate"] != "IMPORTS":
+                continue
+            package = self.entities_by_id.get(fact["object_id"])
+            if not package or not self._import_matches(fact, package, package_name):
+                continue
+            qualifier = fact.get("qualifier", {})
+            name = str(package["identity"].get("name"))
+            seen[name] = {
+                "name": name,
+                "kind": package["kind"],
+                "category": qualifier.get("category"),
+                "import_root": qualifier.get("import_root"),
+                "distribution_name": qualifier.get("distribution_name"),
+            }
+        return sorted(seen.values(), key=lambda row: row["name"])
 
     def _matching_symbols(self, symbol_query: str) -> list[JsonObject]:
         needle = symbol_query.lower()
@@ -98,6 +148,18 @@ class KgSnapshot:
             if entity["kind"] == "CodeSymbol"
             and needle in f"{entity['identity'].get('module', '')}.{entity['identity'].get('qualname', '')}".lower()
         ]
+
+    def _import_matches(self, fact: JsonObject, package: JsonObject, package_name: str) -> bool:
+        needle = package_name.lower()
+        qualifier = fact.get("qualifier", {})
+        candidates = {
+            str(package["identity"].get("name", "")),
+            str(qualifier.get("raw_import", "")),
+            str(qualifier.get("import_root", "")),
+            str(qualifier.get("distribution_name", "")),
+            str(qualifier.get("module_name", "")),
+        }
+        return needle in {candidate.lower() for candidate in candidates if candidate}
 
     def _fact_result(self, fact: JsonObject, subject: JsonObject, object_: JsonObject, **extra: Any) -> JsonObject:
         return {

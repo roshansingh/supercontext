@@ -26,6 +26,14 @@ def main() -> None:
     imports.add_argument("package")
     imports.add_argument("--limit", type=int, default=25)
 
+    top_deps = subparsers.add_parser("top-dependencies")
+    top_deps.add_argument("--limit", type=int, default=25)
+    top_deps.add_argument("--include-stdlib", action="store_true")
+    top_deps.add_argument("--include-unknown", action="store_true")
+
+    dep_info = subparsers.add_parser("dependency-info")
+    dep_info.add_argument("package")
+
     args = parser.parse_args()
     kg = KgSnapshot(args.snapshot)
     if args.command == "summary":
@@ -36,6 +44,14 @@ def main() -> None:
         result = kg.blast_radius(args.symbol, depth=args.depth, limit=args.limit)
     elif args.command == "modules-importing":
         result = kg.modules_importing(args.package, limit=args.limit)
+    elif args.command == "top-dependencies":
+        result = kg.top_dependencies(
+            limit=args.limit,
+            exclude_stdlib=not args.include_stdlib,
+            exclude_unknown=not args.include_unknown,
+        )
+    elif args.command == "dependency-info":
+        result = kg.dependency_info(args.package)
     else:
         raise ValueError(f"Unsupported command: {args.command}")
     print(json.dumps(result, indent=2, sort_keys=True))

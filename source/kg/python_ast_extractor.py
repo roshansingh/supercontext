@@ -8,6 +8,7 @@ import tomllib
 import warnings
 
 from source.kg.models import Coverage, Entity, Evidence, Fact, JsonObject
+from source.kg.import_normalizer import NormalizedImport, PythonImportNormalizer
 from source.kg.repo_source import RepoSnapshot
 
 
@@ -47,9 +48,10 @@ class PythonAstExtractor:
             ]
         )
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, repo.root / "pyproject.toml", 1, 1)
+        import_normalizer = PythonImportNormalizer(repo)
 
         for file_path in repo.python_files:
-            self._extract_file(repo, file_path, repo_entity, service_entity, build)
+            self._extract_file(repo, file_path, repo_entity, service_entity, import_normalizer, build)
 
         build.coverage.append(
             Coverage(
@@ -68,6 +70,7 @@ class PythonAstExtractor:
         file_path: Path,
         repo_entity: Entity,
         service_entity: Entity,
+        import_normalizer: PythonImportNormalizer,
         build: KgBuild,
     ) -> None:
         source = file_path.read_text(encoding="utf-8", errors="replace")
@@ -124,14 +127,25 @@ class PythonAstExtractor:
             build.evidence.append(self._entity_evidence(repo, symbol.entity, file_path, symbol.line, symbol.end_line))
             self._add_fact(build, "DEFINED_IN", symbol.entity, module_entity, repo, file_path, symbol.line, symbol.end_line)
 
-        imports = self._collect_imports(tree)
-        for imported_name, line in imports.items():
-            package_entity = self._external_package(repo, imported_name)
-            build.entities.append(package_entity)
-            build.evidence.append(self._entity_evidence(repo, package_entity, file_path, line, line))
-            self._add_fact(build, "IMPORTS", module_entity, package_entity, repo, file_path, line, line)
+        imports = import_normalizer.collect(tree, module_name)
+        imports_by_root: dict[str, NormalizedImport] = {}
+        for import_ref in imports:
+            dependency_entity = self._dependency_entity(repo, import_ref)
+            build.entities.append(dependency_entity)
+            build.evidence.append(self._entity_evidence(repo, dependency_entity, file_path, import_ref.line, import_ref.line))
+            self._add_fact(
+                build,
+                "IMPORTS",
+                module_entity,
+                dependency_entity,
+                repo,
+                file_path,
+                import_ref.line,
+                import_ref.line,
+                qualifier=self._import_qualifier(import_ref),
+            )
+            imports_by_root.setdefault(import_ref.import_root, import_ref)
 
-        imported_roots = {name.split(".", 1)[0] for name in imports}
         for caller_node in ast.walk(tree):
             if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -149,8 +163,8 @@ class PythonAstExtractor:
                     self._add_fact(build, "CALLS", caller.entity, local_callee.entity, repo, file_path, line, line)
                     continue
                 root = call_name.split(".", 1)[0]
-                if root in imported_roots:
-                    package_entity = self._external_package(repo, root)
+                if root in imports_by_root:
+                    package_entity = self._dependency_entity(repo, imports_by_root[root])
                     build.entities.append(package_entity)
                     self._add_fact(
                         build,
@@ -208,16 +222,6 @@ class PythonAstExtractor:
         )
         return SymbolDef(entity, module_name, qualname, symbol_kind, line, end_line)
 
-    def _collect_imports(self, tree: ast.AST) -> dict[str, int]:
-        imports: dict[str, int] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    imports[alias.name] = node.lineno
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                imports[node.module] = node.lineno
-        return imports
-
     def _add_fact(
         self,
         build: KgBuild,
@@ -258,12 +262,36 @@ class PythonAstExtractor:
             properties={"repo": repo.name},
         )
 
-    def _external_package(self, repo: RepoSnapshot, package_name: str) -> Entity:
+    def _dependency_entity(self, repo: RepoSnapshot, import_ref: NormalizedImport) -> Entity:
+        if import_ref.category in {"internal_module", "relative_internal_module"}:
+            return Entity(
+                kind="CodeModule",
+                identity={"tenant_id": TENANT_ID, "repo": repo.name, "module": import_ref.target_name},
+                properties={"dependency_category": import_ref.category},
+            )
+        return self._external_package(repo, import_ref)
+
+    def _external_package(self, repo: RepoSnapshot, import_ref: NormalizedImport) -> Entity:
         return Entity(
             kind="ExternalPackage",
-            identity={"tenant_id": TENANT_ID, "repo": repo.name, "name": package_name},
-            properties={},
+            identity={"tenant_id": TENANT_ID, "repo": repo.name, "name": import_ref.target_name},
+            properties={
+                "category": import_ref.category,
+                "import_root": import_ref.import_root,
+                "distribution_name": import_ref.distribution_name,
+            },
         )
+
+    def _import_qualifier(self, import_ref: NormalizedImport) -> JsonObject:
+        return {
+            "raw_import": import_ref.raw_import,
+            "import_root": import_ref.import_root,
+            "distribution_name": import_ref.distribution_name,
+            "category": import_ref.category,
+            "module_name": import_ref.module_name,
+            "imported_names": list(import_ref.imported_names),
+            "alias": import_ref.alias,
+        }
 
     def _repo_evidence(self, repo: RepoSnapshot, entity: Entity) -> Evidence:
         return Evidence(
