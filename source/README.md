@@ -6,8 +6,8 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 
 ## What It Does
 
-- Reads a local Python repository.
-- Extracts repo, service, module, symbol, import, and call facts with file/line evidence.
+- Reads a local Python or TypeScript/JavaScript repository.
+- Extracts repo, service, module, symbol, import, and basic call facts with file/line evidence.
 - Writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - Provides small query scripts for summary, callers, blast radius, and imports.
 
@@ -17,12 +17,14 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - No MCP server.
 - No PR bot.
 - No broad language coverage.
+- TypeScript/JavaScript support is static v0 and intentionally shallow.
 - No automatic LLM enrichment in the default path.
 
 ## Run
 
 ```bash
 python -m source.scripts.build_kg --repo ~/work/mercury_ml --out data/kg_runs/mercury_ml
+python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml summary
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
