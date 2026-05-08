@@ -3,7 +3,7 @@
 Status: implementation evaluation
 Date: 2026-05-08
 Snapshots: `data/kg_runs/mercury_ml`, `data/kg_runs/true_loop`
-Implemented plan: `debates/4-2026-05-08-finalize-implementation-plan-for-the-dep.md`
+Implemented plan: deterministic dependency-path query for Q026.
 
 ## Summary
 

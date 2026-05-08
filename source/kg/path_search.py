@@ -21,7 +21,7 @@ class Edge:
 
 
 @dataclass(frozen=True)
-class Path:
+class DependencyPath:
     nodes: tuple[str, ...]
     edges: tuple[Edge, ...]
 
@@ -37,14 +37,14 @@ def find_dependency_paths(
     *,
     max_depth: int,
     limit: int,
-) -> list[Path]:
+) -> list[DependencyPath]:
     target_ids = _target_entity_ids(target_resolution)
     if not source_entity_ids or not target_ids:
         return []
 
     adjacency = _adjacency(snapshot)
     queue = deque((source_id, (source_id,), tuple()) for source_id in sorted(source_entity_ids))
-    paths: list[Path] = []
+    paths: list[DependencyPath] = []
     seen_paths: set[tuple[str, ...]] = set()
 
     while queue and len(paths) < limit:
@@ -61,7 +61,7 @@ def find_dependency_paths(
                 if next_nodes in seen_paths:
                     continue
                 seen_paths.add(next_nodes)
-                paths.append(Path(nodes=next_nodes, edges=next_edges))
+                paths.append(DependencyPath(nodes=next_nodes, edges=next_edges))
                 if len(paths) >= limit:
                     break
             else:
@@ -69,7 +69,7 @@ def find_dependency_paths(
     return paths
 
 
-def path_to_dict(snapshot: Any, path: Path) -> JsonObject:
+def path_to_dict(snapshot: Any, path: DependencyPath) -> JsonObject:
     return {
         "depth": path.depth,
         "nodes": [_entity_ref(snapshot.entities_by_id[entity_id]) for entity_id in path.nodes],
