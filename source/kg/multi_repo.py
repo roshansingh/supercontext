@@ -23,7 +23,7 @@ class PackageProvider:
     aliases: tuple[str, ...]
     manifest_path: Path | None
     repo_entity_id: str
-    service_entity_id: str
+    service_entity_id: str | None
 
 
 @dataclass
@@ -44,6 +44,7 @@ def build_multi_kg(
     strict_extractors: bool = False,
 ) -> JsonObject:
     repos = [discover_repo(path) for path in repo_paths]
+    _validate_unique_repo_names(repos)
     build = _build_multi(repos, strict_extractors=strict_extractors)
     manifest: JsonObject = {
         "build_type": "multi_repo",
@@ -124,23 +125,34 @@ def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:
     return f"Extractor errors while indexing multi-repo snapshot: {details}"
 
 
+def _validate_unique_repo_names(repos: list[RepoSnapshot]) -> None:
+    paths_by_name: dict[str, list[str]] = {}
+    for repo in repos:
+        paths_by_name.setdefault(repo.name, []).append(str(repo.root))
+    duplicates = {name: paths for name, paths in paths_by_name.items() if len(paths) > 1}
+    if not duplicates:
+        return
+    details = "; ".join(f"{name}: {paths}" for name, paths in sorted(duplicates.items()))
+    raise ValueError(f"Multi-repo snapshots require unique repo directory names. Duplicates: {details}")
+
+
 def _package_providers(repos: list[RepoSnapshot], entities: list[Entity]) -> list[PackageProvider]:
     repo_entities: dict[str, Entity] = {}
-    service_entities: dict[str, Entity] = {}
+    service_entities: dict[str, list[Entity]] = {}
     for entity in entities:
         if entity.kind == "Repo":
             repo_entities[str(entity.identity.get("name"))] = entity
         elif entity.kind == "Service":
             repo_name = str(entity.properties.get("repo"))
-            service_entities[repo_name] = entity
+            service_entities.setdefault(repo_name, []).append(entity)
 
     providers: list[PackageProvider] = []
     for repo in repos:
         repo_entity = repo_entities.get(repo.name)
-        service_entity = service_entities.get(repo.name)
-        if repo_entity is None or service_entity is None:
+        if repo_entity is None:
             continue
         package_name, aliases, manifest_path = _package_metadata(repo)
+        service_entity = _select_service_entity(service_entities.get(repo.name, []), aliases)
         providers.append(
             PackageProvider(
                 repo=repo,
@@ -148,10 +160,25 @@ def _package_providers(repos: list[RepoSnapshot], entities: list[Entity]) -> lis
                 aliases=tuple(sorted({alias for alias in aliases if alias})),
                 manifest_path=manifest_path,
                 repo_entity_id=repo_entity.entity_id,
-                service_entity_id=service_entity.entity_id,
+                service_entity_id=service_entity.entity_id if service_entity else None,
             )
         )
     return providers
+
+
+def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity | None:
+    services_by_id = {service.entity_id: service for service in services}
+    unique_services = list(services_by_id.values())
+    if len(unique_services) == 1:
+        return unique_services[0]
+
+    normalized_aliases = {_normalize_package_name(alias) for alias in aliases}
+    matches = [
+        service
+        for service in unique_services
+        if _normalize_package_name(str(service.identity.get("slug", ""))) in normalized_aliases
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
@@ -221,23 +248,25 @@ def _link_external_packages(
             continue
         provider = next(iter(matches))
         matched_name = _matched_name(candidate_names, provider)
-        facts.extend(
-            [
-                Fact(
-                    predicate="RESOLVES_TO_REPO",
-                    subject_id=package.entity_id,
-                    object_id=provider.repo_entity_id,
-                    qualifier=_link_qualifier(package, provider, matched_name),
-                ),
+        package_facts = [
+            Fact(
+                predicate="RESOLVES_TO_REPO",
+                subject_id=package.entity_id,
+                object_id=provider.repo_entity_id,
+                qualifier=_link_qualifier(package, provider, matched_name),
+            )
+        ]
+        if provider.service_entity_id is not None:
+            package_facts.append(
                 Fact(
                     predicate="RESOLVES_TO_SERVICE",
                     subject_id=package.entity_id,
                     object_id=provider.service_entity_id,
                     qualifier=_link_qualifier(package, provider, matched_name),
-                ),
-            ]
-        )
-        evidence.extend(_link_evidence(package, provider, facts[-2:]))
+                )
+            )
+        facts.extend(package_facts)
+        evidence.extend(_link_evidence(package, provider, package_facts))
     return facts, evidence, ambiguous_count
 
 

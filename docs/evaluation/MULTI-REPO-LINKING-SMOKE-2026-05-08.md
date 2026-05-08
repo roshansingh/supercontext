@@ -21,6 +21,7 @@ This is intentionally not a canonical ontology expansion. The link facts are a l
 | API pair query | `repo-dependencies mercury_api` | Pass: `mercury_api` resolves to provider repo `hipo-drf-exceptions` via `pyproject.toml` evidence. |
 | 23-repo LatticeAI build | `build_multi_kg --strict-extractors` over all 23 repos in `/Users/maruti/work/orgs/latticeai` | Pass after adding root `typescript` dependency: 23 repos, 11698 entities, 33657 facts, 4 link facts, 0 ambiguous package matches, 0 extractor errors. |
 | 23-repo link query | `cross-repo-links --limit 20` | Pass: returns repo/service links for `mercury_ml_api -> mercury_ml` and `mercury_api -> hipo-drf-exceptions`. |
+| Duplicate repo-name guard | `build_multi_kg --repo mercury_ml --repo mercury_ml ...` | Pass: exits non-zero with a clear duplicate repo directory-name error. |
 
 ## Findings
 
@@ -31,6 +32,7 @@ This is intentionally not a canonical ontology expansion. The link facts are a l
 | Link evidence is source-backed. | Link evidence cites provider `pyproject.toml` with provider repo commit SHA. | Consumer-side import evidence is already present on the underlying `IMPORTS` facts. |
 | TS parser dependency gap is resolved. | Root `package.json` adds `typescript`; 23-repo run now records `extractor_errors=[]`. | The previous failures were missing parser dependency, not repo syntax failures. |
 | Strict extractor mode works on the full fixture. | The 23-repo smoke used `--strict-extractors` and exited successfully. | CI can use this mode to fail fast if parser/extractor errors reappear. |
+| Duplicate repo names are rejected up front. | Duplicate `mercury_ml` input exits before extraction. | This avoids silent entity collisions because current code identities use `repo.name` as part of their key. |
 
 ## Remaining Gaps
 
