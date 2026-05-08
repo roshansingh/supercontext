@@ -342,6 +342,7 @@ class KgSnapshot:
         )
 
     def cross_repo_links(self, limit: int = 25) -> JsonObject:
+        limit = self._clamp_limit(limit)
         links = []
         for fact in self.facts:
             if fact["predicate"] not in {"RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"}:
@@ -368,6 +369,7 @@ class KgSnapshot:
         }
 
     def repo_dependencies(self, repo: str, limit: int = 25) -> JsonObject:
+        limit = self._clamp_limit(limit)
         links = []
         for fact in self.facts:
             if fact["predicate"] != "RESOLVES_TO_REPO":
@@ -395,6 +397,9 @@ class KgSnapshot:
             "returned_count": len(returned),
             "dependencies": returned,
         }
+
+    def _clamp_limit(self, limit: int, max_limit: int = 100) -> int:
+        return min(max(1, limit), max_limit)
 
     def lookup_symbol(
         self,

@@ -43,6 +43,7 @@ npm install
 python -m source.scripts.build_kg --repo ~/work/mercury_ml --out data/kg_runs/mercury_ml
 python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
 python -m source.scripts.build_multi_kg --repo ~/work/orgs/latticeai/mercury_ml --repo ~/work/orgs/latticeai/mercury_ml_api --out data/kg_runs/latticeai_ml_pair
+python -m source.scripts.build_multi_kg --repo ~/work/orgs/latticeai/mercury_ml --repo ~/work/orgs/latticeai/mercury_ml_api --out data/kg_runs/latticeai_ml_pair --strict-extractors
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml summary
 python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_ml_pair cross-repo-links --limit 10
 python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_ml_pair repo-dependencies mercury_ml_api --limit 10

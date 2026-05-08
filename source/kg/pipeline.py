@@ -5,14 +5,14 @@ from pathlib import Path
 
 from source.kg.extraction.python.ast_extractor import PythonAstExtractor
 from source.kg.models import Coverage, JsonObject, utc_now_iso
-from source.kg.repo_source import discover_repo
+from source.kg.repo_source import RepoSnapshot, discover_repo
 from source.kg.store import JsonlKgStore
 from source.kg.extraction.typescript.compiler_api_extractor import TypeScriptCompilerApiExtractor
 
 
-def build_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject:
+def build_kg(repo_path: str | Path, output_dir: str | Path, strict_extractors: bool = False) -> JsonObject:
     repo = discover_repo(repo_path)
-    build = extract_repo(repo)
+    build = extract_repo(repo, strict_extractors=strict_extractors)
     extractor_names = build.extractor_names
     manifest: JsonObject = {
         "repo_path": str(repo.root),
@@ -46,12 +46,12 @@ class RepoKgBuild:
     entities: list
     facts: list
     evidence: list
-    coverage: list
+    coverage: list[Coverage]
     extractor_names: list[str]
     extractor_errors: list[JsonObject]
 
 
-def extract_repo(repo) -> RepoKgBuild:
+def extract_repo(repo: RepoSnapshot, strict_extractors: bool = False) -> RepoKgBuild:
     extractors = []
     if repo.python_files:
         extractors.append(PythonAstExtractor())
@@ -91,6 +91,8 @@ def extract_repo(repo) -> RepoKgBuild:
         for error in extractor_errors
     )
     extractor_names = [extractor.source_system for extractor in extractors]
+    if strict_extractors and extractor_errors:
+        raise RuntimeError(_extractor_error_message(repo.name, extractor_errors))
     return RepoKgBuild(
         entities=entities,
         facts=facts,
@@ -99,6 +101,14 @@ def extract_repo(repo) -> RepoKgBuild:
         extractor_names=extractor_names,
         extractor_errors=extractor_errors,
     )
+
+
+def _extractor_error_message(repo_name: str, extractor_errors: list[JsonObject]) -> str:
+    details = "; ".join(
+        f"{error['source_system']}: {error['error']}: {error['message']}"
+        for error in extractor_errors
+    )
+    return f"Extractor errors while indexing {repo_name}: {details}"
 
 
 def build_python_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject:

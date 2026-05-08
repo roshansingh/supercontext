@@ -38,9 +38,13 @@ class MultiRepoBuild:
     ambiguous_package_count: int
 
 
-def build_multi_kg(repo_paths: list[str | Path], output_dir: str | Path) -> JsonObject:
+def build_multi_kg(
+    repo_paths: list[str | Path],
+    output_dir: str | Path,
+    strict_extractors: bool = False,
+) -> JsonObject:
     repos = [discover_repo(path) for path in repo_paths]
-    build = _build_multi(repos)
+    build = _build_multi(repos, strict_extractors=strict_extractors)
     manifest: JsonObject = {
         "build_type": "multi_repo",
         "built_at": utc_now_iso(),
@@ -79,7 +83,7 @@ def build_multi_kg(repo_paths: list[str | Path], output_dir: str | Path) -> Json
     return manifest
 
 
-def _build_multi(repos: list[RepoSnapshot]) -> MultiRepoBuild:
+def _build_multi(repos: list[RepoSnapshot], strict_extractors: bool = False) -> MultiRepoBuild:
     entities: list[Entity] = []
     facts: list[Fact] = []
     evidence: list[Evidence] = []
@@ -93,6 +97,8 @@ def _build_multi(repos: list[RepoSnapshot]) -> MultiRepoBuild:
         evidence.extend(repo_build.evidence)
         coverage.extend(repo_build.coverage)
         extractor_errors.extend({**error, "repo": repo.name} for error in repo_build.extractor_errors)
+    if strict_extractors and extractor_errors:
+        raise RuntimeError(_multi_extractor_error_message(extractor_errors))
 
     providers = _package_providers(repos, entities)
     link_facts, link_evidence, ambiguous_count = _link_external_packages(entities, providers)
@@ -108,6 +114,14 @@ def _build_multi(repos: list[RepoSnapshot]) -> MultiRepoBuild:
         link_count=len(link_facts),
         ambiguous_package_count=ambiguous_count,
     )
+
+
+def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:
+    details = "; ".join(
+        f"{error['repo']}:{error['source_system']}: {error['error']}: {error['message']}"
+        for error in extractor_errors
+    )
+    return f"Extractor errors while indexing multi-repo snapshot: {details}"
 
 
 def _package_providers(repos: list[RepoSnapshot], entities: list[Entity]) -> list[PackageProvider]:

@@ -282,7 +282,12 @@ class TypeScriptCompilerApiExtractor:
     def _service_entity(self, repo: RepoSnapshot) -> Entity:
         return Entity(
             kind="Service",
-            identity={"tenant_id": TENANT_ID, "namespace": "default", "slug": self._service_slug(repo)},
+            identity={
+                "tenant_id": TENANT_ID,
+                "namespace": "default",
+                "repo": repo.name,
+                "slug": self._service_slug(repo),
+            },
             properties={"repo": repo.name},
         )
 
