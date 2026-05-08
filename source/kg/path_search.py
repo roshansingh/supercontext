@@ -8,6 +8,9 @@ from source.kg import aggregations
 from source.kg.models import JsonObject
 
 
+_ADJACENCY_CACHE_ATTR = "_dependency_path_adjacency"
+
+
 @dataclass(frozen=True)
 class Edge:
     fact_id: str
@@ -39,9 +42,10 @@ def find_dependency_paths(
     if not source_entity_ids or not target_ids:
         return []
 
-    adjacency = _build_adjacency(snapshot)
+    adjacency = _adjacency(snapshot)
     queue = deque((source_id, (source_id,), tuple()) for source_id in sorted(source_entity_ids))
     paths: list[Path] = []
+    seen_paths: set[tuple[str, ...]] = set()
 
     while queue and len(paths) < limit:
         current_id, node_ids, edges = queue.popleft()
@@ -54,12 +58,15 @@ def find_dependency_paths(
             next_nodes = node_ids + (next_id,)
             next_edges = edges + (edge,)
             if next_id in target_ids:
+                if next_nodes in seen_paths:
+                    continue
+                seen_paths.add(next_nodes)
                 paths.append(Path(nodes=next_nodes, edges=next_edges))
                 if len(paths) >= limit:
                     break
             else:
                 queue.append((next_id, next_nodes, next_edges))
-    return _dedupe_by_node_sequence(paths)[:limit]
+    return paths
 
 
 def path_to_dict(snapshot: Any, path: Path) -> JsonObject:
@@ -68,6 +75,15 @@ def path_to_dict(snapshot: Any, path: Path) -> JsonObject:
         "nodes": [_entity_ref(snapshot.entities_by_id[entity_id]) for entity_id in path.nodes],
         "edges": [_edge_to_dict(snapshot, edge) for edge in path.edges],
     }
+
+
+def _adjacency(snapshot: Any) -> dict[str, list[Edge]]:
+    cached = getattr(snapshot, _ADJACENCY_CACHE_ATTR, None)
+    if cached is not None:
+        return cached
+    adjacency = _build_adjacency(snapshot)
+    setattr(snapshot, _ADJACENCY_CACHE_ATTR, adjacency)
+    return adjacency
 
 
 def _build_adjacency(snapshot: Any) -> dict[str, list[Edge]]:
@@ -97,7 +113,11 @@ def _build_adjacency(snapshot: Any) -> dict[str, list[Edge]]:
 
 def _is_allowed_edge(predicate: str, subject_kind: str, object_kind: str) -> bool:
     return (
-        (predicate == "CALLS" and subject_kind == "CodeSymbol" and object_kind in {"CodeSymbol", "ExternalPackage", "CodeModule"})
+        (
+            predicate == "CALLS"
+            and subject_kind == "CodeSymbol"
+            and object_kind in {"CodeSymbol", "ExternalPackage", "CodeModule"}
+        )
         or (predicate == "DEFINED_IN" and subject_kind == "CodeSymbol" and object_kind == "CodeModule")
         or (predicate == "IMPORTS" and subject_kind == "CodeModule" and object_kind in {"ExternalPackage", "CodeModule"})
     )
@@ -110,17 +130,6 @@ def _target_entity_ids(target_resolution: JsonObject) -> set[str]:
     if not target:
         return set()
     return {str(target["entity_id"])}
-
-
-def _dedupe_by_node_sequence(paths: list[Path]) -> list[Path]:
-    seen: set[tuple[str, ...]] = set()
-    unique_paths: list[Path] = []
-    for path in paths:
-        if path.nodes in seen:
-            continue
-        seen.add(path.nodes)
-        unique_paths.append(path)
-    return unique_paths
 
 
 def _edge_to_dict(snapshot: Any, edge: Edge) -> JsonObject:
