@@ -68,15 +68,67 @@ class KgSnapshot:
             "callers": results,
         }
 
-    def blast_radius(self, symbol_query: str, depth: int = 2, limit: int = 25) -> list[JsonObject]:
-        roots = self._matching_symbols(symbol_query)
+    def find_callees(
+        self,
+        symbol_query: str,
+        limit: int = 25,
+        path: str | None = None,
+        line: int | None = None,
+        include_all: bool = False,
+    ) -> JsonObject:
+        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        if resolution["status"] == "not_found":
+            return {"status": "not_found", "source": resolution, "callees": []}
+        if resolution["status"] == "ambiguous" and not include_all:
+            return {"status": "ambiguous", "source": resolution, "callees": []}
+
+        if include_all:
+            source_ids = {candidate["symbol_id"] for candidate in resolution["candidates"]}
+        else:
+            source_ids = {resolution["resolved_symbol"]["symbol_id"]}
+        results: list[JsonObject] = []
+        for fact in self.facts:
+            if fact["predicate"] != "CALLS" or fact["subject_id"] not in source_ids:
+                continue
+            caller = self.entities_by_id.get(fact["subject_id"])
+            callee = self.entities_by_id.get(fact["object_id"])
+            if caller and callee:
+                results.append(self._fact_result(fact, caller, callee))
+                if len(results) >= limit:
+                    break
+        return {
+            "status": "found" if results else "not_found",
+            "source": resolution,
+            "callee_count": len(results),
+            "callees": results,
+        }
+
+    def blast_radius(
+        self,
+        symbol_query: str,
+        depth: int = 2,
+        limit: int = 25,
+        path: str | None = None,
+        line: int | None = None,
+        include_all: bool = False,
+    ) -> JsonObject:
+        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        if resolution["status"] == "not_found":
+            return {"status": "not_found", "source": resolution, "edges": []}
+        if resolution["status"] == "ambiguous" and not include_all:
+            return {"status": "ambiguous", "source": resolution, "edges": []}
+
+        if include_all:
+            root_ids = {candidate["symbol_id"] for candidate in resolution["candidates"]}
+        else:
+            root_ids = {resolution["resolved_symbol"]["symbol_id"]}
         graph: dict[str, list[JsonObject]] = defaultdict(list)
         for fact in self.facts:
             if fact["predicate"] == "CALLS":
                 graph[fact["subject_id"]].append(fact)
 
-        seen = {root["entity_id"] for root in roots}
-        queue = deque((root["entity_id"], 0) for root in roots)
+        seen = set(root_ids)
+        queue = deque((root_id, 0) for root_id in root_ids)
         results: list[JsonObject] = []
         while queue:
             current_id, current_depth = queue.popleft()
@@ -89,11 +141,23 @@ class KgSnapshot:
                     continue
                 results.append(self._fact_result(fact, caller, callee, depth=current_depth + 1))
                 if len(results) >= limit:
-                    return results
+                    return {
+                        "status": "found",
+                        "source": resolution,
+                        "depth": depth,
+                        "edge_count": len(results),
+                        "edges": results,
+                    }
                 if callee["entity_id"] not in seen:
                     seen.add(callee["entity_id"])
                     queue.append((callee["entity_id"], current_depth + 1))
-        return results
+        return {
+            "status": "found" if results else "not_found",
+            "source": resolution,
+            "depth": depth,
+            "edge_count": len(results),
+            "edges": results,
+        }
 
     def modules_importing(self, package_name: str, limit: int = 25) -> list[JsonObject]:
         results: list[JsonObject] = []

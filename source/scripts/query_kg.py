@@ -20,8 +20,18 @@ def main() -> None:
     callers.add_argument("--include-all", action="store_true")
     callers.add_argument("--limit", type=int, default=25)
 
+    callees = subparsers.add_parser("find-callees")
+    callees.add_argument("symbol")
+    callees.add_argument("--path")
+    callees.add_argument("--line", type=int)
+    callees.add_argument("--include-all", action="store_true")
+    callees.add_argument("--limit", type=int, default=25)
+
     blast = subparsers.add_parser("blast-radius")
     blast.add_argument("symbol")
+    blast.add_argument("--path")
+    blast.add_argument("--line", type=int)
+    blast.add_argument("--include-all", action="store_true")
     blast.add_argument("--depth", type=int, default=2)
     blast.add_argument("--limit", type=int, default=25)
 
@@ -66,8 +76,23 @@ def main() -> None:
             line=args.line,
             include_all=args.include_all,
         )
+    elif args.command == "find-callees":
+        result = kg.find_callees(
+            args.symbol,
+            limit=args.limit,
+            path=args.path,
+            line=args.line,
+            include_all=args.include_all,
+        )
     elif args.command == "blast-radius":
-        result = kg.blast_radius(args.symbol, depth=args.depth, limit=args.limit)
+        result = kg.blast_radius(
+            args.symbol,
+            depth=args.depth,
+            limit=args.limit,
+            path=args.path,
+            line=args.line,
+            include_all=args.include_all,
+        )
     elif args.command == "modules-importing":
         result = kg.modules_importing(args.package, limit=args.limit)
     elif args.command == "top-dependencies":
