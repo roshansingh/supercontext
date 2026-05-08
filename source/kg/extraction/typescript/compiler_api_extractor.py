@@ -4,34 +4,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import re
+import subprocess
 
-from source.kg.js_import_normalizer import JsImportNormalizer, JsImportRef, NormalizedJsImport
+from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
 from source.kg.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.repo_source import RepoSnapshot
 
 
 TENANT_ID = "local-dev"
-
-IMPORT_FROM_RE = re.compile(r"^\s*import\s+(type\s+)?(.+?)\s+from\s+['\"]([^'\"]+)['\"]")
-SIDE_EFFECT_IMPORT_RE = re.compile(r"^\s*import\s+['\"]([^'\"]+)['\"]")
-REQUIRE_RE = re.compile(r"^\s*(?:const|let|var)\s+(.+?)\s*=\s*require\(['\"]([^'\"]+)['\"]\)")
-FUNCTION_RE = re.compile(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)")
-TYPE_RE = re.compile(r"^\s*(?:export\s+)?(?:default\s+)?(class|interface|type|enum)\s+([A-Za-z_$][\w$]*)")
-VALUE_RE = re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*[:=]")
-CALL_RE = re.compile(r"\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(")
-
-CALL_KEYWORDS = {
-    "catch",
-    "describe",
-    "for",
-    "function",
-    "if",
-    "it",
-    "return",
-    "switch",
-    "test",
-    "while",
-}
 
 
 @dataclass
@@ -50,8 +30,8 @@ class SymbolDef:
     line: int
 
 
-class TypeScriptStaticExtractor:
-    source_system = "typescript_static_v0"
+class TypeScriptCompilerApiExtractor:
+    source_system = "typescript_compiler_api_v0"
 
     def extract(self, repo: RepoSnapshot) -> KgBuild:
         build = KgBuild()
@@ -62,13 +42,31 @@ class TypeScriptStaticExtractor:
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, self._package_json(repo), 1, 1)
 
         normalizer = JsImportNormalizer(repo)
+        parsed_files = self._parse_repo(repo)
         for file_path in repo.typescript_files:
-            self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, build)
+            parsed_file = parsed_files.get(str(file_path.relative_to(repo.root)), {})
+            self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build)
+            for diagnostic in parsed_file.get("parse_diagnostics", []):
+                build.coverage.append(
+                    Coverage(
+                        tenant_id=TENANT_ID,
+                        predicate="PARSES",
+                        scope_ref={
+                            "repo": repo.name,
+                            "language": self._language(file_path),
+                            "path": str(file_path.relative_to(repo.root)),
+                            "line": diagnostic.get("line", 1),
+                            "message": diagnostic.get("message", "parse diagnostic"),
+                        },
+                        state="uninstrumented",
+                        source_system=self.source_system,
+                    )
+                )
 
         build.coverage.append(
             Coverage(
                 tenant_id=TENANT_ID,
-                predicate="IMPORTS",
+                predicate="PARSES",
                 scope_ref={"repo": repo.name, "language": "typescript/javascript", "path_prefix": "."},
                 state="instrumented",
                 source_system=self.source_system,
@@ -83,6 +81,7 @@ class TypeScriptStaticExtractor:
         repo_entity: Entity,
         service_entity: Entity,
         normalizer: JsImportNormalizer,
+        parsed_file: JsonObject,
         build: KgBuild,
     ) -> None:
         source = file_path.read_text(encoding="utf-8", errors="replace")
@@ -98,7 +97,7 @@ class TypeScriptStaticExtractor:
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
-        imports = [normalizer.normalize(ref, module_name) for ref in self._collect_imports(lines)]
+        imports = [normalizer.normalize(self._import_ref(row), module_name) for row in parsed_file.get("imports", [])]
         imports_by_local = self._imports_by_local(imports)
         for import_ref in imports:
             dependency_entity = self._dependency_entity(repo, import_ref)
@@ -116,130 +115,60 @@ class TypeScriptStaticExtractor:
                 qualifier=self._import_qualifier(import_ref),
             )
 
-        symbols = self._collect_symbols(repo, file_path, module_name, lines)
+        symbols = [self._symbol_from_row(repo, file_path, module_name, row) for row in parsed_file.get("symbols", [])]
         symbols_by_short_name = {symbol.qualname.rsplit(".", 1)[-1]: symbol for symbol in symbols}
         for symbol in symbols:
             build.entities.append(symbol.entity)
             build.evidence.append(self._entity_evidence(repo, symbol.entity, file_path, symbol.line, symbol.line))
             self._add_fact(build, "DEFINED_IN", symbol.entity, module_entity, repo, file_path, symbol.line, symbol.line)
 
-        symbol_ranges = self._symbol_ranges(symbols, len(lines))
-        for symbol, start, end in symbol_ranges:
-            for line_number in range(start, end + 1):
-                line = lines[line_number - 1]
-                for call_name in self._call_names(line):
-                    short_name = call_name.rsplit(".", 1)[-1]
-                    if short_name in symbols_by_short_name and symbols_by_short_name[short_name] != symbol:
-                        self._add_fact(
-                            build,
-                            "CALLS",
-                            symbol.entity,
-                            symbols_by_short_name[short_name].entity,
-                            repo,
-                            file_path,
-                            line_number,
-                            line_number,
-                        )
-                        continue
-                    root = call_name.split(".", 1)[0]
-                    import_ref = imports_by_local.get(root)
-                    if import_ref:
-                        self._add_fact(
-                            build,
-                            "CALLS",
-                            symbol.entity,
-                            self._dependency_entity(repo, import_ref),
-                            repo,
-                            file_path,
-                            line_number,
-                            line_number,
-                            qualifier={"call": call_name},
-                        )
-
-    def _collect_imports(self, lines: list[str]) -> list[JsImportRef]:
-        refs: list[JsImportRef] = []
-        for index, line in enumerate(lines, start=1):
-            from_match = IMPORT_FROM_RE.match(line)
-            if from_match:
-                is_type_only = bool(from_match.group(1))
-                clause = from_match.group(2).strip()
-                target = from_match.group(3)
-                imported_names, local_names = self._parse_import_clause(clause)
-                refs.append(
-                    JsImportRef(
-                        raw_target=target,
-                        line=index,
-                        imported_names=tuple(imported_names),
-                        local_names=tuple(local_names),
-                        is_type_only=is_type_only,
-                    )
+        for call in parsed_file.get("calls", []):
+            caller = symbols_by_short_name.get(str(call.get("caller", "")))
+            if not caller:
+                continue
+            call_name = str(call.get("name", ""))
+            line_number = int(call.get("line") or caller.line)
+            short_name = call_name.rsplit(".", 1)[-1]
+            if short_name in symbols_by_short_name and symbols_by_short_name[short_name] != caller:
+                self._add_fact(
+                    build,
+                    "CALLS",
+                    caller.entity,
+                    symbols_by_short_name[short_name].entity,
+                    repo,
+                    file_path,
+                    line_number,
+                    line_number,
                 )
                 continue
-            side_effect_match = SIDE_EFFECT_IMPORT_RE.match(line)
-            if side_effect_match:
-                refs.append(JsImportRef(raw_target=side_effect_match.group(1), line=index, imported_names=(), local_names=()))
-                continue
-            require_match = REQUIRE_RE.match(line)
-            if require_match:
-                local_names = tuple(self._names_from_binding(require_match.group(1)))
-                refs.append(
-                    JsImportRef(
-                        raw_target=require_match.group(2),
-                        line=index,
-                        imported_names=local_names,
-                        local_names=local_names,
-                    )
+            root = call_name.split(".", 1)[0]
+            import_ref = imports_by_local.get(root)
+            if import_ref:
+                self._add_fact(
+                    build,
+                    "CALLS",
+                    caller.entity,
+                    self._dependency_entity(repo, import_ref),
+                    repo,
+                    file_path,
+                    line_number,
+                    line_number,
+                    qualifier={"call": call_name},
                 )
-        return refs
 
-    def _parse_import_clause(self, clause: str) -> tuple[list[str], list[str]]:
-        clause = clause.removeprefix("type ").strip()
-        imported_names: list[str] = []
-        local_names: list[str] = []
-        namespace_match = re.search(r"\*\s+as\s+([A-Za-z_$][\w$]*)", clause)
-        if namespace_match:
-            return [namespace_match.group(1)], [namespace_match.group(1)]
+    def _import_ref(self, row: JsonObject) -> JsImportRef:
+        return JsImportRef(
+            raw_target=str(row.get("raw_target", "")),
+            line=int(row.get("line") or 1),
+            imported_names=tuple(str(name) for name in row.get("imported_names", [])),
+            local_names=tuple(str(name) for name in row.get("local_names", [])),
+            is_type_only=bool(row.get("is_type_only", False)),
+        )
 
-        named_match = re.search(r"\{(.+?)\}", clause)
-        if named_match:
-            for name in named_match.group(1).split(","):
-                name = name.strip().removeprefix("type ").strip()
-                if not name:
-                    continue
-                parts = [part.strip() for part in name.split(" as ", 1)]
-                imported_names.append(parts[0])
-                local_names.append(parts[-1])
-
-        default_part = clause.split("{", 1)[0].strip().strip(",")
-        if default_part and re.match(r"^[A-Za-z_$][\w$]*$", default_part):
-            imported_names.append("default")
-            local_names.append(default_part)
-        return imported_names, local_names
-
-    def _names_from_binding(self, binding: str) -> list[str]:
-        return re.findall(r"[A-Za-z_$][\w$]*", binding)
-
-    def _collect_symbols(self, repo: RepoSnapshot, file_path: Path, module_name: str, lines: list[str]) -> list[SymbolDef]:
-        symbols: list[SymbolDef] = []
-        brace_depth = 0
-        for index, line in enumerate(lines, start=1):
-            if brace_depth == 0:
-                match = FUNCTION_RE.match(line)
-                if match:
-                    symbols.append(self._symbol(repo, file_path, module_name, match.group(1), "function", index))
-                else:
-                    match = TYPE_RE.match(line)
-                    if match:
-                        symbols.append(self._symbol(repo, file_path, module_name, match.group(2), match.group(1), index))
-                    else:
-                        match = VALUE_RE.match(line)
-                        if match:
-                            kind = "function" if "=>" in line else "value"
-                            symbols.append(self._symbol(repo, file_path, module_name, match.group(1), kind, index))
-            brace_depth = max(0, brace_depth + line.count("{") - line.count("}"))
-        return symbols
-
-    def _symbol(self, repo: RepoSnapshot, file_path: Path, module_name: str, name: str, kind: str, line: int) -> SymbolDef:
+    def _symbol_from_row(self, repo: RepoSnapshot, file_path: Path, module_name: str, row: JsonObject) -> SymbolDef:
+        name = str(row.get("name", "anonymous"))
+        kind = str(row.get("kind", "value"))
+        line = int(row.get("line") or 1)
         entity = Entity(
             kind="CodeSymbol",
             identity={
@@ -249,26 +178,32 @@ class TypeScriptStaticExtractor:
                 "qualname": name,
                 "symbol_kind": kind,
             },
-            properties={"path": str(file_path.relative_to(repo.root)), "line": line, "language": self._language(file_path)},
+            properties={
+                "path": str(file_path.relative_to(repo.root)),
+                "line": line,
+                "end_line": int(row.get("end_line") or line),
+                "language": self._language(file_path),
+            },
         )
         return SymbolDef(entity=entity, qualname=name, symbol_kind=kind, line=line)
 
-    def _symbol_ranges(self, symbols: list[SymbolDef], line_count: int) -> list[tuple[SymbolDef, int, int]]:
-        sorted_symbols = sorted(symbols, key=lambda symbol: symbol.line)
-        ranges: list[tuple[SymbolDef, int, int]] = []
-        for index, symbol in enumerate(sorted_symbols):
-            end = sorted_symbols[index + 1].line - 1 if index + 1 < len(sorted_symbols) else line_count
-            ranges.append((symbol, symbol.line, max(symbol.line, end)))
-        return ranges
-
-    def _call_names(self, line: str) -> list[str]:
-        names: list[str] = []
-        for match in CALL_RE.finditer(line):
-            call_name = match.group(1)
-            if call_name in CALL_KEYWORDS or call_name.startswith("."):
-                continue
-            names.append(call_name)
-        return names
+    def _parse_repo(self, repo: RepoSnapshot) -> dict[str, JsonObject]:
+        parser_path = Path(__file__).with_name("ts_parser.mjs")
+        payload = {
+            "repoRoot": str(repo.root),
+            "files": [str(path.relative_to(repo.root)) for path in repo.typescript_files],
+        }
+        try:
+            result = subprocess.run(
+                ["node", str(parser_path)],
+                input=json.dumps(payload),
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise RuntimeError("TypeScript parser bridge failed; ensure node and typescript are available") from exc
+        return json.loads(result.stdout or "{}")
 
     def _imports_by_local(self, imports: list[NormalizedJsImport]) -> dict[str, NormalizedJsImport]:
         by_local: dict[str, NormalizedJsImport] = {}

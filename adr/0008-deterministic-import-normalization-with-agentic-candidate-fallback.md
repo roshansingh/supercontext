@@ -229,7 +229,10 @@ Import normalization complements deterministic symbol lookup:
 ## References
 
 - `source/KG-QUERY-SMOKE-TESTS.md`
-- `source/kg/python_ast_extractor.py`
+- `source/kg/extraction/python/ast_extractor.py`
+- `source/kg/normalization/python/imports.py`
+- `source/kg/extraction/typescript/compiler_api_extractor.py`
+- `source/kg/normalization/typescript/imports.py`
 - ADR-0001: `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
 - ADR-0006: `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

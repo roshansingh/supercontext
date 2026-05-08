@@ -17,8 +17,15 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - No MCP server.
 - No PR bot.
 - No broad language coverage.
-- TypeScript/JavaScript support is static v0 and intentionally shallow.
+- TypeScript/JavaScript support is parser-backed but still static; it does not perform full type-aware resolution yet.
 - No automatic LLM enrichment in the default path.
+
+## Layout
+
+- `source/kg/extraction/python/` contains Python AST extraction.
+- `source/kg/extraction/typescript/` contains TypeScript/JavaScript compiler-API extraction.
+- `source/kg/normalization/python/` contains Python import normalization.
+- `source/kg/normalization/typescript/` contains TypeScript/JavaScript import normalization.
 
 ## Run
 

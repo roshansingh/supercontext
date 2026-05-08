@@ -108,7 +108,7 @@ A first implementation slice in `source/` runs the ontology shape locally agains
 
 - **Substrate.** v0 writes JSONL files (`entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, `manifest.json`) in `data/kg_runs/`. Postgres + Apache AGE per ADR-0003 not yet wired.
 - **Tenancy.** Single hardcoded `tenant_id="local-dev"`. Per-tenant isolation collapses to a single value as expected for self-hosted scaffolding.
-- **Extractor.** One deterministic Python AST extractor (`source.kg.python_ast_extractor`). No catalog, manifest, contract-spec, or trace ingestion yet.
+- **Extractor.** Deterministic Python AST extraction lives at `source.kg.extraction.python.ast_extractor`; deterministic TypeScript/JavaScript compiler-API extraction lives at `source.kg.extraction.typescript.compiler_api_extractor`. No catalog, manifest, contract-spec, or trace ingestion yet.
 - **Code-level entity types introduced.** `CodeModule`, `CodeSymbol`, `ExternalPackage` are emitted by the v0 extractor. ADR-0006 §"Deferred families" listed `CodeSymbol` / `CodeOccurrence` as deferred. v0 needs them to drive function-level `find_callers` and `modules-importing` queries. **Status pending decision** — promote to canonical (10 → 13 nodes), keep candidate-only enrichment, or model as a sub-layer below the canonical 10. Tracked in `BACKLOG.md`.
 - **`IMPORTS` relation introduced.** `CodeModule → ExternalPackage`. Not in the canonical 15. Same pending decision as above.
 - **`CALLS` grain.** Spec: `Service → Endpoint` (operation-level, cross-service). v0: `CodeSymbol → CodeSymbol` (function-level, intra-repo). Both useful; the roll-up rule from function-level to Service-level CALLS for multi-service blast-radius is undefined. Tracked in `BACKLOG.md`.
@@ -116,7 +116,7 @@ A first implementation slice in `source/` runs the ontology shape locally agains
 - **Evidence `valid_from` / `valid_to`.** Spec mandates both columns on every evidence row. v0 has only `ingested_at`. Add when bitemporal or freshness queries land.
 - **Promotion rules.** Spec §6: candidate→canonical via per-edge thresholds. v0 defaults `canonical_status='canonical'` on every entity and fact because only one deterministic extractor exists. Enforce when multi-source or `inferred_llm` evidence enters.
 - **Coverage row shape.** Spec §7 fields include `subject_id`, `last_seen_at`, `window_start`, `window_end`. v0 collapses to `tenant_id, predicate, scope_ref, state, source_system, checked_at`. Restore the full shape when Tool Query Contract ADR locks coverage semantics.
-- **Polyglot ingestion.** v0 only handles Python. Other languages emit no entities or facts; loud-refusal-at-ingestion (per `BACKLOG.md`) not yet wired.
+- **Polyglot ingestion.** v0 handles Python and TypeScript/JavaScript only. Other languages emit no entities or facts; loud-refusal-at-ingestion (per `BACKLOG.md`) not yet wired.
 
 The v0 slice is sufficient to validate the ontology shape against a real codebase (smoke tests in `source/KG-QUERY-SMOKE-TESTS.md`). Each gap above carries a revisit trigger in `BACKLOG.md`.
 
@@ -132,4 +132,3 @@ The v0 slice is sufficient to validate the ontology shape against a real codebas
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
 - `PRD.md` §6.1, §6.2, §7, §9
 - `PLATFORM-PRD.md` §8, §10, §11
-
