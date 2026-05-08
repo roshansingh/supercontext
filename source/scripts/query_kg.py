@@ -34,6 +34,23 @@ def main() -> None:
     dep_info = subparsers.add_parser("dependency-info")
     dep_info.add_argument("package")
 
+    lookup = subparsers.add_parser("lookup-symbol")
+    lookup.add_argument("symbol")
+    lookup.add_argument("--path")
+    lookup.add_argument("--line", type=int)
+    lookup.add_argument("--limit", type=int, default=25)
+
+    symbols_file = subparsers.add_parser("symbols-in-file")
+    symbols_file.add_argument("path")
+    symbols_file.add_argument("--limit", type=int, default=100)
+
+    call_evidence = subparsers.add_parser("evidence-for-call")
+    call_evidence.add_argument("caller")
+    call_evidence.add_argument("callee")
+    call_evidence.add_argument("--path")
+    call_evidence.add_argument("--line", type=int)
+    call_evidence.add_argument("--limit", type=int, default=25)
+
     args = parser.parse_args()
     kg = KgSnapshot(args.snapshot)
     if args.command == "summary":
@@ -52,6 +69,18 @@ def main() -> None:
         )
     elif args.command == "dependency-info":
         result = kg.dependency_info(args.package)
+    elif args.command == "lookup-symbol":
+        result = kg.lookup_symbol(args.symbol, limit=args.limit, path=args.path, line=args.line)
+    elif args.command == "symbols-in-file":
+        result = kg.symbols_in_file(args.path, limit=args.limit)
+    elif args.command == "evidence-for-call":
+        result = kg.evidence_for_call(
+            args.caller,
+            args.callee,
+            path=args.path,
+            line=args.line,
+            limit=args.limit,
+        )
     else:
         raise ValueError(f"Unsupported command: {args.command}")
     print(json.dumps(result, indent=2, sort_keys=True))
