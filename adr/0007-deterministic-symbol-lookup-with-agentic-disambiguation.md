@@ -124,6 +124,34 @@ Explicitly out of v1:
 - agent-only symbol resolution as the default
 - promoting Agent SDK guesses to canonical facts without deterministic corroboration
 
+## Implementation Status (v0, 2026-05-08)
+
+This ADR is partially implemented in the local KG harness.
+
+What exists now:
+
+- Python symbol extraction from AST for classes, functions, async functions, and methods.
+- TypeScript/JavaScript symbol extraction through a compiler-API bridge for parser-backed local indexing.
+- Deterministic symbol identity using repo, module, qualname, and symbol kind.
+- Source coordinates and evidence rows for indexed symbols.
+- CLI surfaces:
+  - `lookup-symbol`
+  - `symbols-in-file`
+  - coordinate-qualified lookup through `--path` and `--line`
+- Ambiguity behavior: exact multiple matches return `status="ambiguous"` and ranked candidates instead of guessing.
+
+What is still pending:
+
+- Agent SDK fallback/disambiguation.
+- MCP schema and user-facing clarification flow.
+- Commit-aware coordinate lookup beyond the current snapshot commit.
+- SCIP/LSP-grade references and type-aware symbol resolution.
+
+Evaluation evidence:
+
+- `docs/evaluation/SYMBOL-QUERY-SURFACES-SMOKE-2026-05-08.md`
+- `docs/evaluation/MEDIUM-QUERY-RUN-2026-05-08.md`
+
 ## V2 Agentic Expansion Criteria
 
 The v1 resolver is deterministic-first. A later v2 may expand Agent SDK involvement only if implementation evidence shows that it improves resolution quality without weakening trust, cost, or latency.

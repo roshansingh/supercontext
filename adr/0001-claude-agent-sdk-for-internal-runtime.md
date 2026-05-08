@@ -61,6 +61,23 @@ Broad cross-language structural indexing, broad Opengrep flow analysis, and ever
 ### Neutral
 - MCP consumption depth (stdio + streamable HTTP + SSE, runtime schema fetch, multi-server, lazy-load) is at parity with OpenAI Agents SDK. The MCP layer — the actual moat per ADR-0002 — works identically either way.
 
+## Implementation Status (v0, 2026-05-08)
+
+This ADR is not implemented in the current KG slice.
+
+What exists now:
+
+- The local KG builder uses deterministic in-process extractors, not Claude Agent SDK orchestration.
+- `source.kg.llm.LightLlmClient` exists as an optional helper for later enrichment, but the v0 static KG builder does not call it.
+- The v0 implementation intentionally keeps LLM and agentic behavior out of the default path while extraction quality is being validated.
+
+What is still pending:
+
+- Layer A ingestion-worker orchestration through Claude Agent SDK.
+- Layer B Explorer / PR-bot reasoning agent.
+- SDK hook integration for audit logging, freshness checks, and refusal behavior.
+- Production allowlists, permission policy, and session-store adapter.
+
 ## Alternatives considered
 
 **OpenAI Agents SDK** — rejected. Strongest hosted tools (`FileSearchTool`, `CodeInterpreterTool`, `HostedMCPTool`, `WebSearchTool`) are server-side and bill per call; using them in Layer A would ship customer code to OpenAI Vector Stores, violating `PRD.md` §8's no-egress posture and disqualifying us from regulated-buyer ICPs. For Layer B, functional parity exists but no positive differentiator over Claude Agent SDK, and operational simplicity (one SDK across A+B) tilts the call toward Claude.
