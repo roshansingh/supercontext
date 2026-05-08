@@ -8,7 +8,7 @@ import tomllib
 import warnings
 
 from source.kg.models import Coverage, Entity, Evidence, Fact, JsonObject
-from source.kg.import_normalizer import NormalizedImport, PythonImportNormalizer
+from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.repo_source import RepoSnapshot
 
 

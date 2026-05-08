@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from source.kg.models import JsonObject, utc_now_iso
-from source.kg.python_ast_extractor import PythonAstExtractor
+from source.kg.extraction.python.ast_extractor import PythonAstExtractor
 from source.kg.repo_source import discover_repo
 from source.kg.store import JsonlKgStore
-from source.kg.typescript_static_extractor import TypeScriptStaticExtractor
+from source.kg.extraction.typescript.compiler_api_extractor import TypeScriptCompilerApiExtractor
 
 
 def build_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject:
@@ -15,7 +15,7 @@ def build_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject:
     if repo.python_files:
         extractors.append(PythonAstExtractor())
     if repo.typescript_files:
-        extractors.append(TypeScriptStaticExtractor())
+        extractors.append(TypeScriptCompilerApiExtractor())
 
     builds = [extractor.extract(repo) for extractor in extractors]
     entities = [entity for build in builds for entity in build.entities]
