@@ -67,6 +67,15 @@ def main() -> None:
     imports_both.add_argument("--category", help="Comma-separated import categories to include")
     imports_both.add_argument("--limit", type=int, default=25)
 
+    dep_path = subparsers.add_parser("dependency-path")
+    dep_path.add_argument("source")
+    dep_path.add_argument("target")
+    dep_path.add_argument("--path")
+    dep_path.add_argument("--line", type=int)
+    dep_path.add_argument("--include-all", action="store_true")
+    dep_path.add_argument("--max-depth", type=int, default=4)
+    dep_path.add_argument("--limit", type=int, default=5)
+
     lookup = subparsers.add_parser("lookup-symbol")
     lookup.add_argument("symbol")
     lookup.add_argument("--path")
@@ -139,6 +148,16 @@ def main() -> None:
         if args.category:
             category_filter = {part.strip() for part in args.category.split(",") if part.strip()}
         result = kg.modules_importing_both(args.left, args.right, category_filter=category_filter, limit=args.limit)
+    elif args.command == "dependency-path":
+        result = kg.dependency_path(
+            args.source,
+            args.target,
+            path=args.path,
+            line=args.line,
+            include_all=args.include_all,
+            max_depth=min(max(1, args.max_depth), 6),
+            limit=min(max(1, args.limit), 25),
+        )
     elif args.command == "lookup-symbol":
         result = kg.lookup_symbol(args.symbol, limit=args.limit, path=args.path, line=args.line)
     elif args.command == "symbols-in-file":

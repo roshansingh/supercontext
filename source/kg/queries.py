@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
-from source.kg import aggregations
+from source.kg import aggregations, path_search
 from source.kg.models import JsonObject
 from source.kg.store import read_jsonl
 
@@ -277,6 +277,70 @@ class KgSnapshot:
             limit=limit,
         )
 
+    def dependency_path(
+        self,
+        source_query: str,
+        target_query: str,
+        path: str | None = None,
+        line: int | None = None,
+        include_all: bool = False,
+        max_depth: int = 4,
+        limit: int = 5,
+    ) -> JsonObject:
+        max_depth = min(max(1, max_depth), 6)
+        limit = min(max(1, limit), 25)
+        source_resolution = self._resolve_symbol(source_query, limit=limit, path=path, line=line)
+        if source_resolution["status"] == "not_found":
+            return self._dependency_path_response(
+                "not_found",
+                source_resolution,
+                None,
+                max_depth=max_depth,
+                limit=limit,
+                paths=[],
+            )
+        if source_resolution["status"] == "ambiguous" and not include_all:
+            return self._dependency_path_response(
+                "ambiguous",
+                source_resolution,
+                None,
+                max_depth=max_depth,
+                limit=limit,
+                paths=[],
+            )
+
+        if include_all:
+            source_ids = {candidate["symbol_id"] for candidate in source_resolution["candidates"]}
+        else:
+            source_ids = {source_resolution["resolved_symbol"]["symbol_id"]}
+
+        target_resolution = aggregations._resolve_import_target(target_query, self.facts, self.entities_by_id)
+        if target_resolution["status"] != "resolved":
+            return self._dependency_path_response(
+                target_resolution["status"],
+                source_resolution,
+                target_resolution,
+                max_depth=max_depth,
+                limit=limit,
+                paths=[],
+            )
+
+        paths = path_search.find_dependency_paths(
+            self,
+            source_ids,
+            target_resolution,
+            max_depth=max_depth,
+            limit=limit,
+        )
+        return self._dependency_path_response(
+            "resolved" if paths else "empty",
+            source_resolution,
+            target_resolution,
+            max_depth=max_depth,
+            limit=limit,
+            paths=[path_search.path_to_dict(self, result_path) for result_path in paths],
+        )
+
     def lookup_symbol(
         self,
         symbol_query: str,
@@ -395,6 +459,28 @@ class KgSnapshot:
             "callee": callee_resolution,
             "matches": matches,
         }
+
+    def _dependency_path_response(
+        self,
+        status: str,
+        source_resolution: JsonObject,
+        target_resolution: JsonObject | None,
+        max_depth: int,
+        limit: int,
+        paths: list[JsonObject],
+    ) -> JsonObject:
+        response: JsonObject = {
+            "status": status,
+            "source": source_resolution,
+            "max_depth": max_depth,
+            "limit": limit,
+            "path_count": len(paths),
+            "returned_count": len(paths),
+            "paths": paths,
+        }
+        if target_resolution is not None:
+            response["target"] = target_resolution
+        return response
 
     def _call_facts_at_coordinate(
         self,
