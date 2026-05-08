@@ -7,7 +7,9 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 ## What It Does
 
 - Reads a local Python or TypeScript/JavaScript repository.
+- Can combine multiple local repositories into one snapshot.
 - Extracts repo, service, module, symbol, import, and basic call facts with file/line evidence.
+- Links imported external packages to another indexed repo/service when a unique manifest package-name match exists.
 - Writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - Provides small query scripts for summary, callers, blast radius, and imports.
 
@@ -17,6 +19,7 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - No MCP server.
 - No PR bot.
 - No broad language coverage.
+- Multi-repo linking is manifest/package-name based only; it does not infer aliases with an LLM.
 - TypeScript/JavaScript support is parser-backed but still static; it does not perform full type-aware resolution yet.
 - No automatic LLM enrichment in the default path.
 
@@ -30,10 +33,20 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 
 ## Run
 
+Install the local TypeScript parser dependency before indexing TypeScript/JavaScript repos:
+
+```bash
+npm install
+```
+
 ```bash
 python -m source.scripts.build_kg --repo ~/work/mercury_ml --out data/kg_runs/mercury_ml
 python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
+python -m source.scripts.build_multi_kg --repo ~/work/orgs/latticeai/mercury_ml --repo ~/work/orgs/latticeai/mercury_ml_api --out data/kg_runs/latticeai_ml_pair
+python -m source.scripts.build_multi_kg --repo ~/work/orgs/latticeai/mercury_ml --repo ~/work/orgs/latticeai/mercury_ml_api --out data/kg_runs/latticeai_ml_pair --strict-extractors
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml summary
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_ml_pair cross-repo-links --limit 10
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_ml_pair repo-dependencies mercury_ml_api --limit 10
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-dependencies --limit 10

@@ -120,6 +120,8 @@ def _is_allowed_edge(predicate: str, subject_kind: str, object_kind: str) -> boo
         )
         or (predicate == "DEFINED_IN" and subject_kind == "CodeSymbol" and object_kind == "CodeModule")
         or (predicate == "IMPORTS" and subject_kind == "CodeModule" and object_kind in {"ExternalPackage", "CodeModule"})
+        or (predicate == "RESOLVES_TO_REPO" and subject_kind == "ExternalPackage" and object_kind == "Repo")
+        or (predicate == "RESOLVES_TO_SERVICE" and subject_kind == "ExternalPackage" and object_kind == "Service")
     )
 
 
