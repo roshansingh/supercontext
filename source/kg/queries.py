@@ -97,7 +97,7 @@ class KgSnapshot:
                 continue
             qualifier = fact.get("qualifier", {})
             category = qualifier.get("category")
-            if exclude_stdlib and category == "stdlib":
+            if exclude_stdlib and category in {"stdlib", "node_builtin"}:
                 continue
             if exclude_unknown and category == "unknown":
                 continue
