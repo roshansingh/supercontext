@@ -15,6 +15,9 @@ def main() -> None:
 
     callers = subparsers.add_parser("find-callers")
     callers.add_argument("symbol")
+    callers.add_argument("--path")
+    callers.add_argument("--line", type=int)
+    callers.add_argument("--include-all", action="store_true")
     callers.add_argument("--limit", type=int, default=25)
 
     blast = subparsers.add_parser("blast-radius")
@@ -56,7 +59,13 @@ def main() -> None:
     if args.command == "summary":
         result = kg.summary()
     elif args.command == "find-callers":
-        result = kg.find_callers(args.symbol, limit=args.limit)
+        result = kg.find_callers(
+            args.symbol,
+            limit=args.limit,
+            path=args.path,
+            line=args.line,
+            include_all=args.include_all,
+        )
     elif args.command == "blast-radius":
         result = kg.blast_radius(args.symbol, depth=args.depth, limit=args.limit)
     elif args.command == "modules-importing":

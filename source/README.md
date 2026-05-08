@@ -37,6 +37,7 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-imp
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-dependencies --limit 10
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml find-callers predict --limit 5
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml find-callers load_model --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/true_loop lookup-symbol generateResponseStream
 python -m source.scripts.query_kg --snapshot data/kg_runs/true_loop lookup-symbol generateResponse --path src/lib/response-generator.ts --line 635
 python -m source.scripts.query_kg --snapshot data/kg_runs/true_loop symbols-in-file src/lib/response-generator.ts

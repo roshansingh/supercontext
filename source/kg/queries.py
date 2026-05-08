@@ -33,9 +33,24 @@ class KgSnapshot:
             "coverage": self.coverage,
         }
 
-    def find_callers(self, symbol_query: str, limit: int = 25) -> list[JsonObject]:
-        targets = self._matching_symbols(symbol_query)
-        target_ids = {target["entity_id"] for target in targets}
+    def find_callers(
+        self,
+        symbol_query: str,
+        limit: int = 25,
+        path: str | None = None,
+        line: int | None = None,
+        include_all: bool = False,
+    ) -> JsonObject:
+        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        if resolution["status"] == "not_found":
+            return {"status": "not_found", "target": resolution, "callers": []}
+        if resolution["status"] == "ambiguous" and not include_all:
+            return {"status": "ambiguous", "target": resolution, "callers": []}
+
+        if include_all:
+            target_ids = {candidate["symbol_id"] for candidate in resolution["candidates"]}
+        else:
+            target_ids = {resolution["resolved_symbol"]["symbol_id"]}
         results: list[JsonObject] = []
         for fact in self.facts:
             if fact["predicate"] != "CALLS" or fact["object_id"] not in target_ids:
@@ -45,8 +60,13 @@ class KgSnapshot:
             if caller and callee:
                 results.append(self._fact_result(fact, caller, callee))
                 if len(results) >= limit:
-                    return results
-        return results
+                    break
+        return {
+            "status": "found" if results else "not_found",
+            "target": resolution,
+            "caller_count": len(results),
+            "callers": results,
+        }
 
     def blast_radius(self, symbol_query: str, depth: int = 2, limit: int = 25) -> list[JsonObject]:
         roots = self._matching_symbols(symbol_query)
