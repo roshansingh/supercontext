@@ -47,6 +47,26 @@ def main() -> None:
     dep_info = subparsers.add_parser("dependency-info")
     dep_info.add_argument("package")
 
+    who_imports = subparsers.add_parser("who-imports")
+    who_imports.add_argument("target")
+    who_imports.add_argument("--group-prefix-depth", type=int, default=2)
+    who_imports.add_argument("--no-grouping", action="store_true")
+    who_imports.add_argument("--limit", type=int, default=25)
+
+    top_internal_deps = subparsers.add_parser("top-internal-dependencies")
+    top_internal_deps.add_argument("--relative-only", action="store_true")
+    top_internal_deps.add_argument("--limit", type=int, default=25)
+
+    top_fan_in = subparsers.add_parser("top-fan-in-symbols")
+    top_fan_in.add_argument("--include-external", action="store_true")
+    top_fan_in.add_argument("--limit", type=int, default=25)
+
+    imports_both = subparsers.add_parser("modules-importing-both")
+    imports_both.add_argument("left")
+    imports_both.add_argument("right")
+    imports_both.add_argument("--category", help="Comma-separated import categories to include")
+    imports_both.add_argument("--limit", type=int, default=25)
+
     lookup = subparsers.add_parser("lookup-symbol")
     lookup.add_argument("symbol")
     lookup.add_argument("--path")
@@ -103,6 +123,22 @@ def main() -> None:
         )
     elif args.command == "dependency-info":
         result = kg.dependency_info(args.package)
+    elif args.command == "who-imports":
+        result = kg.who_imports(
+            args.target,
+            group_prefix_depth=max(1, args.group_prefix_depth),
+            no_grouping=args.no_grouping,
+            limit=args.limit,
+        )
+    elif args.command == "top-internal-dependencies":
+        result = kg.top_internal_dependencies(relative_only=args.relative_only, limit=args.limit)
+    elif args.command == "top-fan-in-symbols":
+        result = kg.top_fan_in_symbols(include_external=args.include_external, limit=args.limit)
+    elif args.command == "modules-importing-both":
+        category_filter = None
+        if args.category:
+            category_filter = {part.strip() for part in args.category.split(",") if part.strip()}
+        result = kg.modules_importing_both(args.left, args.right, category_filter=category_filter, limit=args.limit)
     elif args.command == "lookup-symbol":
         result = kg.lookup_symbol(args.symbol, limit=args.limit, path=args.path, line=args.line)
     elif args.command == "symbols-in-file":
