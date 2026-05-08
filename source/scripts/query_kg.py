@@ -76,6 +76,13 @@ def main() -> None:
     dep_path.add_argument("--max-depth", type=int, default=4)
     dep_path.add_argument("--limit", type=int, default=5)
 
+    cross_repo_links = subparsers.add_parser("cross-repo-links")
+    cross_repo_links.add_argument("--limit", type=int, default=25)
+
+    repo_deps = subparsers.add_parser("repo-dependencies")
+    repo_deps.add_argument("repo")
+    repo_deps.add_argument("--limit", type=int, default=25)
+
     lookup = subparsers.add_parser("lookup-symbol")
     lookup.add_argument("symbol")
     lookup.add_argument("--path")
@@ -158,6 +165,10 @@ def main() -> None:
             max_depth=min(max(1, args.max_depth), 6),
             limit=min(max(1, args.limit), 25),
         )
+    elif args.command == "cross-repo-links":
+        result = kg.cross_repo_links(limit=args.limit)
+    elif args.command == "repo-dependencies":
+        result = kg.repo_dependencies(args.repo, limit=args.limit)
     elif args.command == "lookup-symbol":
         result = kg.lookup_symbol(args.symbol, limit=args.limit, path=args.path, line=args.line)
     elif args.command == "symbols-in-file":

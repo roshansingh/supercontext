@@ -201,8 +201,13 @@ class TypeScriptCompilerApiExtractor:
                 check=True,
                 text=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            raise RuntimeError("TypeScript parser bridge failed; ensure node and typescript are available") from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            detail = stderr or stdout or str(exc)
+            raise RuntimeError(f"TypeScript parser bridge failed: {detail}") from exc
+        except FileNotFoundError as exc:
+            raise RuntimeError("TypeScript parser bridge failed: node executable was not found") from exc
         return json.loads(result.stdout or "{}")
 
     def _imports_by_local(self, imports: list[NormalizedJsImport]) -> dict[str, NormalizedJsImport]:

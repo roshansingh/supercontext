@@ -341,6 +341,61 @@ class KgSnapshot:
             paths=[path_search.path_to_dict(self, result_path) for result_path in paths],
         )
 
+    def cross_repo_links(self, limit: int = 25) -> JsonObject:
+        links = []
+        for fact in self.facts:
+            if fact["predicate"] not in {"RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"}:
+                continue
+            package = self.entities_by_id.get(fact["subject_id"])
+            target = self.entities_by_id.get(fact["object_id"])
+            if not package or not target:
+                continue
+            links.append(self._fact_result(fact, package, target))
+        links = sorted(
+            links,
+            key=lambda row: (
+                str(row.get("qualifier", {}).get("consumer_repo", "")),
+                str(row.get("qualifier", {}).get("package_name", "")),
+                row["predicate"],
+            ),
+        )
+        returned = links[:limit]
+        return {
+            "status": "found" if links else "not_found",
+            "link_count": len(links),
+            "returned_count": len(returned),
+            "links": returned,
+        }
+
+    def repo_dependencies(self, repo: str, limit: int = 25) -> JsonObject:
+        links = []
+        for fact in self.facts:
+            if fact["predicate"] != "RESOLVES_TO_REPO":
+                continue
+            package = self.entities_by_id.get(fact["subject_id"])
+            target_repo = self.entities_by_id.get(fact["object_id"])
+            if not package or not target_repo:
+                continue
+            qualifier = fact.get("qualifier", {})
+            if qualifier.get("consumer_repo") != repo:
+                continue
+            links.append(self._fact_result(fact, package, target_repo))
+        links = sorted(
+            links,
+            key=lambda row: (
+                str(row.get("object")),
+                str(row.get("qualifier", {}).get("package_name", "")),
+            ),
+        )
+        returned = links[:limit]
+        return {
+            "status": "found" if links else "not_found",
+            "repo": repo,
+            "dependency_count": len(links),
+            "returned_count": len(returned),
+            "dependencies": returned,
+        }
+
     def lookup_symbol(
         self,
         symbol_query: str,
