@@ -121,6 +121,23 @@ Implementation guardrails:
 - SuperContext may support multiple storage backends over time.
 - The durable product asset is the **graph model, provenance contract, and query semantics**, not Apache AGE itself.
 
+## Implementation Status (v0, 2026-05-08)
+
+Storage implementation has not reached PostgreSQL + Apache AGE yet.
+
+What exists now:
+
+- The local KG harness writes backend-agnostic JSONL snapshots under `data/kg_runs/`: `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
+- The snapshot shape follows the ADR-0006 Entity + Fact + Evidence + Coverage substrate closely enough to validate extraction and query semantics before choosing final table DDL.
+- Query code reads the JSONL substrate through `source.kg.queries.KgSnapshot`, keeping current CLI behavior independent of AGE/Cypher.
+
+What is still pending:
+
+- PostgreSQL tables, migrations, and indexes.
+- Apache AGE graph creation and projection/materialization from facts.
+- Incremental projection strategy, bulk-write path, and storage-level contract tests for the eight Product 1 tools.
+- Tenant graph isolation beyond the current local-dev snapshot convention.
+
 ## References
 
 - `PRD.md` §6.1 (engine), §6.2 (8 MCP tools), §7 (provenance, refusal), §8 (architecture)

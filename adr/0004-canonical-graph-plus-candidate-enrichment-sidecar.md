@@ -180,6 +180,24 @@ ADR-0006 should be treated as the binding follow-up for these items.
 - The broader platform can host multiple graph-shaped knowledge layers without conflating their trust levels.
 - SuperContext's durable asset becomes the graph model, provenance contract, and promotion rules, not just ingestion code.
 
+## Implementation Status (v0, 2026-05-08)
+
+This ADR is partially reflected in the local KG harness.
+
+What exists now:
+
+- `Entity` and `Fact` records include `canonical_status` with `canonical`, `candidate`, and `demoted` values.
+- Query aggregations filter to canonical entities/facts by default where implemented.
+- Evidence rows carry `derivation_class`, `source_system`, `source_ref`, `bytes_ref`, and confidence, which gives candidate/promotion logic a substrate later.
+
+What is still pending:
+
+- No candidate-generation pipeline exists yet.
+- No separate sidecar table/store exists yet.
+- No promotion/demotion workflow is implemented.
+- No UI/MCP candidate-only path exists yet.
+- v0 deterministic extractors currently default entities/facts to canonical because no LLM or multi-source candidate input is wired.
+
 ## References
 
 - `PRD.md` §6.1 (engine), §6.2 (8 MCP tools), §7 (provenance, refusal)

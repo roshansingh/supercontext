@@ -47,6 +47,24 @@ Concretely:
 - Schema discipline imposed by MCP (small tool count, structured JSON) constrains the engine's expressiveness, which is desirable rather than limiting for the wedge use case.
 - Streamable HTTP transport requires customer egress rules to permit our endpoint; not unique to MCP.
 
+## Implementation Status (v0, 2026-05-08)
+
+This ADR is not implemented as an MCP server yet.
+
+What exists now:
+
+- `source/scripts/query_kg.py` provides a local CLI prototype over the same KG facts that future MCP tools will query.
+- Implemented local query surfaces include `find-callers`, `find-callees`, `blast-radius`, `lookup-symbol`, `symbols-in-file`, `evidence-for-call`, `who-imports`, and `dependency-path`.
+- These CLI surfaces validate tool semantics and evidence shape, but they are not final MCP schemas.
+
+What is still pending:
+
+- MCP server implementation.
+- OAuth/static-token auth modes.
+- Final JSON schemas for the eight PRD tools.
+- `supercontext://service/{name}/brief` resource.
+- Cursor pagination, resource auto-attach behavior, and host compatibility testing.
+
 ## Alternatives considered
 
 **Per-IDE bespoke extensions** — rejected per `PRD.md` §6.4. Cost and maintenance burden across eight IDEs is prohibitive for an MVP, and MCP coverage already reaches all of them.

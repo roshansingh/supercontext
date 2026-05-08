@@ -192,6 +192,34 @@ Explicitly out of v1:
 - Agent SDK as the default impact engine
 - promoting Agent SDK candidate impacts without deterministic corroboration
 
+## Implementation Status (v0, 2026-05-08)
+
+This ADR is partially implemented in the local KG harness.
+
+What exists now:
+
+- `find-callers` performs direct reverse `CALLS` lookup after ADR-0007 symbol resolution.
+- `who-imports` performs reverse `IMPORTS` lookup for normalized internal modules and external packages.
+- `top-fan-in-symbols` ranks symbols by direct caller count.
+- `top-internal-dependencies` ranks internal modules by importer count.
+- `modules-importing-both` finds modules that import two normalized targets.
+- `dependency-path` finds bounded mixed paths across `CALLS`, `DEFINED_IN`, and `IMPORTS` facts.
+- Outputs include evidence samples from indexed source coordinates.
+
+What is still pending:
+
+- Generalized reverse transitive `impact-of-symbol` traversal.
+- Product-grade `impact-of-module` that maps importers back to owning symbols/services.
+- Break-first ranking for changed symbols or changed packages.
+- Runtime trace integration and framework-specific dynamic call inference.
+- Agent SDK candidate enrichment.
+- MCP/PR-bot schemas and refusal semantics.
+
+Evaluation evidence:
+
+- `docs/evaluation/MEDIUM-QUERY-AGGREGATION-RUN-2026-05-08.md`
+- `docs/evaluation/MIXED-CALL-IMPORT-PATH-RUN-2026-05-08.md`
+
 ## Relationship to Existing ADRs
 
 ### ADR-0005

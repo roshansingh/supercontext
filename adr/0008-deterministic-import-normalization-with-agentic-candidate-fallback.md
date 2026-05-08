@@ -183,6 +183,40 @@ Explicitly out of v1:
 - agent-first import classification
 - promoting Agent SDK classifications without deterministic corroboration
 
+## Implementation Status (v0, 2026-05-08)
+
+This ADR is partially implemented in the local KG harness.
+
+What exists now:
+
+- Python deterministic import normalization in `source/kg/normalization/python/imports.py`.
+- TypeScript/JavaScript deterministic import normalization in `source/kg/normalization/typescript/imports.py`.
+- Python categories: `stdlib`, `third_party`, `internal_module`, `relative_internal_module`, `unknown`.
+- TypeScript/JavaScript categories: `node_builtin`, `third_party`, `internal_module`, `relative_internal_module`, `unknown`.
+- Metadata parsing from `pyproject.toml` and `package.json`.
+- Common Python distribution/import alias handling, including `sklearn` to `scikit-learn`.
+- Query surfaces over normalized imports:
+  - `modules-importing`
+  - `dependency-info`
+  - `top-dependencies`
+  - `who-imports`
+  - `top-internal-dependencies`
+  - `modules-importing-both`
+
+What is still pending:
+
+- Agent SDK candidate fallback.
+- Broad package-manager and lockfile support.
+- Dynamic import resolution.
+- Cross-repo package-to-repo linking.
+- Vulnerability/license/transitive dependency analysis.
+
+Evaluation evidence:
+
+- `docs/evaluation/LOW-QUERY-RERUN-IMPORT-NORMALIZATION-2026-05-06.md`
+- `docs/evaluation/LOW-QUERY-RERUN-TRUE-LOOP-PARSER-BACKED-2026-05-08.md`
+- `docs/evaluation/MEDIUM-QUERY-AGGREGATION-RUN-2026-05-08.md`
+
 ## Relationship to Existing ADRs
 
 ### ADR-0005
