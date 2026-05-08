@@ -26,6 +26,7 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - `source/kg/extraction/typescript/` contains TypeScript/JavaScript compiler-API extraction.
 - `source/kg/normalization/python/` contains Python import normalization.
 - `source/kg/normalization/typescript/` contains TypeScript/JavaScript import normalization.
+- `source/kg/aggregations.py` contains language-independent ranked/grouped query helpers over normalized facts.
 
 ## Run
 
@@ -36,6 +37,10 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml summary
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-dependencies --limit 10
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml who-imports mercury_ml.chatbot.apis.openai_instructor --limit 10
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-internal-dependencies --limit 10
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-fan-in-symbols --limit 10
+python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing-both pandas sklearn --limit 10
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml find-callers predict --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml find-callers load_model --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml find-callees predict_on_session --path mercury_ml/intent_based_predictions/batch_predict.py --line 77 --limit 10

@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from source.kg import aggregations
 from source.kg.models import JsonObject
 from source.kg.store import read_jsonl
 
@@ -223,6 +224,58 @@ class KgSnapshot:
                 "distribution_name": qualifier.get("distribution_name"),
             }
         return sorted(seen.values(), key=lambda row: row["name"])
+
+    def who_imports(
+        self,
+        target: str,
+        group_prefix_depth: int = 2,
+        no_grouping: bool = False,
+        limit: int = 25,
+    ) -> JsonObject:
+        return aggregations.who_imports(
+            target=target,
+            entities_by_id=self.entities_by_id,
+            facts=self.facts,
+            evidence_by_target=self.evidence_by_target,
+            group_prefix_depth=group_prefix_depth,
+            no_grouping=no_grouping,
+            limit=limit,
+        )
+
+    def top_internal_dependencies(self, relative_only: bool = False, limit: int = 25) -> JsonObject:
+        return aggregations.top_internal_dependencies(
+            entities_by_id=self.entities_by_id,
+            facts=self.facts,
+            evidence_by_target=self.evidence_by_target,
+            relative_only=relative_only,
+            limit=limit,
+        )
+
+    def top_fan_in_symbols(self, include_external: bool = False, limit: int = 25) -> JsonObject:
+        return aggregations.top_fan_in_symbols(
+            entities_by_id=self.entities_by_id,
+            facts=self.facts,
+            evidence_by_target=self.evidence_by_target,
+            include_external=include_external,
+            limit=limit,
+        )
+
+    def modules_importing_both(
+        self,
+        left: str,
+        right: str,
+        category_filter: set[str] | None = None,
+        limit: int = 25,
+    ) -> JsonObject:
+        return aggregations.modules_importing_both(
+            left=left,
+            right=right,
+            entities_by_id=self.entities_by_id,
+            facts=self.facts,
+            evidence_by_target=self.evidence_by_target,
+            category_filter=category_filter,
+            limit=limit,
+        )
 
     def lookup_symbol(
         self,
@@ -512,16 +565,7 @@ class KgSnapshot:
         return file_path.replace("\\", "/").lstrip("./")
 
     def _import_matches(self, fact: JsonObject, package: JsonObject, package_name: str) -> bool:
-        needle = package_name.lower()
-        qualifier = fact.get("qualifier", {})
-        candidates = {
-            str(package["identity"].get("name", "")),
-            str(qualifier.get("raw_import", "")),
-            str(qualifier.get("import_root", "")),
-            str(qualifier.get("distribution_name", "")),
-            str(qualifier.get("module_name", "")),
-        }
-        return needle in {candidate.lower() for candidate in candidates if candidate}
+        return aggregations.import_matches_target(fact, package, package_name)
 
     def _fact_result(self, fact: JsonObject, subject: JsonObject, object_: JsonObject, **extra: Any) -> JsonObject:
         return {
