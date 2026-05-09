@@ -5,9 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import tomllib
+from typing import Literal
 import warnings
 
-from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
+from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
+from source.kg.extraction.python.dataflow import LiteralIndex, build_repo_literal_index
+from source.kg.extraction.python.transport_extractor import extract_transport_events
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -49,9 +52,10 @@ class PythonAstExtractor:
         )
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, repo.root / "pyproject.toml", 1, 1)
         import_normalizer = PythonImportNormalizer(repo)
+        literal_index = build_repo_literal_index(repo)
 
         for file_path in repo.python_files:
-            self._extract_file(repo, file_path, repo_entity, service_entity, import_normalizer, build)
+            self._extract_file(repo, file_path, repo_entity, service_entity, import_normalizer, literal_index, build)
 
         build.coverage.append(
             Coverage(
@@ -71,6 +75,7 @@ class PythonAstExtractor:
         repo_entity: Entity,
         service_entity: Entity,
         import_normalizer: PythonImportNormalizer,
+        literal_index: LiteralIndex,
         build: KgBuild,
     ) -> None:
         source = file_path.read_text(encoding="utf-8", errors="replace")
@@ -177,6 +182,18 @@ class PythonAstExtractor:
                         line,
                         qualifier={"call": call_name},
                     )
+            extract_transport_events(
+                repo,
+                file_path,
+                caller,
+                caller_node,
+                imports,
+                literal_index,
+                build,
+                self.source_system,
+                self._add_entity_evidence,
+                self._add_fact,
+            )
 
     def _collect_symbols(self, repo: RepoSnapshot, file_path: Path, module_name: str, tree: ast.AST) -> list[SymbolDef]:
         symbols: list[SymbolDef] = []
@@ -233,14 +250,22 @@ class PythonAstExtractor:
         line_start: int,
         line_end: int,
         qualifier: JsonObject | None = None,
+        derivation_class: EvidenceDerivationClass = "deterministic_static",
+        canonical_status: Literal["canonical", "candidate", "demoted"] = "canonical",
     ) -> None:
-        fact = Fact(predicate=predicate, subject_id=subject.entity_id, object_id=object_.entity_id, qualifier=qualifier or {})
+        fact = Fact(
+            predicate=predicate,
+            subject_id=subject.entity_id,
+            object_id=object_.entity_id,
+            qualifier=qualifier or {},
+            canonical_status=canonical_status,
+        )
         build.facts.append(fact)
         build.evidence.append(
             Evidence(
                 target_type="fact",
                 target_id=fact.fact_id,
-                derivation_class="deterministic_static",
+                derivation_class=derivation_class,
                 source_system=self.source_system,
                 source_ref={"extractor": self.source_system, "predicate": predicate},
                 bytes_ref=self._bytes_ref(repo, file_path, line_start, line_end),
@@ -330,6 +355,18 @@ class PythonAstExtractor:
             bytes_ref=self._bytes_ref(repo, file_path, line_start, line_end),
             confidence=1.0,
         )
+
+    def _add_entity_evidence(
+        self,
+        build: KgBuild,
+        repo: RepoSnapshot,
+        entity: Entity,
+        file_path: Path,
+        line_start: int,
+        line_end: int,
+    ) -> None:
+        build.entities.append(entity)
+        build.evidence.append(self._entity_evidence(repo, entity, file_path, line_start, line_end))
 
     def _bytes_ref(self, repo: RepoSnapshot, file_path: Path, line_start: int, line_end: int) -> JsonObject:
         return {
