@@ -5,6 +5,18 @@ Purpose: define realistic user questions before adding more KG features.
 
 This is the acceptance input for evidence-driven development. Run these questions against the current system, record `pass`, `partial`, `fail`, or `refused correctly`, and use the gaps to choose the next implementation slice.
 
+## Product-Validation Thesis
+
+The KG-first path should answer many cross-repo questions faster and cheaper than a general Claude Code/Codex search loop that rediscovers evidence from raw repositories each time. That is a real product hypothesis, but it is not sufficient by itself.
+
+The primary validation bar is answer quality: does the system produce correct, useful, cited answers that a real engineer, EM, SRE, or security reviewer would trust? Cost and latency only matter after the answer is right enough.
+
+For goldset runs, use independent ground truth as the judge. The answer generator may propose a `Pass` / `Partial` / `Fail` score, but product validation should compare the generated answer to the `Ground Truth Answer` column and classify failures as:
+
+- `missing KG fact`: the needed fact was not indexed or linked.
+- `bad retrieval plan`: the fact exists but the scenario did not retrieve it.
+- `bad synthesis`: the evidence packet was sufficient but the final answer was wrong, noisy, or overconfident.
+
 ## Difficulty
 
 | Level | Meaning |

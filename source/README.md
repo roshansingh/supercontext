@@ -53,12 +53,24 @@ goldset scenario
 -> evidence packet
 -> source-byte verification later
 -> Claude/LLM synthesis later
+-> independent gold-truth judgement
 -> scored product answer
 ```
+
+Current validation thesis:
+
+- KG-first retrieval should make many cross-repo answers materially faster and cheaper than asking Claude Code/Codex to rediscover the answer by searching repos from scratch.
+- Speed/cost is not enough to validate the product; answer quality is the primary bar.
+- Answer quality must be judged against independent gold truth, not by the same synthesis model that generated the answer.
+- Failures should be classified as missing KG fact, bad retrieval plan, or bad synthesis before adding new features.
 
 Retrieval plans decide which KG query surfaces to call. For example, Q082 runs domain lookup for `api.shopagain.io` and deploy lookup for `prod_shopagain_wsgi.py`.
 
 Evidence packets normalize raw facts into rows with `claim`, `fact_type`, `subject`, `object`, `repo`, `commit_sha`, `path`, `line_start`, `line_end`, `source_system`, `derivation_class`, and `confidence`. They are not final answers; they are the controlled input to source verification and later Claude synthesis.
+
+Answer synthesis is intentionally thin: `source.scripts.run_goldset_answers` sends EvidencePacket rows to Claude Agent SDK with tools disabled and asks for a concise answer, citations, caveats, unknowns, and a `Pass` / `Partial` / `Fail` score. The agent is not allowed to search freely; KG retrieval decides the evidence.
+
+Goldset judgement is separate from synthesis: `source.scripts.run_goldset_judgement` compares the independent ground-truth answer, the EvidencePacket, and the generated answer. Its job is to classify whether failures belong to missing KG facts, retrieval plans, synthesis, or ground-truth issues.
 
 Contract reconciliation is the generic primitive behind docs-vs-code, client-vs-backend, producer-vs-consumer, and deploy-vs-service checks. It takes two scoped fact sets, an identity key such as `endpoint_path`, and returns `matched`, `left_only`, `right_only`, and `possible_matches`. Scenario plans provide the domain-specific scope; the reconciler itself does not know about ShopAgain or API drift.
 
@@ -85,6 +97,8 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 deploy-ma
 python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 reconcile-contract --name shopagain_docs_vs_backend --identity-key endpoint_path --left-name documented --left-predicate DOCUMENTS_ENDPOINT --left-repo shopagain_api_docs --left-path-prefix /v1/ --right-name implemented --right-predicate EXPOSES_ENDPOINT --right-repo mercury_api --right-repo mercury_webhooks --right-path-prefix /v1/
 python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_23 --scenario Q082
 python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_23 --scenario Q082 --scenario Q083 --out data/kg_runs/latticeai_23/product_packets.json
+python -m source.scripts.run_goldset_answers --snapshot data/kg_runs/latticeai_23 --md-out docs/evaluation/LATTICEAI-GOLDSET-ANSWERS-2026-05-09.md --json-out data/kg_runs/latticeai_23/goldset_answers.json
+python -m source.scripts.run_goldset_judgement --packets data/kg_runs/latticeai_23/goldset_packets_for_answers.json --answers data/kg_runs/latticeai_23/goldset_answers.json --md-out docs/evaluation/LATTICEAI-GOLDSET-JUDGEMENT-2026-05-09.md --json-out data/kg_runs/latticeai_23/goldset_judgement.json
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-dependencies --limit 10
