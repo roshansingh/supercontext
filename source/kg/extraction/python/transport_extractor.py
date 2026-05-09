@@ -365,9 +365,9 @@ def _resolver(
 ) -> ValueResolver:
     imported_modules, imported_values = import_bindings(imports)
     local_values = _module_values(module_name, literal_index)
-    local_values.update(local_literal_assignments(function_node))
     if extra_local_values:
         local_values.update(extra_local_values)
+    local_values.update(local_literal_assignments(function_node))
     return ValueResolver(
         ValueScope(
             local_values=local_values,
@@ -384,7 +384,10 @@ def _resolved_bindings(
     caller_resolver: ValueResolver,
 ) -> dict[str, ast.AST]:
     resolved_bindings: dict[str, ast.AST] = {}
-    for name, value_node in bind_args(call_node, function_node).items():
+    bindings = bind_args(call_node, function_node)
+    if bindings is None:
+        return {}
+    for name, value_node in bindings.items():
         resolved = caller_resolver.resolve_value(value_node)
         if isinstance(resolved, ResolvedValue):
             resolved_bindings[name] = ast.Constant(value=resolved.value)
@@ -451,16 +454,10 @@ def _local_binding_names(function_node: FunctionDefNode) -> set[str]:
         names.add(function_node.args.vararg.arg)
     if function_node.args.kwarg is not None:
         names.add(function_node.args.kwarg.arg)
+    collector = _BindingCollector()
     for statement in function_node.body:
-        if isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                names.update(_target_names(target))
-        elif isinstance(statement, ast.AnnAssign):
-            names.update(_target_names(statement.target))
-        elif isinstance(statement, ast.AugAssign):
-            names.update(_target_names(statement.target))
-        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(statement.name)
+        collector.visit(statement)
+    names.update(collector.names)
     return names
 
 
@@ -473,6 +470,85 @@ def _target_names(target: ast.AST) -> set[str]:
             names.update(_target_names(element))
         return names
     return set()
+
+
+class _BindingCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            self.names.update(_target_names(target))
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.names.update(_target_names(node.target))
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.value)
+
+    def visit_For(self, node: ast.For) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.iter)
+        for statement in [*node.body, *node.orelse]:
+            self.visit(statement)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.iter)
+        for statement in [*node.body, *node.orelse]:
+            self.visit(statement)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.names.update(_target_names(item.optional_vars))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.names.update(_target_names(item.optional_vars))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name is not None:
+            self.names.add(node.name)
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.names.add(alias.asname or alias.name.split(".", 1)[0])
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            self.names.add(alias.asname or alias.name)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.value)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.names.add(node.name)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.names.add(node.name)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.names.add(node.name)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
 
 
 def _method_name(node: ast.AST) -> str | None:

@@ -256,17 +256,24 @@ def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunction
     return assignments
 
 
-def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST]:
+def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST] | None:
     positional_params = [*function_def.args.posonlyargs, *function_def.args.args]
     keyword_params = {param.arg for param in [*function_def.args.args, *function_def.args.kwonlyargs]}
     bindings: dict[str, ast.AST] = {}
+    if len(call_node.args) > len(positional_params) and function_def.args.vararg is None:
+        return None
     for index, arg_node in enumerate(call_node.args):
         if index >= len(positional_params):
             break
         bindings[positional_params[index].arg] = arg_node
     for keyword in call_node.keywords:
-        if keyword.arg is not None and keyword.arg in keyword_params:
-            bindings[keyword.arg] = keyword.value
+        if keyword.arg is None:
+            return None
+        if keyword.arg not in keyword_params:
+            return None
+        if keyword.arg in bindings:
+            return None
+        bindings[keyword.arg] = keyword.value
     return bindings
 
 
@@ -395,6 +402,9 @@ class _CallCollector(ast.NodeVisitor):
         return
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
         return
 
 
