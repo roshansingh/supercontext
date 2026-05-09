@@ -540,15 +540,32 @@ class _BindingCollector(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.names.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self.names.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.names.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._visit_arg_defaults(node.args)
         return
+
+    def _visit_arg_defaults(self, args: ast.arguments) -> None:
+        for default in [*args.defaults, *[default for default in args.kw_defaults if default is not None]]:
+            self.visit(default)
 
 
 def _method_name(node: ast.AST) -> str | None:
