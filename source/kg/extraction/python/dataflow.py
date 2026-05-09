@@ -262,8 +262,10 @@ def import_bindings(imports: list[NormalizedImport]) -> tuple[dict[str, str], di
             for imported_name in import_ref.imported_names:
                 imported_values[imported_name] = LiteralRef(import_ref.module_name, imported_name)
             continue
-        alias = import_ref.alias or import_ref.import_root
-        imported_modules[alias] = import_ref.module_name
+        if import_ref.alias:
+            imported_modules[import_ref.alias] = import_ref.module_name
+        else:
+            imported_modules[import_ref.import_root] = import_ref.import_root
     return imported_modules, imported_values
 
 

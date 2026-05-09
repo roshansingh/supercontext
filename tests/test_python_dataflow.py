@@ -81,6 +81,32 @@ class PythonDataflowTest(unittest.TestCase):
             assert isinstance(resolved, ResolvedValue)
             self.assertEqual(resolved.value, "orders-created")
 
+    def test_resolves_dotted_import_without_alias_from_root_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings = root / "app" / "settings.py"
+            producer = root / "app" / "producer.py"
+            settings.parent.mkdir()
+            settings.write_text('CHANNEL_NAME = "orders-created"\n', encoding="utf-8")
+            producer.write_text(
+                "import app.settings\n\n"
+                "def send():\n"
+                "    return app.settings.CHANNEL_NAME\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (settings, producer))
+            tree = ast.parse(producer.read_text(encoding="utf-8"))
+            imports = PythonImportNormalizer(repo).collect(tree, "app.producer")
+            imported_modules, imported_values = import_bindings(imports)
+            return_node = next(node for node in ast.walk(tree) if isinstance(node, ast.Return))
+            resolver = ValueResolver(ValueScope(imported_modules=imported_modules, imported_values=imported_values), build_repo_literal_index(repo))
+
+            resolved = resolver.resolve_value(return_node.value or ast.Constant(None))
+
+            self.assertIsInstance(resolved, ResolvedValue)
+            assert isinstance(resolved, ResolvedValue)
+            self.assertEqual(resolved.value, "orders-created")
+
     def test_resolves_env_lookup_when_env_value_is_supplied(self) -> None:
         node = ast.parse('value = os.getenv("CHANNEL_URL")').body[0]
         assert isinstance(node, ast.Assign)
