@@ -45,6 +45,7 @@ class ValueScope:
     imported_modules: dict[str, str] = field(default_factory=dict)
     imported_values: dict[str, LiteralRef] = field(default_factory=dict)
     env_values: dict[str, str] = field(default_factory=dict)
+    blocked_names: set[str] = field(default_factory=set)
 
 
 class ValueResolver:
@@ -91,6 +92,8 @@ class ValueResolver:
         name = node.id
         if name in self._resolving_names:
             return UnresolvedValue("cyclic_name", name)
+        if name in self.scope.blocked_names:
+            return UnresolvedValue("unknown_local_binding", name)
         if name in self.scope.local_values:
             self._resolving_names.add(name)
             try:
@@ -240,8 +243,24 @@ def module_literal_assignments(tree: ast.AST) -> dict[str, ast.AST]:
 
 
 def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST]:
+    return _local_literal_assignments(function_node)
+
+
+def local_literal_assignments_before(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    before_node: ast.AST,
+) -> dict[str, ast.AST]:
+    return _local_literal_assignments(function_node, before_node=before_node)
+
+
+def _local_literal_assignments(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    before_node: ast.AST | None = None,
+) -> dict[str, ast.AST]:
     assignments: dict[str, ast.AST] = {}
     for statement in function_node.body:
+        if before_node is not None and not node_starts_before(statement, before_node):
+            continue
         if isinstance(statement, ast.Assign):
             for target in statement.targets:
                 if isinstance(target, ast.Name) and _is_supported_local_expression(statement.value):
@@ -254,6 +273,16 @@ def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunction
         ):
             assignments[statement.target.id] = statement.value
     return assignments
+
+
+def node_starts_before(node: ast.AST, reference: ast.AST) -> bool:
+    node_line = getattr(node, "lineno", None)
+    reference_line = getattr(reference, "lineno", None)
+    if node_line is None or reference_line is None:
+        return False
+    node_col = getattr(node, "col_offset", 0)
+    reference_col = getattr(reference, "col_offset", 0)
+    return (node_line, node_col) < (reference_line, reference_col)
 
 
 def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST] | None:

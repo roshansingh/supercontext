@@ -24,6 +24,8 @@ from source.kg.extraction.python.dataflow import (
     body_call_nodes,
     import_bindings,
     local_literal_assignments,
+    local_literal_assignments_before,
+    node_starts_before,
     resolved_to_json,
     unresolved_coverage,
 )
@@ -33,6 +35,8 @@ from source.kg.normalization.python.imports import NormalizedImport
 
 MAX_WRAPPER_RESOLUTION_DEPTH = 2
 FunctionDefNode = ast.FunctionDef | ast.AsyncFunctionDef
+BindingNameCache = dict[int, set[str]]
+CallNodeCache = dict[int, list[ast.Call]]
 
 
 class CallerSymbol(Protocol):
@@ -70,10 +74,20 @@ def extract_transport_events(
     function_defs: dict[str, FunctionDefNode] | None = None,
 ) -> None:
     boto3_names = _boto3_names(imports)
-    resolver = _resolver(caller.module_name, literal_index, imports, caller_node)
-    clients = _transport_clients(caller_node, boto3_names)
-    queue_resources = _queue_resources(caller_node, clients, boto3_names)
-    for call_node in body_call_nodes(caller_node):
+    binding_name_cache: BindingNameCache = {}
+    call_node_cache: CallNodeCache = {}
+    caller_binding_names = _local_binding_names_cached(caller_node, binding_name_cache)
+    for call_node in _body_call_nodes_cached(caller_node, call_node_cache):
+        resolver = _resolver(
+            caller.module_name,
+            literal_index,
+            imports,
+            caller_node,
+            before_node=call_node,
+            local_binding_names=caller_binding_names,
+        )
+        clients = _transport_clients(caller_node, boto3_names, before_node=call_node)
+        queue_resources = _queue_resources(caller_node, clients, boto3_names, before_node=call_node)
         event = _event_from_call(call_node, clients, queue_resources, boto3_names, resolver)
         if event is None and function_defs:
             event = _event_from_wrapper_call(
@@ -85,6 +99,8 @@ def extract_transport_events(
                 boto3_names,
                 resolver,
                 caller_node,
+                binding_name_cache,
+                call_node_cache,
                 depth=0,
                 seen=(),
             )
@@ -140,9 +156,13 @@ class TransportEvent:
             object.__setattr__(self, "qualifier", {})
 
 
-def _transport_clients(function_node: ast.FunctionDef | ast.AsyncFunctionDef, boto3_names: set[str]) -> dict[str, TransportClient]:
+def _transport_clients(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    boto3_names: set[str],
+    before_node: ast.AST | None = None,
+) -> dict[str, TransportClient]:
     clients: dict[str, TransportClient] = {}
-    for value, targets in _assignment_values(function_node):
+    for value, targets in _assignment_values(function_node, before_node=before_node):
         client = _transport_client_from_call(value, boto3_names)
         if client is None:
             continue
@@ -156,9 +176,10 @@ def _queue_resources(
     function_node: ast.FunctionDef | ast.AsyncFunctionDef,
     clients: dict[str, TransportClient],
     boto3_names: set[str],
+    before_node: ast.AST | None = None,
 ) -> dict[str, QueueResource]:
     queues: dict[str, QueueResource] = {}
-    for value, targets in _assignment_values(function_node):
+    for value, targets in _assignment_values(function_node, before_node=before_node):
         queue_arg = _queue_arg_from_call(value, clients, boto3_names)
         if queue_arg is None:
             continue
@@ -211,6 +232,8 @@ def _event_from_wrapper_call(
     boto3_names: set[str],
     caller_resolver: ValueResolver,
     caller_node: FunctionDefNode,
+    binding_name_cache: BindingNameCache,
+    call_node_cache: CallNodeCache,
     *,
     depth: int,
     seen: tuple[str, ...],
@@ -220,22 +243,28 @@ def _event_from_wrapper_call(
     callee_name = _local_function_name(call_node.func)
     if callee_name is None or callee_name in seen:
         return None
-    if callee_name in _local_binding_names(caller_node):
+    if callee_name in _local_binding_names_cached(caller_node, binding_name_cache):
         return None
     wrapper_node = function_defs.get(callee_name)
     if wrapper_node is None:
         return None
-    wrapper_resolver = _resolver(
-        module_name,
-        literal_index,
-        imports,
-        wrapper_node,
-        extra_local_values=_resolved_bindings(call_node, wrapper_node, caller_resolver),
-    )
-    clients = _transport_clients(wrapper_node, boto3_names)
-    queue_resources = _queue_resources(wrapper_node, clients, boto3_names)
+    resolved_bindings = _resolved_bindings(call_node, wrapper_node, caller_resolver)
+    if resolved_bindings is None:
+        return None
+    wrapper_binding_names = _local_binding_names_cached(wrapper_node, binding_name_cache)
     events: list[TransportEvent] = []
-    for nested_call in body_call_nodes(wrapper_node):
+    for nested_call in _body_call_nodes_cached(wrapper_node, call_node_cache):
+        wrapper_resolver = _resolver(
+            module_name,
+            literal_index,
+            imports,
+            wrapper_node,
+            extra_local_values=resolved_bindings,
+            before_node=nested_call,
+            local_binding_names=wrapper_binding_names,
+        )
+        clients = _transport_clients(wrapper_node, boto3_names, before_node=nested_call)
+        queue_resources = _queue_resources(wrapper_node, clients, boto3_names, before_node=nested_call)
         event = _event_from_call(nested_call, clients, queue_resources, boto3_names, wrapper_resolver)
         if event is None:
             event = _event_from_wrapper_call(
@@ -247,6 +276,8 @@ def _event_from_wrapper_call(
                 boto3_names,
                 wrapper_resolver,
                 wrapper_node,
+                binding_name_cache,
+                call_node_cache,
                 depth=depth + 1,
                 seen=(*seen, callee_name),
             )
@@ -366,17 +397,30 @@ def _resolver(
     imports: list[NormalizedImport],
     function_node: FunctionDefNode,
     extra_local_values: dict[str, ast.AST] | None = None,
+    before_node: ast.AST | None = None,
+    local_binding_names: set[str] | None = None,
 ) -> ValueResolver:
     imported_modules, imported_values = import_bindings(imports)
     local_values = _module_values(module_name, literal_index)
+    known_local_names: set[str] = set()
     if extra_local_values:
         local_values.update(extra_local_values)
-    local_values.update(local_literal_assignments(function_node))
+        known_local_names.update(extra_local_values)
+    if before_node is None:
+        local_literals = local_literal_assignments(function_node)
+    else:
+        local_literals = local_literal_assignments_before(function_node, before_node)
+    local_values.update(local_literals)
+    known_local_names.update(local_literals)
+    blocked_names = set()
+    if local_binding_names is not None:
+        blocked_names = local_binding_names - known_local_names
     return ValueResolver(
         ValueScope(
             local_values=local_values,
             imported_modules=imported_modules,
             imported_values=imported_values,
+            blocked_names=blocked_names,
         ),
         literal_index,
     )
@@ -386,23 +430,28 @@ def _resolved_bindings(
     call_node: ast.Call,
     function_node: FunctionDefNode,
     caller_resolver: ValueResolver,
-) -> dict[str, ast.AST]:
+) -> dict[str, ast.AST] | None:
     resolved_bindings: dict[str, ast.AST] = {}
     bindings = bind_args(call_node, function_node)
     if bindings is None:
-        return {}
+        return None
     for name, value_node in bindings.items():
         resolved = caller_resolver.resolve_value(value_node)
         if isinstance(resolved, ResolvedValue):
             resolved_bindings[name] = ast.Constant(value=resolved.value)
         else:
-            resolved_bindings[name] = value_node
+            return None
     return resolved_bindings
 
 
-def _assignment_values(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[ast.AST, tuple[ast.expr, ...]]]:
+def _assignment_values(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    before_node: ast.AST | None = None,
+) -> list[tuple[ast.AST, tuple[ast.expr, ...]]]:
     assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
     for statement in function_node.body:
+        if before_node is not None and not node_starts_before(statement, before_node):
+            continue
         if isinstance(statement, ast.Assign):
             assignments.append((statement.value, tuple(statement.targets)))
         elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
@@ -443,6 +492,24 @@ def _local_function_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
     return None
+
+
+def _body_call_nodes_cached(function_node: FunctionDefNode, cache: CallNodeCache) -> list[ast.Call]:
+    key = id(function_node)
+    calls = cache.get(key)
+    if calls is None:
+        calls = body_call_nodes(function_node)
+        cache[key] = calls
+    return calls
+
+
+def _local_binding_names_cached(function_node: FunctionDefNode, cache: BindingNameCache) -> set[str]:
+    key = id(function_node)
+    names = cache.get(key)
+    if names is None:
+        names = _local_binding_names(function_node)
+        cache[key] = names
+    return names
 
 
 def _local_binding_names(function_node: FunctionDefNode) -> set[str]:

@@ -171,8 +171,74 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertFalse(event_facts)
         unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
         self.assertEqual(len(unresolved), 1)
-        self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_name")
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_local_binding")
         self.assertEqual(unresolved[0].scope_ref["expression"], "queue_url")
+
+    def test_later_local_channel_assignment_does_not_resolve_earlier_call(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'OTHER_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/other"\n\n'
+            "def publish_order():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=queue_url, MessageBody="{}")\n'
+            "    queue_url = OTHER_URL\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_local_binding")
+        self.assertEqual(unresolved[0].scope_ref["expression"], "queue_url")
+
+    def test_later_client_assignment_does_not_make_earlier_call_a_transport_call(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")\n'
+            '    sqs = boto3.client("sqs")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
+    def test_later_queue_resource_assignment_does_not_resolve_earlier_resource_call(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs = boto3.resource("sqs")\n'
+            '    queue.send_message(MessageBody="{}")\n'
+            "    queue = sqs.Queue(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
+    def test_local_parameter_does_not_fall_back_to_same_named_module_channel(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order(QUEUE_URL):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_local_binding")
+        self.assertEqual(unresolved[0].scope_ref["expression"], "QUEUE_URL")
 
     def test_unsupported_transport_channel_literal_emits_coverage_not_fact(self) -> None:
         source = (
@@ -213,6 +279,60 @@ class PythonTransportExtractorTest(unittest.TestCase):
         evidence = [row for row in build.evidence if row.target_id == fact.fact_id]
         self.assertEqual(evidence[0].derivation_class, "static_inferred")
 
+    def test_local_literal_wrapper_argument_can_shadow_same_named_module_channel(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    queue_url = QUEUE_URL\n"
+            "    renamed_wrapper(queue_url)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
+
+    def test_unresolved_local_wrapper_argument_does_not_fall_back_to_same_named_module_channel(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def compute_queue_url():\n"
+            "    return 'runtime-only'\n\n"
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    QUEUE_URL = compute_queue_url()\n"
+            "    renamed_wrapper(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
+    def test_parameter_wrapper_argument_does_not_fall_back_to_same_named_module_channel(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order(QUEUE_URL):\n"
+            "    renamed_wrapper(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
     def test_local_wrapper_keyword_argument_emits_static_inferred_producer(self) -> None:
         source = (
             "import boto3\n\n"
@@ -248,9 +368,6 @@ class PythonTransportExtractorTest(unittest.TestCase):
 
         event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
         self.assertFalse(event_facts)
-        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
-        self.assertTrue(unresolved)
-        self.assertTrue(any(row.scope_ref["reason"] == "unknown_name" for row in unresolved))
 
     def test_duplicate_wrapper_arg_binding_blocks_promotion(self) -> None:
         source = (
@@ -479,6 +596,27 @@ class PythonTransportExtractorTest(unittest.TestCase):
         channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
         self.assertTrue(event_facts)
         self.assertEqual({channels_by_id[fact.object_id].identity["channel_address"] for fact in event_facts}, {"other"})
+        self.assertTrue(any(fact.qualifier["source_kind"] == "python_transport_wrapper_call" for fact in event_facts))
+
+    def test_wrapper_later_local_rebinding_does_not_override_earlier_call_site_binding(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n'
+            'OTHER_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/other"\n\n'
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n'
+            "    destination = OTHER_URL\n\n"
+            "def publish_order():\n"
+            "    renamed_wrapper(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertTrue(event_facts)
+        self.assertEqual({channels_by_id[fact.object_id].identity["channel_address"] for fact in event_facts}, {"orders-created"})
         self.assertTrue(any(fact.qualifier["source_kind"] == "python_transport_wrapper_call" for fact in event_facts))
 
     def test_nested_local_wrapper_promotion_is_bounded_and_static_inferred(self) -> None:
