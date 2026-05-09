@@ -62,6 +62,22 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(channel.identity["channel_address"], "orders-created")
         self.assertEqual(fact.qualifier["api"], "boto3.client('sqs').send_message")
 
+    def test_boto3_annotated_client_assignment_emits_produces_event(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs: object = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["api"], "boto3.client('sqs').send_message")
+
     def test_boto3_sns_publish_with_imported_constant_emits_produces_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -124,6 +140,23 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(channel.identity["channel_address"], "orders-created")
         self.assertEqual(fact.qualifier["api"], "boto3.resource('sqs').Queue(...).send_message")
 
+    def test_boto3_annotated_queue_assignment_emits_produces_event(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs: object = boto3.resource("sqs")\n'
+            "    queue: object = sqs.Queue(QUEUE_URL)\n"
+            '    queue.send_message(MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["api"], "boto3.resource('sqs').Queue(...).send_message")
+
     def test_unresolved_transport_channel_emits_coverage_not_fact(self) -> None:
         source = (
             "import boto3\n\n"
@@ -140,6 +173,23 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(len(unresolved), 1)
         self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_name")
         self.assertEqual(unresolved[0].scope_ref["expression"], "queue_url")
+
+    def test_unsupported_transport_channel_literal_emits_coverage_not_fact(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def publish_order():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl="orders-created", MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unsupported_channel_literal")
+        self.assertEqual(unresolved[0].scope_ref["expression"], "'orders-created'")
 
     def test_user_defined_client_name_does_not_emit_event_without_boto3_import(self) -> None:
         source = (

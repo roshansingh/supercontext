@@ -124,13 +124,11 @@ class TransportEvent:
 
 def _transport_clients(function_node: ast.FunctionDef | ast.AsyncFunctionDef, boto3_names: set[str]) -> dict[str, TransportClient]:
     clients: dict[str, TransportClient] = {}
-    for statement in function_node.body:
-        if not isinstance(statement, ast.Assign):
-            continue
-        client = _transport_client_from_call(statement.value, boto3_names)
+    for value, targets in _assignment_values(function_node):
+        client = _transport_client_from_call(value, boto3_names)
         if client is None:
             continue
-        for target in statement.targets:
+        for target in targets:
             if isinstance(target, ast.Name):
                 clients[target.id] = client
     return clients
@@ -142,13 +140,11 @@ def _queue_resources(
     boto3_names: set[str],
 ) -> dict[str, QueueResource]:
     queues: dict[str, QueueResource] = {}
-    for statement in function_node.body:
-        if not isinstance(statement, ast.Assign):
-            continue
-        queue_arg = _queue_arg_from_call(statement.value, clients, boto3_names)
+    for value, targets in _assignment_values(function_node):
+        queue_arg = _queue_arg_from_call(value, clients, boto3_names)
         if queue_arg is None:
             continue
-        for target in statement.targets:
+        for target in targets:
             if isinstance(target, ast.Name):
                 queues[target.id] = QueueResource(channel_arg=queue_arg)
     return queues
@@ -215,21 +211,10 @@ def _event_from_channel_arg(
 
 def _normalize_channel(transport: str, value: str) -> NormalizedChannel | None:
     if transport == "sqs":
-        return normalize_sqs_url(value) or normalize_sqs_arn(value) or _plain_channel("sqs", value, "queue_name")
+        return normalize_sqs_url(value) or normalize_sqs_arn(value)
     if transport == "sns":
-        return normalize_sns_arn(value) or _plain_channel("sns", value, "topic_name")
+        return normalize_sns_arn(value)
     return None
-
-
-def _plain_channel(broker_kind: str, value: str, property_name: str) -> NormalizedChannel | None:
-    channel_address = value.strip()
-    if not channel_address:
-        return None
-    return NormalizedChannel(
-        broker_kind=broker_kind,
-        channel_address=channel_address,
-        properties={"raw_literal": value, property_name: channel_address},
-    )
 
 
 def _transport_client_from_call(node: ast.AST, boto3_names: set[str]) -> TransportClient | None:
@@ -289,6 +274,16 @@ def _boto3_names(imports: list[NormalizedImport]) -> set[str]:
 
 def _module_values(module_name: str, literal_index: LiteralIndex) -> dict[str, ast.AST]:
     return {ref.name: node for ref, node in literal_index.values.items() if ref.module_name == module_name}
+
+
+def _assignment_values(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[ast.AST, tuple[ast.expr, ...]]]:
+    assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
+    for statement in function_node.body:
+        if isinstance(statement, ast.Assign):
+            assignments.append((statement.value, tuple(statement.targets)))
+        elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+            assignments.append((statement.value, (statement.target,)))
+    return assignments
 
 
 def _keyword_arg(call_node: ast.Call, name: str) -> ast.AST | None:
