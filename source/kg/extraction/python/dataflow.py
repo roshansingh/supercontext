@@ -93,8 +93,10 @@ class ValueResolver:
             return UnresolvedValue("cyclic_name", name)
         if name in self.scope.local_values:
             self._resolving_names.add(name)
-            resolved = self.resolve_value(self.scope.local_values[name])
-            self._resolving_names.remove(name)
+            try:
+                resolved = self.resolve_value(self.scope.local_values[name])
+            finally:
+                self._resolving_names.remove(name)
             if isinstance(resolved, ResolvedValue):
                 return ResolvedValue(resolved.value, f"local:{name}", _expression(node))
             return resolved
@@ -181,14 +183,16 @@ class ValueResolver:
         if node is None:
             return UnresolvedValue("unknown_literal_ref", expression)
         self._resolving_refs.add(ref)
-        resolved = self.resolve_value(node)
-        self._resolving_refs.remove(ref)
+        try:
+            resolved = self.resolve_value(node)
+        finally:
+            self._resolving_refs.remove(ref)
         if isinstance(resolved, ResolvedValue):
             return ResolvedValue(resolved.value, f"literal_ref:{ref.module_name}.{ref.name}", expression)
         return resolved
 
     def _env_name_from_call(self, call_name: str, node: ast.Call) -> str | None:
-        if call_name not in {"os.getenv", "os.environ.get", "getenv"}:
+        if call_name not in {"os.getenv", "os.environ.get"}:
             return None
         if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
             return None
@@ -301,7 +305,7 @@ def module_name_for_path(repo: RepoSnapshot, file_path: Path) -> str:
 
 
 def resolved_to_json(value: ResolvedValue) -> JsonObject:
-    return {"value": value.value, "source": value.source, "expression": value.expression}
+    return {"value": _json_safe(value.value), "source": value.source, "expression": value.expression}
 
 
 def _is_supported_literal_expression(node: ast.AST) -> bool:
@@ -341,6 +345,18 @@ def _call_name(node: ast.AST) -> str:
         parts = _attribute_parts(node)
         return ".".join(parts)
     return ""
+
+
+def _json_safe(value: object) -> object:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, set):
+        return [_json_safe(item) for item in sorted(value, key=repr)]
+    if isinstance(value, dict):
+        return {str(_json_safe(key)): _json_safe(item) for key, item in value.items()}
+    return str(value)
 
 
 def _expression(node: ast.AST) -> str:

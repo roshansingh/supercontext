@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from source.kg.extraction.python.dataflow import (
     build_repo_literal_index,
     import_bindings,
     local_literal_assignments,
+    resolved_to_json,
     unresolved_coverage,
 )
 from source.kg.normalization.python.imports import PythonImportNormalizer
@@ -119,6 +121,17 @@ class PythonDataflowTest(unittest.TestCase):
         self.assertEqual(resolved.value, "resolved-value")
         self.assertEqual(resolved.source, "env:CHANNEL_URL")
 
+    def test_bare_getenv_is_not_treated_as_env_lookup(self) -> None:
+        node = ast.parse('value = getenv("CHANNEL_URL")').body[0]
+        assert isinstance(node, ast.Assign)
+        resolver = ValueResolver(ValueScope(env_values={"CHANNEL_URL": "resolved-value"}))
+
+        resolved = resolver.resolve_value(node.value)
+
+        self.assertIsInstance(resolved, UnresolvedValue)
+        assert isinstance(resolved, UnresolvedValue)
+        self.assertEqual(resolved.reason, "unsupported_call")
+
     def test_unresolved_value_can_be_converted_to_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -148,6 +161,16 @@ class PythonDataflowTest(unittest.TestCase):
         self.assertIsInstance(resolved, ResolvedValue)
         assert isinstance(resolved, ResolvedValue)
         self.assertEqual(resolved.value, "orders-created")
+
+    def test_resolved_to_json_normalizes_non_json_values(self) -> None:
+        resolved = ResolvedValue({"tuple": ("a", "b"), "set": {"b", "a"}, 1: "numeric-key"}, "literal", "value")
+
+        payload = resolved_to_json(resolved)
+
+        json.dumps(payload)
+        self.assertEqual(payload["value"]["tuple"], ["a", "b"])
+        self.assertEqual(payload["value"]["set"], ["a", "b"])
+        self.assertEqual(payload["value"]["1"], "numeric-key")
 
 
 def _repo_snapshot(root: Path, python_files: tuple[Path, ...]) -> RepoSnapshot:
