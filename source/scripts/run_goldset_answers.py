@@ -91,7 +91,8 @@ def _load_or_build_packets(
         packets = data.get("packets", data)
         if not isinstance(packets, list):
             raise ValueError("packets input must be a list or an object with a 'packets' list")
-        return [packet for packet in packets if packet.get("scenario_id") in set(scenario_ids)]
+        scenario_id_set = set(scenario_ids)
+        return [packet for packet in packets if packet.get("scenario_id") in scenario_id_set]
 
     kg = KgSnapshot(snapshot)
     return [_run_scenario(kg, scenario_id) for scenario_id in scenario_ids]

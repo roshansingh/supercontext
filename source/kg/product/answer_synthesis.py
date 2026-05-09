@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
-from typing import Any
 
 from source.kg.core.models import JsonObject
+from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 
 
 DEFAULT_ANSWER_MODEL = "opus"
@@ -103,7 +103,7 @@ def render_answers_markdown(result: JsonObject) -> str:
                 scenario=answer["scenario_id"],
                 score=answer["score"],
                 failure_modes=", ".join(answer.get("failure_modes", [])),
-                notes=_one_line(answer.get("score_reason", "")),
+                notes=one_line(answer.get("score_reason", "")),
             )
         )
 
@@ -123,9 +123,9 @@ def render_answers_markdown(result: JsonObject) -> str:
                 "",
             ]
         )
-        lines.extend(_bullet_lines(answer.get("caveats", [])))
+        lines.extend(bullet_lines(answer.get("caveats", [])))
         lines.extend(["", "### Unknown Because Missing Evidence", ""])
-        lines.extend(_bullet_lines(answer.get("unknowns", [])))
+        lines.extend(bullet_lines(answer.get("unknowns", [])))
         lines.extend(["", "### Score Notes", "", answer["score_reason"].strip()])
 
     return "\n".join(lines).rstrip() + "\n"
@@ -146,7 +146,7 @@ def _prompt_for_packet(packet: JsonObject) -> str:
         "user_query": packet.get("user_query"),
         "expected_answer_shape": packet.get("expected_answer_shape"),
         "retrieval_steps": packet.get("retrieval_steps", []),
-        "evidence_items": [_compact_evidence_item(row) for row in packet.get("evidence_items", [])],
+        "evidence_items": [compact_evidence_item(row) for row in packet.get("evidence_items", [])],
         "unknowns": packet.get("unknowns", []),
     }
     return f"""Create a grounded answer from this EvidencePacket.
@@ -174,27 +174,6 @@ Rules:
 EvidencePacket:
 {json.dumps(compact_packet, indent=2, sort_keys=True)}
 """
-
-
-def _compact_evidence_item(row: JsonObject) -> JsonObject:
-    return {
-        "claim": row.get("claim"),
-        "fact_type": row.get("fact_type"),
-        "subject": row.get("subject"),
-        "object": row.get("object"),
-        "repo": row.get("repo"),
-        "path": row.get("path"),
-        "line_start": row.get("line_start"),
-        "line_end": row.get("line_end"),
-        "source_system": row.get("source_system"),
-        "derivation_class": row.get("derivation_class"),
-        "confidence": row.get("confidence"),
-        "reconciliation_group": row.get("reconciliation_group"),
-        "possible_match": row.get("possible_match"),
-        "similarity": row.get("similarity"),
-        "step": row.get("step"),
-        "qualifier": row.get("qualifier", {}),
-    }
 
 
 def _parse_json_result(result_text: str) -> JsonObject:
@@ -225,13 +204,3 @@ def _validate_answer(answer: JsonObject) -> None:
     for key in ("answer", "score_reason"):
         if not isinstance(answer.get(key), str) or not answer[key].strip():
             raise RuntimeError(f"Answer field {key!r} must be a non-empty string")
-
-
-def _bullet_lines(values: list[Any]) -> list[str]:
-    if not values:
-        return ["- None."]
-    return [f"- {str(value).strip()}" for value in values]
-
-
-def _one_line(value: str) -> str:
-    return " ".join(value.split()).replace("|", "\\|")

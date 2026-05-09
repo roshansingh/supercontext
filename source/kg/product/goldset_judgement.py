@@ -4,10 +4,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
-from typing import Any
 
 from source.kg.core.models import JsonObject
-from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL, _compact_evidence_item, _one_line
+from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
+from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 
 
 JUDGEMENT_SCORES = ("Pass", "Partial", "Fail")
@@ -133,7 +133,7 @@ def render_judgements_markdown(result: JsonObject) -> str:
                 evidence=judgement["evidence_completeness"],
                 answer=judgement["answer_score"],
                 owner=", ".join(judgement.get("failure_owners", [])),
-                notes=_one_line(judgement.get("summary", "")),
+                notes=one_line(judgement.get("summary", "")),
             )
         )
 
@@ -155,11 +155,11 @@ def render_judgements_markdown(result: JsonObject) -> str:
                 "",
             ]
         )
-        lines.extend(_bullet_lines(judgement.get("ground_truth_coverage", [])))
+        lines.extend(bullet_lines(judgement.get("ground_truth_coverage", [])))
         lines.extend(["", "### Missing Or Weak Evidence", ""])
-        lines.extend(_bullet_lines(judgement.get("missing_or_weak_evidence", [])))
+        lines.extend(bullet_lines(judgement.get("missing_or_weak_evidence", [])))
         lines.extend(["", "### Answer Issues", ""])
-        lines.extend(_bullet_lines(judgement.get("answer_issues", [])))
+        lines.extend(bullet_lines(judgement.get("answer_issues", [])))
         lines.extend(["", "### Recommended Next Action", "", judgement["recommended_next_action"].strip()])
 
     return "\n".join(lines).rstrip() + "\n"
@@ -180,7 +180,7 @@ def _prompt_for_judgement(scenario: GoldsetScenario, packet: JsonObject, answer:
         "user_query": packet.get("user_query"),
         "expected_answer_shape": packet.get("expected_answer_shape"),
         "retrieval_steps": packet.get("retrieval_steps", []),
-        "evidence_items": [_compact_evidence_item(row) for row in packet.get("evidence_items", [])],
+        "evidence_items": [compact_evidence_item(row) for row in packet.get("evidence_items", [])],
         "unknowns": packet.get("unknowns", []),
     }
     compact_answer = {
@@ -287,9 +287,3 @@ def _split_markdown_row(line: str) -> list[str]:
     if cells and all(set(cell) <= {"-", ":"} for cell in cells):
         return []
     return cells
-
-
-def _bullet_lines(values: list[Any]) -> list[str]:
-    if not values:
-        return ["- None."]
-    return [f"- {str(value).strip()}" for value in values]

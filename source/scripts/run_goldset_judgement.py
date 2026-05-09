@@ -10,6 +10,7 @@ from source.kg.core.models import JsonObject
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
 from source.kg.product.goldset_judgement import (
     ClaudeGoldsetJudge,
+    GoldsetScenario,
     GoldsetJudgementConfig,
     load_goldset_scenarios,
     render_judgements_markdown,
@@ -89,7 +90,7 @@ async def _judge_all(
     packets_path: str,
     answers_path: str,
     scenario_ids: tuple[str, ...],
-    scenarios: dict[str, object],
+    scenarios: dict[str, GoldsetScenario],
     packets: dict[str, JsonObject],
     answers: dict[str, JsonObject],
     skipped_missing_ground_truth: list[str],
@@ -121,7 +122,9 @@ def _load_by_scenario(path: str, key: str) -> dict[str, JsonObject]:
     if not isinstance(rows, list):
         raise ValueError(f"{path} must contain a list or an object with a {key!r} list")
     by_scenario: dict[str, JsonObject] = {}
-    for row in rows:
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path} {key}[{index}] must be an object")
         scenario_id = row.get("scenario_id")
         if not scenario_id:
             continue

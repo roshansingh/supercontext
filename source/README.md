@@ -53,7 +53,7 @@ goldset scenario
 -> evidence packet
 -> source-byte verification later
 -> Claude/LLM synthesis later
--> independent gold-truth judgement
+-> independent ground-truth judgement
 -> scored product answer
 ```
 
@@ -97,7 +97,7 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 deploy-ma
 python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 reconcile-contract --name shopagain_docs_vs_backend --identity-key endpoint_path --left-name documented --left-predicate DOCUMENTS_ENDPOINT --left-repo shopagain_api_docs --left-path-prefix /v1/ --right-name implemented --right-predicate EXPOSES_ENDPOINT --right-repo mercury_api --right-repo mercury_webhooks --right-path-prefix /v1/
 python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_23 --scenario Q082
 python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_23 --scenario Q082 --scenario Q083 --out data/kg_runs/latticeai_23/product_packets.json
-python -m source.scripts.run_goldset_answers --snapshot data/kg_runs/latticeai_23 --md-out docs/evaluation/LATTICEAI-GOLDSET-ANSWERS-2026-05-09.md --json-out data/kg_runs/latticeai_23/goldset_answers.json
+python -m source.scripts.run_goldset_answers --snapshot data/kg_runs/latticeai_23 --packets-out data/kg_runs/latticeai_23/goldset_packets_for_answers.json --md-out docs/evaluation/LATTICEAI-GOLDSET-ANSWERS-2026-05-09.md --json-out data/kg_runs/latticeai_23/goldset_answers.json
 python -m source.scripts.run_goldset_judgement --packets data/kg_runs/latticeai_23/goldset_packets_for_answers.json --answers data/kg_runs/latticeai_23/goldset_answers.json --md-out docs/evaluation/LATTICEAI-GOLDSET-JUDGEMENT-2026-05-09.md --json-out data/kg_runs/latticeai_23/goldset_judgement.json
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
