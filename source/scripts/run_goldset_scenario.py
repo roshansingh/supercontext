@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from source.kg.product import EvidencePacketBuilder, SCENARIO_PLANS
+from source.kg.product.validation import normalize_unique_strings
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -14,14 +15,16 @@ def main() -> None:
     parser.add_argument(
         "--scenario",
         action="append",
-        choices=sorted(SCENARIO_PLANS),
         help="Scenario ID to run; repeatable. Defaults to all implemented scenarios.",
     )
     parser.add_argument("--out", help="Optional JSON output path")
     args = parser.parse_args()
 
     kg = KgSnapshot(args.snapshot)
-    scenario_ids = args.scenario or sorted(SCENARIO_PLANS)
+    scenario_ids = normalize_unique_strings(tuple(args.scenario or sorted(SCENARIO_PLANS)), "--scenario")
+    invalid_scenario_ids = sorted(set(scenario_ids) - set(SCENARIO_PLANS))
+    if invalid_scenario_ids:
+        raise ValueError(f"Unknown scenarios: {invalid_scenario_ids}")
     packets = [_run_scenario(kg, scenario_id) for scenario_id in scenario_ids]
     result = {"snapshot": str(Path(args.snapshot).expanduser()), "scenario_count": len(packets), "packets": packets}
 

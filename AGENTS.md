@@ -19,9 +19,10 @@ Use Python module commands from the repository root.
 
 ```bash
 python -m compileall -q source
+python -m unittest discover -s tests
 ```
 
-Checks Python syntax/import validity for the prototype.
+Checks Python syntax/import validity and the focused regression tests for the prototype.
 
 ```bash
 python -m source.scripts.build_kg --repo ~/work/mercury_ml --out data/kg_runs/mercury_ml
@@ -52,3 +53,15 @@ Use short imperative commit messages, matching the current history, for example 
 ## Agent-Specific Instructions
 
 Keep changes surgical. Do not rewrite ADRs, research docs, or generated data unless the task requires it. When implementation uncovers a product or architecture decision, document the finding instead of silently expanding scope.
+
+## Pre-PR Validation Discipline
+
+Copilot has repeatedly caught boundary-condition mistakes in review. Before opening or updating a PR, explicitly check these patterns:
+
+- Validate external JSON/input shapes before use. If a CLI accepts either a list or an object wrapper, branch on `isinstance(data, dict)` before calling `.get(...)`.
+- Fail fast on malformed rows. Reject non-object rows, missing IDs, duplicate IDs, and padded IDs; normalize stored IDs after stripping whitespace.
+- Validate list-shaped fields before rendering or iterating. Do not assume model outputs or loaded JSON contain `list[str]`; reject missing, non-list, or non-string values with field-specific errors.
+- Treat sentinel values as contracts. Values like `"none"` must be mutually exclusive with failure values, and pass/fail scores must be consistent with their failure fields.
+- Keep production defaults aligned with ADRs. If eval scripts need unsafe or non-interactive modes such as `dontAsk`, expose them through CLI/env config and keep library defaults policy-safe.
+- Resolve executable dependencies early. If code shells out or relies on an SDK CLI, check path/config up front and raise an actionable error.
+- Add targeted negative checks for each validation branch. A help/compile check is not enough when changing loaders, parsers, or LLM-output handling.
