@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from source.kg import aggregations, path_search
+from source.kg.display import display_entity
 from source.kg.models import JsonObject
 from source.kg.store import read_jsonl
 
@@ -398,6 +399,119 @@ class KgSnapshot:
             "dependencies": returned,
         }
 
+    def domain_references(self, domain_query: str, limit: int = 25) -> JsonObject:
+        limit = self._clamp_limit(limit, max_limit=100)
+        domains = [
+            entity
+            for entity in self.entities
+            if entity["kind"] == "Domain" and domain_query.lower() in str(entity["identity"].get("name", "")).lower()
+        ]
+        domain_ids = {entity["entity_id"] for entity in domains}
+        references = [
+            self._fact_result(fact, self.entities_by_id[fact["subject_id"]], self.entities_by_id[fact["object_id"]])
+            for fact in self.facts
+            if fact["predicate"] in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}
+            and (fact["subject_id"] in domain_ids or fact["object_id"] in domain_ids)
+            and fact["subject_id"] in self.entities_by_id
+            and fact["object_id"] in self.entities_by_id
+        ]
+        references = sorted(references, key=lambda row: (str(row.get("object")), str(row.get("subject"))))
+        returned = references[:limit]
+        return {
+            "status": "found" if references else "not_found",
+            "query": domain_query,
+            "domain_count": len(domain_ids),
+            "reference_count": len(references),
+            "returned_count": len(returned),
+            "references": returned,
+        }
+
+    def endpoints(self, path_query: str | None = None, limit: int = 25) -> JsonObject:
+        limit = self._clamp_limit(limit, max_limit=100)
+        rows = []
+        for fact in self.facts:
+            if fact["predicate"] not in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}:
+                continue
+            subject = self.entities_by_id.get(fact["subject_id"])
+            endpoint = self.entities_by_id.get(fact["object_id"])
+            if not subject or not endpoint or endpoint.get("kind") != "Endpoint":
+                continue
+            path = str(endpoint.get("identity", {}).get("path", ""))
+            if path_query and path_query.lower() not in path.lower():
+                continue
+            rows.append(self._fact_result(fact, subject, endpoint))
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                str(row["qualifier"].get("path", "")),
+                str(row.get("predicate", "")),
+                str(row.get("object", "")),
+            ),
+        )
+        returned = rows[:limit]
+        return {
+            "status": "found" if rows else "not_found",
+            "query": path_query,
+            "endpoint_fact_count": len(rows),
+            "returned_count": len(returned),
+            "endpoints": returned,
+        }
+
+    def event_channels(self, channel_query: str | None = None, limit: int = 25) -> JsonObject:
+        limit = self._clamp_limit(limit, max_limit=100)
+        rows = []
+        for fact in self.facts:
+            if fact["predicate"] not in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
+                continue
+            subject = self.entities_by_id.get(fact["subject_id"])
+            channel = self.entities_by_id.get(fact["object_id"])
+            if not subject or not channel or channel.get("kind") != "EventChannel":
+                continue
+            name = str(channel.get("identity", {}).get("name", ""))
+            if channel_query and channel_query.lower() not in name.lower():
+                continue
+            rows.append(self._fact_result(fact, subject, channel))
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                str(row["qualifier"].get("path", "")),
+                str(row.get("predicate", "")),
+                str(row.get("object", "")),
+            ),
+        )
+        returned = rows[:limit]
+        return {
+            "status": "found" if rows else "not_found",
+            "query": channel_query,
+            "event_fact_count": len(rows),
+            "returned_count": len(returned),
+            "event_channels": returned,
+        }
+
+    def deploy_mappings(self, target_query: str | None = None, limit: int = 25) -> JsonObject:
+        limit = self._clamp_limit(limit, max_limit=100)
+        rows = []
+        for fact in self.facts:
+            if fact["predicate"] != "ROUTES_DOMAIN_TO_DEPLOY":
+                continue
+            subject = self.entities_by_id.get(fact["subject_id"])
+            target = self.entities_by_id.get(fact["object_id"])
+            if not subject or not target:
+                continue
+            haystack = f"{self._display(subject)} {self._display(target)} {fact.get('qualifier', {})}".lower()
+            if target_query and target_query.lower() not in haystack:
+                continue
+            rows.append(self._fact_result(fact, subject, target))
+        rows = sorted(rows, key=lambda row: (str(row.get("subject")), str(row.get("object"))))
+        returned = rows[:limit]
+        return {
+            "status": "found" if rows else "not_found",
+            "query": target_query,
+            "mapping_count": len(rows),
+            "returned_count": len(returned),
+            "mappings": returned,
+        }
+
     def _clamp_limit(self, limit: int, max_limit: int = 100) -> int:
         return min(max(1, limit), max_limit)
 
@@ -725,9 +839,4 @@ class KgSnapshot:
         }
 
     def _display(self, entity: JsonObject) -> str:
-        identity = entity["identity"]
-        if entity["kind"] == "CodeSymbol":
-            return f"{identity.get('module')}.{identity.get('qualname')}"
-        if entity["kind"] == "CodeModule":
-            return str(identity.get("module"))
-        return str(identity.get("name") or identity.get("slug") or identity)
+        return display_entity(entity)

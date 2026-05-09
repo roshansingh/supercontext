@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from source.kg.extraction.config import StaticConfigExtractor
 from source.kg.extraction.python.ast_extractor import PythonAstExtractor
+from source.kg.extraction.typescript.compiler_api_extractor import TypeScriptCompilerApiExtractor
 from source.kg.models import Coverage, JsonObject, utc_now_iso
 from source.kg.repo_source import RepoSnapshot, discover_repo
 from source.kg.store import JsonlKgStore
-from source.kg.extraction.typescript.compiler_api_extractor import TypeScriptCompilerApiExtractor
 
 
 def build_kg(repo_path: str | Path, output_dir: str | Path, strict_extractors: bool = False) -> JsonObject:
@@ -52,7 +53,7 @@ class RepoKgBuild:
 
 
 def extract_repo(repo: RepoSnapshot, strict_extractors: bool = False) -> RepoKgBuild:
-    extractors = []
+    extractors = [StaticConfigExtractor()]
     if repo.python_files:
         extractors.append(PythonAstExtractor())
     if repo.typescript_files:

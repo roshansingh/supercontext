@@ -8,10 +8,11 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 
 - Reads a local Python or TypeScript/JavaScript repository.
 - Can combine multiple local repositories into one snapshot.
-- Extracts repo, service, module, symbol, import, and basic call facts with file/line evidence.
+- Extracts repo, service, module, symbol, import, basic call, domain/env, endpoint, deploy, and event-channel facts with file/line evidence.
 - Links imported external packages to another indexed repo/service when a unique manifest package-name match exists.
 - Writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - Provides small query scripts for summary, callers, blast radius, and imports.
+- Provides a product-validation runner that converts goldset scenario plans into normalized evidence packets.
 
 ## What It Does Not Do Yet
 
@@ -21,15 +22,40 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - No broad language coverage.
 - Multi-repo linking is manifest/package-name based only; it does not infer aliases with an LLM.
 - TypeScript/JavaScript support is parser-backed but still static; it does not perform full type-aware resolution yet.
+- Evidence packets do not fetch source bytes yet; ADR-0005 Mode A verification should consume their `repo`, `commit_sha`, `path`, and line coordinates later.
 - No automatic LLM enrichment in the default path.
 
 ## Layout
 
 - `source/kg/extraction/python/` contains Python AST extraction.
 - `source/kg/extraction/typescript/` contains TypeScript/JavaScript compiler-API extraction.
+- `source/kg/extraction/config/` contains deterministic config extraction for domains, env vars, endpoints, deploy mappings, and event channels.
 - `source/kg/normalization/python/` contains Python import normalization.
 - `source/kg/normalization/typescript/` contains TypeScript/JavaScript import normalization.
+- `source/kg/product/scenario_plans.py` maps product-validation query IDs to deterministic KG retrieval steps.
+- `source/kg/product/evidence_packet.py` normalizes query results into synthesis-ready evidence packets.
+- `source/kg/product/contract_reconciliation.py` compares two scoped sets of facts using a reusable contract identity key.
 - `source/kg/aggregations.py` contains language-independent ranked/grouped query helpers over normalized facts.
+
+## Product-Validation Flow
+
+The product path is intentionally split so we can measure KG value before adding agentic fallback:
+
+```text
+goldset scenario
+-> retrieval plan
+-> deterministic KG queries
+-> evidence packet
+-> source-byte verification later
+-> Claude/LLM synthesis later
+-> scored product answer
+```
+
+Retrieval plans decide which KG query surfaces to call. For example, Q082 runs domain lookup for `api.shopagain.io` and deploy lookup for `prod_shopagain_wsgi.py`.
+
+Evidence packets normalize raw facts into rows with `claim`, `fact_type`, `subject`, `object`, `repo`, `commit_sha`, `path`, `line_start`, `line_end`, `source_system`, `derivation_class`, and `confidence`. They are not final answers; they are the controlled input to source verification and later Claude synthesis.
+
+Contract reconciliation is the generic primitive behind docs-vs-code, client-vs-backend, producer-vs-consumer, and deploy-vs-service checks. It takes two scoped fact sets, an identity key such as `endpoint_path`, and returns `matched`, `left_only`, `right_only`, and `possible_matches`. Scenario plans provide the domain-specific scope; the reconciler itself does not know about ShopAgain or API drift.
 
 ## Run
 
@@ -47,6 +73,13 @@ python -m source.scripts.build_multi_kg --repo ~/work/orgs/latticeai/mercury_ml 
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml summary
 python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_ml_pair cross-repo-links --limit 10
 python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_ml_pair repo-dependencies mercury_ml_api --limit 10
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 domain-references api.shopagain.io --limit 20
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 endpoints --path /api/token --limit 20
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 event-channels --channel la-prod-campaign-messages --limit 20
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 deploy-mappings --target prod_shopagain_wsgi.py --limit 20
+python -m source.scripts.query_kg --snapshot data/kg_runs/latticeai_23 reconcile-contract --name shopagain_docs_vs_backend --identity-key endpoint_path --left-name documented --left-predicate DOCUMENTS_ENDPOINT --left-repo shopagain_api_docs --left-path-prefix /v1/ --right-name implemented --right-predicate EXPOSES_ENDPOINT --right-repo mercury_api --right-repo mercury_webhooks --right-path-prefix /v1/
+python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_23 --scenario Q082
+python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_23 --scenario Q082 --scenario Q083 --out data/kg_runs/latticeai_23/product_packets.json
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml modules-importing pandas --limit 5
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml dependency-info os
 python -m source.scripts.query_kg --snapshot data/kg_runs/mercury_ml top-dependencies --limit 10
