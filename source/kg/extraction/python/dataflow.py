@@ -258,7 +258,7 @@ def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunction
 
 def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST]:
     positional_params = [*function_def.args.posonlyargs, *function_def.args.args]
-    keyword_params = {param.arg for param in [*positional_params, *function_def.args.kwonlyargs]}
+    keyword_params = {param.arg for param in [*function_def.args.args, *function_def.args.kwonlyargs]}
     bindings: dict[str, ast.AST] = {}
     for index, arg_node in enumerate(call_node.args):
         if index >= len(positional_params):

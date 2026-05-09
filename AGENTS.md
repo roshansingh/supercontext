@@ -67,6 +67,7 @@ Copilot has repeatedly caught boundary-condition mistakes in review. Before open
 - Add targeted negative checks for each validation branch. A help/compile check is not enough when changing loaders, parsers, or LLM-output handling.
 - For API extractors, test common equivalent call shapes before PR: positional args, keyword args, alias imports, chained calls, assigned clients/resources, and unresolved arguments. Do not stop at the single happy path.
 - For AST extractors, test common statement variants too: `Assign`, `AnnAssign`, direct chained calls, and assigned intermediate objects.
+- For Python AST semantics, test language rules that affect binding before PR: positional-only parameters, keyword-only parameters, local assignment shadowing, parameter shadowing, and nested function/class scopes.
 - If code has an unsupported/error branch, add a test that proves the branch is reachable. Do not leave fallback logic so broad that invalid inputs silently become canonical facts.
 - When adding caches or indexes, check resource impact explicitly. Avoid retaining full file contents when only AST, line count, or metadata is needed.
 - Keep allowlists as the single source of truth. Do not duplicate supported kinds, methods, transports, languages, or statuses in extractor logic.

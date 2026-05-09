@@ -233,6 +233,25 @@ class PythonTransportExtractorTest(unittest.TestCase):
         evidence = [row for row in build.evidence if row.target_id == fact.fact_id]
         self.assertEqual(evidence[0].derivation_class, "static_inferred")
 
+    def test_positional_only_wrapper_param_is_not_bound_by_keyword(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def renamed_wrapper(destination, /):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    renamed_wrapper(destination=QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
+        self.assertTrue(unresolved)
+        self.assertTrue(any(row.scope_ref["reason"] == "unknown_name" for row in unresolved))
+
     def test_wrapper_promotion_does_not_depend_on_wrapper_name(self) -> None:
         for wrapper_name in ("alpha", "send_message"):
             with self.subTest(wrapper_name=wrapper_name):
@@ -252,6 +271,39 @@ class PythonTransportExtractorTest(unittest.TestCase):
                 self.assertEqual(channel.identity["broker_kind"], "sqs")
                 self.assertEqual(channel.identity["channel_address"], "orders-created")
                 self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
+
+    def test_local_assignment_shadowing_wrapper_name_blocks_promotion(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def sender(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    sender = lambda destination: None\n"
+            "    sender(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
+    def test_parameter_shadowing_wrapper_name_blocks_promotion(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def sender(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order(sender):\n"
+            "    sender(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
 
     def test_nested_local_wrapper_promotion_is_bounded_and_static_inferred(self) -> None:
         source = (

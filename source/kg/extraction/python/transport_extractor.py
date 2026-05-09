@@ -84,6 +84,7 @@ def extract_transport_events(
                 caller.module_name,
                 boto3_names,
                 resolver,
+                caller_node,
                 depth=0,
                 seen=(),
             )
@@ -209,6 +210,7 @@ def _event_from_wrapper_call(
     module_name: str,
     boto3_names: set[str],
     caller_resolver: ValueResolver,
+    caller_node: FunctionDefNode,
     *,
     depth: int,
     seen: tuple[str, ...],
@@ -217,6 +219,8 @@ def _event_from_wrapper_call(
         return None
     callee_name = _local_function_name(call_node.func)
     if callee_name is None or callee_name in seen:
+        return None
+    if callee_name in _local_binding_names(caller_node):
         return None
     wrapper_node = function_defs.get(callee_name)
     if wrapper_node is None:
@@ -241,6 +245,7 @@ def _event_from_wrapper_call(
                 module_name,
                 boto3_names,
                 wrapper_resolver,
+                wrapper_node,
                 depth=depth + 1,
                 seen=(*seen, callee_name),
             )
@@ -431,6 +436,43 @@ def _local_function_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
     return None
+
+
+def _local_binding_names(function_node: FunctionDefNode) -> set[str]:
+    names = {
+        arg.arg
+        for arg in [
+            *function_node.args.posonlyargs,
+            *function_node.args.args,
+            *function_node.args.kwonlyargs,
+        ]
+    }
+    if function_node.args.vararg is not None:
+        names.add(function_node.args.vararg.arg)
+    if function_node.args.kwarg is not None:
+        names.add(function_node.args.kwarg.arg)
+    for statement in function_node.body:
+        if isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                names.update(_target_names(target))
+        elif isinstance(statement, ast.AnnAssign):
+            names.update(_target_names(statement.target))
+        elif isinstance(statement, ast.AugAssign):
+            names.update(_target_names(statement.target))
+        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(statement.name)
+    return names
+
+
+def _target_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for element in target.elts:
+            names.update(_target_names(element))
+        return names
+    return set()
 
 
 def _method_name(node: ast.AST) -> str | None:
