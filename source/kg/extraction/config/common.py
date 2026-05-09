@@ -168,7 +168,7 @@ def endpoint_entity(repo: RepoSnapshot, method: str, path: str, host: str | None
 
 
 def event_channel_entity(
-    repo: RepoSnapshot,
+    _repo: RepoSnapshot,
     broker_kind: str,
     channel_address: str,
     *,
