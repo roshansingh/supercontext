@@ -62,6 +62,10 @@ def _extract_apache(repo: RepoSnapshot, scanned: ScannedFile, service_entity: En
         for wsgi_line, wsgi_path in wsgi_by_line:
             target = deploy_target_entity(repo, "wsgi", wsgi_path)
             add_entity_evidence(build, repo, target, scanned.path, wsgi_line)
+            qualifier: JsonObject = {"source_kind": "apache_vhost"}
+            repo_hint = _repo_hint_from_path(wsgi_path)
+            if repo_hint:
+                qualifier["target_repo_hint"] = repo_hint
             add_fact(
                 build,
                 "ROUTES_DOMAIN_TO_DEPLOY",
@@ -71,7 +75,7 @@ def _extract_apache(repo: RepoSnapshot, scanned: ScannedFile, service_entity: En
                 scanned.path,
                 min(line_number, wsgi_line),
                 max(line_number, wsgi_line),
-                qualifier={"source_kind": "apache_vhost", "target_repo_hint": _repo_hint_from_path(wsgi_path)},
+                qualifier=qualifier,
             )
 
 
@@ -178,9 +182,8 @@ def _add_event_reference(
 
 def _repo_hint_from_path(path: str) -> str | None:
     parts = Path(path).parts
-    for index, part in enumerate(parts):
-        if part == "ubuntu" and index + 1 < len(parts):
-            return parts[index + 1]
+    if len(parts) >= 4 and parts[1] == "home":
+        return parts[3]
     return None
 
 

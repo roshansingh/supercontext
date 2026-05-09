@@ -30,7 +30,8 @@ class StaticConfigExtractor:
         build.entities.extend([repo_entity, service_entity])
         build.evidence.extend([self._repo_evidence(repo, repo_entity), self._service_evidence(repo, service_entity)])
         manifest_path = self._manifest_path(repo)
-        add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, manifest_path, 1)
+        if manifest_path is not None:
+            add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, manifest_path, 1)
 
         files = iter_scannable_files(repo)
         extract_domain_env(repo, files, service_entity, build)
@@ -82,18 +83,18 @@ class StaticConfigExtractor:
             target_type="entity",
             target_id=entity.entity_id,
             derivation_class="authoritative_declared",
-            source_system=self._manifest_source_system(manifest_path),
+            source_system=self._manifest_source_system(manifest_path) if manifest_path is not None else "git",
             source_ref={"package_name": self._package_name(repo)},
-            bytes_ref=bytes_ref(repo, manifest_path, 1, 1) if manifest_path.exists() else None,
+            bytes_ref=bytes_ref(repo, manifest_path, 1, 1) if manifest_path is not None else None,
             confidence=1.0,
         )
 
-    def _manifest_path(self, repo: RepoSnapshot) -> Path:
+    def _manifest_path(self, repo: RepoSnapshot) -> Path | None:
         for filename in ("pyproject.toml", "package.json", "serverless.yml", "zappa_settings.json"):
             path = repo.root / filename
-            if path.exists():
+            if path.is_file():
                 return path
-        return repo.root
+        return None
 
     def _manifest_source_system(self, path: Path) -> str:
         if path.name in {"pyproject.toml", "package.json"}:

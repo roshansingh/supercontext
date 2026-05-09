@@ -8,6 +8,7 @@ from source.kg.models import JsonObject
 
 
 IdentityKey = Literal["endpoint_path", "event_channel", "display_name"]
+MAX_POSSIBLE_MATCH_COMPARISONS_PER_LEFT = 250
 
 
 @dataclass(frozen=True)
@@ -115,14 +116,14 @@ def _possible_matches(left_keys: list[str], right_keys: list[str], threshold: fl
     matches = []
     used_right: set[str] = set()
     for left_key in left_keys:
+        candidate_keys = _candidate_match_keys(left_key, right_keys, used_right)
         candidates = [
             {
                 "left_key": left_key,
                 "right_key": right_key,
                 "similarity": round(SequenceMatcher(None, left_key, right_key).ratio(), 3),
             }
-            for right_key in right_keys
-            if right_key not in used_right
+            for right_key in candidate_keys
         ]
         candidates = [candidate for candidate in candidates if candidate["similarity"] >= threshold]
         if not candidates:
@@ -131,6 +132,45 @@ def _possible_matches(left_keys: list[str], right_keys: list[str], threshold: fl
         used_right.add(best["right_key"])
         matches.append(best)
     return sorted(matches, key=lambda row: (-row["similarity"], row["left_key"], row["right_key"]))
+
+
+def _candidate_match_keys(left_key: str, right_keys: list[str], used_right: set[str]) -> list[str]:
+    candidates = [right_key for right_key in right_keys if right_key not in used_right and _could_be_possible_match(left_key, right_key)]
+    return sorted(candidates, key=lambda right_key: (-_cheap_match_score(left_key, right_key), right_key))[
+        :MAX_POSSIBLE_MATCH_COMPARISONS_PER_LEFT
+    ]
+
+
+def _could_be_possible_match(left_key: str, right_key: str) -> bool:
+    shorter = max(1, min(len(left_key), len(right_key)))
+    longer = max(len(left_key), len(right_key))
+    if shorter / longer < 0.35:
+        return False
+    left_segments = _key_segments(left_key)
+    right_segments = _key_segments(right_key)
+    return bool(left_segments & right_segments) or left_key[:4] == right_key[:4]
+
+
+def _cheap_match_score(left_key: str, right_key: str) -> float:
+    left_segments = _key_segments(left_key)
+    right_segments = _key_segments(right_key)
+    segment_overlap = len(left_segments & right_segments) / max(1, len(left_segments | right_segments))
+    prefix_bonus = _common_prefix_len(left_key, right_key) / max(1, min(len(left_key), len(right_key)))
+    length_ratio = min(len(left_key), len(right_key)) / max(1, max(len(left_key), len(right_key)))
+    return segment_overlap + prefix_bonus + length_ratio
+
+
+def _key_segments(key: str) -> set[str]:
+    return {segment for segment in key.replace("_", "/").replace("-", "/").split("/") if segment and segment not in {"v1", "v2"}}
+
+
+def _common_prefix_len(left: str, right: str) -> int:
+    count = 0
+    for left_char, right_char in zip(left, right):
+        if left_char != right_char:
+            break
+        count += 1
+    return count
 
 
 def _identity_key(entity: JsonObject, identity_key: IdentityKey) -> str:

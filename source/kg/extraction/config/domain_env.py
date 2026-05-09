@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from source.kg.extraction.config.common import (
     ConfigKgBuild,
@@ -99,7 +99,7 @@ def _extract_env_assignments(
     add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
     qualifier = {"name": key, "reference_kind": "config_assignment", "value_kind": _value_kind(key, value)}
     if qualifier["value_kind"] in {"domain", "url"}:
-        qualifier["safe_literal"] = value
+        qualifier["safe_literal"] = _safe_config_literal(value)
     add_fact(build, "REFERENCES_ENV_VAR", service_entity, env_entity, repo, scanned.path, line_number, qualifier=qualifier)
 
     for url in URL_RE.findall(value):
@@ -123,7 +123,7 @@ def _add_domain_reference(
     domain: str,
     literal: str,
 ) -> None:
-    domain_ref = domain.strip().lower().rstrip(".,;)")
+    domain_ref = _normalize_domain_ref(domain)
     if not domain_ref:
         return
     entity = domain_entity(repo, domain_ref)
@@ -136,8 +136,30 @@ def _add_domain_reference(
         repo,
         scanned.path,
         line_number,
-        qualifier={"literal": literal.strip(), "path": scanned.relative_path},
+        qualifier={"literal": _safe_config_literal(literal), "path": scanned.relative_path},
     )
+
+
+def _normalize_domain_ref(domain: str) -> str:
+    return domain.strip().lower().strip(" \t\r\n'\"`<>()[]{}.,;")
+
+
+def _safe_config_literal(value: str) -> str:
+    parsed = _safe_parse_url(value)
+    if parsed is not None and parsed.scheme in {"http", "https"}:
+        hostname = _safe_hostname(parsed)
+        if not hostname:
+            return ""
+        netloc = hostname
+        port = _safe_port(parsed)
+        if port:
+            netloc = f"{hostname}:{port}"
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+    domain_match = DOMAIN_RE.search(value)
+    if domain_match:
+        return _normalize_domain_ref(domain_match.group(0))
+    return ""
 
 
 def _line_has_domain_hint(line: str) -> bool:
@@ -159,6 +181,13 @@ def _safe_parse_url(value: str):
 def _safe_hostname(parsed_url) -> str | None:
     try:
         return parsed_url.hostname
+    except ValueError:
+        return None
+
+
+def _safe_port(parsed_url) -> int | None:
+    try:
+        return parsed_url.port
     except ValueError:
         return None
 
