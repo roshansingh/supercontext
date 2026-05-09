@@ -396,16 +396,33 @@ class _CallCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
         return
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
         return
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
         return
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._visit_arg_defaults(node.args)
         return
+
+    def _visit_arg_defaults(self, args: ast.arguments) -> None:
+        for default in [*args.defaults, *[default for default in args.kw_defaults if default is not None]]:
+            self.visit(default)
 
 
 def _expression(node: ast.AST) -> str:

@@ -430,6 +430,42 @@ class PythonTransportExtractorTest(unittest.TestCase):
         event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
         self.assertFalse(event_facts)
 
+    def test_nested_function_default_expression_is_treated_as_outer_call(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    def inner(result=sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")):\n'
+            "        pass\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_api_call")
+
+    def test_nested_class_base_expression_is_treated_as_outer_call(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def base(value):\n"
+            "    return object\n\n"
+            "def publish_order():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    class Inner(base(sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}"))):\n'
+            "        pass\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_api_call")
+
     def test_user_defined_client_name_does_not_emit_event_without_boto3_import(self) -> None:
         source = (
             "class boto3:\n"
