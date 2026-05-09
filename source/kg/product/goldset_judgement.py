@@ -199,6 +199,8 @@ Rules:
 - If evidence may exist in the KG but the packet did not retrieve it, use `bad retrieval plan`; if you cannot know, say so in notes.
 - If the independent ground truth appears incomplete or contradicts the packet, use `ground truth issue`.
 - Do not trust the generated answer's self-score.
+- If answer_score is `Pass`, failure_owners must be exactly `["none"]`.
+- If answer_score is `Partial` or `Fail`, failure_owners must not include `none`.
 - Return JSON only with this shape:
 {{
   "evidence_completeness": "complete|partial|missing",

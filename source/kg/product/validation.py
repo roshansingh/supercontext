@@ -26,3 +26,11 @@ def require_failure_sentinel_consistency(
         raise RuntimeError(f"{score_key}='Pass' requires {field_key} to be ['none']")
     if score != "Pass" and values == ["none"]:
         raise RuntimeError(f"{score_key}={score!r} cannot use {field_key} ['none']")
+
+
+def require_unique_strings(values: tuple[str, ...], context: str) -> None:
+    seen = set()
+    for value in values:
+        if value in seen:
+            raise ValueError(f"{context} contains duplicate value {value!r}")
+        seen.add(value)

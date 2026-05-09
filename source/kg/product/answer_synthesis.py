@@ -155,6 +155,8 @@ Rules:
 - Keep the answer concise but decision-useful.
 - Score the answer against the expected answer shape as `Pass`, `Partial`, or `Fail`.
 - Failure modes must be chosen from: {", ".join(FAILURE_MODES)}.
+- If score is `Pass`, failure_modes must be exactly `["none"]`.
+- If score is `Partial` or `Fail`, failure_modes must not include `none`.
 - Return JSON only with this shape:
 {{
   "user_query": "...",

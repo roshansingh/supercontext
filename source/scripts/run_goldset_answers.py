@@ -15,6 +15,7 @@ from source.kg.product import (
 )
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL, render_answers_markdown
 from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
+from source.kg.product.validation import require_unique_strings
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -67,6 +68,7 @@ def main() -> None:
     args = parser.parse_args()
 
     scenario_ids = tuple(args.scenario or DEFAULT_SCENARIOS)
+    require_unique_strings(scenario_ids, "--scenario")
     packets = _load_or_build_packets(args.snapshot, scenario_ids, args.packets_in)
     if args.packets_out:
         _write_json(
