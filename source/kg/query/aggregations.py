@@ -214,6 +214,35 @@ def import_matches_target(fact: JsonObject, target: JsonObject, query: str) -> b
     return needle in {candidate.lower() for candidate in _import_target_candidates(fact, target) if candidate}
 
 
+def iter_canonical_facts(facts: Iterable[JsonObject]) -> list[JsonObject]:
+    return _canonical_facts(facts)
+
+
+def iter_canonical_import_facts(facts: Iterable[JsonObject], entities_by_id: dict[str, JsonObject]) -> list[JsonObject]:
+    return _canonical_import_facts(facts, entities_by_id)
+
+
+def is_canonical_entity(entity: JsonObject) -> bool:
+    return _is_canonical_entity(entity)
+
+
+def resolve_import_target(
+    query: str,
+    facts: list[JsonObject],
+    entities_by_id: dict[str, JsonObject],
+    category_filter: set[str] | None = None,
+) -> JsonObject:
+    return _resolve_import_target(query, facts, entities_by_id, category_filter=category_filter)
+
+
+def strongest_derivation(evidence_rows: list[JsonObject]) -> str | None:
+    return _strongest_derivation(evidence_rows)
+
+
+def evidence_sample(evidence: JsonObject) -> JsonObject:
+    return _evidence_sample(evidence)
+
+
 def _canonical_facts(facts: Iterable[JsonObject]) -> list[JsonObject]:
     return [fact for fact in facts if fact.get("canonical_status", "canonical") == "canonical"]
 

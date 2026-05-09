@@ -88,12 +88,12 @@ def _adjacency(snapshot: Any) -> dict[str, list[Edge]]:
 
 def _build_adjacency(snapshot: Any) -> dict[str, list[Edge]]:
     adjacency: dict[str, list[Edge]] = defaultdict(list)
-    for fact in aggregations._canonical_facts(snapshot.facts):
+    for fact in aggregations.iter_canonical_facts(snapshot.facts):
         source = snapshot.entities_by_id.get(fact["subject_id"])
         target = snapshot.entities_by_id.get(fact["object_id"])
         if not source or not target:
             continue
-        if not aggregations._is_canonical_entity(source) or not aggregations._is_canonical_entity(target):
+        if not aggregations.is_canonical_entity(source) or not aggregations.is_canonical_entity(target):
             continue
         if not _is_allowed_edge(fact["predicate"], source["kind"], target["kind"]):
             continue
@@ -142,9 +142,9 @@ def _edge_to_dict(snapshot: Any, edge: Edge) -> JsonObject:
         "predicate": edge.predicate,
         "direction": edge.direction,
         "qualifier": edge.qualifier,
-        "derivation_class": aggregations._strongest_derivation(evidence_rows),
+        "derivation_class": aggregations.strongest_derivation(evidence_rows),
         "sources_count": len(source_systems),
-        "evidence_samples": [aggregations._evidence_sample(row) for row in evidence_rows[:3]],
+        "evidence_samples": [aggregations.evidence_sample(row) for row in evidence_rows[:3]],
     }
 
 

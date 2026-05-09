@@ -315,7 +315,7 @@ class KgSnapshot:
         else:
             source_ids = {source_resolution["resolved_symbol"]["symbol_id"]}
 
-        target_resolution = aggregations._resolve_import_target(target_query, self.facts, self.entities_by_id)
+        target_resolution = aggregations.resolve_import_target(target_query, self.facts, self.entities_by_id)
         if target_resolution["status"] != "resolved":
             return self._dependency_path_response(
                 target_resolution["status"],
