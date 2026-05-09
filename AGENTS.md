@@ -65,3 +65,8 @@ Copilot has repeatedly caught boundary-condition mistakes in review. Before open
 - Keep production defaults aligned with ADRs. If eval scripts need unsafe or non-interactive modes such as `dontAsk`, expose them through CLI/env config and keep library defaults policy-safe.
 - Resolve executable dependencies early. If code shells out or relies on an SDK CLI, check path/config up front and raise an actionable error.
 - Add targeted negative checks for each validation branch. A help/compile check is not enough when changing loaders, parsers, or LLM-output handling.
+- For API extractors, test common equivalent call shapes before PR: positional args, keyword args, alias imports, chained calls, assigned clients/resources, and unresolved arguments. Do not stop at the single happy path.
+- When adding caches or indexes, check resource impact explicitly. Avoid retaining full file contents when only AST, line count, or metadata is needed.
+- Keep allowlists as the single source of truth. Do not duplicate supported kinds, methods, transports, languages, or statuses in extractor logic.
+- Run a self-review for hygiene before pushing: unused imports, dead locals, broad `Any`, duplicated parsing/IO, and helper signatures with unused parameters.
+- For every Copilot-style fix, add a regression test that exercises the exact missed shape, especially keyword forms like `service_name=...` or resource factory args like `url=...`.

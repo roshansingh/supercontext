@@ -38,8 +38,8 @@ class SymbolDef:
 
 @dataclass(frozen=True)
 class ParsedPythonFile:
-    source: str
     tree: ast.AST | None
+    line_count: int
     syntax_error: SyntaxError | None = None
 
 
@@ -96,7 +96,6 @@ class PythonAstExtractor:
         literal_index: LiteralIndex,
         build: KgBuild,
     ) -> None:
-        source = parsed.source
         tree = parsed.tree
         if tree is None:
             exc = parsed.syntax_error
@@ -141,7 +140,7 @@ class PythonAstExtractor:
             properties={"path": str(file_path.relative_to(repo.root))},
         )
         build.entities.append(module_entity)
-        build.evidence.append(self._entity_evidence(repo, module_entity, file_path, 1, max(1, len(source.splitlines()))))
+        build.evidence.append(self._entity_evidence(repo, module_entity, file_path, 1, max(1, parsed.line_count)))
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
@@ -218,13 +217,14 @@ class PythonAstExtractor:
 
     def _parse_file(self, file_path: Path) -> ParsedPythonFile:
         source = file_path.read_text(encoding="utf-8", errors="replace")
+        line_count = len(source.splitlines())
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 tree = ast.parse(source, filename=str(file_path))
         except SyntaxError as exc:
-            return ParsedPythonFile(source=source, tree=None, syntax_error=exc)
-        return ParsedPythonFile(source=source, tree=tree)
+            return ParsedPythonFile(tree=None, line_count=line_count, syntax_error=exc)
+        return ParsedPythonFile(tree=tree, line_count=line_count)
 
     def _literal_index(self, repo: RepoSnapshot, parsed_files: dict[Path, ParsedPythonFile]) -> LiteralIndex:
         values: dict[LiteralRef, ast.AST] = {}

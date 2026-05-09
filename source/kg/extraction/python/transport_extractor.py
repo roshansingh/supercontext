@@ -3,8 +3,9 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Callable, Protocol
 
+from source.kg.core.models import Coverage, Entity
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.config.channel_normalization import (
     NormalizedChannel,
@@ -28,6 +29,16 @@ from source.kg.extraction.python.transport_apis import supported_transports, tra
 from source.kg.normalization.python.imports import NormalizedImport
 
 
+class CallerSymbol(Protocol):
+    entity: Entity
+    module_name: str
+    line: int
+
+
+class KgBuildLike(Protocol):
+    coverage: list[Coverage]
+
+
 @dataclass(frozen=True)
 class TransportClient:
     transport: str
@@ -42,14 +53,14 @@ class QueueResource:
 def extract_transport_events(
     repo: RepoSnapshot,
     file_path: Path,
-    caller: Any,
+    caller: CallerSymbol,
     caller_node: ast.FunctionDef | ast.AsyncFunctionDef,
     imports: list[NormalizedImport],
     literal_index: LiteralIndex,
-    build: Any,
+    build: KgBuildLike,
     source_system: str,
-    add_entity_evidence,
-    add_fact,
+    add_entity_evidence: Callable[..., None],
+    add_fact: Callable[..., None],
 ) -> None:
     boto3_names = _boto3_names(imports)
     imported_modules, imported_values = import_bindings(imports)
@@ -227,9 +238,9 @@ def _transport_client_from_call(node: ast.AST, boto3_names: set[str]) -> Transpo
     call_name = _call_name(node.func)
     if not any(call_name == f"{name}.client" or call_name == f"{name}.resource" for name in boto3_names):
         return None
-    if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+    transport = _constant_string_arg(node, 0, ("service_name",))
+    if transport is None:
         return None
-    transport = node.args[0].value
     if transport not in supported_transports():
         return None
     factory = _method_name(node.func)
@@ -247,7 +258,7 @@ def _queue_arg_from_call(node: ast.AST, clients: dict[str, TransportClient], bot
     client = _client_from_receiver(receiver, clients, boto3_names)
     if client is None or client.transport != "sqs" or client.factory != "resource":
         return None
-    return node.args[0] if node.args else None
+    return _arg_node(node, 0, ("url", "QueueUrl"))
 
 
 def _queue_arg_from_receiver(
@@ -285,6 +296,22 @@ def _keyword_arg(call_node: ast.Call, name: str) -> ast.AST | None:
         if keyword.arg == name:
             return keyword.value
     return None
+
+
+def _arg_node(call_node: ast.Call, position: int, keyword_names: tuple[str, ...]) -> ast.AST | None:
+    if len(call_node.args) > position:
+        return call_node.args[position]
+    for keyword in call_node.keywords:
+        if keyword.arg in keyword_names:
+            return keyword.value
+    return None
+
+
+def _constant_string_arg(call_node: ast.Call, position: int, keyword_names: tuple[str, ...]) -> str | None:
+    node = _arg_node(call_node, position, keyword_names)
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return None
+    return node.value
 
 
 def _receiver(node: ast.AST) -> ast.AST | None:

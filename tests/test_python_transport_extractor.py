@@ -46,6 +46,22 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(channel.identity["channel_address"], "orders-created")
         self.assertEqual(fact.qualifier["api"], "boto3.client('sqs').send_message_batch")
 
+    def test_boto3_client_service_name_keyword_emits_produces_event(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs = boto3.client(service_name="sqs")\n'
+            '    sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["api"], "boto3.client('sqs').send_message")
+
     def test_boto3_sns_publish_with_imported_constant_emits_produces_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -81,6 +97,23 @@ class PythonTransportExtractorTest(unittest.TestCase):
             "def publish_order():\n"
             '    sqs = boto3.resource("sqs")\n'
             "    queue = sqs.Queue(QUEUE_URL)\n"
+            '    queue.send_message(MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["api"], "boto3.resource('sqs').Queue(...).send_message")
+
+    def test_boto3_sqs_resource_queue_accepts_url_keyword(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            '    sqs = boto3.resource("sqs")\n'
+            "    queue = sqs.Queue(url=QUEUE_URL)\n"
             '    queue.send_message(MessageBody="{}")\n'
         )
 
