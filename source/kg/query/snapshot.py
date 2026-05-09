@@ -7,7 +7,8 @@ from typing import Any
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject
 from source.kg.core.store import read_jsonl
-from source.kg.query import aggregations, path_search
+
+from . import aggregations, path_search
 
 
 class KgSnapshot:

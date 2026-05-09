@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from source.kg.core.models import JsonObject
-from source.kg.query import aggregations
+
+from . import aggregations
 
 
 _ADJACENCY_CACHE_ATTR = "_dependency_path_adjacency"

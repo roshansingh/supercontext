@@ -214,12 +214,23 @@ def import_matches_target(fact: JsonObject, target: JsonObject, query: str) -> b
     return needle in {candidate.lower() for candidate in _import_target_candidates(fact, target) if candidate}
 
 
-def iter_canonical_facts(facts: Iterable[JsonObject]) -> list[JsonObject]:
-    return _canonical_facts(facts)
+def iter_canonical_facts(facts: Iterable[JsonObject]) -> Iterable[JsonObject]:
+    for fact in facts:
+        if fact.get("canonical_status", "canonical") == "canonical":
+            yield fact
 
 
-def iter_canonical_import_facts(facts: Iterable[JsonObject], entities_by_id: dict[str, JsonObject]) -> list[JsonObject]:
-    return _canonical_import_facts(facts, entities_by_id)
+def iter_canonical_import_facts(
+    facts: Iterable[JsonObject],
+    entities_by_id: dict[str, JsonObject],
+) -> Iterable[JsonObject]:
+    for fact in iter_canonical_facts(facts):
+        if fact.get("predicate") != "IMPORTS":
+            continue
+        source = entities_by_id.get(fact["subject_id"])
+        target = entities_by_id.get(fact["object_id"])
+        if source and target and is_canonical_entity(source) and is_canonical_entity(target):
+            yield fact
 
 
 def is_canonical_entity(entity: JsonObject) -> bool:
