@@ -274,6 +274,14 @@ def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunc
         if keyword.arg in bindings:
             return None
         bindings[keyword.arg] = keyword.value
+    positional_defaults = function_def.args.defaults
+    required_positional = positional_params[: len(positional_params) - len(positional_defaults)]
+    for param in required_positional:
+        if param.arg not in bindings:
+            return None
+    for param, default in zip(function_def.args.kwonlyargs, function_def.args.kw_defaults):
+        if default is None and param.arg not in bindings:
+            return None
     return bindings
 
 

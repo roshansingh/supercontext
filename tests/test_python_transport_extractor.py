@@ -285,6 +285,36 @@ class PythonTransportExtractorTest(unittest.TestCase):
         event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
         self.assertFalse(event_facts)
 
+    def test_missing_required_wrapper_positional_arg_blocks_promotion(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    renamed_wrapper()\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
+    def test_missing_required_wrapper_keyword_only_arg_blocks_promotion(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def renamed_wrapper(*, destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    renamed_wrapper()\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
     def test_wrapper_promotion_does_not_depend_on_wrapper_name(self) -> None:
         for wrapper_name in ("alpha", "send_message"):
             with self.subTest(wrapper_name=wrapper_name):
