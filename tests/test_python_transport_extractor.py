@@ -191,6 +191,106 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(unresolved[0].scope_ref["reason"], "unsupported_channel_literal")
         self.assertEqual(unresolved[0].scope_ref["expression"], "'orders-created'")
 
+    def test_local_wrapper_with_resolved_channel_emits_static_inferred_producer(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    renamed_wrapper(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
+        self.assertEqual(fact.qualifier["promotion"], "local_wrapper_body")
+        self.assertEqual(fact.qualifier["wrapper_depth"], 1)
+        evidence = [row for row in build.evidence if row.target_id == fact.fact_id]
+        self.assertEqual(evidence[0].derivation_class, "static_inferred")
+
+    def test_local_wrapper_keyword_argument_emits_static_inferred_producer(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def renamed_wrapper(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    renamed_wrapper(destination=QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
+        evidence = [row for row in build.evidence if row.target_id == fact.fact_id]
+        self.assertEqual(evidence[0].derivation_class, "static_inferred")
+
+    def test_wrapper_promotion_does_not_depend_on_wrapper_name(self) -> None:
+        for wrapper_name in ("alpha", "send_message"):
+            with self.subTest(wrapper_name=wrapper_name):
+                source = (
+                    "import boto3\n\n"
+                    'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+                    f"def {wrapper_name}(destination):\n"
+                    '    sqs = boto3.client("sqs")\n'
+                    '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+                    "def publish_order():\n"
+                    f"    {wrapper_name}(QUEUE_URL)\n"
+                )
+
+                build = _extract_single_file(source)
+
+                fact, channel = _single_event_fact(build.facts, build.entities)
+                self.assertEqual(channel.identity["broker_kind"], "sqs")
+                self.assertEqual(channel.identity["channel_address"], "orders-created")
+                self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
+
+    def test_nested_local_wrapper_promotion_is_bounded_and_static_inferred(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def inner(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def outer(destination):\n"
+            "    inner(destination)\n\n"
+            "def publish_order():\n"
+            "    outer(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
+        self.assertEqual(fact.qualifier["wrapper_depth"], 2)
+        evidence = [row for row in build.evidence if row.target_id == fact.fact_id]
+        self.assertEqual(evidence[0].derivation_class, "static_inferred")
+
+    def test_nested_function_body_is_not_treated_as_outer_transport_call(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def publish_order():\n"
+            "    def inner():\n"
+            '        sqs = boto3.client("sqs")\n'
+            '        sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
     def test_user_defined_client_name_does_not_emit_event_without_boto3_import(self) -> None:
         source = (
             "class boto3:\n"

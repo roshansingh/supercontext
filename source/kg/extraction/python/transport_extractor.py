@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from source.kg.core.models import Coverage, Entity
+from source.kg.core.models import Coverage, Entity, EvidenceDerivationClass, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.config.channel_normalization import (
     NormalizedChannel,
@@ -20,6 +20,8 @@ from source.kg.extraction.python.dataflow import (
     UnresolvedValue,
     ValueResolver,
     ValueScope,
+    bind_args,
+    body_call_nodes,
     import_bindings,
     local_literal_assignments,
     resolved_to_json,
@@ -27,6 +29,10 @@ from source.kg.extraction.python.dataflow import (
 )
 from source.kg.extraction.python.transport_apis import supported_transports, transport_spec
 from source.kg.normalization.python.imports import NormalizedImport
+
+
+MAX_WRAPPER_RESOLUTION_DEPTH = 2
+FunctionDefNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 
 class CallerSymbol(Protocol):
@@ -61,23 +67,26 @@ def extract_transport_events(
     source_system: str,
     add_entity_evidence: Callable[..., None],
     add_fact: Callable[..., None],
+    function_defs: dict[str, FunctionDefNode] | None = None,
 ) -> None:
     boto3_names = _boto3_names(imports)
-    imported_modules, imported_values = import_bindings(imports)
-    local_values = _module_values(caller.module_name, literal_index)
-    local_values.update(local_literal_assignments(caller_node))
-    resolver = ValueResolver(
-        ValueScope(
-            local_values=local_values,
-            imported_modules=imported_modules,
-            imported_values=imported_values,
-        ),
-        literal_index,
-    )
+    resolver = _resolver(caller.module_name, literal_index, imports, caller_node)
     clients = _transport_clients(caller_node, boto3_names)
     queue_resources = _queue_resources(caller_node, clients, boto3_names)
-    for call_node in [node for node in ast.walk(caller_node) if isinstance(node, ast.Call)]:
+    for call_node in body_call_nodes(caller_node):
         event = _event_from_call(call_node, clients, queue_resources, boto3_names, resolver)
+        if event is None and function_defs:
+            event = _event_from_wrapper_call(
+                call_node,
+                function_defs,
+                imports,
+                literal_index,
+                caller.module_name,
+                boto3_names,
+                resolver,
+                depth=0,
+                seen=(),
+            )
         if event is None:
             continue
         line = getattr(call_node, "lineno", caller.line)
@@ -103,15 +112,16 @@ def extract_transport_events(
             line,
             line,
             qualifier={
-                "source_kind": "python_transport_api_call",
+                "source_kind": event.source_kind,
                 "api": event.api,
                 "broker_kind": event.channel.broker_kind,
                 "channel_address": event.channel.channel_address,
                 "normalized_channel": event.channel.channel_address,
                 "raw_literal": event.channel.properties.get("raw_literal"),
                 "resolution": resolved_to_json(event.resolved),
+                **event.qualifier,
             },
-            derivation_class="deterministic_static",
+            derivation_class=event.derivation_class,
         )
 
 
@@ -120,6 +130,13 @@ class TransportEvent:
     api: str
     channel: NormalizedChannel | UnresolvedValue
     resolved: ResolvedValue
+    source_kind: str = "python_transport_api_call"
+    derivation_class: EvidenceDerivationClass = "deterministic_static"
+    qualifier: JsonObject | None = None
+
+    def __post_init__(self) -> None:
+        if self.qualifier is None:
+            object.__setattr__(self, "qualifier", {})
 
 
 def _transport_clients(function_node: ast.FunctionDef | ast.AsyncFunctionDef, boto3_names: set[str]) -> dict[str, TransportClient]:
@@ -182,6 +199,64 @@ def _event_from_call(
     if channel_arg is None:
         return None
     return _event_from_channel_arg(f"boto3.{client.factory}('{client.transport}').{method}", client.transport, channel_arg, resolver)
+
+
+def _event_from_wrapper_call(
+    call_node: ast.Call,
+    function_defs: dict[str, FunctionDefNode],
+    imports: list[NormalizedImport],
+    literal_index: LiteralIndex,
+    module_name: str,
+    boto3_names: set[str],
+    caller_resolver: ValueResolver,
+    *,
+    depth: int,
+    seen: tuple[str, ...],
+) -> TransportEvent | None:
+    if depth >= MAX_WRAPPER_RESOLUTION_DEPTH:
+        return None
+    callee_name = _local_function_name(call_node.func)
+    if callee_name is None or callee_name in seen:
+        return None
+    wrapper_node = function_defs.get(callee_name)
+    if wrapper_node is None:
+        return None
+    wrapper_resolver = _resolver(
+        module_name,
+        literal_index,
+        imports,
+        wrapper_node,
+        extra_local_values=_resolved_bindings(call_node, wrapper_node, caller_resolver),
+    )
+    clients = _transport_clients(wrapper_node, boto3_names)
+    queue_resources = _queue_resources(wrapper_node, clients, boto3_names)
+    for nested_call in body_call_nodes(wrapper_node):
+        event = _event_from_call(nested_call, clients, queue_resources, boto3_names, wrapper_resolver)
+        if event is None:
+            event = _event_from_wrapper_call(
+                nested_call,
+                function_defs,
+                imports,
+                literal_index,
+                module_name,
+                boto3_names,
+                wrapper_resolver,
+                depth=depth + 1,
+                seen=(*seen, callee_name),
+            )
+        if event is not None:
+            wrapper_depth = event.qualifier.get("wrapper_depth") if event.qualifier else None
+            if not isinstance(wrapper_depth, int):
+                wrapper_depth = depth + 1
+            return TransportEvent(
+                api=event.api,
+                channel=event.channel,
+                resolved=event.resolved,
+                source_kind="python_transport_wrapper_call",
+                derivation_class="static_inferred",
+                qualifier={"wrapper_depth": max(depth + 1, wrapper_depth), "promotion": "local_wrapper_body"},
+            )
+    return None
 
 
 def _event_from_channel_arg(
@@ -276,6 +351,43 @@ def _module_values(module_name: str, literal_index: LiteralIndex) -> dict[str, a
     return {ref.name: node for ref, node in literal_index.values.items() if ref.module_name == module_name}
 
 
+def _resolver(
+    module_name: str,
+    literal_index: LiteralIndex,
+    imports: list[NormalizedImport],
+    function_node: FunctionDefNode,
+    extra_local_values: dict[str, ast.AST] | None = None,
+) -> ValueResolver:
+    imported_modules, imported_values = import_bindings(imports)
+    local_values = _module_values(module_name, literal_index)
+    local_values.update(local_literal_assignments(function_node))
+    if extra_local_values:
+        local_values.update(extra_local_values)
+    return ValueResolver(
+        ValueScope(
+            local_values=local_values,
+            imported_modules=imported_modules,
+            imported_values=imported_values,
+        ),
+        literal_index,
+    )
+
+
+def _resolved_bindings(
+    call_node: ast.Call,
+    function_node: FunctionDefNode,
+    caller_resolver: ValueResolver,
+) -> dict[str, ast.AST]:
+    resolved_bindings: dict[str, ast.AST] = {}
+    for name, value_node in bind_args(call_node, function_node).items():
+        resolved = caller_resolver.resolve_value(value_node)
+        if isinstance(resolved, ResolvedValue):
+            resolved_bindings[name] = ast.Constant(value=resolved.value)
+        else:
+            resolved_bindings[name] = value_node
+    return resolved_bindings
+
+
 def _assignment_values(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[ast.AST, tuple[ast.expr, ...]]]:
     assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
     for statement in function_node.body:
@@ -312,6 +424,12 @@ def _constant_string_arg(call_node: ast.Call, position: int, keyword_names: tupl
 def _receiver(node: ast.AST) -> ast.AST | None:
     if isinstance(node, ast.Attribute):
         return node.value
+    return None
+
+
+def _local_function_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
     return None
 
 

@@ -256,6 +256,27 @@ def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunction
     return assignments
 
 
+def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST]:
+    positional_params = [*function_def.args.posonlyargs, *function_def.args.args]
+    keyword_params = {param.arg for param in [*positional_params, *function_def.args.kwonlyargs]}
+    bindings: dict[str, ast.AST] = {}
+    for index, arg_node in enumerate(call_node.args):
+        if index >= len(positional_params):
+            break
+        bindings[positional_params[index].arg] = arg_node
+    for keyword in call_node.keywords:
+        if keyword.arg is not None and keyword.arg in keyword_params:
+            bindings[keyword.arg] = keyword.value
+    return bindings
+
+
+def body_call_nodes(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Call]:
+    collector = _CallCollector()
+    for statement in function_node.body:
+        collector.visit(statement)
+    return collector.calls
+
+
 def import_bindings(imports: list[NormalizedImport]) -> tuple[dict[str, str], dict[str, LiteralRef]]:
     imported_modules: dict[str, str] = {}
     imported_values: dict[str, LiteralRef] = {}
@@ -357,6 +378,24 @@ def _json_safe(value: object) -> object:
     if isinstance(value, dict):
         return {str(_json_safe(key)): _json_safe(item) for key, item in value.items()}
     return str(value)
+
+
+class _CallCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.calls: list[ast.Call] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.calls.append(node)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
 
 
 def _expression(node: ast.AST) -> str:
