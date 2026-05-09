@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from source.kg.product.contract_reconciliation import ContractReconciliationSpec, ContractSide, reconcile_contract
 from source.kg.queries import KgSnapshot
 
 
@@ -82,6 +83,34 @@ def main() -> None:
     repo_deps = subparsers.add_parser("repo-dependencies")
     repo_deps.add_argument("repo")
     repo_deps.add_argument("--limit", type=int, default=25)
+
+    domains = subparsers.add_parser("domain-references")
+    domains.add_argument("domain")
+    domains.add_argument("--limit", type=int, default=25)
+
+    endpoints = subparsers.add_parser("endpoints")
+    endpoints.add_argument("--path")
+    endpoints.add_argument("--limit", type=int, default=25)
+
+    events = subparsers.add_parser("event-channels")
+    events.add_argument("--channel")
+    events.add_argument("--limit", type=int, default=25)
+
+    deploy = subparsers.add_parser("deploy-mappings")
+    deploy.add_argument("--target")
+    deploy.add_argument("--limit", type=int, default=25)
+
+    reconcile = subparsers.add_parser("reconcile-contract")
+    reconcile.add_argument("--name", required=True)
+    reconcile.add_argument("--identity-key", choices=["endpoint_path", "event_channel", "display_name"], required=True)
+    reconcile.add_argument("--left-name", required=True)
+    reconcile.add_argument("--left-predicate", action="append", required=True)
+    reconcile.add_argument("--left-repo", action="append")
+    reconcile.add_argument("--left-path-prefix")
+    reconcile.add_argument("--right-name", required=True)
+    reconcile.add_argument("--right-predicate", action="append", required=True)
+    reconcile.add_argument("--right-repo", action="append")
+    reconcile.add_argument("--right-path-prefix")
 
     lookup = subparsers.add_parser("lookup-symbol")
     lookup.add_argument("symbol")
@@ -169,6 +198,34 @@ def main() -> None:
         result = kg.cross_repo_links(limit=args.limit)
     elif args.command == "repo-dependencies":
         result = kg.repo_dependencies(args.repo, limit=args.limit)
+    elif args.command == "domain-references":
+        result = kg.domain_references(args.domain, limit=args.limit)
+    elif args.command == "endpoints":
+        result = kg.endpoints(path_query=args.path, limit=args.limit)
+    elif args.command == "event-channels":
+        result = kg.event_channels(channel_query=args.channel, limit=args.limit)
+    elif args.command == "deploy-mappings":
+        result = kg.deploy_mappings(target_query=args.target, limit=args.limit)
+    elif args.command == "reconcile-contract":
+        result = reconcile_contract(
+            kg,
+            ContractReconciliationSpec(
+                name=args.name,
+                identity_key=args.identity_key,
+                left=ContractSide(
+                    name=args.left_name,
+                    predicates=tuple(args.left_predicate),
+                    repos=tuple(args.left_repo or ()),
+                    path_prefix=args.left_path_prefix,
+                ),
+                right=ContractSide(
+                    name=args.right_name,
+                    predicates=tuple(args.right_predicate),
+                    repos=tuple(args.right_repo or ()),
+                    path_prefix=args.right_path_prefix,
+                ),
+            ),
+        )
     elif args.command == "lookup-symbol":
         result = kg.lookup_symbol(args.symbol, limit=args.limit, path=args.path, line=args.line)
     elif args.command == "symbols-in-file":

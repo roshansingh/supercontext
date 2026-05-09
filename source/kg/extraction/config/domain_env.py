@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
+
+from source.kg.extraction.config.common import (
+    ConfigKgBuild,
+    ScannedFile,
+    add_entity_evidence,
+    add_fact,
+    domain_entity,
+    env_var_entity,
+)
+from source.kg.models import Entity
+from source.kg.repo_source import RepoSnapshot
+
+
+URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
+DOMAIN_RE = re.compile(r"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b")
+JS_ENV_RE = re.compile(r"\b(?:process\.env|import\.meta\.env)\.([A-Za-z_][A-Za-z0-9_]*)")
+PY_ENV_RE = re.compile(r"\b(?:os\.environ(?:\.get)?|getenv)\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
+ENV_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*['\"]?([^'\"#\n]+)")
+
+CONFIG_KEY_HINTS = ("API", "BASE", "DOMAIN", "HOST", "URL", "WS")
+SECRET_KEY_HINTS = ("KEY", "PASS", "PASSWORD", "SECRET", "TOKEN")
+IGNORED_DOMAIN_SUFFIXES = (".py", ".js", ".ts", ".tsx", ".jsx")
+
+
+def extract_domain_env(repo: RepoSnapshot, files: list[ScannedFile], service_entity: Entity, build: ConfigKgBuild) -> None:
+    for scanned in files:
+        for line_number, line in enumerate(scanned.lines, start=1):
+            _extract_domains(repo, scanned, line_number, line, service_entity, build)
+            _extract_env_references(repo, scanned, line_number, line, service_entity, build)
+            _extract_env_assignments(repo, scanned, line_number, line, service_entity, build)
+
+
+def _extract_domains(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    line_number: int,
+    line: str,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+) -> None:
+    for url in URL_RE.findall(line):
+        parsed = _safe_parse_url(url)
+        if parsed is None:
+            continue
+        hostname = _safe_hostname(parsed)
+        if hostname:
+            _add_domain_reference(repo, scanned, line_number, service_entity, build, hostname, url)
+    for domain in DOMAIN_RE.findall(line):
+        if _looks_like_code_file(domain):
+            continue
+        if "://" in line or _line_has_domain_hint(line):
+            _add_domain_reference(repo, scanned, line_number, service_entity, build, domain, domain)
+
+
+def _extract_env_references(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    line_number: int,
+    line: str,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+) -> None:
+    for env_name in sorted(set(JS_ENV_RE.findall(line) + PY_ENV_RE.findall(line))):
+        env_entity = env_var_entity(repo, env_name)
+        add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
+        add_fact(
+            build,
+            "REFERENCES_ENV_VAR",
+            service_entity,
+            env_entity,
+            repo,
+            scanned.path,
+            line_number,
+            qualifier={"name": env_name, "reference_kind": "code_access"},
+        )
+
+
+def _extract_env_assignments(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    line_number: int,
+    line: str,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+) -> None:
+    match = ENV_ASSIGN_RE.match(line)
+    if not match:
+        return
+    key = match.group(1)
+    value = match.group(2).strip()
+    if not _is_config_key(key):
+        return
+
+    env_entity = env_var_entity(repo, key)
+    add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
+    qualifier = {"name": key, "reference_kind": "config_assignment", "value_kind": _value_kind(key, value)}
+    if qualifier["value_kind"] in {"domain", "url"}:
+        qualifier["safe_literal"] = value
+    add_fact(build, "REFERENCES_ENV_VAR", service_entity, env_entity, repo, scanned.path, line_number, qualifier=qualifier)
+
+    for url in URL_RE.findall(value):
+        parsed = _safe_parse_url(url)
+        if parsed is None:
+            continue
+        hostname = _safe_hostname(parsed)
+        if hostname:
+            _add_domain_reference(repo, scanned, line_number, env_entity, build, hostname, url)
+    for domain in DOMAIN_RE.findall(value):
+        if not _looks_like_code_file(domain):
+            _add_domain_reference(repo, scanned, line_number, env_entity, build, domain, domain)
+
+
+def _add_domain_reference(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    line_number: int,
+    subject: Entity,
+    build: ConfigKgBuild,
+    domain: str,
+    literal: str,
+) -> None:
+    domain_ref = domain.strip().lower().rstrip(".,;)")
+    if not domain_ref:
+        return
+    entity = domain_entity(repo, domain_ref)
+    add_entity_evidence(build, repo, entity, scanned.path, line_number)
+    add_fact(
+        build,
+        "REFERENCES_DOMAIN",
+        subject,
+        entity,
+        repo,
+        scanned.path,
+        line_number,
+        qualifier={"literal": literal.strip(), "path": scanned.relative_path},
+    )
+
+
+def _line_has_domain_hint(line: str) -> bool:
+    upper = line.upper()
+    return any(hint in upper for hint in CONFIG_KEY_HINTS)
+
+
+def _looks_like_code_file(value: str) -> bool:
+    return value.endswith(IGNORED_DOMAIN_SUFFIXES)
+
+
+def _safe_parse_url(value: str):
+    try:
+        return urlparse(value)
+    except ValueError:
+        return None
+
+
+def _safe_hostname(parsed_url) -> str | None:
+    try:
+        return parsed_url.hostname
+    except ValueError:
+        return None
+
+
+def _is_config_key(key: str) -> bool:
+    upper = key.upper()
+    return any(hint in upper for hint in CONFIG_KEY_HINTS)
+
+
+def _value_kind(key: str, value: str) -> str:
+    upper_key = key.upper()
+    if any(hint in upper_key for hint in SECRET_KEY_HINTS):
+        return "secret_like"
+    if URL_RE.search(value):
+        return "url"
+    if DOMAIN_RE.search(value):
+        return "domain"
+    return "literal"

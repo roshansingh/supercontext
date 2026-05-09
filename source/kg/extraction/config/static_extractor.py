@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from pathlib import Path
+import json
+import re
+import tomllib
+
+from source.kg.extraction.config.common import (
+    CONFIG_SOURCE_SYSTEM,
+    TENANT_ID,
+    ConfigKgBuild,
+    add_fact,
+    bytes_ref,
+    iter_scannable_files,
+)
+from source.kg.extraction.config.deploy_events import extract_deploy_events
+from source.kg.extraction.config.domain_env import extract_domain_env
+from source.kg.extraction.config.endpoints import extract_endpoints
+from source.kg.models import Coverage, Entity, Evidence
+from source.kg.repo_source import RepoSnapshot
+
+
+class StaticConfigExtractor:
+    source_system = CONFIG_SOURCE_SYSTEM
+
+    def extract(self, repo: RepoSnapshot) -> ConfigKgBuild:
+        build = ConfigKgBuild()
+        repo_entity = self._repo_entity(repo)
+        service_entity = self._service_entity(repo)
+        build.entities.extend([repo_entity, service_entity])
+        build.evidence.extend([self._repo_evidence(repo, repo_entity), self._service_evidence(repo, service_entity)])
+        manifest_path = self._manifest_path(repo)
+        add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, manifest_path, 1)
+
+        files = iter_scannable_files(repo)
+        extract_domain_env(repo, files, service_entity, build)
+        extract_endpoints(repo, files, service_entity, build)
+        extract_deploy_events(repo, files, service_entity, build)
+        build.coverage.append(
+            Coverage(
+                tenant_id=TENANT_ID,
+                predicate="CONFIG_FACTS",
+                scope_ref={"repo": repo.name, "path_prefix": "."},
+                state="instrumented",
+                source_system=self.source_system,
+            )
+        )
+        return build
+
+    def _repo_entity(self, repo: RepoSnapshot) -> Entity:
+        return Entity(
+            kind="Repo",
+            identity={"tenant_id": TENANT_ID, "host": "local", "owner": repo.owner, "name": repo.name},
+            properties={"path": str(repo.root), "commit_sha": repo.commit_sha},
+        )
+
+    def _service_entity(self, repo: RepoSnapshot) -> Entity:
+        return Entity(
+            kind="Service",
+            identity={
+                "tenant_id": TENANT_ID,
+                "namespace": "default",
+                "repo": repo.name,
+                "slug": self._service_slug(repo),
+            },
+            properties={"repo": repo.name},
+        )
+
+    def _repo_evidence(self, repo: RepoSnapshot, entity: Entity) -> Evidence:
+        return Evidence(
+            target_type="entity",
+            target_id=entity.entity_id,
+            derivation_class="authoritative_declared",
+            source_system="git",
+            source_ref={"repo_path": str(repo.root), "commit_sha": repo.commit_sha},
+            confidence=1.0,
+        )
+
+    def _service_evidence(self, repo: RepoSnapshot, entity: Entity) -> Evidence:
+        manifest_path = self._manifest_path(repo)
+        return Evidence(
+            target_type="entity",
+            target_id=entity.entity_id,
+            derivation_class="authoritative_declared",
+            source_system=self._manifest_source_system(manifest_path),
+            source_ref={"package_name": self._package_name(repo)},
+            bytes_ref=bytes_ref(repo, manifest_path, 1, 1) if manifest_path.exists() else None,
+            confidence=1.0,
+        )
+
+    def _manifest_path(self, repo: RepoSnapshot) -> Path:
+        for filename in ("pyproject.toml", "package.json", "serverless.yml", "zappa_settings.json"):
+            path = repo.root / filename
+            if path.exists():
+                return path
+        return repo.root
+
+    def _manifest_source_system(self, path: Path) -> str:
+        if path.name in {"pyproject.toml", "package.json"}:
+            return path.name.replace(".", "_")
+        return self.source_system
+
+    def _service_slug(self, repo: RepoSnapshot) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", self._package_name(repo).lower()).strip("-") or repo.name
+
+    def _package_name(self, repo: RepoSnapshot) -> str:
+        pyproject = repo.root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            except tomllib.TOMLDecodeError:
+                data = {}
+            return str(data.get("tool", {}).get("poetry", {}).get("name") or data.get("project", {}).get("name") or repo.name)
+
+        package_json = repo.root / "package.json"
+        if package_json.exists():
+            try:
+                data = json.loads(package_json.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                data = {}
+            return str(data.get("name") or repo.name)
+        return repo.name
