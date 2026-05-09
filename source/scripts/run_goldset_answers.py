@@ -118,6 +118,9 @@ def _load_or_build_packets(
                 raise ValueError(f"{packets_in} packets[{index}] must include a non-empty scenario_id")
             scenario_id = scenario_id.strip()
             if scenario_id in scenario_id_set:
+                if scenario_id in found_scenario_ids:
+                    raise ValueError(f"{packets_in} packets[{index}] duplicates scenario_id {scenario_id!r}")
+                _validate_packet_list_fields(packet, packets_in, index)
                 packet = dict(packet)
                 packet["scenario_id"] = scenario_id
                 filtered_packets.append(packet)
@@ -129,6 +132,12 @@ def _load_or_build_packets(
 
     kg = KgSnapshot(snapshot)
     return [_run_scenario(kg, scenario_id) for scenario_id in scenario_ids]
+
+
+def _validate_packet_list_fields(packet: JsonObject, packets_in: str, index: int) -> None:
+    for field in ("evidence_items", "retrieval_steps", "unknowns"):
+        if field in packet and not isinstance(packet[field], list):
+            raise ValueError(f"{packets_in} packets[{index}].{field} must be a list")
 
 
 def _run_scenario(kg: KgSnapshot, scenario_id: str) -> JsonObject:
