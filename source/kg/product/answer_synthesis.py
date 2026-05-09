@@ -12,7 +12,7 @@ from source.kg.product.claude_tool_policy import (
 )
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 from source.kg.product.json_result import parse_json_object_result
-from source.kg.product.validation import require_string_list
+from source.kg.product.validation import require_failure_sentinel_consistency, require_string_list
 
 
 DEFAULT_ANSWER_MODEL = "opus"
@@ -185,6 +185,7 @@ def _validate_answer(answer: JsonObject) -> None:
     invalid_modes = [mode for mode in failure_modes if mode not in FAILURE_MODES]
     if invalid_modes:
         raise RuntimeError(f"Invalid failure modes: {invalid_modes}")
+    require_failure_sentinel_consistency(failure_modes, score, "score", "failure_modes")
     for key in ("answer", "score_reason"):
         if not isinstance(answer.get(key), str) or not answer[key].strip():
             raise RuntimeError(f"Answer field {key!r} must be a non-empty string")

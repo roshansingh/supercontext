@@ -147,6 +147,8 @@ def _load_by_scenario(path: str, key: str) -> dict[str, JsonObject]:
         scenario_id = scenario_id.strip()
         if scenario_id in by_scenario:
             raise ValueError(f"{path} {key}[{index}] duplicates scenario_id {scenario_id!r}")
+        row = dict(row)
+        row["scenario_id"] = scenario_id
         by_scenario[str(scenario_id)] = row
     return by_scenario
 

@@ -13,7 +13,7 @@ from source.kg.product.claude_tool_policy import (
 )
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 from source.kg.product.json_result import parse_json_object_result
-from source.kg.product.validation import require_string_list
+from source.kg.product.validation import require_failure_sentinel_consistency, require_string_list
 
 
 JUDGEMENT_SCORES = ("Pass", "Partial", "Fail")
@@ -240,6 +240,7 @@ def _validate_judgement(judgement: JsonObject) -> None:
     invalid = [owner for owner in failure_owners if owner not in FAILURE_OWNERS]
     if invalid:
         raise RuntimeError(f"Invalid failure owners: {invalid}")
+    require_failure_sentinel_consistency(failure_owners, judgement["answer_score"], "answer_score", "failure_owners")
     for key in ("summary", "recommended_next_action"):
         if not isinstance(judgement.get(key), str) or not judgement[key].strip():
             raise RuntimeError(f"Judgement field {key!r} must be a non-empty string")
