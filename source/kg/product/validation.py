@@ -34,3 +34,12 @@ def require_unique_strings(values: tuple[str, ...], context: str) -> None:
         if value in seen:
             raise ValueError(f"{context} contains duplicate value {value!r}")
         seen.add(value)
+
+
+def normalize_unique_strings(values: tuple[str, ...], context: str) -> tuple[str, ...]:
+    normalized = tuple(value.strip() for value in values)
+    empty_indexes = [index for index, value in enumerate(normalized) if not value]
+    if empty_indexes:
+        raise ValueError(f"{context} contains empty values at indexes {empty_indexes}")
+    require_unique_strings(normalized, context)
+    return normalized

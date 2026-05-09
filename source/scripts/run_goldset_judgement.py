@@ -16,7 +16,7 @@ from source.kg.product.goldset_judgement import (
     load_goldset_scenarios,
     render_judgements_markdown,
 )
-from source.kg.product.validation import require_unique_strings
+from source.kg.product.validation import normalize_unique_strings
 
 
 DEFAULT_QUERY_SET = "docs/evaluation/PRODUCT-QUERY-SET.md"
@@ -66,8 +66,7 @@ def main() -> None:
 
     packets = _load_by_scenario(args.packets, "packets")
     answers = _load_by_scenario(args.answers, "answers")
-    requested_scenario_ids = tuple(args.scenario or sorted(answers))
-    require_unique_strings(requested_scenario_ids, "--scenario")
+    requested_scenario_ids = normalize_unique_strings(tuple(args.scenario or sorted(answers)), "--scenario")
     scenarios = load_goldset_scenarios(args.query_set, set(requested_scenario_ids))
     missing = [scenario_id for scenario_id in requested_scenario_ids if scenario_id not in scenarios]
     if args.scenario and missing:

@@ -81,7 +81,7 @@ class ClaudeAnswerSynthesizer:
 
 def render_answers_markdown(result: JsonObject) -> str:
     lines = [
-        "# LatticeAI Goldset Answer Synthesis",
+        "# Goldset Answer Synthesis",
         "",
         f"- Snapshot: `{result['snapshot']}`",
         f"- Model: `{result['model']}`",

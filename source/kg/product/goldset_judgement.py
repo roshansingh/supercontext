@@ -109,7 +109,7 @@ def load_goldset_scenarios(path: str | Path, scenario_ids: set[str]) -> dict[str
 
 def render_judgements_markdown(result: JsonObject) -> str:
     lines = [
-        "# LatticeAI Goldset Judgement",
+        "# Goldset Judgement",
         "",
         f"- Query set: `{result['query_set']}`",
         f"- Packets: `{result['packets']}`",

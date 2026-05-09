@@ -15,7 +15,7 @@ from source.kg.product import (
 )
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL, render_answers_markdown
 from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
-from source.kg.product.validation import require_unique_strings
+from source.kg.product.validation import normalize_unique_strings
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -28,8 +28,7 @@ def main() -> None:
     parser.add_argument(
         "--scenario",
         action="append",
-        choices=sorted(SCENARIO_PLANS),
-        help="Scenario ID to run; repeatable. Defaults to the LatticeAI goldset scenarios.",
+        help="Scenario ID to run; repeatable. Defaults to the configured goldset scenarios.",
     )
     parser.add_argument("--packets-in", help="Optional existing EvidencePacket JSON file")
     parser.add_argument("--packets-out", help="Optional path to write generated EvidencePacket JSON")
@@ -67,8 +66,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    scenario_ids = tuple(args.scenario or DEFAULT_SCENARIOS)
-    require_unique_strings(scenario_ids, "--scenario")
+    scenario_ids = normalize_unique_strings(tuple(args.scenario or DEFAULT_SCENARIOS), "--scenario")
+    invalid_scenario_ids = sorted(set(scenario_ids) - set(SCENARIO_PLANS))
+    if invalid_scenario_ids:
+        raise ValueError(f"Unknown scenarios: {invalid_scenario_ids}")
     packets = _load_or_build_packets(args.snapshot, scenario_ids, args.packets_in)
     if args.packets_out:
         _write_json(
@@ -108,7 +109,7 @@ def _load_or_build_packets(
         data = json.loads(Path(packets_in).expanduser().read_text(encoding="utf-8"))
         packets = data.get("packets") if isinstance(data, dict) else data
         if not isinstance(packets, list):
-            raise ValueError("packets input must be a list or an object with a 'packets' list")
+            raise ValueError(f"{packets_in} must be a list or an object with a 'packets' list")
         scenario_id_set = set(scenario_ids)
         filtered_packets = []
         found_scenario_ids = set()

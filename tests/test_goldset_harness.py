@@ -6,9 +6,10 @@ import unittest
 from pathlib import Path
 
 from source.kg.product.answer_synthesis import _validate_answer
+from source.kg.product.claude_tool_policy import resolve_claude_cli_path
 from source.kg.product.goldset_judgement import _validate_judgement, load_goldset_scenarios
 from source.kg.product.json_result import parse_json_object_result
-from source.kg.product.validation import require_unique_strings
+from source.kg.product.validation import normalize_unique_strings, require_unique_strings
 from source.scripts.run_goldset_answers import _load_or_build_packets
 from source.scripts.run_goldset_judgement import _load_by_scenario
 
@@ -106,13 +107,22 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate value"):
             require_unique_strings(("Q082", "Q082"), "--scenario")
 
+    def test_normalize_unique_strings_strips_before_duplicate_check(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate value"):
+            normalize_unique_strings((" Q082 ", "Q082"), "--scenario")
+
+    def test_resolve_claude_cli_path_rejects_bad_configured_path(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "not executable"):
+            resolve_claude_cli_path("/definitely/missing/claude")
+
 
 def _write_json(value: object) -> Path:
     return _write_text(json.dumps(value))
 
 
 def _write_text(value: str) -> Path:
-    path = Path(tempfile.NamedTemporaryFile(delete=False).name)
+    with tempfile.NamedTemporaryFile(delete=False) as handle:
+        path = Path(handle.name)
     path.write_text(value, encoding="utf-8")
     return path
 
