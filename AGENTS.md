@@ -58,7 +58,7 @@ Keep changes surgical. Do not rewrite ADRs, research docs, or generated data unl
 
 Copilot has repeatedly caught boundary-condition mistakes in review. Before opening or updating a PR, explicitly check these patterns:
 
-- Run the project-local `.codex/skills/pre-pr-semantic-review` checklist before pushing PR updates, especially for extractor, normalization, query, loader, evaluation, or review-fix changes.
+- Always run the project-local `.codex/skills/pre-pr-semantic-review` checklist before any `git push`, especially for extractor, normalization, query, loader, evaluation, or review-fix changes.
 - Validate external JSON/input shapes before use. If a CLI accepts either a list or an object wrapper, branch on `isinstance(data, dict)` before calling `.get(...)`.
 - Fail fast on malformed rows. Reject non-object rows, missing IDs, duplicate IDs, and padded IDs; normalize stored IDs after stripping whitespace.
 - Validate list-shaped fields before rendering or iterating. Do not assume model outputs or loaded JSON contain `list[str]`; reject missing, non-list, or non-string values with field-specific errors.
