@@ -5,9 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import tomllib
+from typing import Literal
 import warnings
 
-from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
+from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
+from source.kg.extraction.python.dataflow import LiteralIndex, LiteralRef, module_literal_assignments
+from source.kg.extraction.python.transport_extractor import extract_transport_events
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -33,6 +36,13 @@ class SymbolDef:
     end_line: int
 
 
+@dataclass(frozen=True)
+class ParsedPythonFile:
+    tree: ast.AST | None
+    line_count: int
+    syntax_error: SyntaxError | None = None
+
+
 class PythonAstExtractor:
     source_system = "python_ast_v0"
 
@@ -49,9 +59,20 @@ class PythonAstExtractor:
         )
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, repo.root / "pyproject.toml", 1, 1)
         import_normalizer = PythonImportNormalizer(repo)
+        parsed_files = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
+        literal_index = self._literal_index(repo, parsed_files)
 
         for file_path in repo.python_files:
-            self._extract_file(repo, file_path, repo_entity, service_entity, import_normalizer, build)
+            self._extract_file(
+                repo,
+                file_path,
+                parsed_files[file_path],
+                repo_entity,
+                service_entity,
+                import_normalizer,
+                literal_index,
+                build,
+            )
 
         build.coverage.append(
             Coverage(
@@ -68,17 +89,16 @@ class PythonAstExtractor:
         self,
         repo: RepoSnapshot,
         file_path: Path,
+        parsed: ParsedPythonFile,
         repo_entity: Entity,
         service_entity: Entity,
         import_normalizer: PythonImportNormalizer,
+        literal_index: LiteralIndex,
         build: KgBuild,
     ) -> None:
-        source = file_path.read_text(encoding="utf-8", errors="replace")
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(source, filename=str(file_path))
-        except SyntaxError as exc:
+        tree = parsed.tree
+        if tree is None:
+            exc = parsed.syntax_error
             build.coverage.append(
                 Coverage(
                     tenant_id=TENANT_ID,
@@ -101,9 +121,14 @@ class PythonAstExtractor:
                     source_ref={
                         "extractor": self.source_system,
                         "error": "syntax_error",
-                        "message": str(exc),
+                        "message": str(exc) if exc is not None else "unknown syntax error",
                     },
-                    bytes_ref=self._bytes_ref(repo, file_path, getattr(exc, "lineno", 1) or 1, getattr(exc, "lineno", 1) or 1),
+                    bytes_ref=self._bytes_ref(
+                        repo,
+                        file_path,
+                        getattr(exc, "lineno", 1) or 1,
+                        getattr(exc, "lineno", 1) or 1,
+                    ),
                     confidence=1.0,
                 )
             )
@@ -115,7 +140,7 @@ class PythonAstExtractor:
             properties={"path": str(file_path.relative_to(repo.root))},
         )
         build.entities.append(module_entity)
-        build.evidence.append(self._entity_evidence(repo, module_entity, file_path, 1, max(1, len(source.splitlines()))))
+        build.evidence.append(self._entity_evidence(repo, module_entity, file_path, 1, max(1, parsed.line_count)))
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
@@ -177,6 +202,39 @@ class PythonAstExtractor:
                         line,
                         qualifier={"call": call_name},
                     )
+            extract_transport_events(
+                repo,
+                file_path,
+                caller,
+                caller_node,
+                imports,
+                literal_index,
+                build,
+                self.source_system,
+                self._add_entity_evidence,
+                self._add_fact,
+            )
+
+    def _parse_file(self, file_path: Path) -> ParsedPythonFile:
+        source = file_path.read_text(encoding="utf-8", errors="replace")
+        line_count = len(source.splitlines())
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(source, filename=str(file_path))
+        except SyntaxError as exc:
+            return ParsedPythonFile(tree=None, line_count=line_count, syntax_error=exc)
+        return ParsedPythonFile(tree=tree, line_count=line_count)
+
+    def _literal_index(self, repo: RepoSnapshot, parsed_files: dict[Path, ParsedPythonFile]) -> LiteralIndex:
+        values: dict[LiteralRef, ast.AST] = {}
+        for file_path, parsed in parsed_files.items():
+            if parsed.tree is None:
+                continue
+            module_name = self._module_name(repo, file_path)
+            for name, value in module_literal_assignments(parsed.tree).items():
+                values[LiteralRef(module_name, name)] = value
+        return LiteralIndex(values)
 
     def _collect_symbols(self, repo: RepoSnapshot, file_path: Path, module_name: str, tree: ast.AST) -> list[SymbolDef]:
         symbols: list[SymbolDef] = []
@@ -233,14 +291,22 @@ class PythonAstExtractor:
         line_start: int,
         line_end: int,
         qualifier: JsonObject | None = None,
+        derivation_class: EvidenceDerivationClass = "deterministic_static",
+        canonical_status: Literal["canonical", "candidate", "demoted"] = "canonical",
     ) -> None:
-        fact = Fact(predicate=predicate, subject_id=subject.entity_id, object_id=object_.entity_id, qualifier=qualifier or {})
+        fact = Fact(
+            predicate=predicate,
+            subject_id=subject.entity_id,
+            object_id=object_.entity_id,
+            qualifier=qualifier or {},
+            canonical_status=canonical_status,
+        )
         build.facts.append(fact)
         build.evidence.append(
             Evidence(
                 target_type="fact",
                 target_id=fact.fact_id,
-                derivation_class="deterministic_static",
+                derivation_class=derivation_class,
                 source_system=self.source_system,
                 source_ref={"extractor": self.source_system, "predicate": predicate},
                 bytes_ref=self._bytes_ref(repo, file_path, line_start, line_end),
@@ -330,6 +396,18 @@ class PythonAstExtractor:
             bytes_ref=self._bytes_ref(repo, file_path, line_start, line_end),
             confidence=1.0,
         )
+
+    def _add_entity_evidence(
+        self,
+        build: KgBuild,
+        repo: RepoSnapshot,
+        entity: Entity,
+        file_path: Path,
+        line_start: int,
+        line_end: int,
+    ) -> None:
+        build.entities.append(entity)
+        build.evidence.append(self._entity_evidence(repo, entity, file_path, line_start, line_end))
 
     def _bytes_ref(self, repo: RepoSnapshot, file_path: Path, line_start: int, line_end: int) -> JsonObject:
         return {
