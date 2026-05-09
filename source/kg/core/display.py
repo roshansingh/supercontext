@@ -15,7 +15,7 @@ def display_entity(entity: JsonObject) -> str:
         prefix = f"{host} " if host else ""
         return f"{prefix}{identity.get('method')} {identity.get('path')}"
     if kind == "EventChannel":
-        return f"{identity.get('broker_kind')}:{identity.get('name')}"
+        return f"{identity.get('broker_kind')}:{identity.get('channel_address') or identity.get('name')}"
     if kind == "DeployTarget":
         return f"{identity.get('type')}:{identity.get('target')}"
     if kind == "EnvVar":

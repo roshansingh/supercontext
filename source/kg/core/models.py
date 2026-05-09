@@ -8,6 +8,16 @@ from typing import Any, Literal
 
 
 JsonObject = dict[str, Any]
+EvidenceDerivationClass = Literal[
+    "authoritative_declared",
+    "authoritative_static",
+    "manual_override",
+    "deterministic_static",
+    "static_inferred",
+    "candidate",
+    "runtime_observed",
+    "inferred_llm",
+]
 
 
 def utc_now_iso() -> str:
@@ -67,13 +77,7 @@ class Fact:
 class Evidence:
     target_type: Literal["entity", "fact"]
     target_id: str
-    derivation_class: Literal[
-        "authoritative_declared",
-        "manual_override",
-        "deterministic_static",
-        "runtime_observed",
-        "inferred_llm",
-    ]
+    derivation_class: EvidenceDerivationClass
     source_system: str
     source_ref: JsonObject
     bytes_ref: JsonObject | None = None
@@ -107,4 +111,3 @@ class Coverage:
         record = asdict(self)
         record["coverage_id"] = self.coverage_id
         return record
-

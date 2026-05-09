@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
-from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
+from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
 from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
 
 
@@ -108,6 +109,7 @@ def add_fact(
     line_start: int,
     line_end: int | None = None,
     qualifier: JsonObject | None = None,
+    derivation_class: EvidenceDerivationClass = "deterministic_static",
 ) -> None:
     fact = Fact(predicate=predicate, subject_id=subject.entity_id, object_id=object_.entity_id, qualifier=qualifier or {})
     build.facts.append(fact)
@@ -115,7 +117,7 @@ def add_fact(
         Evidence(
             target_type="fact",
             target_id=fact.fact_id,
-            derivation_class="deterministic_static",
+            derivation_class=derivation_class,
             source_system=CONFIG_SOURCE_SYSTEM,
             source_ref={"extractor": CONFIG_SOURCE_SYSTEM, "predicate": predicate},
             bytes_ref=bytes_ref(repo, file_path, line_start, line_end or line_start),
@@ -165,11 +167,19 @@ def endpoint_entity(repo: RepoSnapshot, method: str, path: str, host: str | None
     )
 
 
-def event_channel_entity(repo: RepoSnapshot, name: str, broker_kind: str) -> Entity:
+def event_channel_entity(
+    _repo: RepoSnapshot,
+    broker_kind: str,
+    channel_address: str,
+    *,
+    properties: JsonObject | None = None,
+    canonical_status: Literal["canonical", "candidate", "demoted"] = "canonical",
+) -> Entity:
     return Entity(
         kind="EventChannel",
-        identity={"tenant_id": TENANT_ID, "repo": repo.name, "broker_kind": broker_kind, "name": name},
-        properties={},
+        identity={"tenant_id": TENANT_ID, "broker_kind": broker_kind, "channel_address": channel_address},
+        properties=properties or {},
+        canonical_status=canonical_status,
     )
 
 
