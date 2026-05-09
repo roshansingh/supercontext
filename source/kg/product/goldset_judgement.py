@@ -96,6 +96,8 @@ def load_goldset_scenarios(path: str | Path, scenario_ids: set[str]) -> dict[str
         ground_truth = row.get("Ground Truth Answer", "")
         if not ground_truth or ground_truth == "Not in initial goldset.":
             continue
+        if scenario_id in scenarios:
+            raise ValueError(f"{path} contains duplicate goldset scenario ID {scenario_id!r}")
         scenarios[scenario_id] = GoldsetScenario(
             scenario_id=scenario_id,
             user_query=row.get("User Query", ""),
