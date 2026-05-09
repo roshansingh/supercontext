@@ -4,6 +4,14 @@ import json
 import re
 from pathlib import Path
 
+from source.kg.extraction.config.channel_normalization import (
+    ARN_RE,
+    SQS_URL_RE,
+    NormalizedChannel,
+    normalize_sns_arn,
+    normalize_sqs_arn,
+    normalize_sqs_url,
+)
 from source.kg.extraction.config.common import (
     ConfigKgBuild,
     ScannedFile,
@@ -20,8 +28,6 @@ from source.kg.core.repo_source import RepoSnapshot
 
 APACHE_SERVER_NAME_RE = re.compile(r"^\s*Server(?:Name|Alias)\s+([^\s#]+)")
 APACHE_WSGI_RE = re.compile(r"^\s*WSGIScriptAlias\s+\S+\s+([^\s#]+)")
-QUEUE_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*['\"]?([A-Za-z0-9_.:/-]*(?:queue|sqs|campaign|email)[A-Za-z0-9_.:/-]*)", re.IGNORECASE)
-SQS_ARN_RE = re.compile(r"arn:aws:sqs:[A-Za-z0-9-]+:\d+:([A-Za-z0-9_.-]+)")
 SERVERLESS_ROUTE_RE = re.compile(r"^\s*route:\s*['\"]?([^'\"\n]+)")
 SERVERLESS_HANDLER_RE = re.compile(r"^\s*handler:\s*['\"]?([^'\"\n]+)")
 APACHE_VHOST_START_RE = re.compile(r"^\s*<VirtualHost\b", re.IGNORECASE)
@@ -31,7 +37,8 @@ APACHE_VHOST_END_RE = re.compile(r"^\s*</VirtualHost\s*>", re.IGNORECASE)
 def extract_deploy_events(repo: RepoSnapshot, files: list[ScannedFile], service_entity: Entity, build: ConfigKgBuild) -> None:
     for scanned in files:
         _extract_apache(repo, scanned, service_entity, build)
-        _extract_queue_lines(repo, scanned, service_entity, build)
+        if scanned.path.name != "zappa_settings.json":
+            _extract_queue_lines(repo, scanned, service_entity, build)
         _extract_serverless_routes(repo, scanned, service_entity, build)
         if scanned.path.name == "zappa_settings.json":
             _extract_zappa_event_sources(repo, scanned, service_entity, build)
@@ -117,16 +124,8 @@ def _add_apache_domain_routes(
 
 def _extract_queue_lines(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
     for line_number, line in enumerate(scanned.lines, start=1):
-        for queue_name in SQS_ARN_RE.findall(line):
-            _add_event_reference(repo, scanned, line_number, service_entity, build, queue_name, "sqs", "sqs_arn")
-        match = QUEUE_ASSIGN_RE.match(line)
-        if not match:
-            continue
-        key, value = match.group(1), match.group(2).strip().strip("'\",")
-        if value.startswith("arn:aws:sqs"):
-            arn_match = SQS_ARN_RE.search(value)
-            value = arn_match.group(1) if arn_match else value
-        _add_event_reference(repo, scanned, line_number, service_entity, build, value, "sqs", key)
+        for channel in _normalized_channels_in_line(line):
+            _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal")
 
 
 def _extract_serverless_routes(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
@@ -148,7 +147,12 @@ def _extract_serverless_routes(repo: RepoSnapshot, scanned: ScannedFile, service
         if pending_handler:
             qualifier["handler"] = pending_handler[1]
         add_fact(build, "EXPOSES_ENDPOINT", service_entity, endpoint, repo, scanned.path, line_number, qualifier=qualifier)
-        channel = event_channel_entity(repo, route, "websocket")
+        channel = event_channel_entity(
+            repo,
+            "websocket",
+            route,
+            properties={"raw_literal": route, "source_kind": "serverless_route", "path": scanned.relative_path},
+        )
         add_entity_evidence(build, repo, channel, scanned.path, line_number)
         add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, line_number, qualifier=qualifier)
 
@@ -166,12 +170,16 @@ def _extract_zappa_event_sources(repo: RepoSnapshot, scanned: ScannedFile, servi
                 continue
             arn = str(event_source.get("event_source", {}).get("arn") or "")
             function = str(event_source.get("function") or "")
-            arn_match = SQS_ARN_RE.search(arn)
-            if not arn_match:
+            channel_ref = normalize_sqs_arn(arn)
+            if channel_ref is None:
                 continue
-            queue_name = arn_match.group(1)
-            line_number = _line_number_for(scanned, queue_name)
-            channel = event_channel_entity(repo, queue_name, "sqs")
+            line_number = _line_number_for(scanned, channel_ref.properties["raw_literal"])
+            channel = event_channel_entity(
+                repo,
+                channel_ref.broker_kind,
+                channel_ref.channel_address,
+                properties=channel_ref.properties,
+            )
             add_entity_evidence(build, repo, channel, scanned.path, line_number)
             add_fact(
                 build,
@@ -186,7 +194,12 @@ def _extract_zappa_event_sources(repo: RepoSnapshot, scanned: ScannedFile, servi
                     "stage": stage_name,
                     "function": function,
                     "path": scanned.relative_path,
+                    "raw_literal": channel_ref.properties["raw_literal"],
+                    "broker_kind": channel_ref.broker_kind,
+                    "channel_address": channel_ref.channel_address,
+                    "normalized_channel": channel_ref.channel_address,
                 },
+                derivation_class="authoritative_static",
             )
 
 
@@ -196,13 +209,17 @@ def _add_event_reference(
     line_number: int,
     service_entity: Entity,
     build: ConfigKgBuild,
-    channel_name: str,
-    broker_kind: str,
+    channel_ref: NormalizedChannel,
     source_kind: str,
 ) -> None:
-    if not channel_name:
+    if not channel_ref.channel_address:
         return
-    channel = event_channel_entity(repo, channel_name, broker_kind)
+    channel = event_channel_entity(
+        repo,
+        channel_ref.broker_kind,
+        channel_ref.channel_address,
+        properties=channel_ref.properties,
+    )
     add_entity_evidence(build, repo, channel, scanned.path, line_number)
     add_fact(
         build,
@@ -212,8 +229,29 @@ def _add_event_reference(
         repo,
         scanned.path,
         line_number,
-        qualifier={"source_kind": source_kind, "path": scanned.relative_path},
+        qualifier={
+            "source_kind": source_kind,
+            "path": scanned.relative_path,
+            "raw_literal": channel_ref.properties.get("raw_literal"),
+            "broker_kind": channel_ref.broker_kind,
+            "channel_address": channel_ref.channel_address,
+            "normalized_channel": channel_ref.channel_address,
+        },
     )
+
+
+def _normalized_channels_in_line(line: str) -> list[NormalizedChannel]:
+    channels = []
+    for match in ARN_RE.finditer(line):
+        arn = match.group(0)
+        channel = normalize_sqs_arn(arn) or normalize_sns_arn(arn)
+        if channel is not None:
+            channels.append(channel)
+    for match in SQS_URL_RE.finditer(line):
+        channel = normalize_sqs_url(match.group(0))
+        if channel is not None:
+            channels.append(channel)
+    return channels
 
 
 def _repo_hint_from_path(path: str) -> str | None:

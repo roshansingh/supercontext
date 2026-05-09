@@ -179,7 +179,7 @@ def _identity_key(entity: JsonObject, identity_key: IdentityKey) -> str:
     if identity_key == "endpoint_path":
         return _normalize_path(str(identity.get("path", "")))
     if identity_key == "event_channel":
-        return f"{identity.get('broker_kind')}:{identity.get('name')}"
+        return f"{identity.get('broker_kind')}:{identity.get('channel_address') or identity.get('name')}"
     return display_entity(entity)
 
 

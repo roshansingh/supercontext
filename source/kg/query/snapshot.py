@@ -468,7 +468,8 @@ class KgSnapshot:
             channel = self.entities_by_id.get(fact["object_id"])
             if not subject or not channel or channel.get("kind") != "EventChannel":
                 continue
-            name = str(channel.get("identity", {}).get("name", ""))
+            identity = channel.get("identity", {})
+            name = str(identity.get("channel_address") or identity.get("name") or "")
             if channel_query and channel_query.lower() not in name.lower():
                 continue
             rows.append(self._fact_result(fact, subject, channel))

@@ -163,4 +163,6 @@ def _display(entity: JsonObject) -> str:
         return f"{identity.get('module')}.{identity.get('qualname')}"
     if entity["kind"] == "CodeModule":
         return str(identity.get("module"))
+    if entity["kind"] == "EventChannel":
+        return f"{identity.get('broker_kind')}:{identity.get('channel_address') or identity.get('name')}"
     return str(identity.get("name") or identity.get("slug") or identity)
