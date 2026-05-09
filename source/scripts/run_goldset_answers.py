@@ -88,7 +88,7 @@ def _load_or_build_packets(
 ) -> list[JsonObject]:
     if packets_in:
         data = json.loads(Path(packets_in).expanduser().read_text(encoding="utf-8"))
-        packets = data.get("packets", data)
+        packets = data.get("packets") if isinstance(data, dict) else data
         if not isinstance(packets, list):
             raise ValueError("packets input must be a list or an object with a 'packets' list")
         scenario_id_set = set(scenario_ids)

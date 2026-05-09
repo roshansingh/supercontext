@@ -6,6 +6,7 @@ from pathlib import Path
 from shutil import which
 
 from source.kg.core.models import JsonObject
+from source.kg.product.claude_tool_policy import DISALLOWED_CLAUDE_TOOLS
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 from source.kg.product.json_result import parse_json_object_result
 
@@ -46,20 +47,7 @@ class ClaudeAnswerSynthesizer:
                     max_turns=self.config.max_turns,
                     max_budget_usd=self.config.max_budget_usd,
                     allowed_tools=[],
-                    disallowed_tools=[
-                        "Agent",
-                        "Bash",
-                        "Edit",
-                        "Glob",
-                        "Grep",
-                        "LS",
-                        "Read",
-                        "Task",
-                        "TodoWrite",
-                        "WebFetch",
-                        "WebSearch",
-                        "Write",
-                    ],
+                    disallowed_tools=list(DISALLOWED_CLAUDE_TOOLS),
                     permission_mode="dontAsk",
                     cli_path=which("claude"),
                     cwd=Path.cwd(),

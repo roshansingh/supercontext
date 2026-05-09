@@ -118,7 +118,7 @@ async def _judge_all(
 
 def _load_by_scenario(path: str, key: str) -> dict[str, JsonObject]:
     data = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
-    rows = data.get(key, data)
+    rows = data.get(key) if isinstance(data, dict) else data
     if not isinstance(rows, list):
         raise ValueError(f"{path} must contain a list or an object with a {key!r} list")
     by_scenario: dict[str, JsonObject] = {}

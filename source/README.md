@@ -61,7 +61,7 @@ Current validation thesis:
 
 - KG-first retrieval should make many cross-repo answers materially faster and cheaper than asking Claude Code/Codex to rediscover the answer by searching repos from scratch.
 - Speed/cost is not enough to validate the product; answer quality is the primary bar.
-- Answer quality must be judged against independent gold truth, not by the same synthesis model that generated the answer.
+- Answer quality must be judged against independent ground truth, not by the same synthesis model that generated the answer.
 - Failures should be classified as missing KG fact, bad retrieval plan, or bad synthesis before adding new features.
 
 Retrieval plans decide which KG query surfaces to call. For example, Q082 runs domain lookup for `api.shopagain.io` and deploy lookup for `prod_shopagain_wsgi.py`.
