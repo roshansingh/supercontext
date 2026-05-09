@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from source.kg.core.models import Entity, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.config.channel_normalization import (
     NormalizedChannel,
@@ -25,7 +24,7 @@ from source.kg.extraction.python.dataflow import (
     resolved_to_json,
     unresolved_coverage,
 )
-from source.kg.extraction.python.transport_apis import transport_spec
+from source.kg.extraction.python.transport_apis import supported_transports, transport_spec
 from source.kg.normalization.python.imports import NormalizedImport
 
 
@@ -231,7 +230,7 @@ def _transport_client_from_call(node: ast.AST, boto3_names: set[str]) -> Transpo
     if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
         return None
     transport = node.args[0].value
-    if transport not in {"sqs", "sns"}:
+    if transport not in supported_transports():
         return None
     factory = _method_name(node.func)
     if factory not in {"client", "resource"}:

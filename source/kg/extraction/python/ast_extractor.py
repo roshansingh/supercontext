@@ -9,7 +9,7 @@ from typing import Literal
 import warnings
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
-from source.kg.extraction.python.dataflow import LiteralIndex, build_repo_literal_index
+from source.kg.extraction.python.dataflow import LiteralIndex, LiteralRef, module_literal_assignments
 from source.kg.extraction.python.transport_extractor import extract_transport_events
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
@@ -36,6 +36,13 @@ class SymbolDef:
     end_line: int
 
 
+@dataclass(frozen=True)
+class ParsedPythonFile:
+    source: str
+    tree: ast.AST | None
+    syntax_error: SyntaxError | None = None
+
+
 class PythonAstExtractor:
     source_system = "python_ast_v0"
 
@@ -52,10 +59,20 @@ class PythonAstExtractor:
         )
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, repo.root / "pyproject.toml", 1, 1)
         import_normalizer = PythonImportNormalizer(repo)
-        literal_index = build_repo_literal_index(repo)
+        parsed_files = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
+        literal_index = self._literal_index(repo, parsed_files)
 
         for file_path in repo.python_files:
-            self._extract_file(repo, file_path, repo_entity, service_entity, import_normalizer, literal_index, build)
+            self._extract_file(
+                repo,
+                file_path,
+                parsed_files[file_path],
+                repo_entity,
+                service_entity,
+                import_normalizer,
+                literal_index,
+                build,
+            )
 
         build.coverage.append(
             Coverage(
@@ -72,18 +89,17 @@ class PythonAstExtractor:
         self,
         repo: RepoSnapshot,
         file_path: Path,
+        parsed: ParsedPythonFile,
         repo_entity: Entity,
         service_entity: Entity,
         import_normalizer: PythonImportNormalizer,
         literal_index: LiteralIndex,
         build: KgBuild,
     ) -> None:
-        source = file_path.read_text(encoding="utf-8", errors="replace")
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(source, filename=str(file_path))
-        except SyntaxError as exc:
+        source = parsed.source
+        tree = parsed.tree
+        if tree is None:
+            exc = parsed.syntax_error
             build.coverage.append(
                 Coverage(
                     tenant_id=TENANT_ID,
@@ -106,9 +122,14 @@ class PythonAstExtractor:
                     source_ref={
                         "extractor": self.source_system,
                         "error": "syntax_error",
-                        "message": str(exc),
+                        "message": str(exc) if exc is not None else "unknown syntax error",
                     },
-                    bytes_ref=self._bytes_ref(repo, file_path, getattr(exc, "lineno", 1) or 1, getattr(exc, "lineno", 1) or 1),
+                    bytes_ref=self._bytes_ref(
+                        repo,
+                        file_path,
+                        getattr(exc, "lineno", 1) or 1,
+                        getattr(exc, "lineno", 1) or 1,
+                    ),
                     confidence=1.0,
                 )
             )
@@ -194,6 +215,26 @@ class PythonAstExtractor:
                 self._add_entity_evidence,
                 self._add_fact,
             )
+
+    def _parse_file(self, file_path: Path) -> ParsedPythonFile:
+        source = file_path.read_text(encoding="utf-8", errors="replace")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(source, filename=str(file_path))
+        except SyntaxError as exc:
+            return ParsedPythonFile(source=source, tree=None, syntax_error=exc)
+        return ParsedPythonFile(source=source, tree=tree)
+
+    def _literal_index(self, repo: RepoSnapshot, parsed_files: dict[Path, ParsedPythonFile]) -> LiteralIndex:
+        values: dict[LiteralRef, ast.AST] = {}
+        for file_path, parsed in parsed_files.items():
+            if parsed.tree is None:
+                continue
+            module_name = self._module_name(repo, file_path)
+            for name, value in module_literal_assignments(parsed.tree).items():
+                values[LiteralRef(module_name, name)] = value
+        return LiteralIndex(values)
 
     def _collect_symbols(self, repo: RepoSnapshot, file_path: Path, module_name: str, tree: ast.AST) -> list[SymbolDef]:
         symbols: list[SymbolDef] = []

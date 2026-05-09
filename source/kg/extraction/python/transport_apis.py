@@ -29,3 +29,7 @@ def transport_spec(transport: str, factory: str, method: str) -> TransportApiSpe
         if spec.transport == transport and spec.factory == factory and spec.method == method:
             return spec
     return None
+
+
+def supported_transports() -> set[str]:
+    return {spec.transport for spec in TRANSPORT_APIS}
