@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.repo_source import RepoSnapshot
 
 
 NODE_BUILTINS = {

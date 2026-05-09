@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from source.kg.product import EvidencePacketBuilder, SCENARIO_PLANS
-from source.kg.queries import KgSnapshot
+from source.kg.query.snapshot import KgSnapshot
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ import argparse
 import json
 
 from source.kg.product.contract_reconciliation import ContractReconciliationSpec, ContractSide, reconcile_contract
-from source.kg.queries import KgSnapshot
+from source.kg.query.snapshot import KgSnapshot
 
 
 def main() -> None:

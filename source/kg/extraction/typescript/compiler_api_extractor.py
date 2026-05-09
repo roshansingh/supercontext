@@ -7,8 +7,8 @@ import re
 import subprocess
 
 from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
-from source.kg.models import Coverage, Entity, Evidence, Fact, JsonObject
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
+from source.kg.core.repo_source import RepoSnapshot
 
 
 TENANT_ID = "local-dev"

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import tomllib
 
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.repo_source import RepoSnapshot
 
 
 DEPENDENCY_ALIASES = {

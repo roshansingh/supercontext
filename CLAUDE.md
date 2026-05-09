@@ -32,7 +32,7 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/<name> blast-radius <s
 
 Snapshots write `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` under the `--out` directory.
 
-LLM enrichment is not part of the default v0 path. If used: `source.kg.llm.LightLlmClient` reads `OPENAI_API_KEY`, defaults to `gpt-4.1-mini`, override with `SUPERCONTEXT_LLM_MODEL`.
+LLM enrichment is not part of the default v0 path. If used: `source.kg.integrations.llm.LightLlmClient` reads `OPENAI_API_KEY`, defaults to `gpt-4.1-mini`, override with `SUPERCONTEXT_LLM_MODEL`.
 
 ## Repository layout
 

@@ -4,8 +4,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from source.kg.models import Coverage, Entity, Evidence, Fact, JsonObject
-from source.kg.repo_source import IGNORED_DIRS, RepoSnapshot
+from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
+from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
 
 
 TENANT_ID = "local-dev"

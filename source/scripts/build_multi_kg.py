@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from source.kg.multi_repo import build_multi_kg
+from source.kg.build.multi_repo import build_multi_kg
 
 
 def main() -> None:

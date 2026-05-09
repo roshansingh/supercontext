@@ -14,8 +14,8 @@ from source.kg.extraction.config.common import (
     endpoint_entity,
     event_channel_entity,
 )
-from source.kg.models import Entity, JsonObject
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.models import Entity, JsonObject
+from source.kg.core.repo_source import RepoSnapshot
 
 
 APACHE_SERVER_NAME_RE = re.compile(r"^\s*Server(?:Name|Alias)\s+([^\s#]+)")

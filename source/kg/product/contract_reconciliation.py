@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Literal
 
-from source.kg.display import display_entity
-from source.kg.models import JsonObject
+from source.kg.core.display import display_entity
+from source.kg.core.models import JsonObject
 
 
 IdentityKey = Literal["endpoint_path", "event_channel", "display_name"]

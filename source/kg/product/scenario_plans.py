@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from source.kg.models import JsonObject
+from source.kg.core.models import JsonObject
 from source.kg.product.contract_reconciliation import ContractReconciliationSpec, ContractSide, reconcile_contract
-from source.kg.queries import KgSnapshot
+from source.kg.query.snapshot import KgSnapshot
 
 
 ScenarioCommand = Literal[

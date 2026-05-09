@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from source.kg.models import JsonObject
+from source.kg.core.models import JsonObject
 
 
 @dataclass(frozen=True)
