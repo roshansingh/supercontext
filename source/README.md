@@ -27,15 +27,20 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 
 ## Layout
 
+- `source/kg/core/` contains canonical dataclasses, repository discovery, display formatting, and JSONL storage.
+- `source/kg/build/` contains single-repo and multi-repo KG build orchestration.
+- `source/kg/query/` contains snapshot query surfaces, aggregations, and path search.
 - `source/kg/extraction/python/` contains Python AST extraction.
 - `source/kg/extraction/typescript/` contains TypeScript/JavaScript compiler-API extraction.
 - `source/kg/extraction/config/` contains deterministic config extraction for domains, env vars, endpoints, deploy mappings, and event channels.
 - `source/kg/normalization/python/` contains Python import normalization.
 - `source/kg/normalization/typescript/` contains TypeScript/JavaScript import normalization.
+- `source/kg/product/` contains product-validation scenario planning, evidence packets, and contract reconciliation.
+- `source/kg/integrations/` contains optional external service clients.
 - `source/kg/product/scenario_plans.py` maps product-validation query IDs to deterministic KG retrieval steps.
 - `source/kg/product/evidence_packet.py` normalizes query results into synthesis-ready evidence packets.
 - `source/kg/product/contract_reconciliation.py` compares two scoped sets of facts using a reusable contract identity key.
-- `source/kg/aggregations.py` contains language-independent ranked/grouped query helpers over normalized facts.
+- Root-level `source/kg/*.py` files are compatibility wrappers for older imports; new code should import from the grouped packages above.
 
 ## Product-Validation Flow
 
@@ -102,4 +107,4 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/true_loop blast-radius
 
 The v0 extractor is deterministic and does not call an LLM.
 
-If later enrichment needs an LLM, use `source.kg.llm.LightLlmClient`. It reads `OPENAI_API_KEY` from the environment and defaults to `gpt-4.1-mini`, overrideable via `SUPERCONTEXT_LLM_MODEL`.
+If later enrichment needs an LLM, use `source.kg.integrations.llm.LightLlmClient`. It reads `OPENAI_API_KEY` from the environment and defaults to `gpt-4.1-mini`, overrideable via `SUPERCONTEXT_LLM_MODEL`.

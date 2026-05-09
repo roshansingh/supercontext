@@ -16,8 +16,8 @@ from source.kg.extraction.config.common import (
 from source.kg.extraction.config.deploy_events import extract_deploy_events
 from source.kg.extraction.config.domain_env import extract_domain_env
 from source.kg.extraction.config.endpoints import extract_endpoints
-from source.kg.models import Coverage, Entity, Evidence
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.models import Coverage, Entity, Evidence
+from source.kg.core.repo_source import RepoSnapshot
 
 
 class StaticConfigExtractor:

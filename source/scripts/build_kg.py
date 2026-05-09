@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from source.kg.pipeline import build_kg
+from source.kg.build.pipeline import build_kg
 
 
 def main() -> None:

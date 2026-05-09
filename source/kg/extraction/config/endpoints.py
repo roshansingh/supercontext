@@ -11,8 +11,8 @@ from source.kg.extraction.config.common import (
     endpoint_entity,
     normalize_endpoint_path,
 )
-from source.kg.models import Entity
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.models import Entity
+from source.kg.core.repo_source import RepoSnapshot
 
 
 PY_ROUTE_RE = re.compile(r"\b(?:path|re_path)\(\s*r?['\"]([^'\"]+)['\"]")

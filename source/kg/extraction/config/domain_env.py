@@ -11,8 +11,8 @@ from source.kg.extraction.config.common import (
     domain_entity,
     env_var_entity,
 )
-from source.kg.models import Entity
-from source.kg.repo_source import RepoSnapshot
+from source.kg.core.models import Entity
+from source.kg.core.repo_source import RepoSnapshot
 
 
 URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
