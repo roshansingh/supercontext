@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Literal
 
+from source.kg.display import display_entity
 from source.kg.models import JsonObject
 
 
@@ -94,8 +95,8 @@ def _contract_rows(kg, side: ContractSide, identity_key: IdentityKey) -> list[Js
                 "key": key,
                 "fact_id": fact["fact_id"],
                 "predicate": fact.get("predicate"),
-                "subject": _display(subject),
-                "object": _display(object_),
+                "subject": display_entity(subject),
+                "object": display_entity(object_),
                 "subject_repo": _repo_of(subject),
                 "object_repo": _repo_of(object_),
                 "qualifier": fact.get("qualifier", {}),
@@ -179,7 +180,7 @@ def _identity_key(entity: JsonObject, identity_key: IdentityKey) -> str:
         return _normalize_path(str(identity.get("path", "")))
     if identity_key == "event_channel":
         return f"{identity.get('broker_kind')}:{identity.get('name')}"
-    return _display(entity)
+    return display_entity(entity)
 
 
 def _normalize_path(path: str) -> str:
@@ -197,26 +198,6 @@ def _repo_of(entity: JsonObject) -> str | None:
     identity = entity.get("identity", {})
     properties = entity.get("properties", {})
     return identity.get("repo") or properties.get("repo")
-
-
-def _display(entity: JsonObject) -> str:
-    identity = entity.get("identity", {})
-    kind = entity.get("kind")
-    if kind == "CodeSymbol":
-        return f"{identity.get('module')}.{identity.get('qualname')}"
-    if kind == "CodeModule":
-        return str(identity.get("module"))
-    if kind == "Endpoint":
-        host = identity.get("host")
-        prefix = f"{host} " if host else ""
-        return f"{prefix}{identity.get('method')} {identity.get('path')}"
-    if kind == "EventChannel":
-        return f"{identity.get('broker_kind')}:{identity.get('name')}"
-    if kind == "DeployTarget":
-        return f"{identity.get('type')}:{identity.get('target')}"
-    if kind == "EnvVar":
-        return str(identity.get("name"))
-    return str(identity.get("name") or identity.get("slug") or identity)
 
 
 def _spec_record(spec: ContractReconciliationSpec) -> JsonObject:

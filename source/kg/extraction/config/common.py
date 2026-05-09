@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -55,16 +56,19 @@ class ScannedFile:
 
 def iter_scannable_files(repo: RepoSnapshot) -> list[ScannedFile]:
     files: list[ScannedFile] = []
-    for path in sorted(repo.root.rglob("*")):
-        if not path.is_file():
-            continue
+    candidates: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(repo.root):
+        dirnames[:] = sorted(name for name in dirnames if name not in IGNORED_DIRS)
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            if filename in IGNORED_CONFIG_FILENAMES:
+                continue
+            if path.suffix not in CONFIG_EXTENSIONS and not filename.startswith(".env"):
+                continue
+            candidates.append(path)
+
+    for path in sorted(candidates, key=lambda candidate: str(candidate.relative_to(repo.root))):
         relative = path.relative_to(repo.root)
-        if any(part in IGNORED_DIRS for part in relative.parts):
-            continue
-        if path.name in IGNORED_CONFIG_FILENAMES:
-            continue
-        if path.suffix not in CONFIG_EXTENSIONS and not path.name.startswith(".env"):
-            continue
         if path.stat().st_size > MAX_SCAN_BYTES:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")

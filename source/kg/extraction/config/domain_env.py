@@ -15,7 +15,7 @@ from source.kg.models import Entity
 from source.kg.repo_source import RepoSnapshot
 
 
-URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
+URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
 DOMAIN_RE = re.compile(r"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b")
 JS_ENV_RE = re.compile(r"\b(?:process\.env|import\.meta\.env)\.([A-Za-z_][A-Za-z0-9_]*)")
 PY_ENV_RE = re.compile(r"\b(?:os\.environ(?:\.get)?|getenv)\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
@@ -43,12 +43,13 @@ def _extract_domains(
     build: ConfigKgBuild,
 ) -> None:
     for url in URL_RE.findall(line):
-        parsed = _safe_parse_url(url)
+        clean_url = _clean_url_literal(url)
+        parsed = _safe_parse_url(clean_url)
         if parsed is None:
             continue
         hostname = _safe_hostname(parsed)
         if hostname:
-            _add_domain_reference(repo, scanned, line_number, service_entity, build, hostname, url)
+            _add_domain_reference(repo, scanned, line_number, service_entity, build, hostname, clean_url)
     for domain in DOMAIN_RE.findall(line):
         if _looks_like_code_file(domain):
             continue
@@ -103,12 +104,13 @@ def _extract_env_assignments(
     add_fact(build, "REFERENCES_ENV_VAR", service_entity, env_entity, repo, scanned.path, line_number, qualifier=qualifier)
 
     for url in URL_RE.findall(value):
-        parsed = _safe_parse_url(url)
+        clean_url = _clean_url_literal(url)
+        parsed = _safe_parse_url(clean_url)
         if parsed is None:
             continue
         hostname = _safe_hostname(parsed)
         if hostname:
-            _add_domain_reference(repo, scanned, line_number, env_entity, build, hostname, url)
+            _add_domain_reference(repo, scanned, line_number, env_entity, build, hostname, clean_url)
     for domain in DOMAIN_RE.findall(value):
         if not _looks_like_code_file(domain):
             _add_domain_reference(repo, scanned, line_number, env_entity, build, domain, domain)
@@ -147,7 +149,7 @@ def _normalize_domain_ref(domain: str) -> str:
 
 
 def _safe_config_literal(value: str) -> str:
-    parsed = _safe_parse_url(value)
+    parsed = _safe_parse_url(_clean_url_literal(value))
     if parsed is not None and parsed.scheme in {"http", "https"}:
         hostname = _safe_hostname(parsed)
         if not hostname:
@@ -180,6 +182,10 @@ def _safe_parse_url(value: str):
         return urlparse(value)
     except ValueError:
         return None
+
+
+def _clean_url_literal(value: str) -> str:
+    return value.strip().strip("'\"`<>()[]{}.,;")
 
 
 def _safe_hostname(parsed_url) -> str | None:

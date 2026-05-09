@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from source.kg import aggregations, path_search
+from source.kg.display import display_entity
 from source.kg.models import JsonObject
 from source.kg.store import read_jsonl
 
@@ -838,19 +839,4 @@ class KgSnapshot:
         }
 
     def _display(self, entity: JsonObject) -> str:
-        identity = entity["identity"]
-        if entity["kind"] == "CodeSymbol":
-            return f"{identity.get('module')}.{identity.get('qualname')}"
-        if entity["kind"] == "CodeModule":
-            return str(identity.get("module"))
-        if entity["kind"] == "Endpoint":
-            host = identity.get("host")
-            prefix = f"{host} " if host else ""
-            return f"{prefix}{identity.get('method')} {identity.get('path')}"
-        if entity["kind"] == "EventChannel":
-            return f"{identity.get('broker_kind')}:{identity.get('name')}"
-        if entity["kind"] == "DeployTarget":
-            return f"{identity.get('type')}:{identity.get('target')}"
-        if entity["kind"] == "EnvVar":
-            return str(identity.get("name"))
-        return str(identity.get("name") or identity.get("slug") or identity)
+        return display_entity(entity)
