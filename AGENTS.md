@@ -68,6 +68,8 @@ Copilot has repeatedly caught boundary-condition mistakes in review. Before open
 - For API extractors, test common equivalent call shapes before PR: positional args, keyword args, alias imports, chained calls, assigned clients/resources, and unresolved arguments. Do not stop at the single happy path.
 - For AST extractors, test common statement variants too: `Assign`, `AnnAssign`, direct chained calls, and assigned intermediate objects.
 - For Python AST semantics, test language rules that affect binding before PR: positional-only parameters, duplicate argument binding, keyword-only parameters, local assignment/import/loop/with/except shadowing, parameter shadowing, lambda bodies, nested function/class bodies, and evaluated nested-scope expressions such as decorators, default args, class bases, and class keywords.
+- Include Python 3.10+ `match/case` capture bindings in shadowing checks when wrapper or symbol resolution depends on local names.
+- For inference/promotion features, fail closed on ambiguous multiplicity. If one call-site can map to multiple candidate facts and the output contract is not explicitly list-shaped, emit no promoted fact rather than a partial first result.
 - When one AST helper is split into parallel collectors, keep their nested-scope semantics aligned or centralize the traversal policy. A fix in call collection often has an equivalent binding-collection case.
 - If code has an unsupported/error branch, add a test that proves the branch is reachable. Do not leave fallback logic so broad that invalid inputs silently become canonical facts.
 - When adding caches or indexes, check resource impact explicitly. Avoid retaining full file contents when only AST, line count, or metadata is needed.

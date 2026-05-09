@@ -234,6 +234,7 @@ def _event_from_wrapper_call(
     )
     clients = _transport_clients(wrapper_node, boto3_names)
     queue_resources = _queue_resources(wrapper_node, clients, boto3_names)
+    events: list[TransportEvent] = []
     for nested_call in body_call_nodes(wrapper_node):
         event = _event_from_call(nested_call, clients, queue_resources, boto3_names, wrapper_resolver)
         if event is None:
@@ -250,18 +251,21 @@ def _event_from_wrapper_call(
                 seen=(*seen, callee_name),
             )
         if event is not None:
-            wrapper_depth = event.qualifier.get("wrapper_depth") if event.qualifier else None
-            if not isinstance(wrapper_depth, int):
-                wrapper_depth = depth + 1
-            return TransportEvent(
-                api=event.api,
-                channel=event.channel,
-                resolved=event.resolved,
-                source_kind="python_transport_wrapper_call",
-                derivation_class="static_inferred",
-                qualifier={"wrapper_depth": max(depth + 1, wrapper_depth), "promotion": "local_wrapper_body"},
-            )
-    return None
+            events.append(event)
+    if len(events) != 1:
+        return None
+    event = events[0]
+    wrapper_depth = event.qualifier.get("wrapper_depth") if event.qualifier else None
+    if not isinstance(wrapper_depth, int):
+        wrapper_depth = depth + 1
+    return TransportEvent(
+        api=event.api,
+        channel=event.channel,
+        resolved=event.resolved,
+        source_kind="python_transport_wrapper_call",
+        derivation_class="static_inferred",
+        qualifier={"wrapper_depth": max(depth + 1, wrapper_depth), "promotion": "local_wrapper_body"},
+    )
 
 
 def _event_from_channel_arg(
@@ -538,6 +542,15 @@ class _BindingCollector(ast.NodeVisitor):
         self.names.update(_target_names(node.target))
         self.visit(node.value)
 
+    def visit_Match(self, node: ast.Match) -> None:
+        self.visit(node.subject)
+        for case in node.cases:
+            self.names.update(_pattern_names(case.pattern))
+            if case.guard is not None:
+                self.visit(case.guard)
+            for statement in case.body:
+                self.visit(statement)
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.names.add(node.name)
         for decorator in node.decorator_list:
@@ -566,6 +579,39 @@ class _BindingCollector(ast.NodeVisitor):
     def _visit_arg_defaults(self, args: ast.arguments) -> None:
         for default in [*args.defaults, *[default for default in args.kw_defaults if default is not None]]:
             self.visit(default)
+
+
+def _pattern_names(pattern: ast.AST) -> set[str]:
+    if isinstance(pattern, ast.MatchAs):
+        names = _pattern_names(pattern.pattern) if pattern.pattern is not None else set()
+        if pattern.name is not None:
+            names.add(pattern.name)
+        return names
+    if isinstance(pattern, ast.MatchStar):
+        return {pattern.name} if pattern.name is not None else set()
+    if isinstance(pattern, ast.MatchMapping):
+        names = set()
+        for child in pattern.patterns:
+            names.update(_pattern_names(child))
+        if pattern.rest is not None:
+            names.add(pattern.rest)
+        return names
+    if isinstance(pattern, ast.MatchSequence):
+        names = set()
+        for child in pattern.patterns:
+            names.update(_pattern_names(child))
+        return names
+    if isinstance(pattern, ast.MatchClass):
+        names = set()
+        for child in [*pattern.patterns, *pattern.kwd_patterns]:
+            names.update(_pattern_names(child))
+        return names
+    if isinstance(pattern, ast.MatchOr):
+        names = set()
+        for child in pattern.patterns:
+            names.update(_pattern_names(child))
+        return names
+    return set()
 
 
 def _method_name(node: ast.AST) -> str | None:

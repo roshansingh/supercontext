@@ -393,6 +393,43 @@ class PythonTransportExtractorTest(unittest.TestCase):
         event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
         self.assertFalse(event_facts)
 
+    def test_match_capture_shadowing_wrapper_name_blocks_promotion(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def sender(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order(value):\n"
+            "    match value:\n"
+            "        case {'sender': sender}:\n"
+            "            pass\n"
+            "    sender(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
+    def test_multi_producer_wrapper_fails_closed(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n'
+            'OTHER_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/other"\n\n'
+            "def send_both(first, second):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=first, MessageBody="{}")\n'
+            '    sqs.send_message(QueueUrl=second, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    send_both(QUEUE_URL, OTHER_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+
     def test_wrapper_local_rebinding_overrides_call_site_binding(self) -> None:
         source = (
             "import boto3\n\n"
