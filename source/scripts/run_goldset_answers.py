@@ -92,7 +92,19 @@ def _load_or_build_packets(
         if not isinstance(packets, list):
             raise ValueError("packets input must be a list or an object with a 'packets' list")
         scenario_id_set = set(scenario_ids)
-        return [packet for packet in packets if packet.get("scenario_id") in scenario_id_set]
+        filtered_packets = []
+        found_scenario_ids = set()
+        for index, packet in enumerate(packets):
+            if not isinstance(packet, dict):
+                raise ValueError(f"{packets_in} packets[{index}] must be an object")
+            scenario_id = packet.get("scenario_id")
+            if scenario_id in scenario_id_set:
+                filtered_packets.append(packet)
+                found_scenario_ids.add(scenario_id)
+        missing_scenario_ids = sorted(scenario_id_set - found_scenario_ids)
+        if missing_scenario_ids:
+            raise ValueError(f"{packets_in} is missing requested scenarios: {missing_scenario_ids}")
+        return filtered_packets
 
     kg = KgSnapshot(snapshot)
     return [_run_scenario(kg, scenario_id) for scenario_id in scenario_ids]

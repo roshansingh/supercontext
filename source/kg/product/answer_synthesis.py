@@ -7,6 +7,7 @@ from shutil import which
 
 from source.kg.core.models import JsonObject
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
+from source.kg.product.json_result import parse_json_object_result
 
 
 DEFAULT_ANSWER_MODEL = "opus"
@@ -177,18 +178,7 @@ EvidencePacket:
 
 
 def _parse_json_result(result_text: str) -> JsonObject:
-    text = result_text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:].strip()
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Claude returned non-JSON answer synthesis output: {result_text[:500]}") from exc
-    if not isinstance(value, dict):
-        raise RuntimeError("Claude answer synthesis output must be a JSON object")
-    return value
+    return parse_json_object_result(result_text, "answer synthesis")
 
 
 def _validate_answer(answer: JsonObject) -> None:

@@ -8,6 +8,7 @@ from shutil import which
 from source.kg.core.models import JsonObject
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
+from source.kg.product.json_result import parse_json_object_result
 
 
 JUDGEMENT_SCORES = ("Pass", "Partial", "Fail")
@@ -231,18 +232,7 @@ Generated Answer:
 
 
 def _parse_json_result(result_text: str) -> JsonObject:
-    text = result_text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:].strip()
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Claude returned non-JSON judgement output: {result_text[:500]}") from exc
-    if not isinstance(value, dict):
-        raise RuntimeError("Claude judgement output must be a JSON object")
-    return value
+    return parse_json_object_result(result_text, "judgement")
 
 
 def _validate_judgement(judgement: JsonObject) -> None:

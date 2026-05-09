@@ -126,8 +126,11 @@ def _load_by_scenario(path: str, key: str) -> dict[str, JsonObject]:
         if not isinstance(row, dict):
             raise ValueError(f"{path} {key}[{index}] must be an object")
         scenario_id = row.get("scenario_id")
-        if not scenario_id:
-            continue
+        if not isinstance(scenario_id, str) or not scenario_id.strip():
+            raise ValueError(f"{path} {key}[{index}] must include a non-empty scenario_id")
+        scenario_id = scenario_id.strip()
+        if scenario_id in by_scenario:
+            raise ValueError(f"{path} {key}[{index}] duplicates scenario_id {scenario_id!r}")
         by_scenario[str(scenario_id)] = row
     return by_scenario
 
