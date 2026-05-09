@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 
 from source.kg.core.models import JsonObject
-from source.kg.product.claude_tool_policy import DISALLOWED_CLAUDE_TOOLS
+from source.kg.product.claude_tool_policy import (
+    DEFAULT_CLAUDE_PERMISSION_MODE,
+    DISALLOWED_CLAUDE_TOOLS,
+    resolve_claude_cli_path,
+)
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 from source.kg.product.json_result import parse_json_object_result
+from source.kg.product.validation import require_string_list
 
 
 DEFAULT_ANSWER_MODEL = "opus"
@@ -22,6 +26,8 @@ class AnswerSynthesisConfig:
     max_turns: int | None = None
     load_timeout_ms: int = 180_000
     max_budget_usd: float = 0.25
+    permission_mode: str = DEFAULT_CLAUDE_PERMISSION_MODE
+    claude_cli_path: str | None = None
 
 
 class ClaudeAnswerSynthesizer:
@@ -48,8 +54,8 @@ class ClaudeAnswerSynthesizer:
                     max_budget_usd=self.config.max_budget_usd,
                     allowed_tools=[],
                     disallowed_tools=list(DISALLOWED_CLAUDE_TOOLS),
-                    permission_mode="dontAsk",
-                    cli_path=which("claude"),
+                    permission_mode=self.config.permission_mode,
+                    cli_path=resolve_claude_cli_path(self.config.claude_cli_path),
                     cwd=Path.cwd(),
                     extra_args={"bare": None},
                     load_timeout_ms=self.config.load_timeout_ms,
@@ -182,3 +188,5 @@ def _validate_answer(answer: JsonObject) -> None:
     for key in ("answer", "score_reason"):
         if not isinstance(answer.get(key), str) or not answer[key].strip():
             raise RuntimeError(f"Answer field {key!r} must be a non-empty string")
+    for key in ("caveats", "unknowns"):
+        require_string_list(answer, key, "Answer")

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from source.kg.core.models import JsonObject
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
+from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
 from source.kg.product.goldset_judgement import (
     ClaudeGoldsetJudge,
     GoldsetScenario,
@@ -47,6 +48,19 @@ def main() -> None:
         default=180_000,
         help="Claude Agent SDK load timeout in milliseconds.",
     )
+    parser.add_argument(
+        "--permission-mode",
+        default=os.getenv(
+            "CLAUDE_JUDGE_PERMISSION_MODE",
+            os.getenv("CLAUDE_PERMISSION_MODE", DEFAULT_CLAUDE_PERMISSION_MODE),
+        ),
+        help=f"Claude Agent SDK permission mode. Defaults to {DEFAULT_CLAUDE_PERMISSION_MODE}.",
+    )
+    parser.add_argument(
+        "--claude-cli-path",
+        default=os.getenv("CLAUDE_JUDGE_CLI_PATH", os.getenv("CLAUDE_CLI_PATH")),
+        help="Optional path to the Claude CLI. Defaults to resolving 'claude' on PATH.",
+    )
     args = parser.parse_args()
 
     packets = _load_by_scenario(args.packets, "packets")
@@ -72,6 +86,8 @@ def main() -> None:
                 model=args.model,
                 max_budget_usd=args.max_budget_usd,
                 load_timeout_ms=args.load_timeout_ms,
+                permission_mode=args.permission_mode,
+                claude_cli_path=args.claude_cli_path,
             ),
         )
     )

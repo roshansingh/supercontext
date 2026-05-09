@@ -14,6 +14,7 @@ from source.kg.product import (
     EvidencePacketBuilder,
 )
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL, render_answers_markdown
+from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -50,6 +51,19 @@ def main() -> None:
         default=180_000,
         help="Claude Agent SDK load timeout in milliseconds.",
     )
+    parser.add_argument(
+        "--permission-mode",
+        default=os.getenv(
+            "CLAUDE_ANSWER_PERMISSION_MODE",
+            os.getenv("CLAUDE_PERMISSION_MODE", DEFAULT_CLAUDE_PERMISSION_MODE),
+        ),
+        help=f"Claude Agent SDK permission mode. Defaults to {DEFAULT_CLAUDE_PERMISSION_MODE}.",
+    )
+    parser.add_argument(
+        "--claude-cli-path",
+        default=os.getenv("CLAUDE_ANSWER_CLI_PATH", os.getenv("CLAUDE_CLI_PATH")),
+        help="Optional path to the Claude CLI. Defaults to resolving 'claude' on PATH.",
+    )
     args = parser.parse_args()
 
     scenario_ids = tuple(args.scenario or DEFAULT_SCENARIOS)
@@ -68,6 +82,8 @@ def main() -> None:
                 model=args.model,
                 max_budget_usd=args.max_budget_usd,
                 load_timeout_ms=args.load_timeout_ms,
+                permission_mode=args.permission_mode,
+                claude_cli_path=args.claude_cli_path,
             ),
         )
     )
@@ -98,7 +114,12 @@ def _load_or_build_packets(
             if not isinstance(packet, dict):
                 raise ValueError(f"{packets_in} packets[{index}] must be an object")
             scenario_id = packet.get("scenario_id")
+            if not isinstance(scenario_id, str) or not scenario_id.strip():
+                raise ValueError(f"{packets_in} packets[{index}] must include a non-empty scenario_id")
+            scenario_id = scenario_id.strip()
             if scenario_id in scenario_id_set:
+                packet = dict(packet)
+                packet["scenario_id"] = scenario_id
                 filtered_packets.append(packet)
                 found_scenario_ids.add(scenario_id)
         missing_scenario_ids = sorted(scenario_id_set - found_scenario_ids)

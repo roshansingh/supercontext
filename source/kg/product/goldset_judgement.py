@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 
 from source.kg.core.models import JsonObject
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
-from source.kg.product.claude_tool_policy import DISALLOWED_CLAUDE_TOOLS
+from source.kg.product.claude_tool_policy import (
+    DEFAULT_CLAUDE_PERMISSION_MODE,
+    DISALLOWED_CLAUDE_TOOLS,
+    resolve_claude_cli_path,
+)
 from source.kg.product.formatting import bullet_lines, compact_evidence_item, one_line
 from source.kg.product.json_result import parse_json_object_result
+from source.kg.product.validation import require_string_list
 
 
 JUDGEMENT_SCORES = ("Pass", "Partial", "Fail")
@@ -30,6 +34,8 @@ class GoldsetJudgementConfig:
     model: str = DEFAULT_ANSWER_MODEL
     max_budget_usd: float = 0.25
     load_timeout_ms: int = 180_000
+    permission_mode: str = DEFAULT_CLAUDE_PERMISSION_MODE
+    claude_cli_path: str | None = None
 
 
 class ClaudeGoldsetJudge:
@@ -55,8 +61,8 @@ class ClaudeGoldsetJudge:
                     max_budget_usd=self.config.max_budget_usd,
                     allowed_tools=[],
                     disallowed_tools=list(DISALLOWED_CLAUDE_TOOLS),
-                    permission_mode="dontAsk",
-                    cli_path=which("claude"),
+                    permission_mode=self.config.permission_mode,
+                    cli_path=resolve_claude_cli_path(self.config.claude_cli_path),
                     cwd=Path.cwd(),
                     extra_args={"bare": None},
                     load_timeout_ms=self.config.load_timeout_ms,
@@ -237,6 +243,8 @@ def _validate_judgement(judgement: JsonObject) -> None:
     for key in ("summary", "recommended_next_action"):
         if not isinstance(judgement.get(key), str) or not judgement[key].strip():
             raise RuntimeError(f"Judgement field {key!r} must be a non-empty string")
+    for key in ("ground_truth_coverage", "missing_or_weak_evidence", "answer_issues"):
+        require_string_list(judgement, key, "Judgement")
 
 
 def _parse_markdown_table(path: Path) -> list[dict[str, str]]:
