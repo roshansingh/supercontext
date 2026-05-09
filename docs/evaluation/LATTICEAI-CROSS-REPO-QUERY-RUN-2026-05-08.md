@@ -11,9 +11,9 @@ Build summary:
 | Metric | Value |
 |---|---:|
 | Repos indexed | 23 |
-| Entities | 17,592 |
-| Facts | 47,514 |
-| Evidence rows | 95,881 |
+| Entities | 17,570 |
+| Facts | 47,117 |
+| Evidence rows | 95,791 |
 | Coverage rows | 61 |
 | Extractor errors | 0 |
 | Cross-repo link facts | 4 |
@@ -66,7 +66,7 @@ Status meanings:
 
 | ID | Status | Current Result | Main Gap |
 |---|---|---|---|
-| Q081 | Blocked | KG can list repos/services, but cannot map domains to backends. | Domain/env/deploy extraction and service topology. |
+| Q081 | Partial | KG can list repos/services and map `api.shopagain.io` to the WSGI backend via Apache deploy facts. | Needs service-topology aggregation to combine repos, deploy mappings, clients, and runtime/service identity into one answer. |
 | Q082 | Partial | `domain-references api.shopagain.io` finds 47 refs and `deploy-mappings --target prod_shopagain_wsgi.py` maps the domain to the WSGI backend. | Needs product-layer grouping to combine web/mobile env-var refs with deployed backend in one answer. |
 | Q083 | Pass | `endpoints --path /api/token` finds backend token routes plus mobile callers; `endpoints --path auth` finds web auth callers and backend auth routes. | Add endpoint equivalence/grouping later. |
 | Q084 | Partial | Stripe imports found in `mercury_api` billing modules and `mercury_webhooks/views/Stripe.py`. | UI flow mapping, webhook route semantics, billing feature aggregation. |
@@ -87,7 +87,7 @@ Status meanings:
 | Q099 | Pass | `mercury_api -> hipo-drf-exceptions` link exists; 9 importing modules found, including billing, campaigns, companies, Shopify, WooCommerce. | Add frontend error-consumer detection later. |
 | Q100 | Pass | Contract reconciliation compares docs-vs-backend and clients-vs-docs by endpoint path. It returns matched, documented-only, backend-only, and possible rename groups with file/line evidence. | Later synthesis should explain caveats in natural language. |
 | Q101 | Partial | Frontend/mobile API calls are indexed as `CALLS_ENDPOINT`. | Needs docs-minus-client reconciliation query. |
-| Q102 | Blocked | Domains/env configs are not facts. | Env/domain normalization and environment classification. |
+| Q102 | Partial | Domain and env config facts exist through `Domain`, `EnvVar`, `REFERENCES_DOMAIN`, and `REFERENCES_ENV_VAR`. | Needs environment classification and mismatch detection across prod/staging/local configs. |
 | Q103 | Partial | Shopify imports found across backend billing, campaigns, messaging, and shopify_app modules. | OAuth/store-install route grouping, UI step mapping, docs links. |
 | Q104 | Blocked | WooCommerce backend imports are visible, but plugin-to-backend payload flow is not. | PHP/plugin extraction, webhook payload modeling, docs contract links. |
 | Q105 | Blocked | boto3 imports are visible, but infra-to-service dependencies are not. | Terraform/Ansible/Zappa network/IAM extraction. |
@@ -102,8 +102,8 @@ Status meanings:
 | Bucket | Count |
 |---|---:|
 | Pass | 5 |
-| Partial | 13 |
-| Blocked | 12 |
+| Partial | 15 |
+| Blocked | 10 |
 
 ## Recommended Next Feature
 

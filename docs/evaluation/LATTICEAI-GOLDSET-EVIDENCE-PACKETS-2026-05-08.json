@@ -670,34 +670,11 @@
           "subject": "acme-api"
         },
         {
-          "claim": "acme-api references domain api.shopagain.io'.",
-          "commit_sha": "2e41746775a2630bd6608cb87ee80186ae257d84",
-          "confidence": 1.0,
-          "derivation_class": "deterministic_static",
-          "fact_id": "fact_ed6f195c6e3fa19dff0f2a2e",
-          "fact_type": "REFERENCES_DOMAIN",
-          "line_end": 45,
-          "line_start": 45,
-          "object": "api.shopagain.io'",
-          "path": "openapi/openapi.yaml",
-          "possible_match": null,
-          "qualifier": {
-            "literal": "https://api.shopagain.io'",
-            "path": "openapi/openapi.yaml"
-          },
-          "reconciliation_group": null,
-          "repo": "shopagain_api_docs",
-          "similarity": null,
-          "source_system": "static_config_v0",
-          "step": "domain_api_shopagain",
-          "subject": "acme-api"
-        },
-        {
           "claim": "acme-api references domain api.shopagain.io.",
           "commit_sha": "2e41746775a2630bd6608cb87ee80186ae257d84",
           "confidence": 1.0,
           "derivation_class": "deterministic_static",
-          "fact_id": "fact_2c87909e93ca1e4b18e4c699",
+          "fact_id": "fact_d2bc272ff0b265fbcea1bf18",
           "fact_type": "REFERENCES_DOMAIN",
           "line_end": 45,
           "line_start": 45,
@@ -705,7 +682,7 @@
           "path": "openapi/openapi.yaml",
           "possible_match": null,
           "qualifier": {
-            "literal": "api.shopagain.io",
+            "literal": "https://api.shopagain.io",
             "path": "openapi/openapi.yaml"
           },
           "reconciliation_group": null,
@@ -2211,34 +2188,11 @@
           "subject": "acme-api"
         },
         {
-          "claim": "acme-api references domain api.shopagain.io'.",
-          "commit_sha": "2e41746775a2630bd6608cb87ee80186ae257d84",
-          "confidence": 1.0,
-          "derivation_class": "deterministic_static",
-          "fact_id": "fact_ed6f195c6e3fa19dff0f2a2e",
-          "fact_type": "REFERENCES_DOMAIN",
-          "line_end": 45,
-          "line_start": 45,
-          "object": "api.shopagain.io'",
-          "path": "openapi/openapi.yaml",
-          "possible_match": null,
-          "qualifier": {
-            "literal": "https://api.shopagain.io'",
-            "path": "openapi/openapi.yaml"
-          },
-          "reconciliation_group": null,
-          "repo": "shopagain_api_docs",
-          "similarity": null,
-          "source_system": "static_config_v0",
-          "step": "domain_api_shopagain",
-          "subject": "acme-api"
-        },
-        {
           "claim": "acme-api references domain api.shopagain.io.",
           "commit_sha": "2e41746775a2630bd6608cb87ee80186ae257d84",
           "confidence": 1.0,
           "derivation_class": "deterministic_static",
-          "fact_id": "fact_2c87909e93ca1e4b18e4c699",
+          "fact_id": "fact_d2bc272ff0b265fbcea1bf18",
           "fact_type": "REFERENCES_DOMAIN",
           "line_end": 45,
           "line_start": 45,
@@ -2246,7 +2200,7 @@
           "path": "openapi/openapi.yaml",
           "possible_match": null,
           "qualifier": {
-            "literal": "api.shopagain.io",
+            "literal": "https://api.shopagain.io",
             "path": "openapi/openapi.yaml"
           },
           "reconciliation_group": null,

@@ -50,10 +50,10 @@ python -m source.scripts.run_goldset_scenario --snapshot data/kg_runs/latticeai_
 
 | Scenario | Evidence Items | Unknowns | Result |
 |---|---:|---:|---|
-| Q082 | 31 | 0 | Pass for packet generation. |
+| Q082 | 30 | 0 | Pass for packet generation. |
 | Q083 | 23 | 0 | Pass for packet generation. |
 | Q088 | 8 | 0 | Pass for packet generation. |
-| Q095 | 31 | 0 | Pass for packet generation. |
+| Q095 | 30 | 0 | Pass for packet generation. |
 | Q100 | 28 | 0 | Pass for packet generation and contract reconciliation. |
 | Q106 | 6 | 0 | Pass for packet generation. |
 

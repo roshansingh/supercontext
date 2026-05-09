@@ -141,7 +141,9 @@ def _add_domain_reference(
 
 
 def _normalize_domain_ref(domain: str) -> str:
-    return domain.strip().lower().strip(" \t\r\n'\"`<>()[]{}.,;")
+    value = domain.strip().lower().strip(" \t\r\n'\"`<>()[]{}.,;")
+    match = DOMAIN_RE.search(value)
+    return match.group(0) if match else value
 
 
 def _safe_config_literal(value: str) -> str:
@@ -150,10 +152,12 @@ def _safe_config_literal(value: str) -> str:
         hostname = _safe_hostname(parsed)
         if not hostname:
             return ""
-        netloc = hostname
+        netloc = _normalize_domain_ref(hostname)
+        if not netloc:
+            return ""
         port = _safe_port(parsed)
         if port:
-            netloc = f"{hostname}:{port}"
+            netloc = f"{netloc}:{port}"
         return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
 
     domain_match = DOMAIN_RE.search(value)

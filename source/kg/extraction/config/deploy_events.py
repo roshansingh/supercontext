@@ -24,6 +24,8 @@ QUEUE_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*['\"]?([A-Z
 SQS_ARN_RE = re.compile(r"arn:aws:sqs:[A-Za-z0-9-]+:\d+:([A-Za-z0-9_.-]+)")
 SERVERLESS_ROUTE_RE = re.compile(r"^\s*route:\s*['\"]?([^'\"\n]+)")
 SERVERLESS_HANDLER_RE = re.compile(r"^\s*handler:\s*['\"]?([^'\"\n]+)")
+APACHE_VHOST_START_RE = re.compile(r"^\s*<VirtualHost\b", re.IGNORECASE)
+APACHE_VHOST_END_RE = re.compile(r"^\s*</VirtualHost\s*>", re.IGNORECASE)
 
 
 def extract_deploy_events(repo: RepoSnapshot, files: list[ScannedFile], service_entity: Entity, build: ConfigKgBuild) -> None:
@@ -36,9 +38,31 @@ def extract_deploy_events(repo: RepoSnapshot, files: list[ScannedFile], service_
 
 
 def _extract_apache(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+    for domains_by_line, wsgi_by_line in _apache_vhost_blocks(scanned):
+        for line_number, domain in domains_by_line:
+            _add_apache_domain_routes(repo, scanned, service_entity, build, line_number, domain, wsgi_by_line)
+
+
+def _apache_vhost_blocks(scanned: ScannedFile) -> list[tuple[list[tuple[int, str]], list[tuple[int, str]]]]:
+    blocks: list[tuple[list[tuple[int, str]], list[tuple[int, str]]]] = []
     domains_by_line: list[tuple[int, str]] = []
     wsgi_by_line: list[tuple[int, str]] = []
+
+    def flush() -> None:
+        nonlocal domains_by_line, wsgi_by_line
+        if domains_by_line or wsgi_by_line:
+            blocks.append((domains_by_line, wsgi_by_line))
+        domains_by_line = []
+        wsgi_by_line = []
+
     for line_number, line in enumerate(scanned.lines, start=1):
+        if APACHE_VHOST_START_RE.match(line):
+            flush()
+            continue
+        if APACHE_VHOST_END_RE.match(line):
+            flush()
+            continue
+
         server_match = APACHE_SERVER_NAME_RE.match(line)
         if server_match:
             domains_by_line.append((line_number, server_match.group(1)))
@@ -46,37 +70,49 @@ def _extract_apache(repo: RepoSnapshot, scanned: ScannedFile, service_entity: En
         if wsgi_match:
             wsgi_by_line.append((line_number, wsgi_match.group(1)))
 
-    for line_number, domain in domains_by_line:
-        domain_ref = domain_entity(repo, domain)
-        add_entity_evidence(build, repo, domain_ref, scanned.path, line_number)
+    flush()
+    return blocks
+
+
+def _add_apache_domain_routes(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    line_number: int,
+    domain: str,
+    wsgi_by_line: list[tuple[int, str]],
+) -> None:
+    domain_ref = domain_entity(repo, domain)
+    add_entity_evidence(build, repo, domain_ref, scanned.path, line_number)
+    add_fact(
+        build,
+        "REFERENCES_DOMAIN",
+        service_entity,
+        domain_ref,
+        repo,
+        scanned.path,
+        line_number,
+        qualifier={"source_kind": "apache_server_name", "path": scanned.relative_path},
+    )
+    for wsgi_line, wsgi_path in wsgi_by_line:
+        target = deploy_target_entity(repo, "wsgi", wsgi_path)
+        add_entity_evidence(build, repo, target, scanned.path, wsgi_line)
+        qualifier: JsonObject = {"source_kind": "apache_vhost"}
+        repo_hint = _repo_hint_from_path(wsgi_path)
+        if repo_hint:
+            qualifier["target_repo_hint"] = repo_hint
         add_fact(
             build,
-            "REFERENCES_DOMAIN",
-            service_entity,
+            "ROUTES_DOMAIN_TO_DEPLOY",
             domain_ref,
+            target,
             repo,
             scanned.path,
-            line_number,
-            qualifier={"source_kind": "apache_server_name", "path": scanned.relative_path},
+            min(line_number, wsgi_line),
+            max(line_number, wsgi_line),
+            qualifier=qualifier,
         )
-        for wsgi_line, wsgi_path in wsgi_by_line:
-            target = deploy_target_entity(repo, "wsgi", wsgi_path)
-            add_entity_evidence(build, repo, target, scanned.path, wsgi_line)
-            qualifier: JsonObject = {"source_kind": "apache_vhost"}
-            repo_hint = _repo_hint_from_path(wsgi_path)
-            if repo_hint:
-                qualifier["target_repo_hint"] = repo_hint
-            add_fact(
-                build,
-                "ROUTES_DOMAIN_TO_DEPLOY",
-                domain_ref,
-                target,
-                repo,
-                scanned.path,
-                min(line_number, wsgi_line),
-                max(line_number, wsgi_line),
-                qualifier=qualifier,
-            )
 
 
 def _extract_queue_lines(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
