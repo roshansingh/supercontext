@@ -564,7 +564,7 @@ class KgSnapshot:
                 {
                     "scope": "docs",
                     "warning": "no_endpoint_documentation_evidence",
-                    "coverage": self._endpoint_coverage_rows("DOCUMENTS_ENDPOINT", docs_scope, path_prefix),
+                    "coverage": self._endpoint_coverage_rows("DOCUMENTS_ENDPOINT", docs_scope),
                 }
             )
         if backend_scope and not self._has_endpoint_fact("EXPOSES_ENDPOINT", backend_scope, path_prefix):
@@ -572,7 +572,7 @@ class KgSnapshot:
                 {
                     "scope": "backend",
                     "warning": "no_endpoint_extractor_matched",
-                    "coverage": self._endpoint_coverage_rows("EXPOSES_ENDPOINT", backend_scope, path_prefix),
+                    "coverage": self._endpoint_coverage_rows("EXPOSES_ENDPOINT", backend_scope),
                 }
             )
         if client_scope and not self._has_endpoint_fact("CALLS_ENDPOINT", client_scope, path_prefix):
@@ -580,7 +580,7 @@ class KgSnapshot:
                 {
                     "scope": "client",
                     "warning": "no_client_call_evidence",
-                    "coverage": self._endpoint_coverage_rows("CALLS_ENDPOINT", client_scope, path_prefix),
+                    "coverage": self._endpoint_coverage_rows("CALLS_ENDPOINT", client_scope),
                 }
             )
         return warnings
@@ -604,30 +604,18 @@ class KgSnapshot:
         self,
         predicate: str,
         repos: list[str] | tuple[str, ...],
-        path_prefix: str | None = None,
     ) -> list[JsonObject]:
         repo_filter = set(repos)
         return [
             row
             for row in self.coverage
             if row.get("predicate") == predicate and str(row.get("scope_ref", {}).get("repo")) in repo_filter
-            and self._coverage_scope_matches_path_prefix(row, path_prefix)
         ]
 
     def _endpoint_path_matches(self, entity: JsonObject, path_prefix: str) -> bool:
         if entity.get("kind") != "Endpoint":
             return False
         return self._normalize_endpoint_reconciliation_path(str(entity.get("identity", {}).get("path", ""))).startswith(
-            self._normalize_endpoint_reconciliation_path(path_prefix)
-        )
-
-    def _coverage_scope_matches_path_prefix(self, row: JsonObject, path_prefix: str | None) -> bool:
-        if not path_prefix:
-            return True
-        scope_ref = row.get("scope_ref", {})
-        if not isinstance(scope_ref, dict) or "path" not in scope_ref:
-            return True
-        return self._normalize_endpoint_reconciliation_path(str(scope_ref.get("path", ""))).startswith(
             self._normalize_endpoint_reconciliation_path(path_prefix)
         )
 

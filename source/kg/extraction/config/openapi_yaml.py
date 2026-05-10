@@ -60,7 +60,11 @@ def _extract_from_yaml(scanned: ScannedFile) -> OpenApiExtraction:
 
 
 def _is_openapi_document(data: object) -> bool:
-    return isinstance(data, dict) and isinstance(data.get("paths"), dict)
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("paths"), dict)
+        and (isinstance(data.get("openapi"), str) or isinstance(data.get("swagger"), str))
+    )
 
 
 def _endpoints_from_document(data: object, scanned: ScannedFile) -> list[OpenApiEndpoint]:

@@ -98,7 +98,7 @@ def _extract_python_backend_routes(
                 predicate="EXPOSES_ENDPOINT",
                 scope_ref={
                     "repo": repo.name,
-                    "path": scanned.relative_path,
+                    "file_path": scanned.relative_path,
                     "language": "python",
                     "reason": "python_syntax_error",
                     "message": str(exc),
@@ -136,7 +136,7 @@ def _extract_openapi_document(repo: RepoSnapshot, scanned: ScannedFile, service_
             Coverage(
                 tenant_id=TENANT_ID,
                 predicate="DOCUMENTS_ENDPOINT",
-                scope_ref={"repo": repo.name, "path": scanned.relative_path, "reason": result.coverage_reason},
+                scope_ref={"repo": repo.name, "file_path": scanned.relative_path, "reason": result.coverage_reason},
                 state="uninstrumented",
                 source_system=CONFIG_SOURCE_SYSTEM,
             )

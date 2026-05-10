@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from source.kg.core.models import Entity, Fact
+from source.kg.core.models import Coverage, Entity, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import JsonlKgStore
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
@@ -138,6 +138,15 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(docs, [])
         self.assertEqual(coverage, [])
 
+    def test_json_with_paths_but_no_openapi_version_is_not_documented_endpoint(self) -> None:
+        build = _extract_config({"fixture.json": '{"paths": {"/v1/foo": {"get": {}}}}'})
+
+        docs = _endpoint_rows(build, "DOCUMENTS_ENDPOINT")
+        coverage = [row for row in build.coverage if row.predicate == "DOCUMENTS_ENDPOINT"]
+
+        self.assertEqual(docs, [])
+        self.assertEqual(coverage, [])
+
     def test_python_repo_without_recognized_framework_emits_coverage(self) -> None:
         build = _extract_config({"worker.py": "def run():\n    return 1\n"})
 
@@ -159,7 +168,7 @@ class EndpointExtractionTest(unittest.TestCase):
         ]
 
         self.assertEqual(len(coverage), 1)
-        self.assertEqual(coverage[0].scope_ref["path"], "bad_app.py")
+        self.assertEqual(coverage[0].scope_ref["file_path"], "bad_app.py")
 
     def test_javascript_endpoint_parser_gap_is_explicit_coverage(self) -> None:
         build = _extract_config({"server.ts": "app.post('/orders', handler)\nfetch('/orders')\n"})
@@ -247,6 +256,26 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(result["coverage_warnings"][0]["scope"], "backend")
         self.assertEqual(result["coverage_warnings"][0]["warning"], "no_endpoint_extractor_matched")
 
+    def test_reconcile_endpoint_warning_coverage_is_not_filtered_by_endpoint_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[
+                    _coverage_row(
+                        "EXPOSES_ENDPOINT",
+                        "orders-api",
+                        {"file_path": "bad_app.py", "reason": "python_syntax_error"},
+                    )
+                ],
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).reconcile_endpoints(backend_scope=("orders-api",), path_prefix="/v1")
+
+        self.assertEqual(result["coverage_warnings"][0]["coverage"][0]["scope_ref"]["file_path"], "bad_app.py")
+
 
 def _extract_config(files: dict[str, str]):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -267,6 +296,16 @@ def _endpoint_entity(repo: str, method: str, path: str) -> Entity:
     return Entity(
         kind="Endpoint",
         identity={"tenant_id": "local-dev", "repo": repo, "protocol": "http", "method": method, "path": path, "host": None},
+    )
+
+
+def _coverage_row(predicate: str, repo: str, scope_ref: dict[str, object]) -> Coverage:
+    return Coverage(
+        tenant_id="local-dev",
+        predicate=predicate,
+        scope_ref={"repo": repo, **scope_ref},
+        state="uninstrumented",
+        source_system="test",
     )
 
 
