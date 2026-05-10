@@ -58,6 +58,9 @@ class ParsedPythonFile:
 class PythonAstExtractor:
     source_system = "python_ast_v0"
 
+    def __init__(self, *, include_transport: bool = True) -> None:
+        self.include_transport = include_transport
+
     def extract(self, repo: RepoSnapshot) -> KgBuild:
         build = KgBuild()
         repo_entity = self._repo_entity(repo)
@@ -95,6 +98,22 @@ class PythonAstExtractor:
                 source_system=self.source_system,
             )
         )
+        return build
+
+    def extract_transport_events_only(self, repo: RepoSnapshot) -> KgBuild:
+        build = KgBuild()
+        import_normalizer = PythonImportNormalizer(repo)
+        parsed_files = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
+        literal_index = self._literal_index(repo, parsed_files)
+        for file_path in repo.python_files:
+            self._extract_transport_file(
+                repo,
+                file_path,
+                parsed_files[file_path],
+                import_normalizer,
+                literal_index,
+                build,
+            )
         return build
 
     def _extract_file(
@@ -220,6 +239,52 @@ class PythonAstExtractor:
                         line,
                         qualifier={"call": call_name},
                     )
+            if self.include_transport:
+                extract_transport_events(
+                    repo,
+                    file_path,
+                    caller,
+                    caller_node,
+                    imports,
+                    literal_index,
+                    build,
+                    self.source_system,
+                    self._add_entity_evidence,
+                    self._add_fact,
+                    function_defs_by_short_name,
+                    module_node=tree if isinstance(tree, ast.Module) else None,
+                    module_context=module_context,
+                )
+
+    def _extract_transport_file(
+        self,
+        repo: RepoSnapshot,
+        file_path: Path,
+        parsed: ParsedPythonFile,
+        import_normalizer: PythonImportNormalizer,
+        literal_index: LiteralIndex,
+        build: KgBuild,
+    ) -> None:
+        tree = parsed.tree
+        if tree is None:
+            return
+        module_name = self._module_name(repo, file_path)
+        imports = import_normalizer.collect(tree, module_name)
+        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree)
+        by_qualname = {symbol.qualname: symbol for symbol in symbols}
+        function_defs_by_short_name = {
+            symbol.qualname.rsplit(".", 1)[-1]: function_defs[symbol.qualname]
+            for symbol in symbols
+            if symbol.symbol_kind in {"function", "async_function"} and symbol.qualname in function_defs
+        }
+        module_context = module_transport_context(tree if isinstance(tree, ast.Module) else None, imports)
+        for caller_node in ast.walk(tree):
+            if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            caller_name = self._qualname_for_node(tree, caller_node)
+            caller = by_qualname.get(caller_name)
+            if caller is None:
+                continue
             extract_transport_events(
                 repo,
                 file_path,

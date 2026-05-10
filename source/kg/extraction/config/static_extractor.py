@@ -23,6 +23,17 @@ from source.kg.core.repo_source import RepoSnapshot
 class StaticConfigExtractor:
     source_system = CONFIG_SOURCE_SYSTEM
 
+    def __init__(
+        self,
+        *,
+        include_domain_env: bool = True,
+        include_openapi: bool = True,
+        include_deploy_events: bool = True,
+    ) -> None:
+        self.include_domain_env = include_domain_env
+        self.include_openapi = include_openapi
+        self.include_deploy_events = include_deploy_events
+
     def extract(self, repo: RepoSnapshot) -> ConfigKgBuild:
         build = ConfigKgBuild()
         repo_entity = self._repo_entity(repo)
@@ -34,9 +45,11 @@ class StaticConfigExtractor:
             add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, manifest_path, 1)
 
         files = iter_scannable_files(repo)
-        extract_domain_env(repo, files, service_entity, build)
-        extract_endpoints(repo, files, service_entity, build)
-        extract_deploy_events(repo, files, service_entity, build)
+        if self.include_domain_env:
+            extract_domain_env(repo, files, service_entity, build)
+        extract_endpoints(repo, files, service_entity, build, include_openapi=self.include_openapi)
+        if self.include_deploy_events:
+            extract_deploy_events(repo, files, service_entity, build)
         build.coverage.append(
             Coverage(
                 tenant_id=TENANT_ID,

@@ -60,7 +60,7 @@ def extract_repo(repo: RepoSnapshot, strict_extractors: bool = False) -> RepoKgB
         selected_adapters,
         strict_extractors=strict_extractors,
     )
-    extractor_names = [selection.capability.source_system for selection in selected]
+    extractor_names = list(dict.fromkeys(selection.capability.source_system for selection in selected))
     return RepoKgBuild(
         entities=entities,
         facts=facts,
