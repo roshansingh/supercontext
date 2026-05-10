@@ -331,15 +331,21 @@ def build_repo_literal_index(repo: RepoSnapshot) -> LiteralIndex:
     return LiteralIndex(values, config_object_value_assignments(repo))
 
 
-def config_object_value_assignments(repo: RepoSnapshot) -> dict[ConfigObjectRef, tuple[ast.AST, ...]]:
+def config_object_value_assignments(
+    repo: RepoSnapshot,
+    parsed_trees: dict[Path, ast.AST] | None = None,
+) -> dict[ConfigObjectRef, tuple[ast.AST, ...]]:
     values_by_directory = _ini_option_values_by_directory(repo)
     assignments: dict[ConfigObjectRef, tuple[ast.AST, ...]] = {}
-    for file_path in repo.python_files:
-        source = file_path.read_text(encoding="utf-8", errors="replace")
-        try:
-            tree = ast.parse(source, filename=str(file_path))
-        except SyntaxError:
-            continue
+    if parsed_trees is None:
+        parsed_trees = {}
+        for file_path in repo.python_files:
+            source = file_path.read_text(encoding="utf-8", errors="replace")
+            try:
+                parsed_trees[file_path] = ast.parse(source, filename=str(file_path))
+            except SyntaxError:
+                continue
+    for file_path, tree in parsed_trees.items():
         option_values = values_by_directory.get(file_path.parent, {})
         if not option_values:
             continue

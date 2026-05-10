@@ -3,10 +3,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.core.models import Entity, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.python.ast_extractor import PythonAstExtractor
+from source.kg.extraction.python.transport_extractor import module_transport_context
 
 
 class PythonTransportExtractorTest(unittest.TestCase):
@@ -1083,6 +1085,25 @@ class PythonTransportExtractorTest(unittest.TestCase):
 
         event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
         self.assertFalse(event_facts)
+
+    def test_module_transport_context_is_built_once_per_file(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'sqs = boto3.resource("sqs")\n'
+            'queue = sqs.get_queue_by_name(QueueName="orders-created")\n\n'
+            "def publish_order():\n"
+            '    queue.send_message(MessageBody="{}")\n\n'
+            "def publish_again():\n"
+            '    queue.send_message(MessageBody="{}")\n'
+        )
+
+        with patch(
+            "source.kg.extraction.python.ast_extractor.module_transport_context",
+            wraps=module_transport_context,
+        ) as context_builder:
+            _extract_single_file(source)
+
+        self.assertEqual(context_builder.call_count, 1)
 
 
 def _extract_single_file(source: str):

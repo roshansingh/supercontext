@@ -62,6 +62,21 @@ class QueueResource:
     channel_arg_kind: str
 
 
+@dataclass(frozen=True)
+class ModuleTransportContext:
+    clients: dict[str, TransportClient]
+    queue_resources: dict[str, QueueResource]
+
+
+def module_transport_context(module_node: ast.Module | None, imports: list[NormalizedImport]) -> ModuleTransportContext:
+    if module_node is None:
+        return ModuleTransportContext(clients={}, queue_resources={})
+    boto3_names = _boto3_names(imports)
+    clients = _module_transport_clients(module_node, boto3_names)
+    queue_resources = _module_queue_resources(module_node, clients, boto3_names)
+    return ModuleTransportContext(clients=clients, queue_resources=queue_resources)
+
+
 def extract_transport_events(
     repo: RepoSnapshot,
     file_path: Path,
@@ -75,15 +90,16 @@ def extract_transport_events(
     add_fact: Callable[..., None],
     function_defs: dict[str, FunctionDefNode] | None = None,
     module_node: ast.Module | None = None,
+    module_context: ModuleTransportContext | None = None,
 ) -> None:
     boto3_names = _boto3_names(imports)
     binding_name_cache: BindingNameCache = {}
     call_node_cache: CallNodeCache = {}
     caller_binding_names = _local_binding_names_cached(caller_node, binding_name_cache)
-    module_clients = _module_transport_clients(module_node, boto3_names) if module_node is not None else {}
-    module_queue_resources = (
-        _module_queue_resources(module_node, module_clients, boto3_names) if module_node is not None else {}
-    )
+    if module_context is None:
+        module_context = module_transport_context(module_node, imports)
+    module_clients = module_context.clients
+    module_queue_resources = module_context.queue_resources
     for call_node in _body_call_nodes_cached(caller_node, call_node_cache):
         resolver = _resolver(
             caller.module_name,

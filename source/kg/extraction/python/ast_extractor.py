@@ -16,7 +16,10 @@ from source.kg.extraction.python.dataflow import (
     config_object_value_assignments,
     module_literal_assignments,
 )
-from source.kg.extraction.python.transport_extractor import extract_transport_events
+from source.kg.extraction.python.transport_extractor import (
+    extract_transport_events,
+    module_transport_context,
+)
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -185,6 +188,7 @@ class PythonAstExtractor:
             )
             imports_by_root.setdefault(import_ref.import_root, import_ref)
 
+        module_context = module_transport_context(tree if isinstance(tree, ast.Module) else None, imports)
         for caller_node in ast.walk(tree):
             if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -228,7 +232,8 @@ class PythonAstExtractor:
                 self._add_entity_evidence,
                 self._add_fact,
                 function_defs_by_short_name,
-                tree if isinstance(tree, ast.Module) else None,
+                module_node=tree if isinstance(tree, ast.Module) else None,
+                module_context=module_context,
             )
 
     def _parse_file(self, file_path: Path) -> ParsedPythonFile:
@@ -244,13 +249,15 @@ class PythonAstExtractor:
 
     def _literal_index(self, repo: RepoSnapshot, parsed_files: dict[Path, ParsedPythonFile]) -> LiteralIndex:
         values: dict[LiteralRef, ast.AST] = {}
+        parsed_trees: dict[Path, ast.AST] = {}
         for file_path, parsed in parsed_files.items():
             if parsed.tree is None:
                 continue
+            parsed_trees[file_path] = parsed.tree
             module_name = self._module_name(repo, file_path)
             for name, value in module_literal_assignments(parsed.tree).items():
                 values[LiteralRef(module_name, name)] = value
-        return LiteralIndex(values, config_object_value_assignments(repo))
+        return LiteralIndex(values, config_object_value_assignments(repo, parsed_trees))
 
     def _collect_symbols(
         self,
