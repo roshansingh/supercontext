@@ -50,7 +50,7 @@ Only do this once per PR, after coding is finished, tests pass, and the local se
 python -m source.scripts.request_claude_pre_pr_review --base main
 ```
 
-Read the generated file under `docs/reviews/`. For every finding, explicitly decide `accept`, `deny`, or `act`.
+Read the generated file under `docs/reviews/`. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
 
 - `accept` / `act`: make the fix, add a regression test when behavior changes, rerun checks, and commit.
 - `deny`: record the concrete reason in PR notes or review discussion.

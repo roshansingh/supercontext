@@ -63,7 +63,7 @@ def _poll_once(repo: str, pr_number: int, head_sha: str, head_created_at: str) -
     ]
     return {
         "activity": bool(copilot_events or copilot_reviews or unresolved_threads or copilot_issue),
-        "feedback": bool(unresolved_threads or copilot_issue),
+        "feedback": bool(copilot_reviews or unresolved_threads or copilot_issue),
         "reviews": copilot_reviews,
         "threads": unresolved_threads,
         "issue_comments": copilot_issue,

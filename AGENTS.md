@@ -55,7 +55,7 @@ Use short imperative commit messages, matching the current history, for example 
 Before creating a PR for the first time, after coding is finished, tests pass, and self-review is complete:
 
 - Run `python -m source.scripts.request_claude_pre_pr_review --base main`.
-- Read the generated review under `docs/reviews/`.
+- Read the generated review under `docs/reviews/`; it must follow the same structure as existing `docs/reviews/PR-*-REVIEW.md` files.
 - For each Claude finding, make an explicit decision: `accept`, `deny`, or `act`.
 - If accepting/acting, implement the fix with a regression test when behavior changes.
 - If denying, document the concrete reason in the PR notes or a reply/comment.

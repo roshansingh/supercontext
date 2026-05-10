@@ -60,6 +60,42 @@ Task:
 - Do not edit files. Return markdown only.
 - For each finding, include severity, file/path, evidence from the diff, and a concrete fix.
 - If no findings, say so and list residual risks.
+- Write the review in the same structure used by existing docs/reviews/PR-*-REVIEW.md files.
+
+Required output format:
+
+# Pre-PR Review — <branch or change title>
+
+**PR:** Pre-PR for `<branch>`
+**Diff:** <insert diff stat summary>
+**Tests:** <state what evidence is present in the prompt, or "Not verified by reviewer">
+**Verdict:** <Approve / Approve with reservations / Request changes>
+
+---
+
+## Summary
+
+<Concise overview of the change and review result.>
+
+## What Works
+
+<Numbered subsections or bullets for good design/test choices.>
+
+## Real Issues
+
+<Findings ordered by severity. Each finding must include severity, file/path, evidence, and concrete fix. If none, say "No blocking findings.">
+
+## Questions / Assumptions
+
+<Only include if needed.>
+
+## Pass Conditions
+
+<Concrete conditions to satisfy before PR creation.>
+
+## Verdict
+
+<Final short verdict.>
 
 Base branch: {base}
 Current branch: {branch}
