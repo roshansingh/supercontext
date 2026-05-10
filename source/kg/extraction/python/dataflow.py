@@ -353,7 +353,7 @@ def config_object_value_assignments(repo: RepoSnapshot) -> dict[ConfigObjectRef,
 
 def _ini_option_values_by_directory(repo: RepoSnapshot) -> dict[Path, dict[str, tuple[str, ...]]]:
     values_by_directory: dict[Path, dict[str, list[str]]] = {}
-    for path in repo.root.rglob("*.ini"):
+    for path in sorted(repo.root.rglob("*.ini"), key=lambda candidate: str(candidate.relative_to(repo.root))):
         if not path.is_file():
             continue
         parser = configparser.ConfigParser()
@@ -814,12 +814,32 @@ def _unique_values(values: list[object]) -> list[object]:
     unique = []
     seen = set()
     for value in values:
-        key = repr(value)
+        key = _stable_value_key(value)
         if key in seen:
             continue
         seen.add(key)
         unique.append(value)
     return unique
+
+
+def _stable_value_key(value: object) -> object:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return ("scalar", value)
+    if isinstance(value, set):
+        return ("set", tuple(sorted((_stable_value_key(item) for item in value), key=repr)))
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, tuple(_stable_value_key(item) for item in value))
+    if isinstance(value, dict):
+        return (
+            "dict",
+            tuple(
+                sorted(
+                    ((_stable_value_key(key), _stable_value_key(item)) for key, item in value.items()),
+                    key=repr,
+                )
+            ),
+        )
+    return ("object", type(value).__qualname__, repr(value))
 
 
 def _unique_strings(values: list[str]) -> list[str]:

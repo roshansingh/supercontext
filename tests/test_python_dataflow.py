@@ -12,6 +12,7 @@ from source.kg.extraction.python.dataflow import (
     UnresolvedValue,
     ValueResolver,
     ValueScope,
+    _unique_values,
     build_repo_literal_index,
     import_bindings,
     local_literal_assignments,
@@ -171,6 +172,13 @@ class PythonDataflowTest(unittest.TestCase):
         self.assertEqual(payload["value"]["tuple"], ["a", "b"])
         self.assertEqual(payload["value"]["set"], ["a", "b"])
         self.assertEqual(payload["value"]["1"], "numeric-key")
+
+    def test_unique_values_deduplicates_unordered_sets_deterministically(self) -> None:
+        values = [{"b", "a"}, {"a", "b"}, {"c"}]
+
+        unique = _unique_values(values)
+
+        self.assertEqual(unique, [{"b", "a"}, {"c"}])
 
 
 def _repo_snapshot(root: Path, python_files: tuple[Path, ...]) -> RepoSnapshot:

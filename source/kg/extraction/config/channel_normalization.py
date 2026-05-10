@@ -9,7 +9,7 @@ from source.kg.core.models import JsonObject
 
 ARN_RE = re.compile(r"\barn:aws:(?P<service>sqs|sns):(?P<region>[A-Za-z0-9-]+):(?P<account_id>\d+):(?P<name>[A-Za-z0-9_.-]+)\b")
 SQS_URL_RE = re.compile(r"\bhttps?://sqs\.(?P<region>[A-Za-z0-9-]+)\.amazonaws\.com/(?P<account_id>\d+)/(?P<queue_name>[A-Za-z0-9_.-]+)\b")
-SQS_QUEUE_NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}(?:\.fifo)?$")
+SQS_QUEUE_NAME_RE = re.compile(r"^(?:[A-Za-z0-9_-]{1,80}|[A-Za-z0-9_-]{1,75}\.fifo)$")
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,8 @@ def normalize_sqs_arn(arn: str) -> NormalizedChannel | None:
     if components is None or components["service"] != "sqs":
         return None
     queue_name = components["name"]
+    if not SQS_QUEUE_NAME_RE.fullmatch(queue_name):
+        return None
     return NormalizedChannel(
         broker_kind="sqs",
         channel_address=queue_name,
@@ -59,6 +61,8 @@ def normalize_sqs_url(url: str) -> NormalizedChannel | None:
     match = SQS_URL_RE.search(url)
     if match:
         queue_name = match.group("queue_name")
+        if not SQS_QUEUE_NAME_RE.fullmatch(queue_name):
+            return None
         return NormalizedChannel(
             broker_kind="sqs",
             channel_address=queue_name,
@@ -82,7 +86,7 @@ def normalize_sqs_url(url: str) -> NormalizedChannel | None:
         return None
     region = parsed.netloc.split(".")[1]
     account_id, queue_name = parts
-    if not account_id.isdigit() or not queue_name:
+    if not account_id.isdigit() or not SQS_QUEUE_NAME_RE.fullmatch(queue_name):
         return None
     raw_url = url.strip()
     return NormalizedChannel(

@@ -155,6 +155,25 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(channel.identity["channel_address"], "orders-created")
         self.assertEqual(fact.qualifier["api"], "boto3.resource('sqs').Queue(...).send_message")
 
+    def test_set_resolved_queue_names_emit_deterministic_channel_order(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_NAMES = {"z-orders", "a-orders"}\n\n'
+            "def publish_order():\n"
+            '    sqs = boto3.resource("sqs")\n'
+            "    queue = sqs.get_queue_by_name(QueueName=QUEUE_NAMES)\n"
+            '    queue.send_message(MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertEqual(
+            [channels_by_id[fact.object_id].identity["channel_address"] for fact in event_facts],
+            ["a-orders", "z-orders"],
+        )
+
     def test_bare_queue_name_does_not_resolve_for_queue_url_argument(self) -> None:
         source = (
             "import boto3\n\n"

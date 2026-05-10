@@ -554,7 +554,14 @@ def _module_assignment_values(module_node: ast.Module) -> list[tuple[ast.AST, tu
 def _resolved_string_values(value: object) -> tuple[str, ...] | None:
     if isinstance(value, str):
         return (value,)
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, set):
+        values = []
+        for item in value:
+            if not isinstance(item, str):
+                return None
+            values.append(item)
+        return tuple(sorted(values))
+    if isinstance(value, (list, tuple)):
         values = []
         for item in value:
             if not isinstance(item, str):

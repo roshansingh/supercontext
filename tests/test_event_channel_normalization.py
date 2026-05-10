@@ -37,6 +37,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertEqual(channel.broker_kind, "sqs")
         self.assertEqual(channel.channel_address, "orders-created")
         self.assertEqual(channel.properties["queue_url"], url)
+        self.assertIsNone(normalize_sqs_url("https://sqs.us-east-1.amazonaws.com/123456789012/orders.created"))
 
     def test_sqs_queue_name_normalizes_only_valid_queue_names(self) -> None:
         channel = normalize_sqs_queue_name("orders-created")
@@ -45,7 +46,12 @@ class EventChannelNormalizationTest(unittest.TestCase):
         assert channel is not None
         self.assertEqual(channel.broker_kind, "sqs")
         self.assertEqual(channel.channel_address, "orders-created")
+        self.assertIsNotNone(normalize_sqs_queue_name("orders-created.fifo"))
         self.assertIsNone(normalize_sqs_queue_name("not a queue name"))
+        self.assertIsNone(normalize_sqs_queue_name("orders.created"))
+        self.assertIsNone(normalize_sqs_queue_name("orders-created.fifo.fifo"))
+        self.assertIsNone(normalize_sqs_queue_name("a" * 76 + ".fifo"))
+        self.assertIsNone(normalize_sqs_queue_name("a" * 81))
 
     def test_event_channel_identity_matches_ontology_shape(self) -> None:
         repo = _repo_snapshot(Path.cwd())
