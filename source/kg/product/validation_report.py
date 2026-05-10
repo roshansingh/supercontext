@@ -536,9 +536,12 @@ def _overall_status(smoke_checks: list[JsonObject], goldset: JsonObject) -> str:
     smoke_failures = [row for row in smoke_checks if row.get("result") == "fail"]
     judged_failures = [row for row in goldset["scenarios"] if row.get("answer_score") == "Fail"]
     partials = [row for row in goldset["scenarios"] if row.get("answer_score") == "Partial"]
+    unknown_scores = [
+        row for row in goldset["scenarios"] if row.get("answer_score") not in {"Pass", "Partial", "Fail"}
+    ]
     if smoke_failures or judged_failures:
         return "fail"
-    if partials:
+    if partials or unknown_scores or goldset["answer_only_scenarios"] or goldset["packet_only_scenarios"]:
         return "partial"
     return "pass"
 

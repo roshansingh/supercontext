@@ -12,6 +12,7 @@ from source.kg.product.validation_report import (
     _expect_list,
     _expect_status,
     _goldset_summary,
+    _overall_status,
     _product_readout_lines,
     _run_smoke_checks,
     _superseded_artifacts,
@@ -177,6 +178,29 @@ class ValidationReportTest(unittest.TestCase):
         self.assertIn("Q999", lines[0])
         self.assertNotIn("Q082", lines[0])
         self.assertIn("missing KG fact=1", lines[1])
+
+    def test_overall_status_is_partial_for_incomplete_goldset_coverage(self) -> None:
+        goldset = {
+            "scenarios": [{"scenario_id": "Q001", "answer_score": "Pass"}],
+            "answer_only_scenarios": [{"scenario_id": "Q002"}],
+            "packet_only_scenarios": [],
+        }
+
+        self.assertEqual(_overall_status([], goldset), "partial")
+
+        goldset["answer_only_scenarios"] = []
+        goldset["packet_only_scenarios"] = [{"scenario_id": "Q003"}]
+
+        self.assertEqual(_overall_status([], goldset), "partial")
+
+    def test_overall_status_is_partial_for_unknown_judgement_score(self) -> None:
+        goldset = {
+            "scenarios": [{"scenario_id": "Q001", "answer_score": "unknown"}],
+            "answer_only_scenarios": [],
+            "packet_only_scenarios": [],
+        }
+
+        self.assertEqual(_overall_status([], goldset), "partial")
 
     def test_superseded_artifacts_are_generated_from_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,6 +1,6 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-10T11:43:20Z
+Generated: 2026-05-10T11:51:21Z
 
 Overall status: **partial**
 
