@@ -9,7 +9,7 @@ from typing import Literal
 import warnings
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
-from source.kg.extraction.python.dataflow import LiteralIndex, LiteralRef, module_literal_assignments
+from source.kg.extraction.python.dataflow import LiteralIndex, LiteralRef, body_call_nodes, module_literal_assignments
 from source.kg.extraction.python.transport_extractor import extract_transport_events
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
@@ -34,6 +34,9 @@ class SymbolDef:
     symbol_kind: str
     line: int
     end_line: int
+
+
+FunctionDefNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 
 @dataclass(frozen=True)
@@ -144,9 +147,14 @@ class PythonAstExtractor:
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
-        symbols = self._collect_symbols(repo, file_path, module_name, tree)
+        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree)
         by_qualname = {symbol.qualname: symbol for symbol in symbols}
         by_short_name = {symbol.qualname.rsplit(".", 1)[-1]: symbol for symbol in symbols}
+        function_defs_by_short_name = {
+            symbol.qualname.rsplit(".", 1)[-1]: function_defs[symbol.qualname]
+            for symbol in symbols
+            if symbol.symbol_kind in {"function", "async_function"} and symbol.qualname in function_defs
+        }
         for symbol in symbols:
             build.entities.append(symbol.entity)
             build.evidence.append(self._entity_evidence(repo, symbol.entity, file_path, symbol.line, symbol.end_line))
@@ -178,7 +186,7 @@ class PythonAstExtractor:
             caller = by_qualname.get(caller_name)
             if caller is None:
                 continue
-            for call_node in [node for node in ast.walk(caller_node) if isinstance(node, ast.Call)]:
+            for call_node in body_call_nodes(caller_node):
                 call_name = self._call_name(call_node.func)
                 if not call_name:
                     continue
@@ -213,6 +221,7 @@ class PythonAstExtractor:
                 self.source_system,
                 self._add_entity_evidence,
                 self._add_fact,
+                function_defs_by_short_name,
             )
 
     def _parse_file(self, file_path: Path) -> ParsedPythonFile:
@@ -236,8 +245,15 @@ class PythonAstExtractor:
                 values[LiteralRef(module_name, name)] = value
         return LiteralIndex(values)
 
-    def _collect_symbols(self, repo: RepoSnapshot, file_path: Path, module_name: str, tree: ast.AST) -> list[SymbolDef]:
+    def _collect_symbols(
+        self,
+        repo: RepoSnapshot,
+        file_path: Path,
+        module_name: str,
+        tree: ast.AST,
+    ) -> tuple[list[SymbolDef], dict[str, FunctionDefNode]]:
         symbols: list[SymbolDef] = []
+        function_defs: dict[str, FunctionDefNode] = {}
 
         def visit(body: list[ast.stmt], prefix: str = "") -> None:
             for node in body:
@@ -251,10 +267,11 @@ class PythonAstExtractor:
                     if prefix:
                         kind = "method"
                     symbols.append(self._symbol(repo, file_path, module_name, qualname, kind, node))
+                    function_defs[qualname] = node
 
         if isinstance(tree, ast.Module):
             visit(tree.body)
-        return symbols
+        return symbols, function_defs
 
     def _symbol(
         self,

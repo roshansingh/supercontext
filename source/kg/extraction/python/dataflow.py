@@ -45,6 +45,7 @@ class ValueScope:
     imported_modules: dict[str, str] = field(default_factory=dict)
     imported_values: dict[str, LiteralRef] = field(default_factory=dict)
     env_values: dict[str, str] = field(default_factory=dict)
+    blocked_names: set[str] = field(default_factory=set)
 
 
 class ValueResolver:
@@ -91,6 +92,8 @@ class ValueResolver:
         name = node.id
         if name in self._resolving_names:
             return UnresolvedValue("cyclic_name", name)
+        if name in self.scope.blocked_names:
+            return UnresolvedValue("unknown_local_binding", name)
         if name in self.scope.local_values:
             self._resolving_names.add(name)
             try:
@@ -240,8 +243,24 @@ def module_literal_assignments(tree: ast.AST) -> dict[str, ast.AST]:
 
 
 def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST]:
+    return _local_literal_assignments(function_node)
+
+
+def local_literal_assignments_before(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    before_node: ast.AST,
+) -> dict[str, ast.AST]:
+    return _local_literal_assignments(function_node, before_node=before_node)
+
+
+def _local_literal_assignments(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    before_node: ast.AST | None = None,
+) -> dict[str, ast.AST]:
     assignments: dict[str, ast.AST] = {}
     for statement in function_node.body:
+        if before_node is not None and not node_starts_before(statement, before_node):
+            break
         if isinstance(statement, ast.Assign):
             for target in statement.targets:
                 if isinstance(target, ast.Name) and _is_supported_local_expression(statement.value):
@@ -254,6 +273,52 @@ def local_literal_assignments(function_node: ast.FunctionDef | ast.AsyncFunction
         ):
             assignments[statement.target.id] = statement.value
     return assignments
+
+
+def node_starts_before(node: ast.AST, reference: ast.AST) -> bool:
+    node_line = getattr(node, "lineno", None)
+    reference_line = getattr(reference, "lineno", None)
+    if node_line is None or reference_line is None:
+        return False
+    node_col = getattr(node, "col_offset", 0)
+    reference_col = getattr(reference, "col_offset", 0)
+    return (node_line, node_col) < (reference_line, reference_col)
+
+
+def bind_args(call_node: ast.Call, function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST] | None:
+    positional_params = [*function_def.args.posonlyargs, *function_def.args.args]
+    keyword_params = {param.arg for param in [*function_def.args.args, *function_def.args.kwonlyargs]}
+    bindings: dict[str, ast.AST] = {}
+    if len(call_node.args) > len(positional_params) and function_def.args.vararg is None:
+        return None
+    for index, arg_node in enumerate(call_node.args):
+        if index >= len(positional_params):
+            break
+        bindings[positional_params[index].arg] = arg_node
+    for keyword in call_node.keywords:
+        if keyword.arg is None:
+            return None
+        if keyword.arg not in keyword_params:
+            return None
+        if keyword.arg in bindings:
+            return None
+        bindings[keyword.arg] = keyword.value
+    positional_defaults = function_def.args.defaults
+    required_positional = positional_params[: len(positional_params) - len(positional_defaults)]
+    for param in required_positional:
+        if param.arg not in bindings:
+            return None
+    for param, default in zip(function_def.args.kwonlyargs, function_def.args.kw_defaults):
+        if default is None and param.arg not in bindings:
+            return None
+    return bindings
+
+
+def body_call_nodes(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Call]:
+    collector = _CallCollector()
+    for statement in function_node.body:
+        collector.visit(statement)
+    return collector.calls
 
 
 def import_bindings(imports: list[NormalizedImport]) -> tuple[dict[str, str], dict[str, LiteralRef]]:
@@ -357,6 +422,44 @@ def _json_safe(value: object) -> object:
     if isinstance(value, dict):
         return {str(_json_safe(key)): _json_safe(item) for key, item in value.items()}
     return str(value)
+
+
+class _CallCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.calls: list[ast.Call] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.calls.append(node)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._visit_arg_defaults(node.args)
+        return
+
+    def _visit_arg_defaults(self, args: ast.arguments) -> None:
+        for default in [*args.defaults, *[default for default in args.kw_defaults if default is not None]]:
+            self.visit(default)
 
 
 def _expression(node: ast.AST) -> str:

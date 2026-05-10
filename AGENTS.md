@@ -58,6 +58,7 @@ Keep changes surgical. Do not rewrite ADRs, research docs, or generated data unl
 
 Copilot has repeatedly caught boundary-condition mistakes in review. Before opening or updating a PR, explicitly check these patterns:
 
+- Always run the project-local `.codex/skills/pre-pr-semantic-review` checklist before any `git push`, especially for extractor, normalization, query, loader, evaluation, or review-fix changes.
 - Validate external JSON/input shapes before use. If a CLI accepts either a list or an object wrapper, branch on `isinstance(data, dict)` before calling `.get(...)`.
 - Fail fast on malformed rows. Reject non-object rows, missing IDs, duplicate IDs, and padded IDs; normalize stored IDs after stripping whitespace.
 - Validate list-shaped fields before rendering or iterating. Do not assume model outputs or loaded JSON contain `list[str]`; reject missing, non-list, or non-string values with field-specific errors.
@@ -67,6 +68,12 @@ Copilot has repeatedly caught boundary-condition mistakes in review. Before open
 - Add targeted negative checks for each validation branch. A help/compile check is not enough when changing loaders, parsers, or LLM-output handling.
 - For API extractors, test common equivalent call shapes before PR: positional args, keyword args, alias imports, chained calls, assigned clients/resources, and unresolved arguments. Do not stop at the single happy path.
 - For AST extractors, test common statement variants too: `Assign`, `AnnAssign`, direct chained calls, and assigned intermediate objects.
+- For Python AST semantics, test language rules that affect binding before PR: positional-only parameters, duplicate argument binding, missing required parameters, keyword-only parameters, local assignment/import/loop/with/except shadowing, parameter shadowing, lambda bodies, nested function/class bodies, and evaluated nested-scope expressions such as decorators, default args, class bases, and class keywords.
+- Do not use whole-function facts when call-site-scoped facts are required. Local assignments, transport clients/resources, alias maps, and wrapper arguments must respect source order or fail closed.
+- If a name is locally bound but not statically resolvable, do not let resolution fall through to a same-named module/global literal.
+- Include Python 3.10+ `match/case` capture bindings in shadowing checks when wrapper or symbol resolution depends on local names.
+- For inference/promotion features, fail closed on ambiguous multiplicity. If one call-site can map to multiple candidate facts and the output contract is not explicitly list-shaped, emit no promoted fact rather than a partial first result.
+- When one AST helper is split into parallel collectors, keep their nested-scope semantics aligned or centralize the traversal policy. A fix in call collection often has an equivalent binding-collection case.
 - If code has an unsupported/error branch, add a test that proves the branch is reachable. Do not leave fallback logic so broad that invalid inputs silently become canonical facts.
 - When adding caches or indexes, check resource impact explicitly. Avoid retaining full file contents when only AST, line count, or metadata is needed.
 - Keep allowlists as the single source of truth. Do not duplicate supported kinds, methods, transports, languages, or statuses in extractor logic.
