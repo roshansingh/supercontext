@@ -19,9 +19,10 @@ def validate_adapters(adapters: Iterable[Adapter]) -> tuple[Adapter, ...]:
     validated = tuple(adapters)
     seen = set()
     for adapter in validated:
-        if adapter.capability.name in seen:
-            raise ValueError(f"Duplicate adapter name: {adapter.capability.name}")
-        if not adapter.capability.source_system:
-            raise ValueError(f"Adapter {adapter.capability.name} must declare source_system")
-        seen.add(adapter.capability.name)
+        capability = adapter.capability
+        if capability.name in seen:
+            raise ValueError(f"Duplicate adapter name: {capability.name}")
+        if not capability.source_system:
+            raise ValueError(f"Adapter {capability.name} must declare source_system")
+        seen.add(capability.name)
     return validated

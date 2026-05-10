@@ -9,8 +9,8 @@ from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
-from source.kg.extraction.framework.registry import register_for_tests
-from source.kg.extraction.framework.runner import run_adapters
+from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
+from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
 
 
 class AdapterFrameworkTest(unittest.TestCase):
@@ -128,6 +128,22 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertEqual(adapter.calls, 0)
 
+    def test_selection_reads_capability_once_per_adapter(self) -> None:
+        repo = _repo()
+        adapter = _Adapter("stateful-capability", "stateful_v0")
+
+        selected = select_applicable_adapters(repo, (adapter,))
+
+        self.assertEqual(selected, [adapter])
+        self.assertEqual(adapter.capability_reads, 1)
+
+    def test_registry_validation_reads_capability_once_per_adapter(self) -> None:
+        adapter = _Adapter("stateful-capability", "stateful_v0")
+
+        validate_adapters((adapter,))
+
+        self.assertEqual(adapter.capability_reads, 1)
+
     def test_pipeline_selection_does_not_call_applies_to_twice(self) -> None:
         repo = _repo()
         adapter = _Adapter("stateful", "stateful_v0")
@@ -163,9 +179,11 @@ class _Adapter:
     error: Exception | None = None
     calls: int = 0
     applies_calls: int = 0
+    capability_reads: int = 0
 
     @property
     def capability(self) -> AdapterCapability:
+        self.capability_reads += 1
         return AdapterCapability(
             name=self.name,
             languages=self.languages,

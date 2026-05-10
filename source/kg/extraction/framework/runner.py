@@ -80,7 +80,8 @@ def select_applicable_adapters(
     repo_languages = _repo_languages(repo)
     selected = []
     for adapter in adapters:
-        if adapter.capability.languages and not set(adapter.capability.languages).intersection(repo_languages):
+        capability = adapter.capability
+        if capability.languages and not set(capability.languages).intersection(repo_languages):
             continue
         if not adapter.applies_to(repo, ctx):
             continue
