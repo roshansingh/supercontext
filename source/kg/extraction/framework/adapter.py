@@ -23,10 +23,18 @@ class AdapterCapability:
 
 @dataclass(frozen=True)
 class ExtractionContext:
+    """Shared state for one extraction run.
+
+    Adapters populate import-root sets while extracting; the runner reads them
+    after all adapters finish to emit known-stack refusal coverage.
+    """
+
     tenant_id: str = "local-dev"
     config_scans: dict[str, tuple[Any, ...]] = field(default_factory=dict, compare=False, repr=False)
     python_parsed_files: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
     python_literal_indexes: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    python_import_roots: set[str] = field(default_factory=set, compare=False, repr=False)
+    js_ts_import_roots: set[str] = field(default_factory=set, compare=False, repr=False)
 
 
 @dataclass

@@ -11,6 +11,7 @@ from source.kg.extraction.framework.allowlists import (
     SUPPORTED_ENTITY_KINDS,
     SUPPORTED_FACT_PREDICATES,
 )
+from source.kg.extraction.framework.known_stacks import KNOWN_STACK_CATEGORY_PREDICATE, KNOWN_STACK_IMPORTS
 
 
 @dataclass(frozen=True)
@@ -44,12 +45,14 @@ def run_selected_adapters(
     evidence_by_id: dict[str, Evidence] = {}
     coverage: list[Coverage] = []
     errors: list[JsonObject] = []
+    capabilities: list[AdapterCapability] = []
 
     for adapter in adapters:
         capability: AdapterCapability | None = None
         try:
             capability = adapter.capability
             _validate_capability(capability)
+            capabilities.append(capability)
             result = adapter.extract(repo, ctx)
             _validate(capability, result)
         except Exception as exc:
@@ -70,6 +73,8 @@ def run_selected_adapters(
         for row in result.evidence:
             evidence_by_id.setdefault(row.evidence_id, row)
         coverage.extend(result.coverage)
+
+    coverage.extend(_unsupported_known_stack_coverage(repo, ctx, capabilities))
 
     if strict_extractors and errors:
         raise RuntimeError(_adapter_error_message(repo.name, errors))
@@ -169,6 +174,40 @@ def _adapter_source_system(capability: AdapterCapability | None) -> str:
     if capability is not None and capability.source_system:
         return capability.source_system
     return "extraction_framework"
+
+
+def _unsupported_known_stack_coverage(
+    repo: RepoSnapshot,
+    ctx: ExtractionContext,
+    capabilities: list[AdapterCapability],
+) -> list[Coverage]:
+    supported_tags = {tag for capability in capabilities for tag in capability.framework_tags}
+    rows: list[Coverage] = []
+    for language, import_roots in (
+        ("python", ctx.python_import_roots),
+        ("javascript", ctx.js_ts_import_roots),
+    ):
+        for import_root in sorted(import_roots):
+            category = KNOWN_STACK_IMPORTS.get(language, {}).get(import_root)
+            if category is None or import_root in supported_tags:
+                continue
+            predicate = KNOWN_STACK_CATEGORY_PREDICATE[category]
+            rows.append(
+                Coverage(
+                    tenant_id=ctx.tenant_id,
+                    predicate=predicate,
+                    scope_ref={
+                        "repo": repo.name,
+                        "language": language,
+                        "import_root": import_root,
+                        "category": category,
+                        "reason": "no_adapter_for_known_stack",
+                    },
+                    state="uninstrumented",
+                    source_system="extraction_framework",
+                )
+            )
+    return rows
 
 
 def _adapter_error_message(repo_name: str, errors: list[JsonObject]) -> str:

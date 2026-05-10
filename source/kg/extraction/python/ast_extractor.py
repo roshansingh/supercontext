@@ -91,6 +91,7 @@ class PythonAstExtractor:
                 import_normalizer,
                 literal_index,
                 build,
+                ctx,
             )
 
         build.coverage.append(
@@ -117,6 +118,7 @@ class PythonAstExtractor:
                 import_normalizer,
                 literal_index,
                 build,
+                ctx,
             )
         return build
 
@@ -158,6 +160,7 @@ class PythonAstExtractor:
         import_normalizer: PythonImportNormalizer,
         literal_index: LiteralIndex,
         build: KgBuild,
+        ctx: ExtractionContext | None,
     ) -> None:
         tree = parsed.tree
         if tree is None:
@@ -221,6 +224,8 @@ class PythonAstExtractor:
             self._add_fact(build, "DEFINED_IN", symbol.entity, module_entity, repo, file_path, symbol.line, symbol.end_line)
 
         imports = import_normalizer.collect(tree, module_name)
+        if ctx is not None:
+            ctx.python_import_roots.update(import_ref.import_root for import_ref in imports)
         imports_by_root: dict[str, NormalizedImport] = {}
         for import_ref in imports:
             dependency_entity = self._dependency_entity(repo, import_ref)
@@ -296,12 +301,15 @@ class PythonAstExtractor:
         import_normalizer: PythonImportNormalizer,
         literal_index: LiteralIndex,
         build: KgBuild,
+        ctx: ExtractionContext | None,
     ) -> None:
         tree = parsed.tree
         if tree is None:
             return
         module_name = self._module_name(repo, file_path)
         imports = import_normalizer.collect(tree, module_name)
+        if ctx is not None:
+            ctx.python_import_roots.update(import_ref.import_root for import_ref in imports)
         symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree)
         by_qualname = {symbol.qualname: symbol for symbol in symbols}
         function_defs_by_short_name = {

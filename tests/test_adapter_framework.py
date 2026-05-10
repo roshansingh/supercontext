@@ -11,6 +11,7 @@ from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.adapters import config_shared
+from source.kg.extraction.adapters.legacy import LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
@@ -334,6 +335,71 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertEqual(parsed_paths, [app])
 
+    def test_known_stack_without_adapter_tag_emits_uninstrumented_coverage(self) -> None:
+        repo = _repo(python_files=())
+        adapter = _ImportRootAdapter("js-imports", "js_imports_v0", js_ts_import_roots=("express",))
+
+        _, _, _, coverage, errors = run_adapters(repo, (adapter,))
+
+        self.assertEqual(errors, [])
+        rows = _known_stack_rows(coverage)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.predicate, "EXPOSES_ENDPOINT")
+        self.assertEqual(row.state, "uninstrumented")
+        self.assertEqual(row.source_system, "extraction_framework")
+        self.assertEqual(row.scope_ref["language"], "javascript")
+        self.assertEqual(row.scope_ref["import_root"], "express")
+        self.assertEqual(row.scope_ref["reason"], "no_adapter_for_known_stack")
+
+    def test_known_stack_with_adapter_tag_does_not_emit_refusal_coverage(self) -> None:
+        repo = _repo(python_files=())
+        adapter = _ImportRootAdapter(
+            "express-routes",
+            "express_routes_v0",
+            js_ts_import_roots=("express",),
+            framework_tags=("express",),
+        )
+
+        _, _, _, coverage, _ = run_adapters(repo, (adapter,))
+
+        self.assertEqual([row for row in coverage if row.scope_ref.get("reason") == "no_adapter_for_known_stack"], [])
+
+    def test_python_extractor_populates_import_roots_for_known_stack_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text("import flask\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="python-known-stack",
+                owner="test",
+                commit_sha="sha",
+                python_files=(app,),
+                typescript_files=(),
+            )
+            adapter = LegacyAdapter(
+                capability=AdapterCapability(
+                    name="python-import-root-test",
+                    languages=("python",),
+                    produces_predicates=("DEFINED_IN", "IMPLEMENTS", "IMPORTS", "CALLS"),
+                    produces_entity_kinds=("Repo", "Service", "CodeModule", "ExternalPackage"),
+                    ontology_scope="mixed",
+                    source_system=PythonAstExtractor.source_system,
+                ),
+                extractor=PythonAstExtractor(include_transport=False),
+                language_gate="python",
+            )
+
+            _, _, _, coverage, errors = run_adapters(repo, (adapter,))
+
+        self.assertEqual(errors, [])
+        rows = _known_stack_rows(coverage)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].predicate, "EXPOSES_ENDPOINT")
+        self.assertEqual(rows[0].scope_ref["language"], "python")
+        self.assertEqual(rows[0].scope_ref["import_root"], "flask")
+
 
 @dataclass
 class _Adapter:
@@ -343,6 +409,7 @@ class _Adapter:
     applies: bool = True
     produces_predicates: tuple[str, ...] = ("DEFINED_IN",)
     produces_entity_kinds: tuple[str, ...] = ("Service", "Repo")
+    framework_tags: tuple[str, ...] = ()
     result: AdapterResult | None = None
     error: Exception | None = None
     calls: int = 0
@@ -355,6 +422,7 @@ class _Adapter:
         return AdapterCapability(
             name=self.name,
             languages=self.languages,
+            framework_tags=self.framework_tags,
             produces_predicates=self.produces_predicates,
             produces_entity_kinds=self.produces_entity_kinds,
             source_system=self.source_system,
@@ -368,6 +436,18 @@ class _Adapter:
         self.calls += 1
         if self.error is not None:
             raise self.error
+        return self.result or AdapterResult()
+
+
+@dataclass
+class _ImportRootAdapter(_Adapter):
+    python_import_roots: tuple[str, ...] = ()
+    js_ts_import_roots: tuple[str, ...] = ()
+
+    def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
+        self.calls += 1
+        ctx.python_import_roots.update(self.python_import_roots)
+        ctx.js_ts_import_roots.update(self.js_ts_import_roots)
         return self.result or AdapterResult()
 
 
@@ -412,3 +492,7 @@ def _evidence_ids(evidence: list[Evidence]) -> set[str]:
 
 def _coverage_ids(coverage: list) -> set[str]:
     return {row.coverage_id for row in coverage}
+
+
+def _known_stack_rows(coverage: list):
+    return [row for row in coverage if row.scope_ref.get("reason") == "no_adapter_for_known_stack"]
