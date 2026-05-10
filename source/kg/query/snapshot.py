@@ -458,6 +458,67 @@ class KgSnapshot:
             "endpoints": returned,
         }
 
+    def reconcile_endpoints(
+        self,
+        docs_scope: list[str] | tuple[str, ...] = (),
+        backend_scope: list[str] | tuple[str, ...] = (),
+        client_scope: list[str] | tuple[str, ...] = (),
+        path_prefix: str | None = None,
+    ) -> JsonObject:
+        from source.kg.product.contract_reconciliation import ContractReconciliationSpec, ContractSide, reconcile_contract
+
+        docs_vs_backend = reconcile_contract(
+            self,
+            ContractReconciliationSpec(
+                name="docs_vs_backend_endpoints",
+                identity_key="endpoint_path",
+                left=ContractSide(
+                    name="documented",
+                    predicates=("DOCUMENTS_ENDPOINT",),
+                    repos=tuple(docs_scope),
+                    path_prefix=path_prefix,
+                ),
+                right=ContractSide(
+                    name="implemented",
+                    predicates=("EXPOSES_ENDPOINT",),
+                    repos=tuple(backend_scope),
+                    path_prefix=path_prefix,
+                ),
+            ),
+        )
+        docs_vs_client = reconcile_contract(
+            self,
+            ContractReconciliationSpec(
+                name="docs_vs_client_endpoints",
+                identity_key="endpoint_path",
+                left=ContractSide(
+                    name="documented",
+                    predicates=("DOCUMENTS_ENDPOINT",),
+                    repos=tuple(docs_scope),
+                    path_prefix=path_prefix,
+                ),
+                right=ContractSide(
+                    name="called",
+                    predicates=("CALLS_ENDPOINT",),
+                    repos=tuple(client_scope),
+                    path_prefix=path_prefix,
+                ),
+            ),
+        )
+        return {
+            "status": "found" if docs_vs_backend["status"] == "found" or docs_vs_client["status"] == "found" else "not_found",
+            "docs_scope": list(docs_scope),
+            "backend_scope": list(backend_scope),
+            "client_scope": list(client_scope),
+            "path_prefix": path_prefix,
+            "documented_AND_implemented": docs_vs_backend["matched"],
+            "documented_NOT_implemented": docs_vs_backend["left_only"],
+            "implemented_NOT_documented": docs_vs_backend["right_only"],
+            "documented_AND_called": docs_vs_client["matched"],
+            "documented_NOT_called": docs_vs_client["left_only"],
+            "coverage_warnings": self._endpoint_reconciliation_warnings(docs_scope, backend_scope, client_scope, path_prefix),
+        }
+
     def event_channels(self, channel_query: str | None = None, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit, max_limit=100)
         rows = []
@@ -489,6 +550,84 @@ class KgSnapshot:
             "returned_count": len(returned),
             "event_channels": returned,
         }
+
+    def _endpoint_reconciliation_warnings(
+        self,
+        docs_scope: list[str] | tuple[str, ...],
+        backend_scope: list[str] | tuple[str, ...],
+        client_scope: list[str] | tuple[str, ...],
+        path_prefix: str | None,
+    ) -> list[JsonObject]:
+        warnings: list[JsonObject] = []
+        if docs_scope and not self._has_endpoint_fact("DOCUMENTS_ENDPOINT", docs_scope, path_prefix):
+            warnings.append(
+                {
+                    "scope": "docs",
+                    "warning": "no_endpoint_documentation_evidence",
+                    "coverage": self._endpoint_coverage_rows("DOCUMENTS_ENDPOINT", docs_scope),
+                }
+            )
+        if backend_scope and not self._has_endpoint_fact("EXPOSES_ENDPOINT", backend_scope, path_prefix):
+            warnings.append(
+                {
+                    "scope": "backend",
+                    "warning": "no_endpoint_extractor_matched",
+                    "coverage": self._endpoint_coverage_rows("EXPOSES_ENDPOINT", backend_scope),
+                }
+            )
+        if client_scope and not self._has_endpoint_fact("CALLS_ENDPOINT", client_scope, path_prefix):
+            warnings.append(
+                {
+                    "scope": "client",
+                    "warning": "no_client_call_evidence",
+                    "coverage": self._endpoint_coverage_rows("CALLS_ENDPOINT", client_scope),
+                }
+            )
+        return warnings
+
+    def _has_endpoint_fact(self, predicate: str, repos: list[str] | tuple[str, ...], path_prefix: str | None = None) -> bool:
+        repo_filter = set(repos)
+        for fact in self.facts:
+            if fact.get("predicate") != predicate:
+                continue
+            subject = self.entities_by_id.get(fact["subject_id"])
+            object_ = self.entities_by_id.get(fact["object_id"])
+            if not subject or not object_:
+                continue
+            if path_prefix and not self._endpoint_path_matches(object_, path_prefix):
+                continue
+            if self._entity_repo(subject) in repo_filter or self._entity_repo(object_) in repo_filter:
+                return True
+        return False
+
+    def _endpoint_coverage_rows(
+        self,
+        predicate: str,
+        repos: list[str] | tuple[str, ...],
+    ) -> list[JsonObject]:
+        repo_filter = set(repos)
+        return [
+            row
+            for row in self.coverage
+            if row.get("predicate") == predicate and str(row.get("scope_ref", {}).get("repo")) in repo_filter
+        ]
+
+    def _endpoint_path_matches(self, entity: JsonObject, path_prefix: str) -> bool:
+        if entity.get("kind") != "Endpoint":
+            return False
+        path = self._normalize_endpoint_reconciliation_path(str(entity.get("identity", {}).get("path", "")))
+        return path.startswith(path_prefix)
+
+    def _normalize_endpoint_reconciliation_path(self, path: str) -> str:
+        value = path.strip()
+        if not value.startswith("/"):
+            value = "/" + value
+        return value.rstrip("/") or "/"
+
+    def _entity_repo(self, entity: JsonObject) -> str | None:
+        identity = entity.get("identity", {})
+        properties = entity.get("properties", {})
+        return identity.get("repo") or properties.get("repo")
 
     def deploy_mappings(self, target_query: str | None = None, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit, max_limit=100)
