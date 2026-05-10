@@ -24,11 +24,15 @@ class OpenApiExtraction:
 
 
 def extract_openapi_endpoints(scanned: ScannedFile) -> OpenApiExtraction:
-    if not _looks_like_openapi_file(scanned):
+    if scanned.path.suffix not in {".json", ".yaml", ".yml"}:
         return OpenApiExtraction([])
     if scanned.path.suffix == ".json":
-        return _extract_from_json(scanned)
-    return _extract_from_yaml(scanned)
+        result = _extract_from_json(scanned)
+    else:
+        result = _extract_from_yaml(scanned)
+    if result.coverage_reason and not _filename_suggests_openapi(scanned):
+        return OpenApiExtraction([])
+    return result
 
 
 def _extract_from_json(scanned: ScannedFile) -> OpenApiExtraction:
@@ -36,6 +40,8 @@ def _extract_from_json(scanned: ScannedFile) -> OpenApiExtraction:
         data = json.loads(scanned.text)
     except json.JSONDecodeError:
         return OpenApiExtraction([], coverage_reason="openapi_json_parse_error")
+    if not _is_openapi_document(data):
+        return OpenApiExtraction([])
     return OpenApiExtraction(_endpoints_from_document(data, scanned))
 
 
@@ -48,11 +54,17 @@ def _extract_from_yaml(scanned: ScannedFile) -> OpenApiExtraction:
         data = yaml.safe_load(scanned.text)
     except yaml.YAMLError:
         return OpenApiExtraction([], coverage_reason="openapi_yaml_parse_error")
+    if not _is_openapi_document(data):
+        return OpenApiExtraction([])
     return OpenApiExtraction(_endpoints_from_document(data, scanned))
 
 
+def _is_openapi_document(data: object) -> bool:
+    return isinstance(data, dict) and isinstance(data.get("paths"), dict)
+
+
 def _endpoints_from_document(data: object, scanned: ScannedFile) -> list[OpenApiEndpoint]:
-    if not isinstance(data, dict) or not isinstance(data.get("paths"), dict):
+    if not _is_openapi_document(data):
         return []
     endpoints: list[OpenApiEndpoint] = []
     for path, path_item in data["paths"].items():
@@ -75,14 +87,9 @@ def _endpoints_from_document(data: object, scanned: ScannedFile) -> list[OpenApi
     return endpoints
 
 
-def _looks_like_openapi_file(scanned: ScannedFile) -> bool:
-    suffix = scanned.path.suffix
-    if suffix not in {".json", ".yaml", ".yml"}:
-        return False
+def _filename_suggests_openapi(scanned: ScannedFile) -> bool:
     lower_name = scanned.path.name.lower()
-    if any(token in lower_name for token in ("openapi", "swagger")):
-        return True
-    return '"openapi"' in scanned.text or "openapi:" in scanned.text or '"swagger"' in scanned.text or "swagger:" in scanned.text
+    return any(token in lower_name for token in ("openapi", "swagger"))
 
 
 def _line_for_key(scanned: ScannedFile, key: str, start_line: int = 1) -> int:

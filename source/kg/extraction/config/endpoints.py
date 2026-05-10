@@ -91,7 +91,22 @@ def _extract_python_backend_routes(
 ) -> bool:
     try:
         tree = ast.parse(scanned.text, filename=str(scanned.path))
-    except SyntaxError:
+    except SyntaxError as exc:
+        build.coverage.append(
+            Coverage(
+                tenant_id=TENANT_ID,
+                predicate="EXPOSES_ENDPOINT",
+                scope_ref={
+                    "repo": repo.name,
+                    "path": scanned.relative_path,
+                    "language": "python",
+                    "reason": "python_syntax_error",
+                    "message": str(exc),
+                },
+                state="uninstrumented",
+                source_system=CONFIG_SOURCE_SYSTEM,
+            )
+        )
         return False
     routes: list[EndpointRoute] = []
     flask_routes, flask_recognized = extract_flask_routes(tree)

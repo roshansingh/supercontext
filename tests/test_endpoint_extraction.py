@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import builtins
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.core.models import Entity, Fact
 from source.kg.core.repo_source import RepoSnapshot
@@ -70,6 +72,72 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(docs), {"/v1/store_data": {"ANY", "POST"}, "/v1/orders": {"ANY", "GET"}})
         self.assertEqual(_source_kinds_by_path(docs)["/v1/store_data"], {"openapi_path", "openapi_method"})
 
+    def test_openapi_yaml_is_parsed_with_safe_load(self) -> None:
+        build = _extract_config(
+            {
+                "openapi.yaml": (
+                    "openapi: 3.0.0\n"
+                    "paths:\n"
+                    "  /v1/foo:\n"
+                    "    get:\n"
+                    "      operationId: getFoo\n"
+                )
+            }
+        )
+
+        docs = _endpoint_rows(build, "DOCUMENTS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(docs), {"/v1/foo": {"ANY", "GET"}})
+
+    def test_openapi_yaml_parse_error_emits_coverage_for_openapi_filename(self) -> None:
+        build = _extract_config({"openapi.yaml": "openapi: 3.0.0\npaths: [not valid yaml\n"})
+
+        coverage = [
+            row
+            for row in build.coverage
+            if row.predicate == "DOCUMENTS_ENDPOINT" and row.scope_ref.get("reason") == "openapi_yaml_parse_error"
+        ]
+
+        self.assertEqual(len(coverage), 1)
+
+    def test_pyyaml_unavailable_emits_coverage_for_openapi_filename(self) -> None:
+        real_import = builtins.__import__
+
+        def import_without_yaml(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("blocked by test")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=import_without_yaml):
+            build = _extract_config(
+                {
+                    "openapi.yaml": (
+                        "openapi: 3.0.0\n"
+                        "paths:\n"
+                        "  /v1/foo:\n"
+                        "    get:\n"
+                        "      operationId: getFoo\n"
+                    )
+                }
+            )
+
+        coverage = [
+            row
+            for row in build.coverage
+            if row.predicate == "DOCUMENTS_ENDPOINT" and row.scope_ref.get("reason") == "pyyaml_unavailable"
+        ]
+
+        self.assertEqual(len(coverage), 1)
+
+    def test_non_openapi_file_with_openapi_word_does_not_emit_coverage(self) -> None:
+        build = _extract_config({"fixture.json": '{"description": "mentions openapi", "paths": "not an object"}'})
+
+        docs = _endpoint_rows(build, "DOCUMENTS_ENDPOINT")
+        coverage = [row for row in build.coverage if row.predicate == "DOCUMENTS_ENDPOINT"]
+
+        self.assertEqual(docs, [])
+        self.assertEqual(coverage, [])
+
     def test_python_repo_without_recognized_framework_emits_coverage(self) -> None:
         build = _extract_config({"worker.py": "def run():\n    return 1\n"})
 
@@ -80,6 +148,18 @@ class EndpointExtractionTest(unittest.TestCase):
         ]
 
         self.assertEqual(len(coverage), 1)
+
+    def test_python_syntax_error_emits_explicit_coverage(self) -> None:
+        build = _extract_config({"bad_app.py": "def broken(:\n    return 1\n"})
+
+        coverage = [
+            row
+            for row in build.coverage
+            if row.predicate == "EXPOSES_ENDPOINT" and row.scope_ref.get("reason") == "python_syntax_error"
+        ]
+
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(coverage[0].scope_ref["path"], "bad_app.py")
 
     def test_javascript_endpoint_parser_gap_is_explicit_coverage(self) -> None:
         build = _extract_config({"server.ts": "app.post('/orders', handler)\nfetch('/orders')\n"})
