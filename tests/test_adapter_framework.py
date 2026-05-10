@@ -218,6 +218,12 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("config-openapi", names)
         self.assertIn("config-deploy-events", names)
 
+    def test_split_config_capabilities_include_yml_file_kind(self) -> None:
+        capabilities = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}
+
+        self.assertIn("yml", capabilities["config-openapi"].file_kinds)
+        self.assertIn("yml", capabilities["config-deploy-events"].file_kinds)
+
     def test_config_split_pipeline_matches_static_config_monolith(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

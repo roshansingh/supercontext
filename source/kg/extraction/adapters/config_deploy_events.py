@@ -15,7 +15,7 @@ class ConfigDeployEventsAdapter:
     capability = AdapterCapability(
         name="config-deploy-events",
         languages=("config",),
-        file_kinds=("config", "ini", "json", "yaml"),
+        file_kinds=("config", "ini", "json", "yaml", "yml"),
         framework_tags=("apache", "serverless", "zappa", "sqs", "sns"),
         produces_predicates=(
             "EXPOSES_ENDPOINT",
