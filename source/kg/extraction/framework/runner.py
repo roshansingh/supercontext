@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.framework.adapter import Adapter, AdapterResult, ExtractionContext
+from source.kg.extraction.framework.adapter import Adapter, AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.allowlists import (
     BYTES_REF_OPTIONAL_SOURCE_SYSTEMS,
     SUPPORTED_ENTITY_KINDS,
@@ -39,20 +39,22 @@ def run_selected_adapters(
     errors: list[JsonObject] = []
 
     for adapter in adapters:
-        _validate_capability(adapter)
+        capability: AdapterCapability | None = None
         try:
+            capability = adapter.capability
+            _validate_capability(capability)
             result = adapter.extract(repo, ctx)
-            _validate(adapter, result)
+            _validate(capability, result)
         except Exception as exc:
             errors.append(
                 {
-                    "adapter": adapter.capability.name,
-                    "source_system": adapter.capability.source_system,
+                    "adapter": _adapter_name(adapter, capability),
+                    "source_system": _adapter_source_system(capability),
                     "error": type(exc).__name__,
                     "message": str(exc),
                 }
             )
-            coverage.append(_adapter_error_coverage(repo, adapter, ctx, exc))
+            coverage.append(_adapter_error_coverage(repo, adapter, capability, ctx, exc))
             continue
 
         entities.extend(result.entities)
@@ -95,44 +97,61 @@ def _repo_languages(repo: RepoSnapshot) -> frozenset[str]:
     return frozenset(languages)
 
 
-def _validate(adapter: Adapter, result: AdapterResult) -> None:
-    _validate_capability(adapter)
+def _validate(capability: AdapterCapability, result: AdapterResult) -> None:
     for entity in result.entities:
         if entity.kind not in SUPPORTED_ENTITY_KINDS:
-            raise ValueError(f"{adapter.capability.name} emitted unsupported entity kind: {entity.kind}")
-        if adapter.capability.produces_entity_kinds and entity.kind not in adapter.capability.produces_entity_kinds:
-            raise ValueError(f"{adapter.capability.name} emitted undeclared entity kind: {entity.kind}")
+            raise ValueError(f"{capability.name} emitted unsupported entity kind: {entity.kind}")
+        if capability.produces_entity_kinds and entity.kind not in capability.produces_entity_kinds:
+            raise ValueError(f"{capability.name} emitted undeclared entity kind: {entity.kind}")
     for fact in result.facts:
         if fact.predicate not in SUPPORTED_FACT_PREDICATES:
-            raise ValueError(f"{adapter.capability.name} emitted unsupported predicate: {fact.predicate}")
-        if adapter.capability.produces_predicates and fact.predicate not in adapter.capability.produces_predicates:
-            raise ValueError(f"{adapter.capability.name} emitted undeclared predicate: {fact.predicate}")
+            raise ValueError(f"{capability.name} emitted unsupported predicate: {fact.predicate}")
+        if capability.produces_predicates and fact.predicate not in capability.produces_predicates:
+            raise ValueError(f"{capability.name} emitted undeclared predicate: {fact.predicate}")
     for row in result.evidence:
         if row.bytes_ref is None and row.source_system not in BYTES_REF_OPTIONAL_SOURCE_SYSTEMS:
             raise ValueError(
-                f"{adapter.capability.name} emitted evidence without bytes_ref for source_system: {row.source_system}"
+                f"{capability.name} emitted evidence without bytes_ref for source_system: {row.source_system}"
             )
 
 
-def _validate_capability(adapter: Adapter) -> None:
-    if not adapter.capability.source_system:
-        raise ValueError(f"{adapter.capability.name} must declare source_system")
+def _validate_capability(capability: AdapterCapability) -> None:
+    if not capability.source_system:
+        raise ValueError(f"{capability.name} must declare source_system")
 
 
-def _adapter_error_coverage(repo: RepoSnapshot, adapter: Adapter, ctx: ExtractionContext, exc: Exception) -> Coverage:
+def _adapter_error_coverage(
+    repo: RepoSnapshot,
+    adapter: Adapter,
+    capability: AdapterCapability | None,
+    ctx: ExtractionContext,
+    exc: Exception,
+) -> Coverage:
     return Coverage(
         tenant_id=ctx.tenant_id,
         predicate="PARSES",
         scope_ref={
             "repo": repo.name,
-            "adapter": adapter.capability.name,
+            "adapter": _adapter_name(adapter, capability),
             "error": type(exc).__name__,
             "message": str(exc),
             "reason": "adapter_error",
         },
         state="uninstrumented",
-        source_system=adapter.capability.source_system,
+        source_system=_adapter_source_system(capability),
     )
+
+
+def _adapter_name(adapter: Adapter, capability: AdapterCapability | None) -> str:
+    if capability is not None:
+        return capability.name
+    return type(adapter).__name__
+
+
+def _adapter_source_system(capability: AdapterCapability | None) -> str:
+    if capability is not None and capability.source_system:
+        return capability.source_system
+    return "extraction_framework"
 
 
 def _adapter_error_message(repo_name: str, errors: list[JsonObject]) -> str:

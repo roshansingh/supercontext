@@ -24,6 +24,16 @@ class AdapterFrameworkTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must declare source_system"):
             register_for_tests((_Adapter("missing", ""),))
 
+    def test_runner_non_strict_converts_missing_source_system_to_error_coverage(self) -> None:
+        repo = _repo()
+
+        _, _, _, coverage, errors = run_adapters(repo, (_Adapter("missing", ""),))
+
+        self.assertEqual(errors[0]["source_system"], "extraction_framework")
+        self.assertIn("must declare source_system", errors[0]["message"])
+        self.assertEqual(coverage[0].source_system, "extraction_framework")
+        self.assertEqual(coverage[0].scope_ref["adapter"], "missing")
+
     def test_runner_skips_adapter_when_applies_to_false(self) -> None:
         repo = _repo()
         adapter = _Adapter("skip", "skip_v0", applies=False)
