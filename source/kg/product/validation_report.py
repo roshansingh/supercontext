@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from source.kg.core.models import JsonObject
+from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -577,19 +578,34 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
 
 
 def _goldset_artifact_consistency(packet: object, answer: object) -> tuple[str, list[str]]:
+    """Classify whether a judgement's answer was synthesized from the current packet.
+
+    Fingerprint mismatches and count mismatches are both stale. Missing fingerprint or
+    count metadata is unverified unless another field proves staleness.
+    """
     if not isinstance(packet, dict):
         return "missing_packet", ["judgement scenario has no matching EvidencePacket row"]
     if not isinstance(answer, dict):
         return "missing_answer", ["judgement scenario has no matching synthesized answer row"]
 
     issues: list[str] = []
-    _compare_count_metadata(
+    mismatch_detected = False
+    current_fingerprint = packet_fingerprint(packet)
+    answer_fingerprint = answer.get("packet_fingerprint")
+    if isinstance(answer_fingerprint, str) and answer_fingerprint.strip():
+        if answer_fingerprint != current_fingerprint:
+            mismatch_detected = True
+            issues.append("answer packet_fingerprint does not match current packet fingerprint")
+    else:
+        issues.append("answer missing packet_fingerprint; content freshness cannot be verified")
+
+    mismatch_detected |= _compare_count_metadata(
         issues,
         label="evidence_item_count",
         answer_count=answer.get("evidence_item_count"),
         current_count=_list_count(packet.get("evidence_items")),
     )
-    _compare_count_metadata(
+    mismatch_detected |= _compare_count_metadata(
         issues,
         label="retrieval_step_count",
         answer_count=answer.get("retrieval_step_count"),
@@ -597,17 +613,26 @@ def _goldset_artifact_consistency(packet: object, answer: object) -> tuple[str, 
     )
     if not issues:
         return "current", []
-    if any("does not match" in issue for issue in issues):
+    if mismatch_detected:
         return "stale", issues
     return "unverified", issues
 
 
-def _compare_count_metadata(issues: list[str], label: str, answer_count: object, current_count: int) -> None:
+def _compare_count_metadata(issues: list[str], label: str, answer_count: object, current_count: int) -> bool:
     if not isinstance(answer_count, int):
         issues.append(f"answer missing integer {label}; cannot verify packet freshness")
-        return
+        return False
     if answer_count != current_count:
         issues.append(f"answer {label}={answer_count} does not match current packet {label}={current_count}")
+        return True
+    return False
+
+
+def _failure_owner_summary(rows: list[JsonObject]) -> str:
+    owners = Counter(owner for row in rows for owner in row.get("failure_owners", []) if owner != "none")
+    if not owners:
+        return ""
+    return ", ".join(f"{owner}={count}" for owner, count in sorted(owners.items()))
 
 
 def _list_count(value: object) -> int:
@@ -719,10 +744,12 @@ def _product_readout_lines(goldset: JsonObject, next_feature_recommendation: str
             "- Artifact consistency blocks product-gap diagnosis for "
             f"{scenario_ids}; regenerate answers and judgement from the current EvidencePacket rows first."
         )
+        pending_owner_summary = _failure_owner_summary(stale_or_unverified)
+        if pending_owner_summary:
+            lines.append(f"- Suspected failure owners pending re-judgement: {pending_owner_summary}.")
     if non_passing:
-        owners = Counter(owner for row in non_passing for owner in row.get("failure_owners", []) if owner != "none")
-        if owners:
-            owner_summary = ", ".join(f"{owner}={count}" for owner, count in sorted(owners.items()))
+        owner_summary = _failure_owner_summary(non_passing)
+        if owner_summary:
             lines.append(f"- Remaining judged failures are concentrated in: {owner_summary}.")
         else:
             lines.append("- Remaining judged failures do not have classified failure owners.")

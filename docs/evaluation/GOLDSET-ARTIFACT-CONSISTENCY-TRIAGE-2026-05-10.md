@@ -10,12 +10,16 @@ Are the remaining LatticeAI goldset partials current product failures, or are th
 
 They are currently stale artifact failures. The canonical EvidencePacket files contain newer evidence than the synthesized answer/judgement files used by the canonical validation report.
 
+The current answer files also predate packet fingerprints, so Q083 and Q100 are now marked `unverified` even though their counts still match. That is intentional: count equality proves less than content equality.
+
 ## Evidence
 
 | Scenario | Current packet | Current answer metadata | Triage |
 |---|---:|---:|---|
 | Q082 | 50 evidence items, 2 retrieval steps | 30 evidence items, 2 retrieval steps | Stale answer after config/env citation improvements. |
+| Q083 | 27 evidence items, 2 retrieval steps | 27 evidence items, 2 retrieval steps, no packet fingerprint | Unverified until answer is regenerated with a packet fingerprint. |
 | Q088 | 11 evidence items, 3 retrieval steps | 1 evidence item, 2 retrieval steps | Stale answer; current packet includes campaign scheduling, delivery, and email-status event facts. |
+| Q100 | 84 evidence items, 2 retrieval steps | 84 evidence items, 2 retrieval steps, no packet fingerprint | Unverified until answer is regenerated with a packet fingerprint. |
 | Q106 | 9 evidence items, 2 retrieval steps | 2 evidence items, 2 retrieval steps | Stale answer; current packet includes producer, consumer, and downstream email-status evidence. |
 
 Q088 and Q106 also pass in the event-focused judgement artifacts, which confirms the KG/evidence layer already improved for the event-channel path. The canonical validation report should therefore stop treating the stale judgement rows as direct evidence of `missing KG fact` or `bad retrieval plan`.
@@ -24,8 +28,10 @@ Q088 and Q106 also pass in the event-focused judgement artifacts, which confirms
 
 Add a generic artifact-consistency guard to the canonical validation report:
 
-- Compare each current EvidencePacket row to the synthesized answer row metadata.
+- Store a packet fingerprint on newly synthesized answers.
+- Compare each current EvidencePacket row to the synthesized answer fingerprint and count metadata.
 - Mark rows as `current`, `stale`, `unverified`, `missing_packet`, or `missing_answer`.
+- Keep suspected failure owners from stale/unverified rows visible as pending re-judgement signal.
 - Exclude stale/unverified rows from product-gap failure-owner aggregation.
 - Tell the reader to regenerate answers and judgement from current packets before selecting the next product feature.
 

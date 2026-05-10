@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from source.kg.product.answer_synthesis import _validate_answer
+from source.kg.product.answer_synthesis import AnswerSynthesisConfig, _validate_answer
+from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.product.claude_tool_policy import resolve_claude_cli_path
 from source.kg.product.goldset_judgement import _validate_judgement, load_goldset_scenarios
 from source.kg.product.json_result import parse_json_object_result
 from source.kg.product.validation import normalize_unique_strings, require_unique_strings
-from source.scripts.run_goldset_answers import _load_or_build_packets
+from source.scripts.run_goldset_answers import _load_or_build_packets, _synthesize_answers
 from source.scripts.run_goldset_judgement import _load_by_scenario
 
 
@@ -115,6 +118,24 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not executable"):
             resolve_claude_cli_path("/definitely/missing/claude")
 
+    def test_synthesized_answers_include_packet_fingerprint(self) -> None:
+        packet = {
+            "scenario_id": "Q082",
+            "user_query": "Which clients call the API?",
+            "expected_answer_shape": "list clients",
+            "evidence_items": [{"claim": "client A calls API"}],
+            "retrieval_steps": [{"name": "domain references"}],
+            "unknowns": [],
+        }
+
+        with patch("source.scripts.run_goldset_answers.ClaudeAnswerSynthesizer", _FakeSynthesizer):
+            result = asyncio.run(_synthesize_answers("snapshot", [packet], AnswerSynthesisConfig()))
+
+        answer = result["answers"][0]
+        self.assertEqual(answer["evidence_item_count"], 1)
+        self.assertEqual(answer["retrieval_step_count"], 1)
+        self.assertEqual(answer["packet_fingerprint"], packet_fingerprint(packet))
+
 
 def _write_json(value: object) -> Path:
     return _write_text(json.dumps(value))
@@ -125,6 +146,22 @@ def _write_text(value: str) -> Path:
         path = Path(handle.name)
     path.write_text(value, encoding="utf-8")
     return path
+
+
+class _FakeSynthesizer:
+    def __init__(self, _config: AnswerSynthesisConfig) -> None:
+        pass
+
+    async def synthesize(self, packet: dict[str, object]) -> dict[str, object]:
+        return {
+            "scenario_id": packet["scenario_id"],
+            "score": "Pass",
+            "failure_modes": ["none"],
+            "answer": "ok",
+            "score_reason": "ok",
+            "caveats": [],
+            "unknowns": [],
+        }
 
 
 if __name__ == "__main__":

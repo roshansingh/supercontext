@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.product.validation_report import (
     ValidationConfig,
     _expect_count,
@@ -44,7 +45,15 @@ class ValidationReportTest(unittest.TestCase):
                 json.dumps(
                     {
                         "answers": [
-                            {"scenario_id": "Q001", "score": "Pass", "evidence_item_count": 1, "retrieval_step_count": 1},
+                            {
+                                "scenario_id": "Q001",
+                                "score": "Pass",
+                                "evidence_item_count": 1,
+                                "retrieval_step_count": 1,
+                                "packet_fingerprint": packet_fingerprint(
+                                    {"scenario_id": "Q001", "evidence_items": [{}], "retrieval_steps": [{}]}
+                                ),
+                            },
                             {"scenario_id": "Q002", "score": "Partial", "evidence_item_count": 0, "retrieval_step_count": 1},
                         ]
                     }
@@ -121,10 +130,43 @@ class ValidationReportTest(unittest.TestCase):
         self.assertEqual(
             summary["scenarios"][0]["artifact_issues"],
             [
+                "answer missing packet_fingerprint; content freshness cannot be verified",
                 "answer evidence_item_count=1 does not match current packet evidence_item_count=2",
                 "answer retrieval_step_count=1 does not match current packet retrieval_step_count=2",
             ],
         )
+
+    def test_goldset_summary_flags_stale_answer_when_fingerprint_changes_but_counts_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            current_packet = {"scenario_id": "Q088", "evidence_items": [{"id": "new"}], "retrieval_steps": [{"id": "same"}]}
+            old_packet = {"scenario_id": "Q088", "evidence_items": [{"id": "old"}], "retrieval_steps": [{"id": "same"}]}
+            packets.write_text(json.dumps({"packets": [current_packet]}), encoding="utf-8")
+            answers.write_text(
+                json.dumps(
+                    {
+                        "answers": [
+                            {
+                                "scenario_id": "Q088",
+                                "score": "Pass",
+                                "evidence_item_count": 1,
+                                "retrieval_step_count": 1,
+                                "packet_fingerprint": packet_fingerprint(old_packet),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            judgement.write_text(json.dumps({"judgements": [{"scenario_id": "Q088", "failure_owners": ["none"]}]}), encoding="utf-8")
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement))
+
+        self.assertEqual(summary["artifact_summary"], {"stale": 1})
+        self.assertEqual(summary["scenarios"][0]["artifact_issues"], ["answer packet_fingerprint does not match current packet fingerprint"])
 
     def test_goldset_summary_flags_unverifiable_answer_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -380,9 +422,11 @@ class ValidationReportTest(unittest.TestCase):
         }
 
         lines = _product_readout_lines(goldset, "Next.")
+        joined_lines = "\n".join(lines)
 
-        self.assertIn("Artifact consistency blocks product-gap diagnosis for Q088", "\n".join(lines))
-        self.assertNotIn("missing KG fact=1", "\n".join(lines))
+        self.assertIn("Artifact consistency blocks product-gap diagnosis for Q088", joined_lines)
+        self.assertIn("Suspected failure owners pending re-judgement: missing KG fact=1", joined_lines)
+        self.assertNotIn("Remaining judged failures are concentrated in: missing KG fact=1", joined_lines)
 
     def test_overall_status_is_partial_for_incomplete_goldset_coverage(self) -> None:
         goldset = {

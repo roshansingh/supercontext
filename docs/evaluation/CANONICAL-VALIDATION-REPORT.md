@@ -1,6 +1,6 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-10T19:39:04Z
+Generated: 2026-05-10T19:46:35Z
 
 Overall status: **partial**
 
@@ -60,23 +60,24 @@ Answer scores: Partial=2, Pass=3.
 
 Evidence completeness: complete=3, partial=2.
 
-Artifact consistency: current=2, stale=3.
+Artifact consistency: stale=3, unverified=2.
 
 | Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |
 |---|---|---|---|---|---|
-| Q082 | stale: answer evidence_item_count=30 does not match current packet evidence_item_count=50 | complete | Pass | none | The EvidencePacket contains all ground truth facts: Apache vhost mapping to mercury_api WSGI, ServerName at line 7, the prod.ini references for campaign_messages/tracking/webhooks, and both env-driven client references (REACT_APP_API_ROOT and VITE_API_ROOT). The generated answer correctly enumerates clients, distinguishes env-driven baseURLs, and identifies mercury_api as the served backend with the WSGI entrypoint. |
-| Q083 | current | complete | Pass | none | The EvidencePacket contains all the ground truth facts: backend JWT routes at companies/urls.py lines 63-64, auth/auth/registration at lines 60-62, mercury-ui auth.js callers (lines 14, 23, 27 covering login/logout/registration), and ShopAgainMobile callers in login.api.tsx:6 and axiosConfig.tsx:37. The generated answer correctly identifies all required backend routes and frontend/mobile callers with proper file/line citations. |
-| Q088 | stale: answer evidence_item_count=1 does not match current packet evidence_item_count=11; answer retrieval_step_count=2 does not match current packet retrieval_step_count=3 | partial | Partial | missing KG fact, bad retrieval plan | The evidence packet only contains the delivery queue (la-prod-campaign-messages) and its consumer. It lacks the campaign scheduling queue (CAMPAIGN_SQS / la-prod-campaign), its producer (campaign_event.py) and consumer (campaign_event_processor.py), and the la-prod-email delivery status sink. The answer correctly reports what evidence supports and explicitly flags the missing scheduling-side facts. |
-| Q100 | current | complete | Pass | none | Evidence packet contains all documented v1 endpoints plus their backend matches/non-matches and client-call reconciliation results. The generated answer correctly identifies `/v1/collections` as the lone documented endpoint without an exact backend match (only a fuzzy match to `/v1/product_collections`) and reports that no documented endpoint has a confirmed client caller in the scoped clients reconciliation, with appropriate citations and caveats. |
-| Q106 | stale: answer evidence_item_count=2 does not match current packet evidence_item_count=9 | partial | Partial | bad retrieval plan, missing KG fact | The packet proves the consumer edge (handler, ARN, Zappa binding) but contains no producer send-site evidence and no reference to the downstream `la-prod-email` response queue. The answer faithfully reflects the packet, correctly refusing to name a producer, but consequently misses the ground-truth producer (mercury_api user_messaging.py + settings.CAMPAIGN_MESSAGE_SQS / prod.py:44) and the consumer's downstream emit. |
+| Q082 | stale: answer missing packet_fingerprint; content freshness cannot be verified; answer evidence_item_count=30 does not match current packet evidence_item_count=50 | complete | Pass | none | The EvidencePacket contains all ground truth facts: Apache vhost mapping to mercury_api WSGI, ServerName at line 7, the prod.ini references for campaign_messages/tracking/webhooks, and both env-driven client references (REACT_APP_API_ROOT and VITE_API_ROOT). The generated answer correctly enumerates clients, distinguishes env-driven baseURLs, and identifies mercury_api as the served backend with the WSGI entrypoint. |
+| Q083 | unverified: answer missing packet_fingerprint; content freshness cannot be verified | complete | Pass | none | The EvidencePacket contains all the ground truth facts: backend JWT routes at companies/urls.py lines 63-64, auth/auth/registration at lines 60-62, mercury-ui auth.js callers (lines 14, 23, 27 covering login/logout/registration), and ShopAgainMobile callers in login.api.tsx:6 and axiosConfig.tsx:37. The generated answer correctly identifies all required backend routes and frontend/mobile callers with proper file/line citations. |
+| Q088 | stale: answer missing packet_fingerprint; content freshness cannot be verified; answer evidence_item_count=1 does not match current packet evidence_item_count=11; answer retrieval_step_count=2 does not match current packet retrieval_step_count=3 | partial | Partial | missing KG fact, bad retrieval plan | The evidence packet only contains the delivery queue (la-prod-campaign-messages) and its consumer. It lacks the campaign scheduling queue (CAMPAIGN_SQS / la-prod-campaign), its producer (campaign_event.py) and consumer (campaign_event_processor.py), and the la-prod-email delivery status sink. The answer correctly reports what evidence supports and explicitly flags the missing scheduling-side facts. |
+| Q100 | unverified: answer missing packet_fingerprint; content freshness cannot be verified | complete | Pass | none | Evidence packet contains all documented v1 endpoints plus their backend matches/non-matches and client-call reconciliation results. The generated answer correctly identifies `/v1/collections` as the lone documented endpoint without an exact backend match (only a fuzzy match to `/v1/product_collections`) and reports that no documented endpoint has a confirmed client caller in the scoped clients reconciliation, with appropriate citations and caveats. |
+| Q106 | stale: answer missing packet_fingerprint; content freshness cannot be verified; answer evidence_item_count=2 does not match current packet evidence_item_count=9 | partial | Partial | bad retrieval plan, missing KG fact | The packet proves the consumer edge (handler, ARN, Zappa binding) but contains no producer send-site evidence and no reference to the downstream `la-prod-email` response queue. The answer faithfully reflects the packet, correctly refusing to name a producer, but consequently misses the ground-truth producer (mercury_api user_messaging.py + settings.CAMPAIGN_MESSAGE_SQS / prod.py:44) and the consumer's downstream emit. |
 
 Answer-only scenarios without judgement ground truth:
 - `Q095`: self-score `Pass`, No judgement ground truth available in PRODUCT-QUERY-SET.
 
 ## Product Readout
 
-- KG-first answers pass independent judgement when indexed facts exist: Q083, Q100.
-- Artifact consistency blocks product-gap diagnosis for Q082, Q088, Q106; regenerate answers and judgement from the current EvidencePacket rows first.
+- No judged scenario currently has both complete evidence and a passing answer.
+- Artifact consistency blocks product-gap diagnosis for Q082, Q083, Q088, Q100, Q106; regenerate answers and judgement from the current EvidencePacket rows first.
+- Suspected failure owners pending re-judgement: bad retrieval plan=2, missing KG fact=2.
 - No current judged scenario failed or partially passed in this run.
 - Recommended next feature: Use the config/env citation movement to rescore the LatticeAI goldset, then prioritize the repeated remaining failure owner rather than adding stack-specific extractors.
 
