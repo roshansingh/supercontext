@@ -47,7 +47,7 @@ git commit -m "Short imperative summary"
 Only do this once per PR, after coding is finished, tests pass, and the local semantic self-review is complete.
 
 ```bash
-python -m source.scripts.request_claude_pre_pr_review --base main
+python .codex/scripts/request_claude_pre_pr_review.py --base main
 ```
 
 Read the generated file under `docs/reviews/`. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
@@ -80,7 +80,7 @@ git status --short --branch
 Do not manually request Copilot review immediately. Auto-review is configured, but GitHub only reviews new pushes automatically when the `Review new pushes` option is active; otherwise it may review only once.
 
 ```bash
-python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>
+python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
 The poll script waits for current-head Copilot activity. If none appears after the first 2-minute poll, it requests `@copilot` once as a fallback and continues polling.

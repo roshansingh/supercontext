@@ -32,13 +32,13 @@ def main() -> None:
     pr_number = args.pr or int(_gh_text(["pr", "view", "--json", "number", "--jq", ".number"]))
 
     head_sha = _gh_text(["pr", "view", str(pr_number), "--json", "headRefOid", "--jq", ".headRefOid"])
-    head_created_at = _head_commit_created_at(repo, head_sha)
+    head_pushed_at = _head_commit_pushed_at(repo, head_sha)
     deadline = time.monotonic() + args.timeout_seconds
     started_at = time.monotonic()
     manual_request_sent = False
     attempt = 1
     while True:
-        result = _poll_once(repo, pr_number, head_sha, head_created_at)
+        result = _poll_once(repo, pr_number, head_sha, head_pushed_at)
         _print_summary(result, attempt, repo, pr_number, head_sha)
         if result["feedback"]:
             return
@@ -69,7 +69,7 @@ def main() -> None:
         attempt += 1
 
 
-def _poll_once(repo: str, pr_number: int, head_sha: str, head_created_at: str) -> dict[str, Any]:
+def _poll_once(repo: str, pr_number: int, head_sha: str, head_pushed_at: str) -> dict[str, Any]:
     reviews = _gh_json(["api", f"repos/{repo}/pulls/{pr_number}/reviews"])
     issue_comments = _gh_json(["api", f"repos/{repo}/issues/{pr_number}/comments"])
     events = _gh_json(["api", f"repos/{repo}/issues/{pr_number}/events"])
@@ -83,12 +83,12 @@ def _poll_once(repo: str, pr_number: int, head_sha: str, head_created_at: str) -
     copilot_issue = [
         comment
         for comment in issue_comments
-        if _is_copilot_user(comment.get("user")) and str(comment.get("created_at", "")) >= head_created_at
+        if _is_copilot_user(comment.get("user")) and str(comment.get("created_at", "")) >= head_pushed_at
     ]
     copilot_events = [
         event
         for event in events
-        if str(event.get("created_at", "")) >= head_created_at
+        if str(event.get("created_at", "")) >= head_pushed_at
         and (event.get("event") == "copilot_work_started" or _is_copilot_user(event.get("requested_reviewer")))
     ]
     return {
@@ -128,9 +128,40 @@ def _is_copilot_user(user: Any) -> bool:
     return login in COPILOT_LOGINS or "copilot" in login
 
 
-def _head_commit_created_at(repo: str, head_sha: str) -> str:
-    commit = _gh_json(["api", f"repos/{repo}/commits/{head_sha}"])
-    return str(commit.get("commit", {}).get("committer", {}).get("date", ""))
+def _head_commit_pushed_at(repo: str, head_sha: str) -> str:
+    owner, name = repo.split("/", 1)
+    query = """
+    query($owner:String!, $name:String!, $oid:GitObjectID!) {
+      repository(owner:$owner, name:$name) {
+        object(oid:$oid) {
+          ... on Commit {
+            pushedDate
+            committedDate
+          }
+        }
+      }
+    }
+    """
+    payload = _gh_json(
+        [
+            "api",
+            "graphql",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-f",
+            f"oid={head_sha}",
+            "-f",
+            f"query={query}",
+        ]
+    )
+    commit = payload.get("data", {}).get("repository", {}).get("object") or {}
+    pushed_at = commit.get("pushedDate")
+    committed_at = commit.get("committedDate")
+    if not pushed_at and not committed_at:
+        raise RuntimeError(f"Could not resolve pushedDate or committedDate for head commit {head_sha}")
+    return str(pushed_at or committed_at)
 
 
 def _request_copilot_review(pr_number: int) -> bool:

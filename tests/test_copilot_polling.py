@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import unittest
+from importlib import util
+from pathlib import Path
 from unittest.mock import patch
 
-from source.scripts import poll_copilot_review
+
+def _load_poll_script() -> object:
+    script_path = Path(__file__).resolve().parents[1] / ".codex" / "scripts" / "poll_copilot_review.py"
+    spec = util.spec_from_file_location("poll_copilot_review", script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load {script_path}")
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+poll_copilot_review = _load_poll_script()
 
 
 class CopilotPollingTest(unittest.TestCase):
@@ -24,8 +37,8 @@ class CopilotPollingTest(unittest.TestCase):
             raise AssertionError(f"unexpected gh api call: {args}")
 
         with (
-            patch("source.scripts.poll_copilot_review._gh_json", side_effect=gh_json),
-            patch("source.scripts.poll_copilot_review._unresolved_copilot_threads", return_value=[]),
+            patch.object(poll_copilot_review, "_gh_json", side_effect=gh_json),
+            patch.object(poll_copilot_review, "_unresolved_copilot_threads", return_value=[]),
         ):
             result = poll_copilot_review._poll_once(
                 "owner/repo",
@@ -56,8 +69,8 @@ class CopilotPollingTest(unittest.TestCase):
             raise AssertionError(f"unexpected gh api call: {args}")
 
         with (
-            patch("source.scripts.poll_copilot_review._gh_json", side_effect=gh_json),
-            patch("source.scripts.poll_copilot_review._unresolved_copilot_threads", return_value=[]),
+            patch.object(poll_copilot_review, "_gh_json", side_effect=gh_json),
+            patch.object(poll_copilot_review, "_unresolved_copilot_threads", return_value=[]),
         ):
             result = poll_copilot_review._poll_once(
                 "owner/repo",
@@ -69,6 +82,26 @@ class CopilotPollingTest(unittest.TestCase):
         self.assertTrue(result["activity"])
         self.assertTrue(result["feedback"])
         self.assertEqual(len(result["reviews"]), 1)
+
+    def test_head_commit_timestamp_uses_pushed_date(self) -> None:
+        with patch.object(
+            poll_copilot_review,
+            "_gh_json",
+            return_value={
+                "data": {
+                    "repository": {
+                        "object": {
+                            "pushedDate": "2026-05-10T12:00:00Z",
+                            "committedDate": "2026-05-01T12:00:00Z",
+                        }
+                    }
+                }
+            },
+        ) as gh_json:
+            timestamp = poll_copilot_review._head_commit_pushed_at("owner/repo", "abc123")
+
+        self.assertEqual(timestamp, "2026-05-10T12:00:00Z")
+        self.assertIn("graphql", gh_json.call_args.args[0])
 
 
 if __name__ == "__main__":
