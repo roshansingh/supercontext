@@ -615,9 +615,8 @@ class KgSnapshot:
     def _endpoint_path_matches(self, entity: JsonObject, path_prefix: str) -> bool:
         if entity.get("kind") != "Endpoint":
             return False
-        return self._normalize_endpoint_reconciliation_path(str(entity.get("identity", {}).get("path", ""))).startswith(
-            self._normalize_endpoint_reconciliation_path(path_prefix)
-        )
+        path = self._normalize_endpoint_reconciliation_path(str(entity.get("identity", {}).get("path", "")))
+        return path.startswith(path_prefix)
 
     def _normalize_endpoint_reconciliation_path(self, path: str) -> str:
         value = path.strip()

@@ -35,6 +35,24 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_methods_by_path(routes), {"/123": {"POST"}, "/health": {"GET"}, "/internal": {"DELETE"}})
         self.assertEqual(_source_kinds_by_path(routes)["/123"], {"flask_route"})
+        self.assertEqual(_source_kinds_by_path(routes)["/health"], {"flask_get"})
+
+    def test_legacy_javascript_regexes_do_not_run_on_python_files(self) -> None:
+        build = _extract_config(
+            {
+                "app.py": (
+                    "from flask import Flask\n\n"
+                    "app = Flask(__name__)\n\n"
+                    "@app.get('/health')\n"
+                    "def health():\n"
+                    "    return 'ok'\n"
+                )
+            }
+        )
+
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+
+        self.assertEqual(_source_kinds_by_path(routes)["/health"], {"flask_get"})
 
     def test_django_ast_routes_emit_from_import_identity(self) -> None:
         build = _extract_config(
@@ -275,6 +293,23 @@ class EndpointExtractionTest(unittest.TestCase):
             result = KgSnapshot(tmpdir).reconcile_endpoints(backend_scope=("orders-api",), path_prefix="/v1")
 
         self.assertEqual(result["coverage_warnings"][0]["coverage"][0]["scope_ref"]["file_path"], "bad_app.py")
+
+    def test_reconcile_endpoint_warning_prefix_keeps_trailing_slash_boundary(self) -> None:
+        backend_service = _service_entity("orders-api")
+        backend_endpoint = _endpoint_entity("orders-api", "POST", "/v1beta/orders")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=[backend_service, backend_endpoint],
+                facts=[Fact("EXPOSES_ENDPOINT", backend_service.entity_id, backend_endpoint.entity_id)],
+                evidence=[],
+                coverage=[],
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).reconcile_endpoints(backend_scope=("orders-api",), path_prefix="/v1/")
+
+        self.assertEqual(result["coverage_warnings"][0]["scope"], "backend")
 
 
 def _extract_config(files: dict[str, str]):

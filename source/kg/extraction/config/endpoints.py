@@ -26,6 +26,7 @@ CLIENT_CALL_RE = re.compile(
     r"\b(?:fetch|axios\.(?:get|post|put|delete|patch)|[A-Za-z_][A-Za-z0-9_]*\.(?:get|post|put|delete|patch))\(\s*['\"`]([^'\"`]+)['\"`]",
     re.IGNORECASE,
 )
+JAVASCRIPT_TYPESCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
 HTTP_METHOD_BY_VERB = {
     "get": "GET",
     "post": "POST",
@@ -50,12 +51,13 @@ def extract_endpoints(repo: RepoSnapshot, files: list[ScannedFile], service_enti
             saw_recognized_python_web_framework = (
                 _extract_python_backend_routes(repo, scanned, service_entity, build) or saw_recognized_python_web_framework
             )
-        if scanned.path.suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+        if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
             saw_javascript_or_typescript = True
         _extract_openapi_document(repo, scanned, service_entity, build)
-        for line_number, line in enumerate(scanned.lines, start=1):
-            _extract_legacy_javascript_routes(repo, scanned, line_number, line, service_entity, build)
-            _extract_client_calls(repo, scanned, line_number, line, service_entity, build)
+        if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
+            for line_number, line in enumerate(scanned.lines, start=1):
+                _extract_legacy_javascript_routes(repo, scanned, line_number, line, service_entity, build)
+                _extract_client_calls(repo, scanned, line_number, line, service_entity, build)
     if saw_python and not saw_recognized_python_web_framework:
         build.coverage.append(
             Coverage(
