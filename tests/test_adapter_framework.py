@@ -9,9 +9,14 @@ from unittest.mock import patch
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.extraction.adapters import REGISTERED_ADAPTERS
+from source.kg.extraction.adapters import config_shared
+from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
+from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
 from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
+from source.kg.extraction.python.ast_extractor import PythonAstExtractor
 
 
 class AdapterFrameworkTest(unittest.TestCase):
@@ -24,6 +29,18 @@ class AdapterFrameworkTest(unittest.TestCase):
     def test_registry_rejects_missing_source_system(self) -> None:
         with self.assertRaisesRegex(ValueError, "must declare source_system"):
             register_for_tests((_Adapter("missing", ""),))
+
+    def test_registry_rejects_unsupported_declared_predicate(self) -> None:
+        adapter = _Adapter("bad-predicate-declaration", "test_v0", produces_predicates=("MADE_UP",))
+
+        with self.assertRaisesRegex(ValueError, "declares unsupported predicates"):
+            validate_adapters((adapter,))
+
+    def test_registry_rejects_unsupported_declared_entity_kind(self) -> None:
+        adapter = _Adapter("bad-kind-declaration", "test_v0", produces_entity_kinds=("MadeUp",))
+
+        with self.assertRaisesRegex(ValueError, "declares unsupported entity kinds"):
+            validate_adapters((adapter,))
 
     def test_runner_non_strict_converts_missing_source_system_to_error_coverage(self) -> None:
         repo = _repo()
@@ -104,6 +121,20 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("unsupported predicate", errors[0]["message"])
         self.assertEqual(coverage[0].scope_ref["reason"], "adapter_error")
 
+    def test_runner_strict_validation_rejects_unknown_predicate(self) -> None:
+        repo = _repo()
+        service = _entity("Service", "svc")
+        repo_entity = _entity("Repo", "repo")
+        bad_fact = Fact("MADE_UP", service.entity_id, repo_entity.entity_id)
+        adapter = _Adapter(
+            "bad-predicate",
+            "bad_v0",
+            result=AdapterResult(entities=[service, repo_entity], facts=[bad_fact]),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "unsupported predicate"):
+            run_adapters(repo, (adapter,), strict_extractors=True)
+
     def test_runner_validation_requires_bytes_ref_for_source_file_systems(self) -> None:
         repo = _repo()
         entity = _entity("Service", "svc")
@@ -179,6 +210,130 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(build.extractor_names, ["stateful_v0"])
         self.assertEqual(adapter.capability_reads, 2)
 
+    def test_registered_adapters_include_pr_fw_2_splits(self) -> None:
+        names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}
+
+        self.assertIn("python-boto3-transport", names)
+        self.assertIn("config-domain-env", names)
+        self.assertIn("config-openapi", names)
+        self.assertIn("config-deploy-events", names)
+
+    def test_split_config_capabilities_include_yml_file_kind(self) -> None:
+        capabilities = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}
+
+        self.assertIn("yml", capabilities["config-openapi"].file_kinds)
+        self.assertIn("yml", capabilities["config-deploy-events"].file_kinds)
+
+    def test_config_split_pipeline_matches_static_config_monolith(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text('API_URL="https://api.example.com"\n', encoding="utf-8")
+            (root / "openapi.yaml").write_text(
+                "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n",
+                encoding="utf-8",
+            )
+            (root / "serverless.yml").write_text(
+                "functions:\n  ws:\n    handler: app.handler\n    events:\n      - websocket:\n          route: $connect\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="config-split",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            monolith = StaticConfigExtractor().extract(repo)
+            split = extract_repo(repo)
+
+        self.assertEqual(_entity_ids(split.entities), _entity_ids(monolith.entities))
+        self.assertEqual(_fact_ids(split.facts), _fact_ids(monolith.facts))
+        self.assertEqual(_evidence_ids(split.evidence), _evidence_ids(monolith.evidence))
+        self.assertEqual(_coverage_ids(split.coverage), _coverage_ids(monolith.coverage))
+
+    def test_config_split_adapters_share_one_config_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text('API_URL="https://api.example.com"\n', encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="config-scan",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            with patch(
+                "source.kg.extraction.adapters.config_shared.iter_scannable_files",
+                wraps=config_shared.iter_scannable_files,
+            ) as scan:
+                extract_repo(repo)
+
+        self.assertEqual(scan.call_count, 1)
+
+    def test_python_transport_split_matches_python_ast_monolith(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import boto3\n\n"
+                "def publish_order():\n"
+                "    client = boto3.client('sqs')\n"
+                "    client.send_message(QueueUrl='https://sqs.us-east-1.amazonaws.com/123/orders', MessageBody='x')\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="python-split",
+                owner="test",
+                commit_sha="sha",
+                python_files=(app,),
+                typescript_files=(),
+            )
+
+            monolith = PythonAstExtractor().extract(repo)
+            reduced = PythonAstExtractor(include_transport=False).extract(repo)
+            split = PYTHON_BOTO3_TRANSPORT_ADAPTER.extract(repo, ExtractionContext())
+
+        self.assertEqual(_entity_ids(reduced.entities + split.entities), _entity_ids(monolith.entities))
+        self.assertEqual(_fact_ids(reduced.facts + split.facts), _fact_ids(monolith.facts))
+        self.assertEqual(_evidence_ids(reduced.evidence + split.evidence), _evidence_ids(monolith.evidence))
+        self.assertEqual(_coverage_ids(reduced.coverage + split.coverage), _coverage_ids(monolith.coverage))
+
+    def test_python_split_adapters_share_parsed_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import boto3\n\n"
+                "def publish_order():\n"
+                "    client = boto3.client('sqs')\n"
+                "    client.send_message(QueueUrl='https://sqs.us-east-1.amazonaws.com/123/orders', MessageBody='x')\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="python-cache",
+                owner="test",
+                commit_sha="sha",
+                python_files=(app,),
+                typescript_files=(),
+            )
+            original_parse_file = PythonAstExtractor._parse_file
+            parsed_paths: list[Path] = []
+
+            def counted_parse_file(extractor: PythonAstExtractor, file_path: Path):
+                parsed_paths.append(file_path)
+                return original_parse_file(extractor, file_path)
+
+            with patch.object(PythonAstExtractor, "_parse_file", counted_parse_file):
+                extract_repo(repo)
+
+        self.assertEqual(parsed_paths, [app])
+
 
 @dataclass
 class _Adapter:
@@ -186,6 +341,8 @@ class _Adapter:
     source_system: str
     languages: tuple[str, ...] = ("config",)
     applies: bool = True
+    produces_predicates: tuple[str, ...] = ("DEFINED_IN",)
+    produces_entity_kinds: tuple[str, ...] = ("Service", "Repo")
     result: AdapterResult | None = None
     error: Exception | None = None
     calls: int = 0
@@ -198,8 +355,8 @@ class _Adapter:
         return AdapterCapability(
             name=self.name,
             languages=self.languages,
-            produces_predicates=("DEFINED_IN",),
-            produces_entity_kinds=("Service", "Repo"),
+            produces_predicates=self.produces_predicates,
+            produces_entity_kinds=self.produces_entity_kinds,
             source_system=self.source_system,
         )
 
@@ -239,3 +396,19 @@ def _evidence(fact: Fact, path: str) -> Evidence:
         source_ref={"path": path},
         bytes_ref={"path": path, "line_start": 1, "line_end": 1, "commit_sha": "sha"},
     )
+
+
+def _entity_ids(entities: list[Entity]) -> set[str]:
+    return {entity.entity_id for entity in entities}
+
+
+def _fact_ids(facts: list[Fact]) -> set[str]:
+    return {fact.fact_id for fact in facts}
+
+
+def _evidence_ids(evidence: list[Evidence]) -> set[str]:
+    return {row.evidence_id for row in evidence}
+
+
+def _coverage_ids(coverage: list) -> set[str]:
+    return {row.coverage_id for row in coverage}

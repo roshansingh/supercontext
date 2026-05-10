@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact
 from source.kg.core.repo_source import RepoSnapshot
@@ -24,6 +24,9 @@ class AdapterCapability:
 @dataclass(frozen=True)
 class ExtractionContext:
     tenant_id: str = "local-dev"
+    config_scans: dict[str, tuple[Any, ...]] = field(default_factory=dict, compare=False, repr=False)
+    python_parsed_files: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    python_literal_indexes: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass

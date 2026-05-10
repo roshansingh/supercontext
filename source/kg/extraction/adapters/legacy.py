@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.extraction.adapters.config_shared import scannable_config_files
 from source.kg.extraction.config import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.python.ast_extractor import PythonAstExtractor
@@ -28,7 +29,12 @@ class LegacyAdapter:
         return True
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
-        build = self.extractor.extract(repo)
+        if isinstance(self.extractor, StaticConfigExtractor):
+            build = self.extractor.extract(repo, files=scannable_config_files(repo, ctx))
+        elif isinstance(self.extractor, PythonAstExtractor):
+            build = self.extractor.extract_with_context(repo, ctx)
+        else:
+            build = self.extractor.extract(repo)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),
@@ -42,23 +48,17 @@ LEGACY_STATIC_CONFIG_ADAPTER = LegacyAdapter(
         name="legacy-static-config",
         languages=("config",),
         file_kinds=("config",),
-        framework_tags=("config",),
+        framework_tags=(),
         produces_predicates=(
             "DEFINED_IN",
             "EXPOSES_ENDPOINT",
             "CALLS_ENDPOINT",
-            "DOCUMENTS_ENDPOINT",
-            "REFERENCES_DOMAIN",
-            "REFERENCES_ENV_VAR",
-            "REFERENCES_EVENT_CHANNEL",
-            "ROUTES_DOMAIN_TO_DEPLOY",
-            "CONSUMES_EVENT",
         ),
-        produces_entity_kinds=("Repo", "Service", "Endpoint", "Domain", "EnvVar", "DeployTarget", "EventChannel"),
+        produces_entity_kinds=("Repo", "Service", "Endpoint"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     ),
-    extractor=StaticConfigExtractor(),
+    extractor=StaticConfigExtractor(include_domain_env=False, include_openapi=False, include_deploy_events=False),
 )
 
 LEGACY_PYTHON_AST_ADAPTER = LegacyAdapter(
@@ -66,15 +66,13 @@ LEGACY_PYTHON_AST_ADAPTER = LegacyAdapter(
         name="legacy-python-ast",
         languages=("python",),
         file_kinds=("python",),
-        framework_tags=("python", "flask", "django", "fastapi", "boto3"),
+        framework_tags=("flask", "django", "fastapi"),
         produces_predicates=(
             "DEFINED_IN",
             "IMPLEMENTS",
             "IMPORTS",
             "CALLS",
             "EXPOSES_ENDPOINT",
-            "PRODUCES_EVENT",
-            "CONSUMES_EVENT",
         ),
         produces_entity_kinds=(
             "Repo",
@@ -83,12 +81,11 @@ LEGACY_PYTHON_AST_ADAPTER = LegacyAdapter(
             "CodeSymbol",
             "ExternalPackage",
             "Endpoint",
-            "EventChannel",
         ),
         ontology_scope="mixed",
         source_system=PythonAstExtractor.source_system,
     ),
-    extractor=PythonAstExtractor(),
+    extractor=PythonAstExtractor(include_transport=False),
     language_gate="python",
 )
 
@@ -97,7 +94,7 @@ LEGACY_TYPESCRIPT_COMPILER_API_ADAPTER = LegacyAdapter(
         name="legacy-typescript-compiler-api",
         languages=("javascript", "typescript"),
         file_kinds=("javascript", "typescript"),
-        framework_tags=("javascript", "typescript"),
+        framework_tags=(),
         produces_predicates=("DEFINED_IN", "IMPLEMENTS", "IMPORTS", "CALLS"),
         produces_entity_kinds=("Repo", "Service", "CodeModule", "CodeSymbol", "ExternalPackage"),
         ontology_scope="mixed",

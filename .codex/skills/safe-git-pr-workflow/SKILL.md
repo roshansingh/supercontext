@@ -42,15 +42,13 @@ git add path/to/file.py path/to/other.md
 git commit -m "Short imperative summary"
 ```
 
-5. Before creating a PR for the first time, run one Claude pre-PR review.
+5. Before creating a PR for the first time, ask the user for one manual Claude pre-PR review.
 
 Only do this once per PR, after coding is finished, tests pass, and the local semantic self-review is complete.
 
-```bash
-python .codex/scripts/request_claude_pre_pr_review.py --base main
-```
+Do not run Claude Code CLI yourself for this step. Tell the user to ask Claude manually and provide the resulting review file under `docs/reviews/`.
 
-Read the generated file under `docs/reviews/`. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
+Read the manual review file. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
 
 - `accept` / `act`: make the fix, add a regression test when behavior changes, rerun checks, and commit.
 - `deny`: record the concrete reason in PR notes or review discussion.

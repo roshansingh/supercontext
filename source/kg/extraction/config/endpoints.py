@@ -41,7 +41,14 @@ HTTP_METHOD_BY_VERB = {
 }
 
 
-def extract_endpoints(repo: RepoSnapshot, files: list[ScannedFile], service_entity: Entity, build: ConfigKgBuild) -> None:
+def extract_endpoints(
+    repo: RepoSnapshot,
+    files: list[ScannedFile],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    *,
+    include_openapi: bool = True,
+) -> None:
     saw_python = False
     saw_javascript_or_typescript = False
     saw_recognized_python_web_framework = False
@@ -53,7 +60,8 @@ def extract_endpoints(repo: RepoSnapshot, files: list[ScannedFile], service_enti
             )
         if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
             saw_javascript_or_typescript = True
-        _extract_openapi_document(repo, scanned, service_entity, build)
+        if include_openapi:
+            extract_openapi_document(repo, scanned, service_entity, build)
         if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
             for line_number, line in enumerate(scanned.lines, start=1):
                 _extract_legacy_javascript_routes(repo, scanned, line_number, line, service_entity, build)
@@ -131,7 +139,7 @@ def _extract_python_backend_routes(
     return flask_recognized or django_recognized
 
 
-def _extract_openapi_document(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+def extract_openapi_document(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
     result = extract_openapi_endpoints(scanned)
     if result.coverage_reason:
         build.coverage.append(
