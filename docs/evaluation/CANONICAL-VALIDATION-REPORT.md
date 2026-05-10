@@ -1,6 +1,6 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-10T12:00:47Z
+Generated: 2026-05-10T12:44:18Z
 
 Overall status: **partial**
 
@@ -23,13 +23,13 @@ This is the current canonical validation report for low/medium deterministic sur
 |---|---|---:|---:|---:|---:|
 | Mercury ML | `data/kg_runs/mercury_ml_eval_2026_05_10` | 6613 | 24836 | 103651 | 5 |
 | True Loop | `data/kg_runs/true_loop_eval_2026_05_10` | 1814 | 3648 | 7677 | 6 |
-| LatticeAI 23 | `data/kg_runs/latticeai_23_eval_2026_05_10` | 16776 | 45383 | 91284 | 87 |
+| LatticeAI 23 | `data/kg_runs/latticeai_23_eval_2026_05_10` | 16834 | 45585 | 91688 | 93 |
 
 ## Low/Medium And Goldset Retrieval Smoke
 
 Smoke-check IDs are corpus-scoped; the same product query ID can appear for multiple fixtures.
 
-Result counts: pass=18.
+Result counts: pass=20.
 
 | ID | Difficulty | Corpus | Surface | Result | Notes |
 |---|---|---|---|---|---|
@@ -47,9 +47,11 @@ Result counts: pass=18.
 | Q010 | Low | True Loop | `lookup-symbol` | pass | status `resolved`, expected `resolved` |
 | Q026 | Medium | True Loop | `dependency-path` | pass | status `resolved`, expected `resolved` |
 | Q032 | Medium | True Loop | `endpoints` | pass | endpoint_fact_count=34, expected >= 1 |
-| Q082 | Medium | LatticeAI 23 | `domain-references` | pass | reference_count=47, expected >= 1 |
+| Q082 | Medium | LatticeAI 23 | `domain-references` | pass | reference_count=49, expected >= 1 |
+| Q082 | Medium | LatticeAI 23 | `domain-references` | pass | REFERENCES_ENV_VAR: 2 rows |
 | Q083 | Medium | LatticeAI 23 | `endpoints` | pass | endpoint_fact_count=4, expected >= 1 |
-| Q088 | Goldset | LatticeAI 23 | `event-channels` | pass | event_fact_count=1, expected >= 1 |
+| Q088 | Goldset | LatticeAI 23 | `event-channels` | pass | event_fact_count=2, expected >= 1 |
+| Q088 | Goldset | LatticeAI 23 | `event-channels` | pass | source_refs: 3 rows |
 | Q095 | Medium | LatticeAI 23 | `deploy-mappings` | pass | mapping_count=1, expected >= 1 |
 
 ## LatticeAI Goldset
@@ -73,7 +75,7 @@ Answer-only scenarios without judgement ground truth:
 
 - KG-first answers pass independent judgement when indexed facts exist: Q082, Q083, Q100.
 - Remaining judged failures are concentrated in: bad retrieval plan=2, missing KG fact=2.
-- Recommended next feature: After this canonical report path, prioritize generic config/env source citations for JS/TS env usage, Python settings constants, and ConfigParser-backed .ini values.
+- Recommended next feature: Use the config/env citation movement to rescore the LatticeAI goldset, then prioritize the repeated remaining failure owner rather than adding stack-specific extractors.
 
 ## Superseded Artifacts
 

@@ -205,6 +205,43 @@ class EndpointExtractionTest(unittest.TestCase):
             },
         )
 
+    def test_domain_references_include_env_var_consumer_citations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env.production").write_text("VITE_API_ROOT=https://api.example.com\n", encoding="utf-8")
+            source_path = root / "src" / "api.ts"
+            source_path.parent.mkdir()
+            source_path.write_text("export const apiRoot = import.meta.env.VITE_API_ROOT;\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="web",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = StaticConfigExtractor().extract(repo)
+            snapshot_dir = root / "kg"
+            JsonlKgStore(snapshot_dir).write(
+                entities=build.entities,
+                facts=build.facts,
+                evidence=build.evidence,
+                coverage=build.coverage,
+                manifest={},
+            )
+
+            result = KgSnapshot(snapshot_dir).domain_references("api.example.com", limit=20)
+
+        env_usage = [
+            row
+            for row in result["references"]
+            if row["predicate"] == "REFERENCES_ENV_VAR"
+            and isinstance(row.get("qualifier"), dict)
+            and row["qualifier"].get("reference_kind") == "code_access"
+        ]
+        self.assertEqual(len(env_usage), 1)
+        self.assertEqual(env_usage[0]["evidence"][0]["bytes_ref"]["path"], "src/api.ts")
+
     def test_reconcile_endpoints_matches_docs_backend_and_client_by_path(self) -> None:
         docs_service = _service_entity("api-docs")
         backend_service = _service_entity("orders-api")

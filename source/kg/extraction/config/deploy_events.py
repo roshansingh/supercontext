@@ -261,7 +261,7 @@ def _normalized_channels_in_line(line: str) -> list[NormalizedChannel]:
 def _ini_queue_channels(scanned: ScannedFile) -> list[tuple[int, NormalizedChannel]]:
     if scanned.path.suffix.lower() != ".ini":
         return []
-    parser = configparser.ConfigParser()
+    parser = configparser.RawConfigParser()
     try:
         parser.read_string(scanned.text)
     except configparser.Error:

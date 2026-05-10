@@ -27,6 +27,7 @@ from source.kg.extraction.python.dataflow import (
     local_literal_assignments,
     local_literal_assignments_before,
     node_starts_before,
+    resolved_constant,
     resolved_to_json,
     unresolved_coverage,
 )
@@ -541,7 +542,7 @@ def _resolved_bindings(
     for name, value_node in bindings.items():
         resolved = caller_resolver.resolve_value(value_node)
         if isinstance(resolved, ResolvedValue):
-            resolved_bindings[name] = ast.Constant(value=resolved.value)
+            resolved_bindings[name] = resolved_constant(resolved)
         else:
             return None
     return resolved_bindings

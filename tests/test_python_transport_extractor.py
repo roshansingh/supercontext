@@ -291,6 +291,19 @@ class PythonTransportExtractorTest(unittest.TestCase):
         fact, channel = _single_event_fact(build.facts, build.entities)
         self.assertEqual(channel.identity["channel_address"], "prod-email")
         self.assertEqual(fact.predicate, "PRODUCES_EVENT")
+        self.assertEqual(
+            fact.qualifier["resolution"]["source_refs"],
+            [
+                {
+                    "source_kind": "configparser_ini_option",
+                    "path": "app/configmanager/prod.ini",
+                    "line_start": 2,
+                    "line_end": 2,
+                    "section": "messaging",
+                    "option": "email_queue",
+                }
+            ],
+        )
 
     def test_configparser_default_ini_value_resolves_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -371,6 +384,42 @@ class PythonTransportExtractorTest(unittest.TestCase):
         fact, channel = _single_event_fact(build.facts, build.entities)
         self.assertEqual(channel.identity["channel_address"], "prod-email")
         self.assertEqual(fact.predicate, "PRODUCES_EVENT")
+
+    def test_configparser_source_refs_survive_local_wrapper_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_dir = root / "app" / "configmanager"
+            config_dir.mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (config_dir / "prod.ini").write_text("[queue]\nemail_queue = prod-email\n", encoding="utf-8")
+            (config_dir / "__init__.py").write_text(
+                "import configparser\n\n"
+                "class QueueConfig:\n"
+                "    def __init__(self):\n"
+                "        parser = configparser.ConfigParser()\n"
+                "        parser.read('prod.ini')\n"
+                "        self.EMAIL_QUEUE = parser['queue']['email_queue']\n\n"
+                "settings = QueueConfig()\n",
+                encoding="utf-8",
+            )
+            producer = root / "app" / "producer.py"
+            producer.write_text(
+                "import boto3\n"
+                "from app.configmanager import settings\n\n"
+                "def publish(queue_name):\n"
+                '    sqs = boto3.resource("sqs")\n'
+                "    queue = sqs.get_queue_by_name(QueueName=queue_name)\n"
+                '    queue.send_message(MessageBody="{}")\n\n'
+                "def publish_order():\n"
+                "    publish(settings.EMAIL_QUEUE)\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (config_dir / "__init__.py", producer))
+
+            build = PythonAstExtractor().extract(repo)
+
+        fact, _ = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(fact.qualifier["resolution"]["source_refs"][0]["path"], "app/configmanager/prod.ini")
 
     def test_ini_files_do_not_pollute_python_literal_namespace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -68,8 +68,8 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "goldset": goldset,
         "supersedes": _superseded_artifacts(config.evaluation_dir),
         "next_feature_recommendation": (
-            "After this canonical report path, prioritize generic config/env source citations for JS/TS env usage, "
-            "Python settings constants, and ConfigParser-backed .ini values."
+            "Use the config/env citation movement to rescore the LatticeAI goldset, then prioritize the repeated "
+            "remaining failure owner rather than adding stack-specific extractors."
         ),
     }
 
@@ -330,6 +330,18 @@ def _lattice_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
             _expect_count(lambda kg: kg.domain_references("api.shopagain.io", limit=100), "reference_count", 1),
         ),
         (
+            "Q082",
+            "Medium",
+            "domain-references",
+            "Which code locations read env vars that resolve to api.shopagain.io?",
+            _expect_predicate_count(
+                lambda kg: kg.domain_references("api.shopagain.io", limit=100),
+                "references",
+                "REFERENCES_ENV_VAR",
+                1,
+            ),
+        ),
+        (
             "Q083",
             "Medium",
             "endpoints",
@@ -342,6 +354,17 @@ def _lattice_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
             "event-channels",
             "Which facts exist for la-prod-campaign-messages?",
             _expect_count(lambda kg: kg.event_channels("la-prod-campaign-messages", limit=100), "event_fact_count", 1),
+        ),
+        (
+            "Q088",
+            "Goldset",
+            "event-channels",
+            "Do ConfigParser-backed event facts carry source .ini citations?",
+            _expect_source_ref_count(
+                lambda kg: kg.event_channels("la-prod-email", limit=100),
+                "event_channels",
+                1,
+            ),
         ),
         (
             "Q095",
@@ -383,6 +406,56 @@ def _expect_count(run: Callable[[KgSnapshot], JsonObject], field: str, minimum: 
         return result, f"{field}={count}, expected >= {minimum}", _compact_actual(actual)
 
     return check
+
+
+def _expect_predicate_count(
+    run: Callable[[KgSnapshot], JsonObject],
+    row_key: str,
+    predicate: str,
+    minimum: int,
+) -> CheckFn:
+    def check(kg: KgSnapshot) -> tuple[ValidationResult, str, JsonObject]:
+        actual = run(kg)
+        rows = actual.get(row_key, [])
+        if not isinstance(rows, list):
+            rows = []
+        count = sum(1 for row in rows if isinstance(row, dict) and row.get("predicate") == predicate)
+        result = "pass" if count >= minimum else "fail"
+        return result, f"{predicate}: {count} rows", {"predicate_count": count, "sample": rows[:2]}
+
+    return check
+
+
+def _expect_source_ref_count(
+    run: Callable[[KgSnapshot], JsonObject],
+    row_key: str,
+    minimum: int,
+) -> CheckFn:
+    def check(kg: KgSnapshot) -> tuple[ValidationResult, str, JsonObject]:
+        actual = run(kg)
+        rows = actual.get(row_key, [])
+        if not isinstance(rows, list):
+            rows = []
+        matching = [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and _row_source_refs(row)
+        ]
+        result = "pass" if len(matching) >= minimum else "fail"
+        return result, f"source_refs: {len(matching)} rows", {"source_ref_count": len(matching), "sample": matching[:2]}
+
+    return check
+
+
+def _row_source_refs(row: JsonObject) -> object:
+    qualifier = row.get("qualifier", {})
+    if not isinstance(qualifier, dict):
+        return None
+    resolution = qualifier.get("resolution", {})
+    if not isinstance(resolution, dict):
+        return None
+    return resolution.get("source_refs")
 
 
 def _compact_actual(value: JsonObject) -> JsonObject:

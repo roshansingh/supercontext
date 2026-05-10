@@ -207,10 +207,40 @@ class PythonDataflowTest(unittest.TestCase):
                 "source.kg.extraction.python.dataflow.ast.parse",
                 side_effect=AssertionError("unexpected parse"),
             ):
-                assignments = config_object_value_assignments(repo, {config_module: parsed_tree})
+                assignments, source_assignments = config_object_value_assignments(repo, {config_module: parsed_tree})
 
         resolved_values = [node.value for values in assignments.values() for node in values]
         self.assertEqual(resolved_values, ["prod-email"])
+        source_refs = [source for sources in source_assignments.values() for source in sources]
+        self.assertEqual(
+            [(source.path, source.line, source.section, source.option) for source in source_refs],
+            [("app/configmanager/prod.ini", 2, "queue", "email_queue")],
+        )
+
+    def test_config_object_value_assignments_preserves_percent_literals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_dir = root / "app" / "configmanager"
+            config_dir.mkdir(parents=True)
+            config_module = config_dir / "__init__.py"
+            (config_dir / "prod.ini").write_text("[format]\ntime_format = %H:%M:%S\n", encoding="utf-8")
+            config_module.write_text(
+                "import configparser\n\n"
+                "class FormatConfig:\n"
+                "    def __init__(self):\n"
+                "        parser = configparser.ConfigParser()\n"
+                "        parser.read('prod.ini')\n"
+                "        self.TIME_FORMAT = parser['format']['time_format']\n"
+                "\n"
+                "settings = FormatConfig()\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (config_module,))
+
+            assignments, _ = config_object_value_assignments(repo)
+
+        resolved_values = [node.value for values in assignments.values() for node in values]
+        self.assertEqual(resolved_values, ["%H:%M:%S"])
 
 
 def _repo_snapshot(root: Path, python_files: tuple[Path, ...]) -> RepoSnapshot:
