@@ -92,6 +92,12 @@ def main() -> None:
     endpoints.add_argument("--path")
     endpoints.add_argument("--limit", type=int, default=25)
 
+    reconcile_endpoints = subparsers.add_parser("reconcile-endpoints")
+    reconcile_endpoints.add_argument("--docs-repo", action="append")
+    reconcile_endpoints.add_argument("--backend-repo", action="append")
+    reconcile_endpoints.add_argument("--client-repo", action="append")
+    reconcile_endpoints.add_argument("--path-prefix")
+
     events = subparsers.add_parser("event-channels")
     events.add_argument("--channel")
     events.add_argument("--limit", type=int, default=25)
@@ -202,6 +208,13 @@ def main() -> None:
         result = kg.domain_references(args.domain, limit=args.limit)
     elif args.command == "endpoints":
         result = kg.endpoints(path_query=args.path, limit=args.limit)
+    elif args.command == "reconcile-endpoints":
+        result = kg.reconcile_endpoints(
+            docs_scope=tuple(args.docs_repo or ()),
+            backend_scope=tuple(args.backend_repo or ()),
+            client_scope=tuple(args.client_repo or ()),
+            path_prefix=args.path_prefix,
+        )
     elif args.command == "event-channels":
         result = kg.event_channels(channel_query=args.channel, limit=args.limit)
     elif args.command == "deploy-mappings":
