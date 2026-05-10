@@ -516,7 +516,7 @@ class KgSnapshot:
             "implemented_NOT_documented": docs_vs_backend["right_only"],
             "documented_AND_called": docs_vs_client["matched"],
             "documented_NOT_called": docs_vs_client["left_only"],
-            "coverage_warnings": self._endpoint_reconciliation_warnings(docs_scope, backend_scope, client_scope),
+            "coverage_warnings": self._endpoint_reconciliation_warnings(docs_scope, backend_scope, client_scope, path_prefix),
         }
 
     def event_channels(self, channel_query: str | None = None, limit: int = 25) -> JsonObject:
@@ -556,52 +556,86 @@ class KgSnapshot:
         docs_scope: list[str] | tuple[str, ...],
         backend_scope: list[str] | tuple[str, ...],
         client_scope: list[str] | tuple[str, ...],
+        path_prefix: str | None,
     ) -> list[JsonObject]:
         warnings: list[JsonObject] = []
-        if docs_scope and not self._has_endpoint_fact("DOCUMENTS_ENDPOINT", docs_scope):
+        if docs_scope and not self._has_endpoint_fact("DOCUMENTS_ENDPOINT", docs_scope, path_prefix):
             warnings.append(
                 {
                     "scope": "docs",
                     "warning": "no_endpoint_documentation_evidence",
-                    "coverage": self._endpoint_coverage_rows("DOCUMENTS_ENDPOINT", docs_scope),
+                    "coverage": self._endpoint_coverage_rows("DOCUMENTS_ENDPOINT", docs_scope, path_prefix),
                 }
             )
-        if backend_scope and not self._has_endpoint_fact("EXPOSES_ENDPOINT", backend_scope):
+        if backend_scope and not self._has_endpoint_fact("EXPOSES_ENDPOINT", backend_scope, path_prefix):
             warnings.append(
                 {
                     "scope": "backend",
                     "warning": "no_endpoint_extractor_matched",
-                    "coverage": self._endpoint_coverage_rows("EXPOSES_ENDPOINT", backend_scope),
+                    "coverage": self._endpoint_coverage_rows("EXPOSES_ENDPOINT", backend_scope, path_prefix),
                 }
             )
-        if client_scope and not self._has_endpoint_fact("CALLS_ENDPOINT", client_scope):
+        if client_scope and not self._has_endpoint_fact("CALLS_ENDPOINT", client_scope, path_prefix):
             warnings.append(
                 {
                     "scope": "client",
                     "warning": "no_client_call_evidence",
-                    "coverage": self._endpoint_coverage_rows("CALLS_ENDPOINT", client_scope),
+                    "coverage": self._endpoint_coverage_rows("CALLS_ENDPOINT", client_scope, path_prefix),
                 }
             )
         return warnings
 
-    def _has_endpoint_fact(self, predicate: str, repos: list[str] | tuple[str, ...]) -> bool:
+    def _has_endpoint_fact(self, predicate: str, repos: list[str] | tuple[str, ...], path_prefix: str | None = None) -> bool:
         repo_filter = set(repos)
         for fact in self.facts:
             if fact.get("predicate") != predicate:
                 continue
             subject = self.entities_by_id.get(fact["subject_id"])
             object_ = self.entities_by_id.get(fact["object_id"])
-            if subject and object_ and (self._entity_repo(subject) in repo_filter or self._entity_repo(object_) in repo_filter):
+            if not subject or not object_:
+                continue
+            if path_prefix and not self._endpoint_path_matches(object_, path_prefix):
+                continue
+            if self._entity_repo(subject) in repo_filter or self._entity_repo(object_) in repo_filter:
                 return True
         return False
 
-    def _endpoint_coverage_rows(self, predicate: str, repos: list[str] | tuple[str, ...]) -> list[JsonObject]:
+    def _endpoint_coverage_rows(
+        self,
+        predicate: str,
+        repos: list[str] | tuple[str, ...],
+        path_prefix: str | None = None,
+    ) -> list[JsonObject]:
         repo_filter = set(repos)
         return [
             row
             for row in self.coverage
             if row.get("predicate") == predicate and str(row.get("scope_ref", {}).get("repo")) in repo_filter
+            and self._coverage_scope_matches_path_prefix(row, path_prefix)
         ]
+
+    def _endpoint_path_matches(self, entity: JsonObject, path_prefix: str) -> bool:
+        if entity.get("kind") != "Endpoint":
+            return False
+        return self._normalize_endpoint_reconciliation_path(str(entity.get("identity", {}).get("path", ""))).startswith(
+            self._normalize_endpoint_reconciliation_path(path_prefix)
+        )
+
+    def _coverage_scope_matches_path_prefix(self, row: JsonObject, path_prefix: str | None) -> bool:
+        if not path_prefix:
+            return True
+        scope_ref = row.get("scope_ref", {})
+        if not isinstance(scope_ref, dict) or "path" not in scope_ref:
+            return True
+        return self._normalize_endpoint_reconciliation_path(str(scope_ref.get("path", ""))).startswith(
+            self._normalize_endpoint_reconciliation_path(path_prefix)
+        )
+
+    def _normalize_endpoint_reconciliation_path(self, path: str) -> str:
+        value = path.strip()
+        if not value.startswith("/"):
+            value = "/" + value
+        return value.rstrip("/") or "/"
 
     def _entity_repo(self, entity: JsonObject) -> str | None:
         identity = entity.get("identity", {})

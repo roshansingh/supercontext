@@ -229,6 +229,24 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(result["coverage_warnings"][0]["scope"], "docs")
         self.assertEqual(result["coverage_warnings"][0]["warning"], "no_endpoint_documentation_evidence")
 
+    def test_reconcile_endpoint_warnings_honor_path_prefix(self) -> None:
+        backend_service = _service_entity("orders-api")
+        backend_endpoint = _endpoint_entity("orders-api", "POST", "/internal/health")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=[backend_service, backend_endpoint],
+                facts=[Fact("EXPOSES_ENDPOINT", backend_service.entity_id, backend_endpoint.entity_id)],
+                evidence=[],
+                coverage=[],
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).reconcile_endpoints(backend_scope=("orders-api",), path_prefix="/v1")
+
+        self.assertEqual(result["coverage_warnings"][0]["scope"], "backend")
+        self.assertEqual(result["coverage_warnings"][0]["warning"], "no_endpoint_extractor_matched")
+
 
 def _extract_config(files: dict[str, str]):
     with tempfile.TemporaryDirectory() as tmpdir:
