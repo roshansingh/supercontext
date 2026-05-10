@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact
@@ -167,6 +168,16 @@ class AdapterFrameworkTest(unittest.TestCase):
             build = extract_repo(repo)
 
         self.assertEqual(build.extractor_names, ["static_config_v0"])
+
+    def test_pipeline_reuses_selection_capability_for_extractor_names(self) -> None:
+        repo = _repo()
+        adapter = _Adapter("stateful", "stateful_v0")
+
+        with patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)):
+            build = extract_repo(repo)
+
+        self.assertEqual(build.extractor_names, ["stateful_v0"])
+        self.assertEqual(adapter.capability_reads, 2)
 
 
 @dataclass

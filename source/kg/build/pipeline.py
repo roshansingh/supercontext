@@ -51,15 +51,16 @@ class RepoKgBuild:
 
 def extract_repo(repo: RepoSnapshot, strict_extractors: bool = False) -> RepoKgBuild:
     from source.kg.extraction.adapters import REGISTERED_ADAPTERS
-    from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapters
+    from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
 
-    selected_adapters = select_applicable_adapters(repo, REGISTERED_ADAPTERS)
+    selected = select_applicable_adapter_specs(repo, REGISTERED_ADAPTERS)
+    selected_adapters = [selection.adapter for selection in selected]
     entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(
         repo,
         selected_adapters,
         strict_extractors=strict_extractors,
     )
-    extractor_names = [adapter.capability.source_system for adapter in selected_adapters]
+    extractor_names = [selection.capability.source_system for selection in selected]
     return RepoKgBuild(
         entities=entities,
         facts=facts,

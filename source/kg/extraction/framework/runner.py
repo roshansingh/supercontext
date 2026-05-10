@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
@@ -10,6 +11,12 @@ from source.kg.extraction.framework.allowlists import (
     SUPPORTED_ENTITY_KINDS,
     SUPPORTED_FACT_PREDICATES,
 )
+
+
+@dataclass(frozen=True)
+class SelectedAdapter:
+    adapter: Adapter
+    capability: AdapterCapability
 
 
 def run_adapters(
@@ -76,16 +83,25 @@ def select_applicable_adapters(
     *,
     ctx: ExtractionContext | None = None,
 ) -> list[Adapter]:
+    return [selection.adapter for selection in select_applicable_adapter_specs(repo, adapters, ctx=ctx)]
+
+
+def select_applicable_adapter_specs(
+    repo: RepoSnapshot,
+    adapters: Iterable[Adapter],
+    *,
+    ctx: ExtractionContext | None = None,
+) -> list[SelectedAdapter]:
     ctx = ctx or ExtractionContext()
     repo_languages = _repo_languages(repo)
-    selected = []
+    selected: list[SelectedAdapter] = []
     for adapter in adapters:
         capability = adapter.capability
         if capability.languages and not set(capability.languages).intersection(repo_languages):
             continue
         if not adapter.applies_to(repo, ctx):
             continue
-        selected.append(adapter)
+        selected.append(SelectedAdapter(adapter=adapter, capability=capability))
     return selected
 
 
