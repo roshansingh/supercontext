@@ -24,7 +24,7 @@ class PythonBoto3TransportAdapter:
         return bool(repo.python_files)
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
-        build = PythonAstExtractor(include_transport=False).extract_transport_events_only(repo)
+        build = PythonAstExtractor(include_transport=False).extract_transport_events_only(repo, ctx)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),

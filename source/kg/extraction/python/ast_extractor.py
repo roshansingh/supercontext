@@ -20,6 +20,7 @@ from source.kg.extraction.python.transport_extractor import (
     extract_transport_events,
     module_transport_context,
 )
+from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -62,6 +63,9 @@ class PythonAstExtractor:
         self.include_transport = include_transport
 
     def extract(self, repo: RepoSnapshot) -> KgBuild:
+        return self.extract_with_context(repo, None)
+
+    def extract_with_context(self, repo: RepoSnapshot, ctx: ExtractionContext | None) -> KgBuild:
         build = KgBuild()
         repo_entity = self._repo_entity(repo)
         service_entity = self._service_entity(repo)
@@ -74,8 +78,8 @@ class PythonAstExtractor:
         )
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, repo.root / "pyproject.toml", 1, 1)
         import_normalizer = PythonImportNormalizer(repo)
-        parsed_files = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
-        literal_index = self._literal_index(repo, parsed_files)
+        parsed_files = self._parsed_files(repo, ctx)
+        literal_index = self._literal_index_for_context(repo, parsed_files, ctx)
 
         for file_path in repo.python_files:
             self._extract_file(
@@ -100,11 +104,11 @@ class PythonAstExtractor:
         )
         return build
 
-    def extract_transport_events_only(self, repo: RepoSnapshot) -> KgBuild:
+    def extract_transport_events_only(self, repo: RepoSnapshot, ctx: ExtractionContext | None = None) -> KgBuild:
         build = KgBuild()
         import_normalizer = PythonImportNormalizer(repo)
-        parsed_files = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
-        literal_index = self._literal_index(repo, parsed_files)
+        parsed_files = self._parsed_files(repo, ctx)
+        literal_index = self._literal_index_for_context(repo, parsed_files, ctx)
         for file_path in repo.python_files:
             self._extract_transport_file(
                 repo,
@@ -115,6 +119,34 @@ class PythonAstExtractor:
                 build,
             )
         return build
+
+    def _parsed_files(self, repo: RepoSnapshot, ctx: ExtractionContext | None) -> dict[Path, ParsedPythonFile]:
+        if ctx is None:
+            return {file_path: self._parse_file(file_path) for file_path in repo.python_files}
+        key = self._repo_cache_key(repo)
+        cached = ctx.python_parsed_files.get(key)
+        if cached is None:
+            cached = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
+            ctx.python_parsed_files[key] = cached
+        return cached
+
+    def _literal_index_for_context(
+        self,
+        repo: RepoSnapshot,
+        parsed_files: dict[Path, ParsedPythonFile],
+        ctx: ExtractionContext | None,
+    ) -> LiteralIndex:
+        if ctx is None:
+            return self._literal_index(repo, parsed_files)
+        key = self._repo_cache_key(repo)
+        cached = ctx.python_literal_indexes.get(key)
+        if cached is None:
+            cached = self._literal_index(repo, parsed_files)
+            ctx.python_literal_indexes[key] = cached
+        return cached
+
+    def _repo_cache_key(self, repo: RepoSnapshot) -> str:
+        return f"{repo.root}:{repo.commit_sha}"
 
     def _extract_file(
         self,

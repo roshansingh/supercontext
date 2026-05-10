@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from source.kg.extraction.adapters.config_shared import scannable_config_files
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.common import ConfigKgBuild, iter_scannable_files
+from source.kg.extraction.config.common import ConfigKgBuild
 from source.kg.extraction.config.deploy_events import extract_deploy_events
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
@@ -34,7 +35,7 @@ class ConfigDeployEventsAdapter:
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()
         service_entity = StaticConfigExtractor()._service_entity(repo)
-        extract_deploy_events(repo, iter_scannable_files(repo), service_entity, build)
+        extract_deploy_events(repo, scannable_config_files(repo, ctx), service_entity, build)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),

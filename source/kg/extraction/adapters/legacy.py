@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.extraction.adapters.config_shared import scannable_config_files
 from source.kg.extraction.config import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.python.ast_extractor import PythonAstExtractor
@@ -28,7 +29,12 @@ class LegacyAdapter:
         return True
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
-        build = self.extractor.extract(repo)
+        if isinstance(self.extractor, StaticConfigExtractor):
+            build = self.extractor.extract(repo, files=scannable_config_files(repo, ctx))
+        elif isinstance(self.extractor, PythonAstExtractor):
+            build = self.extractor.extract_with_context(repo, ctx)
+        else:
+            build = self.extractor.extract(repo)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),

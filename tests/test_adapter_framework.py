@@ -10,6 +10,7 @@ from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
+from source.kg.extraction.adapters import config_shared
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
@@ -246,6 +247,27 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(_evidence_ids(split.evidence), _evidence_ids(monolith.evidence))
         self.assertEqual(_coverage_ids(split.coverage), _coverage_ids(monolith.coverage))
 
+    def test_config_split_adapters_share_one_config_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text('API_URL="https://api.example.com"\n', encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="config-scan",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            with patch(
+                "source.kg.extraction.adapters.config_shared.iter_scannable_files",
+                wraps=config_shared.iter_scannable_files,
+            ) as scan:
+                extract_repo(repo)
+
+        self.assertEqual(scan.call_count, 1)
+
     def test_python_transport_split_matches_python_ast_monolith(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -274,6 +296,37 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(_fact_ids(reduced.facts + split.facts), _fact_ids(monolith.facts))
         self.assertEqual(_evidence_ids(reduced.evidence + split.evidence), _evidence_ids(monolith.evidence))
         self.assertEqual(_coverage_ids(reduced.coverage + split.coverage), _coverage_ids(monolith.coverage))
+
+    def test_python_split_adapters_share_parsed_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import boto3\n\n"
+                "def publish_order():\n"
+                "    client = boto3.client('sqs')\n"
+                "    client.send_message(QueueUrl='https://sqs.us-east-1.amazonaws.com/123/orders', MessageBody='x')\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="python-cache",
+                owner="test",
+                commit_sha="sha",
+                python_files=(app,),
+                typescript_files=(),
+            )
+            original_parse_file = PythonAstExtractor._parse_file
+            parsed_paths: list[Path] = []
+
+            def counted_parse_file(extractor: PythonAstExtractor, file_path: Path):
+                parsed_paths.append(file_path)
+                return original_parse_file(extractor, file_path)
+
+            with patch.object(PythonAstExtractor, "_parse_file", counted_parse_file):
+                extract_repo(repo)
+
+        self.assertEqual(parsed_paths, [app])
 
 
 @dataclass
