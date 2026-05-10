@@ -50,11 +50,10 @@ class AdapterContractTest(unittest.TestCase):
 
     def _assert_false_positive(self, adapter: Adapter, fixture_dir: Path) -> None:
         result = _run_adapter(adapter, fixture_dir)
-        declared_kinds = set(adapter.capability.produces_entity_kinds)
-        leaked_entities = [entity for entity in result.entities if entity.kind in declared_kinds]
 
         self.assertEqual(result.facts, [])
-        self.assertEqual(leaked_entities, [])
+        self.assertEqual(result.entities, [])
+        self.assertEqual(result.evidence, [])
         self.assertEqual(result.coverage, [])
 
     def _assert_coverage(self, adapter: Adapter, fixture_dir: Path) -> None:
