@@ -9,6 +9,7 @@ import subprocess
 from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.extraction.framework.adapter import ExtractionContext
 
 
 TENANT_ID = "local-dev"
@@ -34,6 +35,9 @@ class TypeScriptCompilerApiExtractor:
     source_system = "typescript_compiler_api_v0"
 
     def extract(self, repo: RepoSnapshot) -> KgBuild:
+        return self.extract_with_context(repo, None)
+
+    def extract_with_context(self, repo: RepoSnapshot, ctx: ExtractionContext | None) -> KgBuild:
         build = KgBuild()
         repo_entity = self._repo_entity(repo)
         service_entity = self._service_entity(repo)
@@ -45,7 +49,7 @@ class TypeScriptCompilerApiExtractor:
         parsed_files = self._parse_repo(repo)
         for file_path in repo.typescript_files:
             parsed_file = parsed_files.get(str(file_path.relative_to(repo.root)), {})
-            self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build)
+            self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build, ctx)
             for diagnostic in parsed_file.get("parse_diagnostics", []):
                 build.coverage.append(
                     Coverage(
@@ -83,6 +87,7 @@ class TypeScriptCompilerApiExtractor:
         normalizer: JsImportNormalizer,
         parsed_file: JsonObject,
         build: KgBuild,
+        ctx: ExtractionContext | None,
     ) -> None:
         source = file_path.read_text(encoding="utf-8", errors="replace")
         lines = source.splitlines()
@@ -98,6 +103,8 @@ class TypeScriptCompilerApiExtractor:
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
         imports = [normalizer.normalize(self._import_ref(row), module_name) for row in parsed_file.get("imports", [])]
+        if ctx is not None:
+            ctx.js_ts_import_roots.update(import_ref.import_root for import_ref in imports)
         imports_by_local = self._imports_by_local(imports)
         for import_ref in imports:
             dependency_entity = self._dependency_entity(repo, import_ref)

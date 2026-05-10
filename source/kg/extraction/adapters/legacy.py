@@ -33,6 +33,8 @@ class LegacyAdapter:
             build = self.extractor.extract(repo, files=scannable_config_files(repo, ctx))
         elif isinstance(self.extractor, PythonAstExtractor):
             build = self.extractor.extract_with_context(repo, ctx)
+        elif isinstance(self.extractor, TypeScriptCompilerApiExtractor):
+            build = self.extractor.extract_with_context(repo, ctx)
         else:
             build = self.extractor.extract(repo)
         return AdapterResult(
