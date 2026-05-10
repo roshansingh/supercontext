@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from source.kg.core.models import JsonObject
-from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
+from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MAX_BUDGET_USD, DEFAULT_ANSWER_MODEL
 from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
 from source.kg.product.goldset_judgement import (
     ClaudeGoldsetJudge,
@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument(
         "--max-budget-usd",
         type=float,
-        default=0.25,
+        default=DEFAULT_ANSWER_MAX_BUDGET_USD,
         help="Maximum Claude API spend per scenario judgement call.",
     )
     parser.add_argument(

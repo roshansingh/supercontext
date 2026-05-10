@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from source.kg.core.models import JsonObject
-from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL
+from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MAX_BUDGET_USD, DEFAULT_ANSWER_MODEL
 from source.kg.product.claude_tool_policy import (
     DEFAULT_CLAUDE_PERMISSION_MODE,
     DISALLOWED_CLAUDE_TOOLS,
@@ -32,7 +32,7 @@ class GoldsetScenario:
 @dataclass(frozen=True)
 class GoldsetJudgementConfig:
     model: str = DEFAULT_ANSWER_MODEL
-    max_budget_usd: float = 0.25
+    max_budget_usd: float = DEFAULT_ANSWER_MAX_BUDGET_USD
     load_timeout_ms: int = 180_000
     permission_mode: str = DEFAULT_CLAUDE_PERMISSION_MODE
     claude_cli_path: str | None = None

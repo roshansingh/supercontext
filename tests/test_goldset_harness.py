@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from source.kg.product.answer_synthesis import AnswerSynthesisConfig, _validate_answer
+from source.kg.product.answer_synthesis import AnswerSynthesisConfig, _prompt_for_packet, _validate_answer
 from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.product.claude_tool_policy import resolve_claude_cli_path
 from source.kg.product.goldset_judgement import _validate_judgement, load_goldset_scenarios
@@ -135,6 +135,79 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
         self.assertEqual(answer["evidence_item_count"], 1)
         self.assertEqual(answer["retrieval_step_count"], 1)
         self.assertEqual(answer["packet_fingerprint"], packet_fingerprint(packet))
+
+    def test_answer_prompt_adds_reconciliation_rules_for_reconciliation_packets(self) -> None:
+        packet = {
+            "scenario_id": "Q100",
+            "user_query": "Which documented endpoints drift?",
+            "expected_answer_shape": "Endpoint drift table.",
+            "evidence_items": [
+                {"claim": "matched endpoint", "reconciliation_group": "matched"},
+                {"claim": "fuzzy endpoint", "reconciliation_group": "possible_matches"},
+                {"claim": "right-only endpoint", "reconciliation_group": "right_only"},
+            ],
+            "retrieval_steps": [],
+            "unknowns": [],
+        }
+
+        prompt = _prompt_for_packet(packet)
+
+        self.assertIn("Contract reconciliation requirements:", prompt)
+        self.assertIn("matched=1, possible_matches=1, right_only=1", prompt)
+        self.assertIn("matched-but-unexpected repo/service placement", prompt)
+        self.assertIn("repo/service placement drift", prompt)
+        self.assertIn("If a material reconciliation category is omitted", prompt)
+
+    def test_answer_prompt_omits_reconciliation_rules_for_non_reconciliation_packets(self) -> None:
+        packet = {
+            "scenario_id": "Q088",
+            "user_query": "Which queues connect services?",
+            "expected_answer_shape": "Queue lineage.",
+            "evidence_items": [{"claim": "service produces queue"}],
+            "retrieval_steps": [],
+            "unknowns": [],
+        }
+
+        prompt = _prompt_for_packet(packet)
+
+        self.assertNotIn("Contract reconciliation requirements:", prompt)
+        self.assertNotIn("matched-but-unexpected repo/service placement", prompt)
+
+    def test_answer_prompt_adds_event_lineage_rules_for_event_packets(self) -> None:
+        packet = {
+            "scenario_id": "Q106",
+            "user_query": "Who produces and consumes the queue?",
+            "expected_answer_shape": "Producer, consumer, and downstream lineage.",
+            "evidence_items": [
+                {"claim": "producer sends queue", "fact_type": "PRODUCES_EVENT"},
+                {"claim": "consumer receives queue", "fact_type": "CONSUMES_EVENT"},
+                {"claim": "config references queue", "fact_type": "REFERENCES_EVENT_CHANNEL"},
+            ],
+            "retrieval_steps": [],
+            "unknowns": [],
+        }
+
+        prompt = _prompt_for_packet(packet)
+
+        self.assertIn("Event lineage requirements:", prompt)
+        self.assertIn("CONSUMES_EVENT=1, PRODUCES_EVENT=1, REFERENCES_EVENT_CHANNEL=1", prompt)
+        self.assertIn("downstream channels produced by those consumers", prompt)
+        self.assertIn("If a material event lineage edge is omitted", prompt)
+
+    def test_answer_prompt_omits_event_lineage_rules_for_non_event_packets(self) -> None:
+        packet = {
+            "scenario_id": "Q100",
+            "user_query": "Which endpoints drift?",
+            "expected_answer_shape": "Endpoint drift.",
+            "evidence_items": [{"claim": "endpoint match", "fact_type": "DOCUMENTS_ENDPOINT"}],
+            "retrieval_steps": [],
+            "unknowns": [],
+        }
+
+        prompt = _prompt_for_packet(packet)
+
+        self.assertNotIn("Event lineage requirements:", prompt)
+        self.assertNotIn("downstream channels produced by those consumers", prompt)
 
 
 def _write_json(value: object) -> Path:

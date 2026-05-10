@@ -16,6 +16,7 @@ from source.kg.product.validation import require_failure_sentinel_consistency, r
 
 
 DEFAULT_ANSWER_MODEL = "opus"
+DEFAULT_ANSWER_MAX_BUDGET_USD = 1.0
 FAILURE_MODES = ("missing KG fact", "bad retrieval plan", "bad synthesis", "none", "other")
 SCORE_VALUES = ("Pass", "Partial", "Fail")
 
@@ -25,7 +26,7 @@ class AnswerSynthesisConfig:
     model: str = DEFAULT_ANSWER_MODEL
     max_turns: int | None = None
     load_timeout_ms: int = 180_000
-    max_budget_usd: float = 0.25
+    max_budget_usd: float = DEFAULT_ANSWER_MAX_BUDGET_USD
     permission_mode: str = DEFAULT_CLAUDE_PERMISSION_MODE
     claude_cli_path: str | None = None
 
@@ -144,6 +145,7 @@ def _prompt_for_packet(packet: JsonObject) -> str:
         "evidence_items": [compact_evidence_item(row) for row in packet.get("evidence_items", [])],
         "unknowns": packet.get("unknowns", []),
     }
+    packet_specific_rules = "\n".join(rule for rule in (_reconciliation_rules(packet), _event_lineage_rules(packet)) if rule)
     return f"""Create a grounded answer from this EvidencePacket.
 
 Rules:
@@ -157,6 +159,7 @@ Rules:
 - Failure modes must be chosen from: {", ".join(FAILURE_MODES)}.
 - If score is `Pass`, failure_modes must be exactly `["none"]`.
 - If score is `Partial` or `Fail`, failure_modes must not include `none`.
+{packet_specific_rules}
 - Return JSON only with this shape:
 {{
   "user_query": "...",
@@ -171,6 +174,70 @@ Rules:
 EvidencePacket:
 {json.dumps(compact_packet, indent=2, sort_keys=True)}
 """
+
+
+def _reconciliation_rules(packet: JsonObject) -> str:
+    groups = _reconciliation_group_counts(packet)
+    if not groups:
+        return ""
+    group_summary = ", ".join(f"{name}={groups[name]}" for name in sorted(groups))
+    return (
+        "\nContract reconciliation requirements:\n"
+        f"- This packet contains reconciliation evidence: {group_summary}.\n"
+        "- Organize reconciliation answers by outcome before caveats: exact matches, possible/fuzzy matches, "
+        "left-only, right-only, and matched-but-unexpected repo/service placement.\n"
+        "- Do not collapse every `matched` row into `cleanly matched`; compare repo/service placement against the "
+        "question scope and expected answer shape.\n"
+        "- If an endpoint/schema/event is documented for one backend but implemented in another repo/service, call it "
+        "out as repo/service placement drift even when the reconciliation group is `matched`.\n"
+        "- If a material reconciliation category is omitted or only buried in caveats, score must be `Partial` or `Fail`."
+    )
+
+
+def _event_lineage_rules(packet: JsonObject) -> str:
+    counts = _fact_type_counts(packet, {"PRODUCES_EVENT", "CONSUMES_EVENT", "REFERENCES_EVENT_CHANNEL"})
+    if not counts:
+        return ""
+    fact_summary = ", ".join(f"{name}={counts[name]}" for name in sorted(counts))
+    return (
+        "\nEvent lineage requirements:\n"
+        f"- This packet contains event-channel evidence: {fact_summary}.\n"
+        "- Organize event answers by channel and role: producer send-sites, consumer handlers, config/source refs, "
+        "and downstream channels produced by those consumers when present in the packet.\n"
+        "- If the queried channel's consumer also produces another event channel in the packet, include that downstream "
+        "edge as part of the impact/lineage narrative, not only as a caveat.\n"
+        "- Do not call an event edge complete if producer, consumer, or adjacent downstream event evidence present in "
+        "the packet is omitted from the main answer.\n"
+        "- If a material event lineage edge is omitted, score must be `Partial` or `Fail`."
+    )
+
+
+def _reconciliation_group_counts(packet: JsonObject) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    evidence_items = packet.get("evidence_items", [])
+    if not isinstance(evidence_items, list):
+        return counts
+    for item in evidence_items:
+        if not isinstance(item, dict):
+            continue
+        group = item.get("reconciliation_group")
+        if isinstance(group, str) and group:
+            counts[group] = counts.get(group, 0) + 1
+    return counts
+
+
+def _fact_type_counts(packet: JsonObject, fact_types: set[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    evidence_items = packet.get("evidence_items", [])
+    if not isinstance(evidence_items, list):
+        return counts
+    for item in evidence_items:
+        if not isinstance(item, dict):
+            continue
+        fact_type = item.get("fact_type")
+        if isinstance(fact_type, str) and fact_type in fact_types:
+            counts[fact_type] = counts.get(fact_type, 0) + 1
+    return counts
 
 
 def _parse_json_result(result_text: str) -> JsonObject:

@@ -13,7 +13,7 @@ from source.kg.product import (
     ClaudeAnswerSynthesizer,
     EvidencePacketBuilder,
 )
-from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL, render_answers_markdown
+from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MAX_BUDGET_USD, DEFAULT_ANSWER_MODEL, render_answers_markdown
 from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
 from source.kg.product.validation import normalize_unique_strings
@@ -43,7 +43,7 @@ def main() -> None:
     parser.add_argument(
         "--max-budget-usd",
         type=float,
-        default=0.25,
+        default=DEFAULT_ANSWER_MAX_BUDGET_USD,
         help="Maximum Claude API spend per scenario synthesis call.",
     )
     parser.add_argument(
