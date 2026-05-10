@@ -8,7 +8,7 @@ from source.kg.extraction.framework.adapter import Adapter
 REGISTERED_ADAPTERS: tuple[Adapter, ...] = ()
 
 
-def register(adapters: Iterable[Adapter]) -> tuple[Adapter, ...]:
+def register_for_tests(adapters: Iterable[Adapter]) -> tuple[Adapter, ...]:
     """Test hook to override the registered tuple. Production uses adapters/__init__.py."""
     global REGISTERED_ADAPTERS
     REGISTERED_ADAPTERS = validate_adapters(adapters)

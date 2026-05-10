@@ -57,7 +57,11 @@ After every `git push` to a PR branch, do not manually request Copilot review; a
 - Run `python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>` after each push.
 - Poll every 2 minutes for up to 10 minutes, using the script defaults.
 - Check both top-level Copilot reviews and inline review comments.
-- If Copilot feedback appears, address it, run `.codex/skills/pre-pr-semantic-review`, push again, and repeat this polling loop.
+- For each Copilot comment, make an explicit decision: `accept`, `deny`, or `act`.
+- If accepting/acting, implement the fix with a regression test when behavior changes.
+- If denying, reply with concrete evidence for why the feedback is not applicable.
+- Reply to each Copilot thread with the decision and either the fix summary or denial rationale, then resolve the thread.
+- After any code/doc change, run `.codex/skills/pre-pr-semantic-review`, push again, and repeat this polling loop.
 - If no Copilot feedback appears within the polling window, state that auto-review was monitored and no feedback appeared.
 
 ## Agent-Specific Instructions

@@ -9,7 +9,7 @@ from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
-from source.kg.extraction.framework.registry import register
+from source.kg.extraction.framework.registry import register_for_tests
 from source.kg.extraction.framework.runner import run_adapters
 
 
@@ -18,11 +18,11 @@ class AdapterFrameworkTest(unittest.TestCase):
         adapter = _Adapter("dup", "test_v0")
 
         with self.assertRaisesRegex(ValueError, "Duplicate adapter name: dup"):
-            register((adapter, adapter))
+            register_for_tests((adapter, adapter))
 
     def test_registry_rejects_missing_source_system(self) -> None:
         with self.assertRaisesRegex(ValueError, "must declare source_system"):
-            register((_Adapter("missing", ""),))
+            register_for_tests((_Adapter("missing", ""),))
 
     def test_runner_skips_adapter_when_applies_to_false(self) -> None:
         repo = _repo()
