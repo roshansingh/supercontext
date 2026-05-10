@@ -49,12 +49,12 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "generated_at": config.generated_at,
         "status": _overall_status(smoke_checks, goldset),
         "inputs": {
-            "mercury_snapshot": str(config.mercury_snapshot),
-            "true_loop_snapshot": str(config.true_loop_snapshot),
-            "lattice_snapshot": str(config.lattice_snapshot),
-            "goldset_packets": str(config.goldset_packets),
-            "goldset_answers": str(config.goldset_answers),
-            "goldset_judgement": str(config.goldset_judgement),
+            "mercury_snapshot": _report_path(config.mercury_snapshot),
+            "true_loop_snapshot": _report_path(config.true_loop_snapshot),
+            "lattice_snapshot": _report_path(config.lattice_snapshot),
+            "goldset_packets": _report_path(config.goldset_packets),
+            "goldset_answers": _report_path(config.goldset_answers),
+            "goldset_judgement": _report_path(config.goldset_judgement),
         },
         "snapshot_inventory": [
             _snapshot_inventory("Mercury ML", config.mercury_snapshot, mercury),
@@ -191,7 +191,7 @@ def _run_smoke_checks(
                     "query_id": query_id,
                     "difficulty": difficulty,
                     "corpus": corpus,
-                    "snapshot": str(snapshot_path),
+                    "snapshot": _report_path(snapshot_path),
                     "surface": surface,
                     "question": question,
                     "result": result,
@@ -409,7 +409,7 @@ def _compact_actual(value: JsonObject) -> JsonObject:
 def _snapshot_inventory(corpus: str, snapshot_path: Path, kg: KgSnapshot) -> JsonObject:
     return {
         "corpus": corpus,
-        "snapshot": str(snapshot_path),
+        "snapshot": _report_path(snapshot_path),
         "entities": len(kg.entities),
         "facts": len(kg.facts),
         "evidence": len(kg.evidence),
@@ -477,9 +477,9 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
         )
 
     return {
-        "packets_path": str(config.goldset_packets),
-        "answers_path": str(config.goldset_answers),
-        "judgement_path": str(config.goldset_judgement),
+        "packets_path": _report_path(config.goldset_packets),
+        "answers_path": _report_path(config.goldset_answers),
+        "judgement_path": _report_path(config.goldset_judgement),
         "scenario_count": len(judgement_rows),
         "answer_score_summary": _result_counts(judgement_rows, key="answer_score"),
         "evidence_summary": _result_counts(judgement_rows, key="evidence_completeness"),
@@ -497,6 +497,14 @@ def _load_rows(path: Path, key: str) -> list[JsonObject]:
     if not isinstance(rows, list):
         raise ValueError(f"{path} must contain a list or an object with a {key!r} list")
     return rows
+
+
+def _report_path(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        return resolved.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 def _rows_by_scenario(path: Path, rows: list[JsonObject], key: str) -> dict[str, JsonObject]:

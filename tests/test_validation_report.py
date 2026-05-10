@@ -14,8 +14,10 @@ from source.kg.product.validation_report import (
     _goldset_summary,
     _overall_status,
     _product_readout_lines,
+    _report_path,
     _run_smoke_checks,
     _superseded_artifacts,
+    run_canonical_validation,
     render_validation_markdown,
 )
 
@@ -134,6 +136,73 @@ class ValidationReportTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "duplicates scenario_id 'Q001'"):
                 _goldset_summary(_config(root, packets, answers, judgement))
+
+    def test_goldset_summary_reports_expanded_metadata_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            packets = home / "packets.json"
+            answers = home / "answers.json"
+            judgement = home / "judgement.json"
+            packets.write_text(json.dumps({"packets": []}), encoding="utf-8")
+            answers.write_text(json.dumps({"answers": []}), encoding="utf-8")
+            judgement.write_text(json.dumps({"judgements": []}), encoding="utf-8")
+
+            with patch.dict("os.environ", {"HOME": str(home)}):
+                summary = _goldset_summary(
+                    _config(
+                        home,
+                        Path("~/packets.json"),
+                        Path("~/answers.json"),
+                        Path("~/judgement.json"),
+                    )
+                )
+
+        self.assertEqual(summary["packets_path"], packets.resolve().as_posix())
+        self.assertEqual(summary["answers_path"], answers.resolve().as_posix())
+        self.assertEqual(summary["judgement_path"], judgement.resolve().as_posix())
+
+    def test_run_canonical_validation_reports_expanded_input_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            config = _config(
+                home,
+                Path("~/packets.json"),
+                Path("~/answers.json"),
+                Path("~/judgement.json"),
+            )
+            config = ValidationConfig(
+                mercury_snapshot=Path("~/mercury"),
+                true_loop_snapshot=Path("~/true_loop"),
+                lattice_snapshot=Path("~/lattice"),
+                goldset_packets=config.goldset_packets,
+                goldset_answers=config.goldset_answers,
+                goldset_judgement=config.goldset_judgement,
+                generated_at=config.generated_at,
+                evaluation_dir=config.evaluation_dir,
+            )
+
+            with (
+                patch.dict("os.environ", {"HOME": str(home)}),
+                patch("source.kg.product.validation_report.KgSnapshot", return_value=object()),
+                patch("source.kg.product.validation_report._run_smoke_checks", return_value=[]),
+                patch(
+                    "source.kg.product.validation_report._goldset_summary",
+                    return_value={
+                        "scenarios": [],
+                        "answer_only_scenarios": [],
+                        "packet_only_scenarios": [],
+                    },
+                ),
+                patch("source.kg.product.validation_report._snapshot_inventory", return_value={}),
+                patch("source.kg.product.validation_report._superseded_artifacts", return_value=[]),
+            ):
+                report = run_canonical_validation(config)
+
+        self.assertEqual(report["inputs"]["mercury_snapshot"], (home / "mercury").resolve().as_posix())
+        self.assertEqual(report["inputs"]["goldset_packets"], (home / "packets.json").resolve().as_posix())
+
+    def test_report_path_normalizes_repo_local_relative_segments(self) -> None:
+        self.assertEqual(_report_path(Path("source") / ".." / "source"), "source")
 
     def test_markdown_marks_superseded_artifacts(self) -> None:
         report = {
