@@ -52,6 +52,15 @@ Use short imperative commit messages, matching the current history, for example 
 
 ## PR Review Loop
 
+Before creating a PR for the first time, after coding is finished, tests pass, and self-review is complete:
+
+- Run `python -m source.scripts.request_claude_pre_pr_review --base main`.
+- Read the generated review under `docs/reviews/`.
+- For each Claude finding, make an explicit decision: `accept`, `deny`, or `act`.
+- If accepting/acting, implement the fix with a regression test when behavior changes.
+- If denying, document the concrete reason in the PR notes or a reply/comment.
+- Only create the PR after accepted/actionable Claude findings are handled.
+
 After every `git push` to a PR branch, do not manually request Copilot review; auto-review is configured for this repo. Verify and poll instead:
 
 - Run `python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>` after each push.

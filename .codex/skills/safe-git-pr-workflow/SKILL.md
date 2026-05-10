@@ -42,7 +42,22 @@ git add path/to/file.py path/to/other.md
 git commit -m "Short imperative summary"
 ```
 
-5. Push once.
+5. Before creating a PR for the first time, run one Claude pre-PR review.
+
+Only do this once per PR, after coding is finished, tests pass, and the local semantic self-review is complete.
+
+```bash
+python -m source.scripts.request_claude_pre_pr_review --base main
+```
+
+Read the generated file under `docs/reviews/`. For every finding, explicitly decide `accept`, `deny`, or `act`.
+
+- `accept` / `act`: make the fix, add a regression test when behavior changes, rerun checks, and commit.
+- `deny`: record the concrete reason in PR notes or review discussion.
+
+Do not create the PR until accepted/actionable Claude findings are handled.
+
+6. Push once.
 
 ```bash
 git push
@@ -54,11 +69,21 @@ If push succeeds remotely but local tracking update fails:
 git fetch origin <current-branch>
 ```
 
-6. Verify final state:
+7. Verify final state:
 
 ```bash
 git status --short --branch
 ```
+
+8. After every push to a PR branch, poll auto-Copilot review.
+
+Do not manually request Copilot review; auto-review is configured.
+
+```bash
+python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>
+```
+
+For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, and repeat the polling loop.
 
 ## PR Review Comments
 
