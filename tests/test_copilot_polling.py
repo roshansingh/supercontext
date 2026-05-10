@@ -103,6 +103,12 @@ class CopilotPollingTest(unittest.TestCase):
         self.assertEqual(timestamp, "2026-05-10T12:00:00Z")
         self.assertIn("graphql", gh_json.call_args.args[0])
 
+    def test_default_poll_delays_use_six_minute_schedule(self) -> None:
+        self.assertEqual(poll_copilot_review._poll_delays(None, 360), [120, 120, 60, 60])
+
+    def test_fixed_poll_interval_respects_timeout(self) -> None:
+        self.assertEqual(poll_copilot_review._poll_delays(120, 300), [120, 120, 60])
+
 
 if __name__ == "__main__":
     unittest.main()

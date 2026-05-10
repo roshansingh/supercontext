@@ -9,14 +9,24 @@ from typing import Any
 
 
 COPILOT_LOGINS = {"copilot", "copilot-pull-request-reviewer"}
+DEFAULT_POLL_DELAYS_SECONDS = (120, 120, 60, 60)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Poll a PR for Copilot auto-review feedback.")
     parser.add_argument("--pr", type=int, help="Pull request number. Defaults to the current branch PR.")
     parser.add_argument("--repo", help="owner/name. Defaults to `gh repo view`.")
-    parser.add_argument("--interval-seconds", type=int, default=120)
-    parser.add_argument("--timeout-seconds", type=int, default=600)
+    parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        help="Use a fixed polling interval instead of the default 2m, 2m, 1m, 1m schedule.",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=sum(DEFAULT_POLL_DELAYS_SECONDS),
+        help="Maximum polling window. Defaults to 6 minutes.",
+    )
     parser.add_argument(
         "--manual-request-after-seconds",
         type=int,
@@ -33,7 +43,7 @@ def main() -> None:
 
     head_sha = _gh_text(["pr", "view", str(pr_number), "--json", "headRefOid", "--jq", ".headRefOid"])
     head_pushed_at = _head_commit_pushed_at(repo, head_sha)
-    deadline = time.monotonic() + args.timeout_seconds
+    poll_delays = _poll_delays(args.interval_seconds, args.timeout_seconds)
     started_at = time.monotonic()
     manual_request_sent = False
     attempt = 1
@@ -61,10 +71,10 @@ def main() -> None:
                     "No current-head Copilot activity appeared after "
                     f"{elapsed}s; attempted @copilot fallback request but GitHub rejected it."
                 )
-        if time.monotonic() >= deadline:
+        if attempt > len(poll_delays):
             print("No Copilot feedback appeared within the polling window.")
             return
-        sleep_seconds = min(args.interval_seconds, max(0, int(deadline - time.monotonic())))
+        sleep_seconds = poll_delays[attempt - 1]
         time.sleep(sleep_seconds)
         attempt += 1
 
@@ -99,6 +109,30 @@ def _poll_once(repo: str, pr_number: int, head_sha: str, head_pushed_at: str) ->
         "issue_comments": copilot_issue,
         "events": copilot_events,
     }
+
+
+def _poll_delays(interval_seconds: int | None, timeout_seconds: int) -> list[int]:
+    if timeout_seconds <= 0:
+        return []
+    if interval_seconds is not None:
+        delay = max(1, interval_seconds)
+        delays = []
+        remaining = timeout_seconds
+        while remaining > 0:
+            next_delay = min(delay, remaining)
+            delays.append(next_delay)
+            remaining -= next_delay
+        return delays
+
+    delays: list[int] = []
+    elapsed = 0
+    for delay in DEFAULT_POLL_DELAYS_SECONDS:
+        if elapsed >= timeout_seconds:
+            break
+        next_delay = min(delay, timeout_seconds - elapsed)
+        delays.append(next_delay)
+        elapsed += next_delay
+    return delays
 
 
 def _print_summary(result: dict[str, Any], attempt: int, repo: str, pr_number: int, head_sha: str) -> None:

@@ -64,7 +64,7 @@ Before creating a PR for the first time, after coding is finished, tests pass, a
 After every `git push` to a PR branch, do not manually request Copilot review immediately. Auto-review is configured for this repo, but GitHub only reviews new pushes automatically when the `Review new pushes` option is active; otherwise it may review only once. Verify and poll instead:
 
 - Run `python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>` after each push.
-- Poll every 2 minutes for up to 10 minutes, using the script defaults.
+- Poll on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute.
 - If no current-head Copilot activity appears after the first 2-minute poll, the script requests `@copilot` once as a fallback and continues polling.
 - Check both top-level Copilot reviews and inline review comments.
 - For each Copilot comment, make an explicit decision: `accept`, `deny`, or `act`.

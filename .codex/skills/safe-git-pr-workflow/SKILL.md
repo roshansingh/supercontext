@@ -83,7 +83,7 @@ Do not manually request Copilot review immediately. Auto-review is configured, b
 python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
-The poll script waits for current-head Copilot activity. If none appears after the first 2-minute poll, it requests `@copilot` once as a fallback and continues polling.
+The poll script waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute. If no current-head Copilot activity appears after the first 2-minute poll, it requests `@copilot` once as a fallback and continues polling.
 
 For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, and repeat the polling loop.
 
