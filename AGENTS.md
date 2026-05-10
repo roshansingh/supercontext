@@ -54,6 +54,8 @@ Use short imperative commit messages, matching the current history, for example 
 
 Keep changes surgical. Do not rewrite ADRs, research docs, or generated data unless the task requires it. When implementation uncovers a product or architecture decision, document the finding instead of silently expanding scope.
 
+Always use the project-local `.codex/skills/product-evaluation` skill before interpreting product-validation results, proposing the next validation-driven feature, or deciding the next highest-value KG/product gap.
+
 ## Pre-PR Validation Discipline
 
 Copilot has repeatedly caught boundary-condition mistakes in review. Before opening or updating a PR, explicitly check these patterns:

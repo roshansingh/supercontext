@@ -98,6 +98,42 @@ class ValidationReportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicates scenario_id"):
                 _goldset_summary(_config(root, packets, answers, judgement))
 
+    def test_goldset_summary_rejects_non_object_judgement_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            packets.write_text(json.dumps({"packets": []}), encoding="utf-8")
+            answers.write_text(json.dumps({"answers": []}), encoding="utf-8")
+            judgement.write_text(json.dumps([]), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "object with a 'judgements' list"):
+                _goldset_summary(_config(root, packets, answers, judgement))
+
+    def test_goldset_summary_rejects_duplicate_judgement_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            packets.write_text(json.dumps({"packets": [{"scenario_id": "Q001"}]}), encoding="utf-8")
+            answers.write_text(json.dumps({"answers": [{"scenario_id": "Q001"}]}), encoding="utf-8")
+            judgement.write_text(
+                json.dumps(
+                    {
+                        "judgements": [
+                            {"scenario_id": "Q001", "failure_owners": ["none"]},
+                            {"scenario_id": "Q001", "failure_owners": ["none"]},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "duplicates scenario_id 'Q001'"):
+                _goldset_summary(_config(root, packets, answers, judgement))
+
     def test_markdown_marks_superseded_artifacts(self) -> None:
         report = {
             "generated_at": "2026-05-10T00:00:00Z",

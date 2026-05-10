@@ -421,6 +421,8 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
     packets = _load_rows(config.goldset_packets, "packets")
     answers = _load_rows(config.goldset_answers, "answers")
     judgement_payload = json.loads(config.goldset_judgement.expanduser().read_text(encoding="utf-8"))
+    if not isinstance(judgement_payload, dict):
+        raise ValueError(f"{config.goldset_judgement} must contain an object with a 'judgements' list")
     judgements = judgement_payload.get("judgements")
     if not isinstance(judgements, list):
         raise ValueError(f"{config.goldset_judgement} must contain a 'judgements' list")
@@ -433,6 +435,8 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
         if not isinstance(judgement, dict):
             raise ValueError(f"{config.goldset_judgement} judgements[{index}] must be an object")
         scenario_id = _scenario_id(config.goldset_judgement, "judgements", index, judgement)
+        if scenario_id in judged_ids:
+            raise ValueError(f"{config.goldset_judgement} judgements[{index}] duplicates scenario_id {scenario_id!r}")
         judged_ids.add(scenario_id)
         failure_owners = judgement.get("failure_owners", [])
         if not isinstance(failure_owners, list) or not all(isinstance(owner, str) for owner in failure_owners):
