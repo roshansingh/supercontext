@@ -50,6 +50,16 @@ There is no full test suite yet. For now, verify changes with `compileall`, at l
 
 Use short imperative commit messages, matching the current history, for example `Add deterministic import normalization` or `Add parser-backed TypeScript extraction`. PR descriptions should include summary, scope, verification commands, and evaluation delta when behavior changes. Link relevant ADRs or docs when the PR implements an architectural decision.
 
+## PR Review Loop
+
+After every `git push` to a PR branch, do not manually request Copilot review; auto-review is configured for this repo. Verify and poll instead:
+
+- Run `python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>` after each push.
+- Poll every 2 minutes for up to 10 minutes, using the script defaults.
+- Check both top-level Copilot reviews and inline review comments.
+- If Copilot feedback appears, address it, run `.codex/skills/pre-pr-semantic-review`, push again, and repeat this polling loop.
+- If no Copilot feedback appears within the polling window, state that auto-review was monitored and no feedback appeared.
+
 ## Agent-Specific Instructions
 
 Keep changes surgical. Do not rewrite ADRs, research docs, or generated data unless the task requires it. When implementation uncovers a product or architecture decision, document the finding instead of silently expanding scope.

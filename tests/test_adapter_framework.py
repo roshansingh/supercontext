@@ -20,6 +20,10 @@ class AdapterFrameworkTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate adapter name: dup"):
             register((adapter, adapter))
 
+    def test_registry_rejects_missing_source_system(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must declare source_system"):
+            register((_Adapter("missing", ""),))
+
     def test_runner_skips_adapter_when_applies_to_false(self) -> None:
         repo = _repo()
         adapter = _Adapter("skip", "skip_v0", applies=False)
@@ -114,6 +118,15 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertEqual(adapter.calls, 0)
 
+    def test_pipeline_selection_does_not_call_applies_to_twice(self) -> None:
+        repo = _repo()
+        adapter = _Adapter("stateful", "stateful_v0")
+
+        selected = run_adapters(repo, (adapter,))
+
+        self.assertEqual(adapter.applies_calls, 1)
+        self.assertEqual(selected, ([], [], [], [], []))
+
     def test_pipeline_reports_only_applicable_extractors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = RepoSnapshot(
@@ -139,6 +152,7 @@ class _Adapter:
     result: AdapterResult | None = None
     error: Exception | None = None
     calls: int = 0
+    applies_calls: int = 0
 
     @property
     def capability(self) -> AdapterCapability:
@@ -151,6 +165,7 @@ class _Adapter:
         )
 
     def applies_to(self, repo: RepoSnapshot, ctx: ExtractionContext) -> bool:
+        self.applies_calls += 1
         return self.applies
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:

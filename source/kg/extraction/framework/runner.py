@@ -20,13 +20,26 @@ def run_adapters(
     ctx: ExtractionContext | None = None,
 ) -> tuple[list[Entity], list[Fact], list[Evidence], list[Coverage], list[JsonObject]]:
     ctx = ctx or ExtractionContext()
+    selected_adapters = select_applicable_adapters(repo, adapters, ctx=ctx)
+    return run_selected_adapters(repo, selected_adapters, strict_extractors=strict_extractors, ctx=ctx)
+
+
+def run_selected_adapters(
+    repo: RepoSnapshot,
+    adapters: Iterable[Adapter],
+    *,
+    strict_extractors: bool = False,
+    ctx: ExtractionContext | None = None,
+) -> tuple[list[Entity], list[Fact], list[Evidence], list[Coverage], list[JsonObject]]:
+    ctx = ctx or ExtractionContext()
     entities: list[Entity] = []
     facts_by_id: dict[str, Fact] = {}
     evidence_by_id: dict[str, Evidence] = {}
     coverage: list[Coverage] = []
     errors: list[JsonObject] = []
 
-    for adapter in select_applicable_adapters(repo, adapters, ctx=ctx):
+    for adapter in adapters:
+        _validate_capability(adapter)
         try:
             result = adapter.extract(repo, ctx)
             _validate(adapter, result)
@@ -83,6 +96,7 @@ def _repo_languages(repo: RepoSnapshot) -> frozenset[str]:
 
 
 def _validate(adapter: Adapter, result: AdapterResult) -> None:
+    _validate_capability(adapter)
     for entity in result.entities:
         if entity.kind not in SUPPORTED_ENTITY_KINDS:
             raise ValueError(f"{adapter.capability.name} emitted unsupported entity kind: {entity.kind}")
@@ -98,6 +112,11 @@ def _validate(adapter: Adapter, result: AdapterResult) -> None:
             raise ValueError(
                 f"{adapter.capability.name} emitted evidence without bytes_ref for source_system: {row.source_system}"
             )
+
+
+def _validate_capability(adapter: Adapter) -> None:
+    if not adapter.capability.source_system:
+        raise ValueError(f"{adapter.capability.name} must declare source_system")
 
 
 def _adapter_error_coverage(repo: RepoSnapshot, adapter: Adapter, ctx: ExtractionContext, exc: Exception) -> Coverage:
