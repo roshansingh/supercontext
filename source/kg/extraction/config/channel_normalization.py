@@ -9,6 +9,7 @@ from source.kg.core.models import JsonObject
 
 ARN_RE = re.compile(r"\barn:aws:(?P<service>sqs|sns):(?P<region>[A-Za-z0-9-]+):(?P<account_id>\d+):(?P<name>[A-Za-z0-9_.-]+)\b")
 SQS_URL_RE = re.compile(r"\bhttps?://sqs\.(?P<region>[A-Za-z0-9-]+)\.amazonaws\.com/(?P<account_id>\d+)/(?P<queue_name>[A-Za-z0-9_.-]+)\b")
+SQS_QUEUE_NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}(?:\.fifo)?$")
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,20 @@ def normalize_sqs_url(url: str) -> NormalizedChannel | None:
             "queue_url": raw_url,
             "region": region,
             "account_id": account_id,
+            "queue_name": queue_name,
+        },
+    )
+
+
+def normalize_sqs_queue_name(name: str) -> NormalizedChannel | None:
+    queue_name = name.strip()
+    if not SQS_QUEUE_NAME_RE.fullmatch(queue_name):
+        return None
+    return NormalizedChannel(
+        broker_kind="sqs",
+        channel_address=queue_name,
+        properties={
+            "raw_literal": queue_name,
             "queue_name": queue_name,
         },
     )

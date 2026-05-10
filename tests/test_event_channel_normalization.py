@@ -6,7 +6,7 @@ from pathlib import Path
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.channel_normalization import normalize_sqs_arn, normalize_sqs_url
+from source.kg.extraction.config.channel_normalization import normalize_sqs_arn, normalize_sqs_queue_name, normalize_sqs_url
 from source.kg.extraction.config.common import ConfigKgBuild, ScannedFile, event_channel_entity
 from source.kg.extraction.config.deploy_events import extract_deploy_events
 
@@ -37,6 +37,15 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertEqual(channel.broker_kind, "sqs")
         self.assertEqual(channel.channel_address, "orders-created")
         self.assertEqual(channel.properties["queue_url"], url)
+
+    def test_sqs_queue_name_normalizes_only_valid_queue_names(self) -> None:
+        channel = normalize_sqs_queue_name("orders-created")
+
+        self.assertIsNotNone(channel)
+        assert channel is not None
+        self.assertEqual(channel.broker_kind, "sqs")
+        self.assertEqual(channel.channel_address, "orders-created")
+        self.assertIsNone(normalize_sqs_queue_name("not a queue name"))
 
     def test_event_channel_identity_matches_ontology_shape(self) -> None:
         repo = _repo_snapshot(Path.cwd())
@@ -96,6 +105,49 @@ class EventChannelNormalizationTest(unittest.TestCase):
             scanned = ScannedFile(
                 path=config_path,
                 relative_path=".env",
+                text=config_path.read_text(encoding="utf-8"),
+                lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build)
+
+            self.assertFalse([entity for entity in build.entities if entity.kind == "EventChannel"])
+            self.assertFalse([fact for fact in build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"])
+
+    def test_ini_sqs_shaped_value_emits_event_reference_from_any_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            config_path = repo_root / "prod.ini"
+            config_path.write_text("[messaging]\nemail_queue = orders-created\n", encoding="utf-8")
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "local-dev", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=config_path,
+                relative_path="prod.ini",
+                text=config_path.read_text(encoding="utf-8"),
+                lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build)
+
+            channels = [entity for entity in build.entities if entity.kind == "EventChannel"]
+            self.assertEqual(len(channels), 1)
+            self.assertEqual(channels[0].identity["channel_address"], "orders-created")
+            reference_fact = next(fact for fact in build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL")
+            self.assertEqual(reference_fact.qualifier["source_kind"], "ini_queue_config")
+
+    def test_ini_non_queue_tooling_values_do_not_emit_event_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            config_path = repo_root / "setup.ini"
+            config_path.write_text("[flake8]\nmax-line-length = 88\nasyncio_mode = auto\n", encoding="utf-8")
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "local-dev", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=config_path,
+                relative_path="setup.ini",
                 text=config_path.read_text(encoding="utf-8"),
                 lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
             )

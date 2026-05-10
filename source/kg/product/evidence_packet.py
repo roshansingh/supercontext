@@ -154,6 +154,8 @@ def _claim_for_row(row: JsonObject) -> str:
         return f"{prefix}{subject} references event channel {object_}."
     if predicate == "CONSUMES_EVENT":
         return f"{prefix}{subject} consumes event channel {object_}."
+    if predicate == "PRODUCES_EVENT":
+        return f"{prefix}{subject} produces event channel {object_}."
     if predicate == "RESOLVES_TO_REPO":
         return f"{prefix}{subject} resolves to repo {object_}."
     if predicate == "RESOLVES_TO_SERVICE":

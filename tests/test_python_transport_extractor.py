@@ -138,7 +138,238 @@ class PythonTransportExtractorTest(unittest.TestCase):
         fact, channel = _single_event_fact(build.facts, build.entities)
         self.assertEqual(channel.identity["broker_kind"], "sqs")
         self.assertEqual(channel.identity["channel_address"], "orders-created")
+
+    def test_boto3_get_queue_by_name_accepts_bare_queue_name(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def publish_order():\n"
+            '    sqs = boto3.resource("sqs")\n'
+            '    queue = sqs.get_queue_by_name(QueueName="orders-created")\n'
+            '    queue.send_message(MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
         self.assertEqual(fact.qualifier["api"], "boto3.resource('sqs').Queue(...).send_message")
+
+    def test_bare_queue_name_does_not_resolve_for_queue_url_argument(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def publish_order():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl="orders-created", MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
+        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT"]
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unsupported_channel_literal")
+
+    def test_module_level_queue_resource_resolves_imported_settings_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings_dir = root / "app" / "settings"
+            settings_dir.mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (settings_dir / "__init__.py").write_text("", encoding="utf-8")
+            (settings_dir / "dev.py").write_text('QUEUE_NAME = "dev-orders"\n', encoding="utf-8")
+            (settings_dir / "prod.py").write_text('QUEUE_NAME = "prod-orders"\n', encoding="utf-8")
+            producer = root / "app" / "producer.py"
+            producer.write_text(
+                "import boto3\n"
+                "from app import settings\n\n"
+                'sqs = boto3.resource("sqs")\n'
+                "queue = sqs.get_queue_by_name(QueueName=settings.QUEUE_NAME)\n\n"
+                "def publish_order():\n"
+                '    queue.send_message(MessageBody="{}")\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (settings_dir / "__init__.py", settings_dir / "dev.py", settings_dir / "prod.py", producer))
+
+            build = PythonAstExtractor().extract(repo)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertEqual(
+            {channels_by_id[fact.object_id].identity["channel_address"] for fact in event_facts},
+            {"dev-orders", "prod-orders"},
+        )
+
+    def test_direct_settings_import_resolves_environment_variants_for_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings_dir = root / "app" / "settings"
+            settings_dir.mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (settings_dir / "__init__.py").write_text("", encoding="utf-8")
+            (settings_dir / "dev.py").write_text('QUEUE_NAME = "dev-orders"\n', encoding="utf-8")
+            (settings_dir / "prod.py").write_text('QUEUE_NAME = "prod-orders"\n', encoding="utf-8")
+            consumer = root / "app" / "consumer.py"
+            consumer.write_text(
+                "import boto3\n"
+                "from app.settings import QUEUE_NAME\n\n"
+                "def consume_orders():\n"
+                '    sqs = boto3.resource("sqs")\n'
+                "    queue = sqs.get_queue_by_name(QueueName=QUEUE_NAME)\n"
+                "    queue.receive_messages(MaxNumberOfMessages=5)\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (settings_dir / "__init__.py", settings_dir / "dev.py", settings_dir / "prod.py", consumer))
+
+            build = PythonAstExtractor().extract(repo)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertEqual(
+            {channels_by_id[fact.object_id].identity["channel_address"] for fact in event_facts},
+            {"dev-orders", "prod-orders"},
+        )
+
+    def test_control_flow_queue_resource_resolves_config_ini_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_dir = root / "app" / "configmanager"
+            config_dir.mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (config_dir / "prod.ini").write_text("[messaging]\nemail_queue = prod-email\n", encoding="utf-8")
+            (config_dir / "__init__.py").write_text(
+                "import configparser\n\n"
+                "parser = configparser.ConfigParser()\n"
+                "parser.read('prod.ini')\n\n"
+                "class QueueConfig:\n"
+                "    def __init__(self):\n"
+                "        self.EMAIL_QUEUE = parser['messaging']['email_queue']\n\n"
+                "class AppConfig:\n"
+                "    def __init__(self):\n"
+                "        self.queueConfig = QueueConfig()\n\n"
+                "settings = AppConfig()\n",
+                encoding="utf-8",
+            )
+            producer = root / "app" / "producer.py"
+            producer.write_text(
+                "import boto3\n"
+                "from app.configmanager import settings\n\n"
+                "email_sqs_queue = None\n\n"
+                "def publish_order():\n"
+                "    global email_sqs_queue\n"
+                "    if not email_sqs_queue:\n"
+                '        sqs = boto3.resource("sqs")\n'
+                "        email_sqs_queue = sqs.get_queue_by_name(QueueName=settings.queueConfig.EMAIL_QUEUE)\n"
+                '    email_sqs_queue.send_message(MessageBody="{}")\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (config_dir / "__init__.py", producer))
+
+            build = PythonAstExtractor().extract(repo)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["channel_address"], "prod-email")
+        self.assertEqual(fact.predicate, "PRODUCES_EVENT")
+
+    def test_configparser_argument_passed_to_child_config_class_resolves_ini_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_dir = root / "app" / "configmanager"
+            config_dir.mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (config_dir / "prod.ini").write_text("[queue]\nemail_queue = prod-email\n", encoding="utf-8")
+            (config_dir / "__init__.py").write_text(
+                "import configparser\n\n"
+                "class Config:\n"
+                "    def __init__(self):\n"
+                "        parser = configparser.ConfigParser()\n"
+                "        parser.read('prod.ini')\n"
+                "        self.queueConfig = QueueConfig(parser)\n\n"
+                "class QueueConfig:\n"
+                "    def __init__(self, parser):\n"
+                "        self.EMAIL_QUEUE = parser['queue']['email_queue']\n\n"
+                "config = Config()\n",
+                encoding="utf-8",
+            )
+            producer = root / "app" / "producer.py"
+            producer.write_text(
+                "import boto3\n"
+                "from app.configmanager import config\n\n"
+                "def publish_order():\n"
+                '    sqs = boto3.resource("sqs")\n'
+                "    queue = sqs.get_queue_by_name(QueueName=config.queueConfig.EMAIL_QUEUE)\n"
+                '    queue.send_message(MessageBody="{}")\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (config_dir / "__init__.py", producer))
+
+            build = PythonAstExtractor().extract(repo)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["channel_address"], "prod-email")
+        self.assertEqual(fact.predicate, "PRODUCES_EVENT")
+
+    def test_ini_files_do_not_pollute_python_literal_namespace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            package = root / "app"
+            package.mkdir()
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (root / "pytest.ini").write_text("[pytest]\nasyncio_mode = auto\n", encoding="utf-8")
+            (root / "setup.ini").write_text("[flake8]\nmax-line-length = 88\n", encoding="utf-8")
+            producer = package / "producer.py"
+            producer.write_text(
+                "import boto3\n"
+                "from app import settings\n\n"
+                "def publish_order():\n"
+                '    sqs = boto3.resource("sqs")\n'
+                "    queue = sqs.get_queue_by_name(QueueName=settings.MAX_LINE_LENGTH)\n"
+                '    queue.send_message(MessageBody="{}")\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (producer,))
+
+            build = PythonAstExtractor().extract(repo)
+
+        self.assertFalse([fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"])
+        unresolved = [row for row in build.coverage if row.predicate == "PRODUCES_EVENT" and row.state == "uninstrumented"]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_attribute_root")
+
+    def test_sqs_receive_messages_emits_consumes_event(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def consume_orders():\n"
+            '    sqs = boto3.resource("sqs")\n'
+            '    queue = sqs.get_queue_by_name(QueueName="orders-created")\n'
+            "    for message in queue.receive_messages(MaxNumberOfMessages=10):\n"
+            "        pass\n"
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertEqual(len(event_facts), 1)
+        self.assertEqual(channels_by_id[event_facts[0].object_id].identity["channel_address"], "orders-created")
+        self.assertEqual(event_facts[0].qualifier["api"], "boto3.resource('sqs').Queue(...).receive_messages")
+
+    def test_ambiguous_queue_resource_assignments_fail_closed(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def publish_order(flag):\n"
+            '    sqs = boto3.resource("sqs")\n'
+            "    if flag:\n"
+            '        queue = sqs.get_queue_by_name(QueueName="orders-created")\n'
+            "    else:\n"
+            '        queue = sqs.get_queue_by_name(QueueName="other-orders")\n'
+            '    queue.send_message(MessageBody="{}")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        self.assertFalse(event_facts)
 
     def test_boto3_annotated_queue_assignment_emits_produces_event(self) -> None:
         source = (
