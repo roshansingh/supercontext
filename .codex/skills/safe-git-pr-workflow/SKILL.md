@@ -77,11 +77,13 @@ git status --short --branch
 
 8. After every push to a PR branch, poll auto-Copilot review.
 
-Do not manually request Copilot review; auto-review is configured.
+Do not manually request Copilot review immediately. Auto-review is configured, but GitHub only reviews new pushes automatically when the `Review new pushes` option is active; otherwise it may review only once.
 
 ```bash
 python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>
 ```
+
+The poll script waits for current-head Copilot activity. If none appears after the first 2-minute poll, it requests `@copilot` once as a fallback and continues polling.
 
 For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, and repeat the polling loop.
 

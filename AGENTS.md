@@ -61,10 +61,11 @@ Before creating a PR for the first time, after coding is finished, tests pass, a
 - If denying, document the concrete reason in the PR notes or a reply/comment.
 - Only create the PR after accepted/actionable Claude findings are handled.
 
-After every `git push` to a PR branch, do not manually request Copilot review; auto-review is configured for this repo. Verify and poll instead:
+After every `git push` to a PR branch, do not manually request Copilot review immediately. Auto-review is configured for this repo, but GitHub only reviews new pushes automatically when the `Review new pushes` option is active; otherwise it may review only once. Verify and poll instead:
 
 - Run `python -m source.scripts.poll_copilot_review --pr <PR_NUMBER>` after each push.
 - Poll every 2 minutes for up to 10 minutes, using the script defaults.
+- If no current-head Copilot activity appears after the first 2-minute poll, the script requests `@copilot` once as a fallback and continues polling.
 - Check both top-level Copilot reviews and inline review comments.
 - For each Copilot comment, make an explicit decision: `accept`, `deny`, or `act`.
 - If accepting/acting, implement the fix with a regression test when behavior changes.

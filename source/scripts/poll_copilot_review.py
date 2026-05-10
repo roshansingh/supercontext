@@ -17,6 +17,15 @@ def main() -> None:
     parser.add_argument("--repo", help="owner/name. Defaults to `gh repo view`.")
     parser.add_argument("--interval-seconds", type=int, default=120)
     parser.add_argument("--timeout-seconds", type=int, default=600)
+    parser.add_argument(
+        "--manual-request-after-seconds",
+        type=int,
+        default=120,
+        help=(
+            "Request @copilot once if no current-head Copilot activity appears after this many seconds. "
+            "Use 0 to disable the fallback."
+        ),
+    )
     args = parser.parse_args()
 
     repo = args.repo or _gh_text(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
@@ -25,12 +34,33 @@ def main() -> None:
     head_sha = _gh_text(["pr", "view", str(pr_number), "--json", "headRefOid", "--jq", ".headRefOid"])
     head_created_at = _head_commit_created_at(repo, head_sha)
     deadline = time.monotonic() + args.timeout_seconds
+    started_at = time.monotonic()
+    manual_request_sent = False
     attempt = 1
     while True:
         result = _poll_once(repo, pr_number, head_sha, head_created_at)
         _print_summary(result, attempt, repo, pr_number, head_sha)
         if result["feedback"]:
             return
+        elapsed = int(time.monotonic() - started_at)
+        should_request = (
+            args.manual_request_after_seconds > 0
+            and not manual_request_sent
+            and not result["activity"]
+            and elapsed >= args.manual_request_after_seconds
+        )
+        if should_request:
+            manual_request_sent = True
+            if _request_copilot_review(pr_number):
+                print(
+                    "No current-head Copilot activity appeared after "
+                    f"{elapsed}s; requested @copilot review once as fallback."
+                )
+            else:
+                print(
+                    "No current-head Copilot activity appeared after "
+                    f"{elapsed}s; attempted @copilot fallback request but GitHub rejected it."
+                )
         if time.monotonic() >= deadline:
             print("No Copilot feedback appeared within the polling window.")
             return
@@ -58,8 +88,8 @@ def _poll_once(repo: str, pr_number: int, head_sha: str, head_created_at: str) -
     copilot_events = [
         event
         for event in events
-        if event.get("event") == "copilot_work_started"
-        or _is_copilot_user(event.get("requested_reviewer"))
+        if str(event.get("created_at", "")) >= head_created_at
+        and (event.get("event") == "copilot_work_started" or _is_copilot_user(event.get("requested_reviewer")))
     ]
     return {
         "activity": bool(copilot_events or copilot_reviews or unresolved_threads or copilot_issue),
@@ -101,6 +131,20 @@ def _is_copilot_user(user: Any) -> bool:
 def _head_commit_created_at(repo: str, head_sha: str) -> str:
     commit = _gh_json(["api", f"repos/{repo}/commits/{head_sha}"])
     return str(commit.get("commit", {}).get("committer", {}).get("date", ""))
+
+
+def _request_copilot_review(pr_number: int) -> bool:
+    result = subprocess.run(
+        ["gh", "pr", "edit", str(pr_number), "--add-reviewer", "@copilot"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return True
+    message = (result.stderr or result.stdout or "").strip()
+    if message:
+        print(message, file=sys.stderr)
+    return False
 
 
 def _unresolved_copilot_threads(repo: str, pr_number: int) -> list[dict[str, Any]]:
