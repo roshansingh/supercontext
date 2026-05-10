@@ -100,6 +100,7 @@ class ConfigClassInfo:
 @dataclass(frozen=True)
 class ValueScope:
     local_values: dict[str, ast.AST] = field(default_factory=dict)
+    local_resolved_values: dict[str, ResolvedValue] = field(default_factory=dict)
     imported_modules: dict[str, str] = field(default_factory=dict)
     imported_values: dict[str, LiteralRef] = field(default_factory=dict)
     env_values: dict[str, str] = field(default_factory=dict)
@@ -115,7 +116,7 @@ class ValueResolver:
 
     def resolve_value(self, node: ast.AST) -> ResolvedValue | UnresolvedValue:
         if isinstance(node, ast.Constant):
-            return ResolvedValue(node.value, "literal", _expression(node), _node_source_refs(node))
+            return ResolvedValue(node.value, "literal", _expression(node))
 
         if isinstance(node, ast.List):
             return self._resolve_sequence(node.elts, list, _expression(node))
@@ -161,6 +162,9 @@ class ValueResolver:
             if isinstance(resolved, ResolvedValue):
                 return ResolvedValue(resolved.value, f"local:{name}", _expression(node), resolved.source_refs)
             return resolved
+        if name in self.scope.local_resolved_values:
+            resolved = self.scope.local_resolved_values[name]
+            return ResolvedValue(resolved.value, f"local:{name}", _expression(node), resolved.source_refs)
         imported_ref = self.scope.imported_values.get(name)
         if imported_ref is not None:
             return self._resolve_imported_name(imported_ref, _expression(node))
@@ -810,20 +814,6 @@ def resolved_to_json(value: ResolvedValue) -> JsonObject:
     if value.source_refs:
         payload["source_refs"] = list(value.source_refs)
     return payload
-
-
-def resolved_constant(value: ResolvedValue) -> ast.Constant:
-    node = ast.Constant(value=value.value)
-    if value.source_refs:
-        setattr(node, "_bettercontext_source_refs", value.source_refs)
-    return node
-
-
-def _node_source_refs(node: ast.AST) -> tuple[JsonObject, ...]:
-    source_refs = getattr(node, "_bettercontext_source_refs", ())
-    if not isinstance(source_refs, tuple):
-        return ()
-    return tuple(source_ref for source_ref in source_refs if isinstance(source_ref, dict))
 
 
 def _config_source_to_json(source_ref: ConfigSourceRef) -> JsonObject:
