@@ -1,6 +1,6 @@
 ---
 name: pre-pr-semantic-review
-description: Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, loaders, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, and regression tests.
+description: Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, loaders, endpoint/path reconciliation, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, and regression tests.
 ---
 
 # Pre-PR Semantic Review
@@ -33,6 +33,8 @@ git status --short --branch
 
 ## Extractor And AST Checklist
 
+- Gate language-specific legacy extractors by file type before scanning lines. A JS/TS regex extractor must not run on Python, YAML, JSON, Markdown, or config files.
+- Parser-backed extractors must not be followed by broad legacy regex extraction over the same file type unless the legacy facts are explicitly isolated and tested for no duplicate/conflicting facts.
 - Do not use whole-function facts when call-site-scoped facts are required. Resolution maps for locals, clients, resources, aliases, or wrappers must only use bindings visible at that call site unless Python semantics require fail-closed handling.
 - If a name is locally bound but not statically resolvable, do not fall back to a same-named module/global constant. Emit unresolved coverage or skip promotion.
 - Match Python call semantics before wrapper promotion: positional-only, keyword-only, missing required args, duplicate bindings, `*args`, and `**kwargs` must fail closed when ambiguous.
@@ -45,10 +47,18 @@ git status --short --branch
 ## Validation Checklist
 
 - Validate external JSON/input shapes before `.get`, iteration, or rendering.
+- Validate config documents by structural schema markers, not by broad content keywords. For OpenAPI, require a `paths` object plus an `openapi` or `swagger` version marker before emitting endpoint documentation facts.
 - Reject malformed rows, duplicate IDs, padded IDs, non-list list fields, and non-string list members with field-specific errors.
 - Treat sentinel values as contracts; pass/fail fields must be mutually consistent.
 - Keep allowlists as the single source of truth for supported languages, transports, methods, statuses, and derivation classes.
 - Resolve executable/SDK dependencies early with actionable errors.
+
+## Path And Scope Semantics
+
+- Do not overload `path` in structured records. Use explicit keys such as `file_path`, `endpoint_path`, `module_path`, or `path_prefix` so filters cannot confuse source-file paths with product/runtime paths.
+- Apply endpoint `path_prefix` filters only to endpoint identities or explicitly named `endpoint_path` fields. Do not apply endpoint prefixes to coverage rows whose paths are source files.
+- Preserve caller-provided prefix semantics. If another helper uses raw `startswith(path_prefix)`, do not normalize away trailing slashes in an adjacent warning/status path and accidentally make `/v1/` match `/v1beta/...`.
+- When a query/reconciliation method has filters, apply the same filters consistently to status, warning suppression, and result rows. Add a negative test where data exists outside the requested filter and must not suppress warnings inside the filter.
 
 ## Regression Test Rule
 
