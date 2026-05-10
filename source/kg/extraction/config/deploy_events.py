@@ -268,14 +268,25 @@ def _ini_queue_channels(scanned: ScannedFile) -> list[tuple[int, NormalizedChann
         return []
     line_by_option = _ini_option_lines(scanned)
     channels: list[tuple[int, NormalizedChannel]] = []
+    for option, value in parser.defaults().items():
+        channel = _normalized_ini_queue_value(value)
+        if channel is not None:
+            channels.append((line_by_option.get(("default", option.casefold()), 1), channel))
     for section in parser.sections():
-        for option, value in parser[section].items():
-            if not _looks_like_queue_config_value(value):
+        section_key = section.casefold()
+        for option in sorted(option for candidate_section, option in line_by_option if candidate_section == section_key):
+            if option not in parser[section]:
                 continue
-            channel = normalize_sqs_queue_name(value)
+            channel = _normalized_ini_queue_value(parser[section][option])
             if channel is not None:
-                channels.append((line_by_option.get((section.casefold(), option.casefold()), 1), channel))
+                channels.append((line_by_option.get((section_key, option), 1), channel))
     return channels
+
+
+def _normalized_ini_queue_value(value: str) -> NormalizedChannel | None:
+    if not _looks_like_queue_config_value(value):
+        return None
+    return normalize_sqs_queue_name(value)
 
 
 def _looks_like_queue_config_value(value: str) -> bool:

@@ -356,18 +356,44 @@ def _ini_option_values_by_directory(repo: RepoSnapshot) -> dict[Path, dict[str, 
     for path in sorted(repo.root.rglob("*.ini"), key=lambda candidate: str(candidate.relative_to(repo.root))):
         if not path.is_file():
             continue
+        text = path.read_text(encoding="utf-8", errors="replace")
         parser = configparser.ConfigParser()
         try:
-            parser.read_string(path.read_text(encoding="utf-8", errors="replace"))
+            parser.read_string(text)
         except configparser.Error:
             continue
+        local_options = _ini_local_options(text)
+        for option, value in parser.defaults().items():
+            values_by_directory.setdefault(path.parent, {}).setdefault(option.casefold(), []).append(value)
         for section in parser.sections():
-            for option, value in parser[section].items():
-                values_by_directory.setdefault(path.parent, {}).setdefault(option.casefold(), []).append(value)
+            for option in sorted(local_options.get(section.casefold(), ())):
+                if option in parser[section]:
+                    values_by_directory.setdefault(path.parent, {}).setdefault(option, []).append(parser[section][option])
     return {
         directory: {option: tuple(_unique_strings(values)) for option, values in option_values.items()}
         for directory, option_values in values_by_directory.items()
     }
+
+
+def _ini_local_options(text: str) -> dict[str, set[str]]:
+    current_section: str | None = None
+    options: dict[str, set[str]] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1].strip().casefold()
+            options.setdefault(current_section, set())
+            continue
+        if current_section is None:
+            continue
+        key, separator, _ = line.partition("=")
+        if not separator:
+            key, separator, _ = line.partition(":")
+        if separator:
+            options.setdefault(current_section, set()).add(key.strip().casefold())
+    return options
 
 
 def _config_object_option_paths(tree: ast.AST) -> list[tuple[str, tuple[str, ...], str]]:

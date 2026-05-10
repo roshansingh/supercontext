@@ -143,6 +143,33 @@ class EventChannelNormalizationTest(unittest.TestCase):
             reference_fact = next(fact for fact in build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL")
             self.assertEqual(reference_fact.qualifier["source_kind"], "ini_queue_config")
 
+    def test_ini_default_queue_value_emits_once_with_default_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            config_path = repo_root / "prod.ini"
+            config_path.write_text(
+                "[DEFAULT]\nemail_queue = orders-created\n\n[messaging]\nother = ignoredvalue\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "local-dev", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=config_path,
+                relative_path="prod.ini",
+                text=config_path.read_text(encoding="utf-8"),
+                lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build)
+
+            channels = [entity for entity in build.entities if entity.kind == "EventChannel"]
+            self.assertEqual(len(channels), 1)
+            self.assertEqual(channels[0].identity["channel_address"], "orders-created")
+            reference_fact = next(fact for fact in build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL")
+            evidence = [row for row in build.evidence if row.target_id == reference_fact.fact_id]
+            self.assertEqual(evidence[0].bytes_ref["line_start"], 2)
+
     def test_ini_non_queue_tooling_values_do_not_emit_event_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)

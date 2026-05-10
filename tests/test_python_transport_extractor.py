@@ -290,6 +290,48 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(channel.identity["channel_address"], "prod-email")
         self.assertEqual(fact.predicate, "PRODUCES_EVENT")
 
+    def test_configparser_default_ini_value_resolves_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_dir = root / "app" / "configmanager"
+            config_dir.mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (config_dir / "prod.ini").write_text(
+                "[DEFAULT]\nemail_queue = default-email\n\n[queue]\nother = ignored-value\n",
+                encoding="utf-8",
+            )
+            (config_dir / "__init__.py").write_text(
+                "import configparser\n\n"
+                "class Config:\n"
+                "    def __init__(self):\n"
+                "        parser = configparser.ConfigParser()\n"
+                "        parser.read('prod.ini')\n"
+                "        self.queueConfig = QueueConfig(parser)\n\n"
+                "class QueueConfig:\n"
+                "    def __init__(self, parser):\n"
+                "        self.EMAIL_QUEUE = parser['queue']['email_queue']\n\n"
+                "config = Config()\n",
+                encoding="utf-8",
+            )
+            producer = root / "app" / "producer.py"
+            producer.write_text(
+                "import boto3\n"
+                "from app.configmanager import config\n\n"
+                "def publish_order():\n"
+                '    sqs = boto3.resource("sqs")\n'
+                "    queue = sqs.get_queue_by_name(QueueName=config.queueConfig.EMAIL_QUEUE)\n"
+                '    queue.send_message(MessageBody="{}")\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (config_dir / "__init__.py", producer))
+
+            build = PythonAstExtractor().extract(repo)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertEqual(len(event_facts), 1)
+        self.assertEqual(channels_by_id[event_facts[0].object_id].identity["channel_address"], "default-email")
+
     def test_configparser_argument_passed_to_child_config_class_resolves_ini_value(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -372,6 +414,37 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(len(event_facts), 1)
         self.assertEqual(channels_by_id[event_facts[0].object_id].identity["channel_address"], "orders-created")
         self.assertEqual(event_facts[0].qualifier["api"], "boto3.resource('sqs').Queue(...).receive_messages")
+
+    def test_sqs_client_receive_message_emits_consumes_event_for_queue_url(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def consume_orders():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.receive_message(QueueUrl="https://sqs.us-east-1.amazonaws.com/123456789012/orders-created")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        event_facts = [fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT"]
+        channels_by_id = {entity.entity_id: entity for entity in build.entities if entity.kind == "EventChannel"}
+        self.assertEqual(len(event_facts), 1)
+        self.assertEqual(channels_by_id[event_facts[0].object_id].identity["channel_address"], "orders-created")
+        self.assertEqual(event_facts[0].qualifier["api"], "boto3.client('sqs').receive_message")
+
+    def test_sqs_client_receive_message_rejects_bare_queue_name(self) -> None:
+        source = (
+            "import boto3\n\n"
+            "def consume_orders():\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.receive_message(QueueUrl="orders-created")\n'
+        )
+
+        build = _extract_single_file(source)
+
+        self.assertFalse([fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT"])
+        unresolved = [row for row in build.coverage if row.predicate == "CONSUMES_EVENT" and row.state == "uninstrumented"]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(unresolved[0].scope_ref["reason"], "unsupported_channel_literal")
 
     def test_ambiguous_queue_resource_assignments_fail_closed(self) -> None:
         source = (
