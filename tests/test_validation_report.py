@@ -41,7 +41,14 @@ class ValidationReportTest(unittest.TestCase):
                 encoding="utf-8",
             )
             answers.write_text(
-                json.dumps({"answers": [{"scenario_id": "Q001", "score": "Pass"}, {"scenario_id": "Q002", "score": "Partial"}]}),
+                json.dumps(
+                    {
+                        "answers": [
+                            {"scenario_id": "Q001", "score": "Pass", "evidence_item_count": 1, "retrieval_step_count": 1},
+                            {"scenario_id": "Q002", "score": "Partial", "evidence_item_count": 0, "retrieval_step_count": 1},
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
             judgement.write_text(
@@ -65,8 +72,111 @@ class ValidationReportTest(unittest.TestCase):
 
         self.assertEqual(summary["answer_score_summary"], {"Pass": 1})
         self.assertEqual(summary["evidence_summary"], {"complete": 1})
+        self.assertEqual(summary["artifact_summary"], {"current": 1})
         self.assertEqual(summary["answer_only_scenarios"], [{"scenario_id": "Q002", "self_score": "Partial", "notes": "No judgement ground truth available in PRODUCT-QUERY-SET."}])
         self.assertEqual(summary["packet_only_scenarios"], [])
+
+    def test_goldset_summary_flags_stale_answer_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            packets.write_text(
+                json.dumps(
+                    {"packets": [{"scenario_id": "Q088", "evidence_items": [{}, {}], "retrieval_steps": [{}, {}]}]}
+                ),
+                encoding="utf-8",
+            )
+            answers.write_text(
+                json.dumps(
+                    {
+                        "answers": [
+                            {"scenario_id": "Q088", "score": "Partial", "evidence_item_count": 1, "retrieval_step_count": 1}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            judgement.write_text(
+                json.dumps(
+                    {
+                        "judgements": [
+                            {
+                                "scenario_id": "Q088",
+                                "evidence_completeness": "partial",
+                                "answer_score": "Partial",
+                                "failure_owners": ["missing KG fact"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement))
+
+        self.assertEqual(summary["artifact_summary"], {"stale": 1})
+        self.assertEqual(summary["scenarios"][0]["artifact_status"], "stale")
+        self.assertEqual(
+            summary["scenarios"][0]["artifact_issues"],
+            [
+                "answer evidence_item_count=1 does not match current packet evidence_item_count=2",
+                "answer retrieval_step_count=1 does not match current packet retrieval_step_count=2",
+            ],
+        )
+
+    def test_goldset_summary_flags_unverifiable_answer_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            packets.write_text(
+                json.dumps({"packets": [{"scenario_id": "Q088", "evidence_items": [], "retrieval_steps": []}]}),
+                encoding="utf-8",
+            )
+            answers.write_text(json.dumps({"answers": [{"scenario_id": "Q088", "score": "Pass"}]}), encoding="utf-8")
+            judgement.write_text(json.dumps({"judgements": [{"scenario_id": "Q088", "failure_owners": ["none"]}]}), encoding="utf-8")
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement))
+
+        self.assertEqual(summary["artifact_summary"], {"unverified": 1})
+        self.assertEqual(summary["scenarios"][0]["artifact_status"], "unverified")
+
+    def test_goldset_summary_flags_missing_packet_and_answer_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            packets.write_text(
+                json.dumps({"packets": [{"scenario_id": "Q001", "evidence_items": [], "retrieval_steps": []}]}),
+                encoding="utf-8",
+            )
+            answers.write_text(
+                json.dumps(
+                    {"answers": [{"scenario_id": "Q002", "score": "Pass", "evidence_item_count": 0, "retrieval_step_count": 0}]}
+                ),
+                encoding="utf-8",
+            )
+            judgement.write_text(
+                json.dumps(
+                    {
+                        "judgements": [
+                            {"scenario_id": "Q001", "failure_owners": ["none"]},
+                            {"scenario_id": "Q002", "failure_owners": ["none"]},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement))
+
+        statuses = {row["scenario_id"]: row["artifact_status"] for row in summary["scenarios"]}
+        self.assertEqual(statuses, {"Q001": "missing_answer", "Q002": "missing_packet"})
+        self.assertEqual(summary["artifact_summary"], {"missing_answer": 1, "missing_packet": 1})
 
     def test_goldset_summary_surfaces_packet_only_scenarios(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -216,6 +326,7 @@ class ValidationReportTest(unittest.TestCase):
             "goldset": {
                 "answer_score_summary": {"Pass": 1},
                 "evidence_summary": {"complete": 1},
+                "artifact_summary": {"current": 1},
                 "scenarios": [],
                 "answer_only_scenarios": [],
                 "packet_only_scenarios": [],
@@ -232,12 +343,19 @@ class ValidationReportTest(unittest.TestCase):
     def test_product_readout_is_derived_from_goldset_rows(self) -> None:
         goldset = {
             "scenarios": [
-                {"scenario_id": "Q999", "answer_score": "Pass", "evidence_completeness": "complete", "failure_owners": ["none"]},
+                {
+                    "scenario_id": "Q999",
+                    "answer_score": "Pass",
+                    "evidence_completeness": "complete",
+                    "failure_owners": ["none"],
+                    "artifact_status": "current",
+                },
                 {
                     "scenario_id": "Q998",
                     "answer_score": "Partial",
                     "evidence_completeness": "partial",
                     "failure_owners": ["missing KG fact"],
+                    "artifact_status": "current",
                 },
             ]
         }
@@ -247,6 +365,24 @@ class ValidationReportTest(unittest.TestCase):
         self.assertIn("Q999", lines[0])
         self.assertNotIn("Q082", lines[0])
         self.assertIn("missing KG fact=1", lines[1])
+
+    def test_product_readout_separates_stale_artifacts_from_product_failures(self) -> None:
+        goldset = {
+            "scenarios": [
+                {
+                    "scenario_id": "Q088",
+                    "answer_score": "Partial",
+                    "evidence_completeness": "partial",
+                    "failure_owners": ["missing KG fact"],
+                    "artifact_status": "stale",
+                }
+            ]
+        }
+
+        lines = _product_readout_lines(goldset, "Next.")
+
+        self.assertIn("Artifact consistency blocks product-gap diagnosis for Q088", "\n".join(lines))
+        self.assertNotIn("missing KG fact=1", "\n".join(lines))
 
     def test_overall_status_is_partial_for_incomplete_goldset_coverage(self) -> None:
         goldset = {
@@ -270,6 +406,18 @@ class ValidationReportTest(unittest.TestCase):
         }
 
         self.assertEqual(_overall_status([], goldset), "partial")
+
+    def test_overall_status_does_not_fail_on_stale_judgement_failure(self) -> None:
+        goldset = {
+            "scenarios": [{"scenario_id": "Q001", "answer_score": "Fail", "artifact_status": "stale"}],
+            "answer_only_scenarios": [],
+            "packet_only_scenarios": [],
+        }
+
+        self.assertEqual(_overall_status([], goldset), "partial")
+
+        goldset["scenarios"][0]["artifact_status"] = "current"
+        self.assertEqual(_overall_status([], goldset), "fail")
 
     def test_superseded_artifacts_are_generated_from_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -134,13 +134,22 @@ def render_validation_markdown(report: JsonObject) -> str:
             "",
             _counts_sentence(goldset["evidence_summary"], label="Evidence completeness"),
             "",
-            "| Scenario | Evidence | Judged Answer | Failure Owner | Notes |",
-            "|---|---|---|---|---|",
+            _counts_sentence(goldset["artifact_summary"], label="Artifact consistency"),
+            "",
+            "| Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |",
+            "|---|---|---|---|---|---|",
         ]
     )
     for row in goldset["scenarios"]:
+        raw_artifact_issues = row.get("artifact_issues", [])
+        artifact_issues = raw_artifact_issues if isinstance(raw_artifact_issues, list) else []
+        artifact_notes = "; ".join(str(issue) for issue in artifact_issues)
+        artifact_cell = row.get("artifact_status", "unknown")
+        if artifact_notes:
+            artifact_cell = f"{artifact_cell}: {artifact_notes}"
         lines.append(
-            f"| {_md_table_cell(row['scenario_id'])} | {_md_table_cell(row['evidence_completeness'])} | "
+            f"| {_md_table_cell(row['scenario_id'])} | {_md_table_cell(artifact_cell)} | "
+            f"{_md_table_cell(row['evidence_completeness'])} | "
             f"{_md_table_cell(row['answer_score'])} | {_md_table_cell(', '.join(row['failure_owners']))} | "
             f"{_md_table_cell(row['notes'])} |"
         )
@@ -514,17 +523,20 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
         failure_owners = judgement.get("failure_owners", [])
         if not isinstance(failure_owners, list) or not all(isinstance(owner, str) for owner in failure_owners):
             raise ValueError(f"{config.goldset_judgement} judgements[{index}].failure_owners must be list[str]")
-        packet = packets_by_id.get(scenario_id, {})
-        answer = answers_by_id.get(scenario_id, {})
+        packet = packets_by_id.get(scenario_id)
+        answer = answers_by_id.get(scenario_id)
+        artifact_status, artifact_issues = _goldset_artifact_consistency(packet, answer)
         judgement_rows.append(
             {
                 "scenario_id": scenario_id,
                 "evidence_completeness": judgement.get("evidence_completeness", "unknown"),
                 "answer_score": judgement.get("answer_score", "unknown"),
                 "failure_owners": failure_owners,
-                "evidence_item_count": len(packet.get("evidence_items", [])) if isinstance(packet, dict) else 0,
-                "retrieval_step_count": len(packet.get("retrieval_steps", [])) if isinstance(packet, dict) else 0,
+                "evidence_item_count": _list_count(packet.get("evidence_items")) if isinstance(packet, dict) else 0,
+                "retrieval_step_count": _list_count(packet.get("retrieval_steps")) if isinstance(packet, dict) else 0,
                 "self_score": answer.get("score") if isinstance(answer, dict) else None,
+                "artifact_status": artifact_status,
+                "artifact_issues": artifact_issues,
                 "notes": _goldset_notes(judgement),
             }
         )
@@ -556,11 +568,50 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
         "scenario_count": len(judgement_rows),
         "answer_score_summary": _result_counts(judgement_rows, key="answer_score"),
         "evidence_summary": _result_counts(judgement_rows, key="evidence_completeness"),
+        "artifact_summary": _result_counts(judgement_rows, key="artifact_status"),
         "failure_owner_summary": dict(sorted(Counter(owner for row in judgement_rows for owner in row["failure_owners"]).items())),
         "scenarios": judgement_rows,
         "answer_only_scenarios": answer_only,
         "packet_only_scenarios": packet_only,
     }
+
+
+def _goldset_artifact_consistency(packet: object, answer: object) -> tuple[str, list[str]]:
+    if not isinstance(packet, dict):
+        return "missing_packet", ["judgement scenario has no matching EvidencePacket row"]
+    if not isinstance(answer, dict):
+        return "missing_answer", ["judgement scenario has no matching synthesized answer row"]
+
+    issues: list[str] = []
+    _compare_count_metadata(
+        issues,
+        label="evidence_item_count",
+        answer_count=answer.get("evidence_item_count"),
+        current_count=_list_count(packet.get("evidence_items")),
+    )
+    _compare_count_metadata(
+        issues,
+        label="retrieval_step_count",
+        answer_count=answer.get("retrieval_step_count"),
+        current_count=_list_count(packet.get("retrieval_steps")),
+    )
+    if not issues:
+        return "current", []
+    if any("does not match" in issue for issue in issues):
+        return "stale", issues
+    return "unverified", issues
+
+
+def _compare_count_metadata(issues: list[str], label: str, answer_count: object, current_count: int) -> None:
+    if not isinstance(answer_count, int):
+        issues.append(f"answer missing integer {label}; cannot verify packet freshness")
+        return
+    if answer_count != current_count:
+        issues.append(f"answer {label}={answer_count} does not match current packet {label}={current_count}")
+
+
+def _list_count(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def _load_rows(path: Path, key: str) -> list[JsonObject]:
@@ -615,14 +666,23 @@ def _result_counts(rows: list[JsonObject], key: str = "result") -> JsonObject:
 
 def _overall_status(smoke_checks: list[JsonObject], goldset: JsonObject) -> str:
     smoke_failures = [row for row in smoke_checks if row.get("result") == "fail"]
-    judged_failures = [row for row in goldset["scenarios"] if row.get("answer_score") == "Fail"]
-    partials = [row for row in goldset["scenarios"] if row.get("answer_score") == "Partial"]
+    judged_failures = [
+        row
+        for row in goldset["scenarios"]
+        if row.get("answer_score") == "Fail" and row.get("artifact_status") == "current"
+    ]
+    partials = [
+        row
+        for row in goldset["scenarios"]
+        if row.get("answer_score") == "Partial" and row.get("artifact_status") == "current"
+    ]
+    artifact_issues = [row for row in goldset["scenarios"] if row.get("artifact_status") != "current"]
     unknown_scores = [
         row for row in goldset["scenarios"] if row.get("answer_score") not in {"Pass", "Partial", "Fail"}
     ]
     if smoke_failures or judged_failures:
         return "fail"
-    if partials or unknown_scores or goldset["answer_only_scenarios"] or goldset["packet_only_scenarios"]:
+    if partials or artifact_issues or unknown_scores or goldset["answer_only_scenarios"] or goldset["packet_only_scenarios"]:
         return "partial"
     return "pass"
 
@@ -638,14 +698,27 @@ def _product_readout_lines(goldset: JsonObject, next_feature_recommendation: str
     passing = [
         str(row["scenario_id"])
         for row in goldset["scenarios"]
-        if row.get("answer_score") == "Pass" and row.get("evidence_completeness") == "complete"
+        if row.get("answer_score") == "Pass"
+        and row.get("evidence_completeness") == "complete"
+        and row.get("artifact_status") == "current"
     ]
-    non_passing = [row for row in goldset["scenarios"] if row.get("answer_score") != "Pass"]
+    stale_or_unverified = [row for row in goldset["scenarios"] if row.get("artifact_status") != "current"]
+    non_passing = [
+        row
+        for row in goldset["scenarios"]
+        if row.get("answer_score") != "Pass" and row.get("artifact_status") == "current"
+    ]
     lines = []
     if passing:
         lines.append(f"- KG-first answers pass independent judgement when indexed facts exist: {', '.join(passing)}.")
     else:
         lines.append("- No judged scenario currently has both complete evidence and a passing answer.")
+    if stale_or_unverified:
+        scenario_ids = ", ".join(str(row["scenario_id"]) for row in stale_or_unverified)
+        lines.append(
+            "- Artifact consistency blocks product-gap diagnosis for "
+            f"{scenario_ids}; regenerate answers and judgement from the current EvidencePacket rows first."
+        )
     if non_passing:
         owners = Counter(owner for row in non_passing for owner in row.get("failure_owners", []) if owner != "none")
         if owners:
@@ -654,7 +727,7 @@ def _product_readout_lines(goldset: JsonObject, next_feature_recommendation: str
         else:
             lines.append("- Remaining judged failures do not have classified failure owners.")
     else:
-        lines.append("- No judged scenario failed or partially passed in this run.")
+        lines.append("- No current judged scenario failed or partially passed in this run.")
     lines.append(f"- Recommended next feature: {next_feature_recommendation}")
     return lines
 
