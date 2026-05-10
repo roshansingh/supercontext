@@ -46,7 +46,13 @@ git commit -m "Short imperative summary"
 
 Only do this once per PR, after coding is finished, tests pass, and the local semantic self-review is complete.
 
-Do not run Claude Code CLI yourself for this step. Tell the user to ask Claude manually and provide the resulting review file under `docs/reviews/`.
+Do not run Claude Code CLI yourself for this step. Give the user an exact copy-paste prompt/command for Claude Code and ask them to provide the resulting review file under `docs/reviews/`.
+
+The command must tell Claude to:
+- Review the current branch against `main`.
+- Do not edit files.
+- Write the review to a named path under `docs/reviews/`, such as `docs/reviews/PR-XX-REVIEW.md`.
+- Use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files.
 
 Read the manual review file. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
 

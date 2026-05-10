@@ -1,5 +1,7 @@
 debates/
 data/kg_runs/
+docs/plans/
+docs/reviews/
 __pycache__/
 *.pyc
 node_modules/
