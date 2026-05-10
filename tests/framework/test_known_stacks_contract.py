@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from source.kg.build.pipeline import extract_repo
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import discover_repo
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.framework.known_stacks import KNOWN_STACK_IMPORTS
 
@@ -58,17 +58,7 @@ def _run_fixture(fixture_dir: Path):
             target = root / source.relative_to(fixture_dir)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(source.read_bytes())
-        typescript_files = tuple(
-            sorted(path for path in root.rglob("*") if path.suffix in {".js", ".jsx", ".ts", ".tsx"})
-        )
-        repo = RepoSnapshot(
-            root=root,
-            name="known-stack-fixture",
-            owner="test",
-            commit_sha="sha",
-            python_files=tuple(sorted(root.rglob("*.py"))),
-            typescript_files=typescript_files,
-        )
+        repo = discover_repo(root)
         return extract_repo(repo)
 
 

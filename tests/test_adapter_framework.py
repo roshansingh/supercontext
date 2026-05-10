@@ -11,6 +11,7 @@ from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.adapters import config_shared
+from source.kg.extraction.adapters.legacy import LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
@@ -363,6 +364,41 @@ class AdapterFrameworkTest(unittest.TestCase):
         _, _, _, coverage, _ = run_adapters(repo, (adapter,))
 
         self.assertEqual([row for row in coverage if row.scope_ref.get("reason") == "no_adapter_for_known_stack"], [])
+
+    def test_python_extractor_populates_import_roots_for_known_stack_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text("import flask\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="python-known-stack",
+                owner="test",
+                commit_sha="sha",
+                python_files=(app,),
+                typescript_files=(),
+            )
+            adapter = LegacyAdapter(
+                capability=AdapterCapability(
+                    name="python-import-root-test",
+                    languages=("python",),
+                    produces_predicates=("DEFINED_IN", "IMPLEMENTS", "IMPORTS", "CALLS"),
+                    produces_entity_kinds=("Repo", "Service", "CodeModule", "ExternalPackage"),
+                    ontology_scope="mixed",
+                    source_system=PythonAstExtractor.source_system,
+                ),
+                extractor=PythonAstExtractor(include_transport=False),
+                language_gate="python",
+            )
+
+            _, _, _, coverage, errors = run_adapters(repo, (adapter,))
+
+        self.assertEqual(errors, [])
+        rows = _known_stack_rows(coverage)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].predicate, "EXPOSES_ENDPOINT")
+        self.assertEqual(rows[0].scope_ref["language"], "python")
+        self.assertEqual(rows[0].scope_ref["import_root"], "flask")
 
 
 @dataclass
