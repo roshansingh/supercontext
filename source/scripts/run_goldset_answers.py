@@ -14,6 +14,7 @@ from source.kg.product import (
     EvidencePacketBuilder,
 )
 from source.kg.product.answer_synthesis import DEFAULT_ANSWER_MODEL, render_answers_markdown
+from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.product.claude_tool_policy import DEFAULT_CLAUDE_PERMISSION_MODE
 from source.kg.product.validation import normalize_unique_strings
 from source.kg.query.snapshot import KgSnapshot
@@ -166,6 +167,7 @@ async def _synthesize_answers(
         answer["expected_answer_shape"] = packet.get("expected_answer_shape")
         answer["evidence_item_count"] = len(packet.get("evidence_items", []))
         answer["retrieval_step_count"] = len(packet.get("retrieval_steps", []))
+        answer["packet_fingerprint"] = packet_fingerprint(packet)
         answers.append(answer)
 
     return {
