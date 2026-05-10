@@ -36,11 +36,11 @@ git status --short --branch
 - Do not use whole-function facts when call-site-scoped facts are required. Resolution maps for locals, clients, resources, aliases, or wrappers must only use bindings visible at that call site unless Python semantics require fail-closed handling.
 - If a name is locally bound but not statically resolvable, do not fall back to a same-named module/global constant. Emit unresolved coverage or skip promotion.
 - Match Python call semantics before wrapper promotion: positional-only, keyword-only, missing required args, duplicate bindings, `*args`, and `**kwargs` must fail closed when ambiguous.
-- Account for local shadowing by params, assignment, annotated/aug assignment, imports, loops, `with`, `except`, walrus, nested defs/classes, lambdas, and `match/case` captures.
+- Account for local shadowing by params, assignment, annotated/aug assignment, imports, loops, `with`, `except`, walrus, nested defs/classes, lambdas, and `match/case` captures. Also account for `global`/`nonlocal` symbol-table effects.
 - Keep nested-scope traversal policies aligned across collectors. If call collection visits evaluated decorators/defaults/class bases, binding collection must treat the same expressions consistently.
 - Do not traverse nested function/class/lambda bodies as if they execute in the outer body. Do visit evaluated expressions: decorators, defaults, kw-defaults, class bases, and class keyword values.
 - Fail closed on ambiguous multiplicity. If one input maps to multiple candidate facts and the output contract is not list-shaped, emit no promoted fact.
-- Avoid repeated full-body scans inside per-call loops. Cache binding/name/alias analysis per function when used for many calls.
+- Avoid repeated full-body scans inside per-call loops. Cache binding/name/alias analysis per function when used for many calls, and stop ordered prefix scans with `break` once the target call site is reached.
 
 ## Validation Checklist
 

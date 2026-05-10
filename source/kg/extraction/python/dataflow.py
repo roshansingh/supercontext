@@ -260,7 +260,7 @@ def _local_literal_assignments(
     assignments: dict[str, ast.AST] = {}
     for statement in function_node.body:
         if before_node is not None and not node_starts_before(statement, before_node):
-            continue
+            break
         if isinstance(statement, ast.Assign):
             for target in statement.targets:
                 if isinstance(target, ast.Name) and _is_supported_local_expression(statement.value):

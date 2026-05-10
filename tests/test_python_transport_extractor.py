@@ -240,6 +240,25 @@ class PythonTransportExtractorTest(unittest.TestCase):
         self.assertEqual(unresolved[0].scope_ref["reason"], "unknown_local_binding")
         self.assertEqual(unresolved[0].scope_ref["expression"], "QUEUE_URL")
 
+    def test_global_declaration_allows_module_channel_resolution_before_assignment(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n'
+            'OTHER_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/other"\n\n'
+            "def publish_order():\n"
+            "    global QUEUE_URL\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=QUEUE_URL, MessageBody="{}")\n'
+            "    QUEUE_URL = OTHER_URL\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_api_call")
+
     def test_unsupported_transport_channel_literal_emits_coverage_not_fact(self) -> None:
         source = (
             "import boto3\n\n"
@@ -558,6 +577,25 @@ class PythonTransportExtractorTest(unittest.TestCase):
 
         event_facts = [fact for fact in build.facts if fact.predicate == "PRODUCES_EVENT"]
         self.assertFalse(event_facts)
+
+    def test_global_declaration_does_not_shadow_wrapper_name(self) -> None:
+        source = (
+            "import boto3\n\n"
+            'QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/orders-created"\n\n'
+            "def sender(destination):\n"
+            '    sqs = boto3.client("sqs")\n'
+            '    sqs.send_message(QueueUrl=destination, MessageBody="{}")\n\n'
+            "def publish_order():\n"
+            "    global sender\n"
+            "    sender(QUEUE_URL)\n"
+        )
+
+        build = _extract_single_file(source)
+
+        fact, channel = _single_event_fact(build.facts, build.entities)
+        self.assertEqual(channel.identity["broker_kind"], "sqs")
+        self.assertEqual(channel.identity["channel_address"], "orders-created")
+        self.assertEqual(fact.qualifier["source_kind"], "python_transport_wrapper_call")
 
     def test_multi_producer_wrapper_fails_closed(self) -> None:
         source = (

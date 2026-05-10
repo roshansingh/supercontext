@@ -451,7 +451,7 @@ def _assignment_values(
     assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
     for statement in function_node.body:
         if before_node is not None and not node_starts_before(statement, before_node):
-            continue
+            break
         if isinstance(statement, ast.Assign):
             assignments.append((statement.value, tuple(statement.targets)))
         elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
@@ -529,6 +529,8 @@ def _local_binding_names(function_node: FunctionDefNode) -> set[str]:
     for statement in function_node.body:
         collector.visit(statement)
     names.update(collector.names)
+    names.difference_update(collector.global_names)
+    names.update(collector.nonlocal_names)
     return names
 
 
@@ -546,6 +548,14 @@ def _target_names(target: ast.AST) -> set[str]:
 class _BindingCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         self.names: set[str] = set()
+        self.global_names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.nonlocal_names.update(node.names)
 
     def visit_Assign(self, node: ast.Assign) -> None:
         for target in node.targets:
