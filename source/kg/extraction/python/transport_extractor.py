@@ -11,6 +11,7 @@ from source.kg.extraction.config.channel_normalization import (
     NormalizedChannel,
     normalize_sns_arn,
     normalize_sqs_arn,
+    normalize_sqs_queue_name,
     normalize_sqs_url,
 )
 from source.kg.extraction.config.common import event_channel_entity
@@ -58,6 +59,22 @@ class TransportClient:
 @dataclass(frozen=True)
 class QueueResource:
     channel_arg: ast.AST
+    channel_arg_kind: str
+
+
+@dataclass(frozen=True)
+class ModuleTransportContext:
+    clients: dict[str, TransportClient]
+    queue_resources: dict[str, QueueResource]
+
+
+def module_transport_context(module_node: ast.Module | None, imports: list[NormalizedImport]) -> ModuleTransportContext:
+    if module_node is None:
+        return ModuleTransportContext(clients={}, queue_resources={})
+    boto3_names = _boto3_names(imports)
+    clients = _module_transport_clients(module_node, boto3_names)
+    queue_resources = _module_queue_resources(module_node, clients, boto3_names)
+    return ModuleTransportContext(clients=clients, queue_resources=queue_resources)
 
 
 def extract_transport_events(
@@ -72,11 +89,17 @@ def extract_transport_events(
     add_entity_evidence: Callable[..., None],
     add_fact: Callable[..., None],
     function_defs: dict[str, FunctionDefNode] | None = None,
+    module_node: ast.Module | None = None,
+    module_context: ModuleTransportContext | None = None,
 ) -> None:
     boto3_names = _boto3_names(imports)
     binding_name_cache: BindingNameCache = {}
     call_node_cache: CallNodeCache = {}
     caller_binding_names = _local_binding_names_cached(caller_node, binding_name_cache)
+    if module_context is None:
+        module_context = module_transport_context(module_node, imports)
+    module_clients = module_context.clients
+    module_queue_resources = module_context.queue_resources
     for call_node in _body_call_nodes_cached(caller_node, call_node_cache):
         resolver = _resolver(
             caller.module_name,
@@ -86,11 +109,14 @@ def extract_transport_events(
             before_node=call_node,
             local_binding_names=caller_binding_names,
         )
-        clients = _transport_clients(caller_node, boto3_names, before_node=call_node)
-        queue_resources = _queue_resources(caller_node, clients, boto3_names, before_node=call_node)
-        event = _event_from_call(call_node, clients, queue_resources, boto3_names, resolver)
-        if event is None and function_defs:
-            event = _event_from_wrapper_call(
+        clients = {**module_clients, **_transport_clients(caller_node, boto3_names, before_node=call_node)}
+        queue_resources = {
+            **module_queue_resources,
+            **_queue_resources(caller_node, clients, boto3_names, before_node=call_node),
+        }
+        events = _events_from_call(call_node, clients, queue_resources, boto3_names, resolver)
+        if not events and function_defs:
+            events = _events_from_wrapper_call(
                 call_node,
                 function_defs,
                 imports,
@@ -104,46 +130,48 @@ def extract_transport_events(
                 depth=0,
                 seen=(),
             )
-        if event is None:
+        if not events:
             continue
         line = getattr(call_node, "lineno", caller.line)
-        if isinstance(event.channel, UnresolvedValue):
-            build.coverage.append(
-                unresolved_coverage(repo, file_path, event.channel, source_system, predicate="PRODUCES_EVENT", line=line)
+        for event in events:
+            if isinstance(event.channel, UnresolvedValue):
+                build.coverage.append(
+                    unresolved_coverage(repo, file_path, event.channel, source_system, predicate=event.predicate, line=line)
+                )
+                continue
+            channel = event_channel_entity(
+                repo,
+                event.channel.broker_kind,
+                event.channel.channel_address,
+                properties=event.channel.properties,
             )
-            continue
-        channel = event_channel_entity(
-            repo,
-            event.channel.broker_kind,
-            event.channel.channel_address,
-            properties=event.channel.properties,
-        )
-        add_entity_evidence(build, repo, channel, file_path, line, line)
-        add_fact(
-            build,
-            "PRODUCES_EVENT",
-            caller.entity,
-            channel,
-            repo,
-            file_path,
-            line,
-            line,
-            qualifier={
-                "source_kind": event.source_kind,
-                "api": event.api,
-                "broker_kind": event.channel.broker_kind,
-                "channel_address": event.channel.channel_address,
-                "normalized_channel": event.channel.channel_address,
-                "raw_literal": event.channel.properties.get("raw_literal"),
-                "resolution": resolved_to_json(event.resolved),
-                **event.qualifier,
-            },
-            derivation_class=event.derivation_class,
-        )
+            add_entity_evidence(build, repo, channel, file_path, line, line)
+            add_fact(
+                build,
+                event.predicate,
+                caller.entity,
+                channel,
+                repo,
+                file_path,
+                line,
+                line,
+                qualifier={
+                    "source_kind": event.source_kind,
+                    "api": event.api,
+                    "broker_kind": event.channel.broker_kind,
+                    "channel_address": event.channel.channel_address,
+                    "normalized_channel": event.channel.channel_address,
+                    "raw_literal": event.channel.properties.get("raw_literal"),
+                    "resolution": resolved_to_json(event.resolved),
+                    **event.qualifier,
+                },
+                derivation_class=event.derivation_class,
+            )
 
 
 @dataclass(frozen=True)
 class TransportEvent:
+    predicate: str
     api: str
     channel: NormalizedChannel | UnresolvedValue
     resolved: ResolvedValue
@@ -172,58 +200,103 @@ def _transport_clients(
     return clients
 
 
+def _module_transport_clients(
+    module_node: ast.Module,
+    boto3_names: set[str],
+) -> dict[str, TransportClient]:
+    clients: dict[str, TransportClient] = {}
+    for value, targets in _module_assignment_values(module_node):
+        client = _transport_client_from_call(value, boto3_names)
+        if client is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                clients[target.id] = client
+    return clients
+
+
 def _queue_resources(
     function_node: ast.FunctionDef | ast.AsyncFunctionDef,
     clients: dict[str, TransportClient],
     boto3_names: set[str],
     before_node: ast.AST | None = None,
 ) -> dict[str, QueueResource]:
-    queues: dict[str, QueueResource] = {}
+    queues_by_name: dict[str, list[QueueResource]] = {}
     for value, targets in _assignment_values(function_node, before_node=before_node):
-        queue_arg = _queue_arg_from_call(value, clients, boto3_names)
+        queue_arg = _queue_resource_from_call(value, clients, boto3_names)
         if queue_arg is None:
             continue
         for target in targets:
             if isinstance(target, ast.Name):
-                queues[target.id] = QueueResource(channel_arg=queue_arg)
-    return queues
+                queues_by_name.setdefault(target.id, []).append(queue_arg)
+    return {name: queues[0] for name, queues in queues_by_name.items() if len(queues) == 1}
 
 
-def _event_from_call(
+def _module_queue_resources(
+    module_node: ast.Module,
+    clients: dict[str, TransportClient],
+    boto3_names: set[str],
+) -> dict[str, QueueResource]:
+    queues_by_name: dict[str, list[QueueResource]] = {}
+    for value, targets in _module_assignment_values(module_node):
+        queue_arg = _queue_resource_from_call(value, clients, boto3_names)
+        if queue_arg is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                queues_by_name.setdefault(target.id, []).append(queue_arg)
+    return {name: queues[0] for name, queues in queues_by_name.items() if len(queues) == 1}
+
+
+def _events_from_call(
     call_node: ast.Call,
     clients: dict[str, TransportClient],
     queue_resources: dict[str, QueueResource],
     boto3_names: set[str],
     resolver: ValueResolver,
-) -> TransportEvent | None:
+) -> list[TransportEvent]:
     method = _method_name(call_node.func)
     if method is None:
-        return None
+        return []
 
     receiver = _receiver(call_node.func)
     if receiver is None:
-        return None
+        return []
 
-    queue_arg = _queue_arg_from_receiver(receiver, clients, queue_resources, boto3_names)
-    if queue_arg is not None:
+    queue_resource = _queue_resource_from_receiver(receiver, clients, queue_resources, boto3_names)
+    if queue_resource is not None:
         spec = transport_spec("sqs", "resource", method)
         if spec is None:
-            return None
-        return _event_from_channel_arg(f"boto3.resource('sqs').Queue(...).{method}", "sqs", queue_arg, resolver)
+            return []
+        return _events_from_channel_arg(
+            spec.predicate,
+            f"boto3.resource('sqs').Queue(...).{method}",
+            "sqs",
+            queue_resource.channel_arg,
+            resolver,
+            allow_bare_sqs_name=queue_resource.channel_arg_kind == "queue_name",
+        )
 
     client = _client_from_receiver(receiver, clients, boto3_names)
     if client is None:
-        return None
+        return []
     spec = transport_spec(client.transport, client.factory, method)
     if spec is None or spec.channel_arg is None:
-        return None
+        return []
     channel_arg = _keyword_arg(call_node, spec.channel_arg)
     if channel_arg is None:
-        return None
-    return _event_from_channel_arg(f"boto3.{client.factory}('{client.transport}').{method}", client.transport, channel_arg, resolver)
+        return []
+    return _events_from_channel_arg(
+        spec.predicate,
+        f"boto3.{client.factory}('{client.transport}').{method}",
+        client.transport,
+        channel_arg,
+        resolver,
+        allow_bare_sqs_name=False,
+    )
 
 
-def _event_from_wrapper_call(
+def _events_from_wrapper_call(
     call_node: ast.Call,
     function_defs: dict[str, FunctionDefNode],
     imports: list[NormalizedImport],
@@ -237,22 +310,22 @@ def _event_from_wrapper_call(
     *,
     depth: int,
     seen: tuple[str, ...],
-) -> TransportEvent | None:
+) -> list[TransportEvent]:
     if depth >= MAX_WRAPPER_RESOLUTION_DEPTH:
-        return None
+        return []
     callee_name = _local_function_name(call_node.func)
     if callee_name is None or callee_name in seen:
-        return None
+        return []
     if callee_name in _local_binding_names_cached(caller_node, binding_name_cache):
-        return None
+        return []
     wrapper_node = function_defs.get(callee_name)
     if wrapper_node is None:
-        return None
+        return []
     resolved_bindings = _resolved_bindings(call_node, wrapper_node, caller_resolver)
     if resolved_bindings is None:
-        return None
+        return []
     wrapper_binding_names = _local_binding_names_cached(wrapper_node, binding_name_cache)
-    events: list[TransportEvent] = []
+    event_groups: list[list[TransportEvent]] = []
     for nested_call in _body_call_nodes_cached(wrapper_node, call_node_cache):
         wrapper_resolver = _resolver(
             module_name,
@@ -265,9 +338,9 @@ def _event_from_wrapper_call(
         )
         clients = _transport_clients(wrapper_node, boto3_names, before_node=nested_call)
         queue_resources = _queue_resources(wrapper_node, clients, boto3_names, before_node=nested_call)
-        event = _event_from_call(nested_call, clients, queue_resources, boto3_names, wrapper_resolver)
-        if event is None:
-            event = _event_from_wrapper_call(
+        events = _events_from_call(nested_call, clients, queue_resources, boto3_names, wrapper_resolver)
+        if not events:
+            events = _events_from_wrapper_call(
                 nested_call,
                 function_defs,
                 imports,
@@ -281,52 +354,76 @@ def _event_from_wrapper_call(
                 depth=depth + 1,
                 seen=(*seen, callee_name),
             )
-        if event is not None:
-            events.append(event)
-    if len(events) != 1:
-        return None
-    event = events[0]
-    wrapper_depth = event.qualifier.get("wrapper_depth") if event.qualifier else None
-    if not isinstance(wrapper_depth, int):
-        wrapper_depth = depth + 1
-    return TransportEvent(
-        api=event.api,
-        channel=event.channel,
-        resolved=event.resolved,
-        source_kind="python_transport_wrapper_call",
-        derivation_class="static_inferred",
-        qualifier={"wrapper_depth": max(depth + 1, wrapper_depth), "promotion": "local_wrapper_body"},
-    )
+        if events:
+            event_groups.append(events)
+    if len(event_groups) != 1:
+        return []
+    wrapped_events = []
+    for event in event_groups[0]:
+        wrapper_depth = event.qualifier.get("wrapper_depth") if event.qualifier else None
+        if not isinstance(wrapper_depth, int):
+            wrapper_depth = depth + 1
+        wrapped_events.append(
+            TransportEvent(
+                predicate=event.predicate,
+                api=event.api,
+                channel=event.channel,
+                resolved=event.resolved,
+                source_kind="python_transport_wrapper_call",
+                derivation_class="static_inferred",
+                qualifier={"wrapper_depth": max(depth + 1, wrapper_depth), "promotion": "local_wrapper_body"},
+            )
+        )
+    return wrapped_events
 
 
-def _event_from_channel_arg(
+def _events_from_channel_arg(
+    predicate: str,
     api: str,
     transport: str,
     channel_arg: ast.AST,
     resolver: ValueResolver,
-) -> TransportEvent | None:
+    *,
+    allow_bare_sqs_name: bool,
+) -> list[TransportEvent]:
     resolved = resolver.resolve_value(channel_arg)
     if isinstance(resolved, UnresolvedValue):
-        return TransportEvent(api=api, channel=resolved, resolved=ResolvedValue(None, "unresolved", resolved.expression))
-    if not isinstance(resolved.value, str):
-        return TransportEvent(
-            api=api,
-            channel=UnresolvedValue("non_string_channel", resolved.expression),
-            resolved=resolved,
-        )
-    channel = _normalize_channel(transport, resolved.value)
-    if channel is None:
-        return TransportEvent(
-            api=api,
-            channel=UnresolvedValue("unsupported_channel_literal", resolved.expression),
-            resolved=resolved,
-        )
-    return TransportEvent(api=api, channel=channel, resolved=resolved)
+        return [TransportEvent(predicate=predicate, api=api, channel=resolved, resolved=ResolvedValue(None, "unresolved", resolved.expression))]
+    values = _resolved_string_values(resolved.value)
+    if values is None:
+        return [
+            TransportEvent(
+                predicate=predicate,
+                api=api,
+                channel=UnresolvedValue("non_string_channel", resolved.expression),
+                resolved=resolved,
+            )
+        ]
+    events = []
+    for value in values:
+        channel = _normalize_channel(transport, value, allow_bare_sqs_name=allow_bare_sqs_name)
+        if channel is None:
+            events.append(
+                TransportEvent(
+                    predicate=predicate,
+                    api=api,
+                    channel=UnresolvedValue("unsupported_channel_literal", resolved.expression),
+                    resolved=resolved,
+                )
+            )
+            continue
+        events.append(TransportEvent(predicate=predicate, api=api, channel=channel, resolved=resolved))
+    return events
 
 
-def _normalize_channel(transport: str, value: str) -> NormalizedChannel | None:
+def _normalize_channel(transport: str, value: str, *, allow_bare_sqs_name: bool) -> NormalizedChannel | None:
     if transport == "sqs":
-        return normalize_sqs_url(value) or normalize_sqs_arn(value)
+        channel = normalize_sqs_url(value) or normalize_sqs_arn(value)
+        if channel is not None:
+            return channel
+        if allow_bare_sqs_name:
+            return normalize_sqs_queue_name(value)
+        return None
     if transport == "sns":
         return normalize_sns_arn(value)
     return None
@@ -349,8 +446,8 @@ def _transport_client_from_call(node: ast.AST, boto3_names: set[str]) -> Transpo
     return TransportClient(transport=transport, factory=factory)
 
 
-def _queue_arg_from_call(node: ast.AST, clients: dict[str, TransportClient], boto3_names: set[str]) -> ast.AST | None:
-    if not isinstance(node, ast.Call) or _method_name(node.func) != "Queue":
+def _queue_resource_from_call(node: ast.AST, clients: dict[str, TransportClient], boto3_names: set[str]) -> QueueResource | None:
+    if not isinstance(node, ast.Call):
         return None
     receiver = _receiver(node.func)
     if receiver is None:
@@ -358,19 +455,25 @@ def _queue_arg_from_call(node: ast.AST, clients: dict[str, TransportClient], bot
     client = _client_from_receiver(receiver, clients, boto3_names)
     if client is None or client.transport != "sqs" or client.factory != "resource":
         return None
-    return _arg_node(node, 0, ("url", "QueueUrl"))
+    method = _method_name(node.func)
+    if method == "Queue":
+        channel_arg = _arg_node(node, 0, ("url", "QueueUrl"))
+        return QueueResource(channel_arg=channel_arg, channel_arg_kind="queue_url") if channel_arg is not None else None
+    if method == "get_queue_by_name":
+        channel_arg = _arg_node(node, 0, ("QueueName", "queue_name"))
+        return QueueResource(channel_arg=channel_arg, channel_arg_kind="queue_name") if channel_arg is not None else None
+    return None
 
 
-def _queue_arg_from_receiver(
+def _queue_resource_from_receiver(
     receiver: ast.AST,
     clients: dict[str, TransportClient],
     queue_resources: dict[str, QueueResource],
     boto3_names: set[str],
-) -> ast.AST | None:
+) -> QueueResource | None:
     if isinstance(receiver, ast.Name):
-        queue = queue_resources.get(receiver.id)
-        return queue.channel_arg if queue is not None else None
-    return _queue_arg_from_call(receiver, clients, boto3_names)
+        return queue_resources.get(receiver.id)
+    return _queue_resource_from_call(receiver, clients, boto3_names)
 
 
 def _client_from_receiver(receiver: ast.AST, clients: dict[str, TransportClient], boto3_names: set[str]) -> TransportClient | None:
@@ -448,15 +551,40 @@ def _assignment_values(
     function_node: ast.FunctionDef | ast.AsyncFunctionDef,
     before_node: ast.AST | None = None,
 ) -> list[tuple[ast.AST, tuple[ast.expr, ...]]]:
-    assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
+    collector = _AssignmentCollector(before_node)
     for statement in function_node.body:
-        if before_node is not None and not node_starts_before(statement, before_node):
-            break
+        collector.visit(statement)
+    return collector.assignments
+
+
+def _module_assignment_values(module_node: ast.Module) -> list[tuple[ast.AST, tuple[ast.expr, ...]]]:
+    assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
+    for statement in module_node.body:
         if isinstance(statement, ast.Assign):
             assignments.append((statement.value, tuple(statement.targets)))
         elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
             assignments.append((statement.value, (statement.target,)))
     return assignments
+
+
+def _resolved_string_values(value: object) -> tuple[str, ...] | None:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, set):
+        values = []
+        for item in value:
+            if not isinstance(item, str):
+                return None
+            values.append(item)
+        return tuple(sorted(values))
+    if isinstance(value, (list, tuple)):
+        values = []
+        for item in value:
+            if not isinstance(item, str):
+                return None
+            values.append(item)
+        return tuple(values)
+    return None
 
 
 def _keyword_arg(call_node: ast.Call, name: str) -> ast.AST | None:
@@ -543,6 +671,39 @@ def _target_names(target: ast.AST) -> set[str]:
             names.update(_target_names(element))
         return names
     return set()
+
+
+class _AssignmentCollector(ast.NodeVisitor):
+    def __init__(self, before_node: ast.AST | None) -> None:
+        self.before_node = before_node
+        self.assignments: list[tuple[ast.AST, tuple[ast.expr, ...]]] = []
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if self._is_before_reference(node):
+            self.assignments.append((node.value, tuple(node.targets)))
+            self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None and self._is_before_reference(node):
+            self.assignments.append((node.value, (node.target,)))
+            self.visit(node.value)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+    def _is_before_reference(self, node: ast.AST) -> bool:
+        if self.before_node is None:
+            return True
+        return node_starts_before(node, self.before_node)
 
 
 class _BindingCollector(ast.NodeVisitor):

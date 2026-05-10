@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+import configparser
 
 from source.kg.extraction.config.channel_normalization import (
     ARN_RE,
@@ -10,6 +11,7 @@ from source.kg.extraction.config.channel_normalization import (
     NormalizedChannel,
     normalize_sns_arn,
     normalize_sqs_arn,
+    normalize_sqs_queue_name,
     normalize_sqs_url,
 )
 from source.kg.extraction.config.common import (
@@ -123,6 +125,8 @@ def _add_apache_domain_routes(
 
 
 def _extract_queue_lines(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+    for line_number, channel in _ini_queue_channels(scanned):
+        _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "ini_queue_config")
     for line_number, line in enumerate(scanned.lines, start=1):
         for channel in _normalized_channels_in_line(line):
             _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal")
@@ -252,6 +256,66 @@ def _normalized_channels_in_line(line: str) -> list[NormalizedChannel]:
         if channel is not None:
             channels.append(channel)
     return channels
+
+
+def _ini_queue_channels(scanned: ScannedFile) -> list[tuple[int, NormalizedChannel]]:
+    if scanned.path.suffix.lower() != ".ini":
+        return []
+    parser = configparser.ConfigParser()
+    try:
+        parser.read_string(scanned.text)
+    except configparser.Error:
+        return []
+    line_by_option = _ini_option_lines(scanned)
+    channels: list[tuple[int, NormalizedChannel]] = []
+    for option, value in parser.defaults().items():
+        channel = _normalized_ini_queue_value(value)
+        if channel is not None:
+            channels.append((line_by_option.get(("default", option.casefold()), 1), channel))
+    for section in parser.sections():
+        section_key = section.casefold()
+        for option in sorted(option for candidate_section, option in line_by_option if candidate_section == section_key):
+            if option not in parser[section]:
+                continue
+            channel = _normalized_ini_queue_value(parser[section][option])
+            if channel is not None:
+                channels.append((line_by_option.get((section_key, option), 1), channel))
+    return channels
+
+
+def _normalized_ini_queue_value(value: str) -> NormalizedChannel | None:
+    if not _looks_like_queue_config_value(value):
+        return None
+    return normalize_sqs_queue_name(value)
+
+
+def _looks_like_queue_config_value(value: str) -> bool:
+    channel = normalize_sqs_queue_name(value)
+    if channel is None:
+        return False
+    if not any(character.isalpha() for character in value):
+        return False
+    return "-" in value or "_" in value or value.endswith(".fifo")
+
+
+def _ini_option_lines(scanned: ScannedFile) -> dict[tuple[str, str], int]:
+    current_section: str | None = None
+    lines: dict[tuple[str, str], int] = {}
+    for line_number, raw_line in enumerate(scanned.lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1].strip().casefold()
+            continue
+        if current_section is None:
+            continue
+        key, separator, _ = line.partition("=")
+        if not separator:
+            key, separator, _ = line.partition(":")
+        if separator:
+            lines[(current_section, key.strip().casefold())] = line_number
+    return lines
 
 
 def _repo_hint_from_path(path: str) -> str | None:

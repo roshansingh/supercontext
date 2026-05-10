@@ -279,3 +279,18 @@ Expected product movement:
 3. Which known transport APIs should be in v1 without becoming an unmaintainable allowlist?
 4. Should endpoint extraction be improved in the same PR sequence, or split into a separate plan?
 5. How should unresolved values be represented in coverage so the product can refuse or caveat correctly?
+
+## Implementation Note: 2026-05-10
+
+The first event-evidence slice added SQS consumer extraction because Q088 requires the polling consumer side of the same channel lineage, not only producer send sites.
+
+Added consumer API allowlist entries:
+
+- `boto3.client("sqs").receive_message(QueueUrl=...)` emits `CONSUMES_EVENT` only when `QueueUrl` resolves to an SQS URL.
+- `boto3.resource("sqs").Queue(...).receive_messages(...)` emits `CONSUMES_EVENT` only when the queue resource was created from a resolved SQS URL or SQS queue name.
+
+Guardrails:
+
+- Consumer facts use the same receiver-resolution and channel-resolution rules as producer facts.
+- Bare queue names are accepted only in SQS queue-name contexts such as `get_queue_by_name(QueueName=...)`, not as generic `QueueUrl` literals.
+- Fixtures live in `tests/test_python_transport_extractor.py` and cover producer, consumer, wrapper, unresolved, and INI-backed config-object paths.

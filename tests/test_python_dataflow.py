@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.python.dataflow import (
@@ -12,7 +13,9 @@ from source.kg.extraction.python.dataflow import (
     UnresolvedValue,
     ValueResolver,
     ValueScope,
+    _unique_values,
     build_repo_literal_index,
+    config_object_value_assignments,
     import_bindings,
     local_literal_assignments,
     resolved_to_json,
@@ -171,6 +174,43 @@ class PythonDataflowTest(unittest.TestCase):
         self.assertEqual(payload["value"]["tuple"], ["a", "b"])
         self.assertEqual(payload["value"]["set"], ["a", "b"])
         self.assertEqual(payload["value"]["1"], "numeric-key")
+
+    def test_unique_values_deduplicates_unordered_sets_deterministically(self) -> None:
+        values = [{"b", "a"}, {"a", "b"}, {"c"}]
+
+        unique = _unique_values(values)
+
+        self.assertEqual(unique, [{"b", "a"}, {"c"}])
+
+    def test_config_object_value_assignments_reuses_preparsed_trees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_dir = root / "app" / "configmanager"
+            config_dir.mkdir(parents=True)
+            config_module = config_dir / "__init__.py"
+            (config_dir / "prod.ini").write_text("[queue]\nemail_queue = prod-email\n", encoding="utf-8")
+            config_module.write_text(
+                "import configparser\n\n"
+                "class QueueConfig:\n"
+                "    def __init__(self):\n"
+                "        parser = configparser.ConfigParser()\n"
+                "        parser.read('prod.ini')\n"
+                "        self.EMAIL_QUEUE = parser['queue']['email_queue']\n"
+                "\n"
+                "settings = QueueConfig()\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, (config_module,))
+            parsed_tree = ast.parse(config_module.read_text(encoding="utf-8"))
+
+            with patch(
+                "source.kg.extraction.python.dataflow.ast.parse",
+                side_effect=AssertionError("unexpected parse"),
+            ):
+                assignments = config_object_value_assignments(repo, {config_module: parsed_tree})
+
+        resolved_values = [node.value for values in assignments.values() for node in values]
+        self.assertEqual(resolved_values, ["prod-email"])
 
 
 def _repo_snapshot(root: Path, python_files: tuple[Path, ...]) -> RepoSnapshot:

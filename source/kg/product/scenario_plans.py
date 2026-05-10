@@ -117,6 +117,12 @@ SCENARIO_PLANS: dict[str, ScenarioPlan] = {
                 args={"channel": "la-prod-campaign-messages", "limit": 100},
                 purpose="Find campaign message delivery queue references and consumers.",
             ),
+            RetrievalStep(
+                name="delivery_status_queue",
+                command="event_channels",
+                args={"channel": "la-prod-email", "limit": 100},
+                purpose="Find downstream delivery-status queue references and producers.",
+            ),
         ),
     ),
     "Q095": ScenarioPlan(
@@ -199,10 +205,10 @@ SCENARIO_PLANS: dict[str, ScenarioPlan] = {
                 purpose="Find queue references and configured consumers for campaign message delivery.",
             ),
             RetrievalStep(
-                name="campaign_api_dependency",
-                command="repo_dependencies",
-                args={"repo": "mercury_api", "limit": 50},
-                purpose="Find cross-repo package dependencies that may contextualize the producer service.",
+                name="delivery_status_queue",
+                command="event_channels",
+                args={"channel": "la-prod-email", "limit": 100},
+                purpose="Find downstream delivery-status queue references and producer evidence from the consumer.",
             ),
         ),
     ),
