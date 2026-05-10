@@ -408,14 +408,31 @@ class KgSnapshot:
             if entity["kind"] == "Domain" and domain_query.lower() in str(entity["identity"].get("name", "")).lower()
         ]
         domain_ids = {entity["entity_id"] for entity in domains}
-        references = [
-            self._fact_result(fact, self.entities_by_id[fact["subject_id"]], self.entities_by_id[fact["object_id"]])
-            for fact in self.facts
-            if fact["predicate"] in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}
-            and (fact["subject_id"] in domain_ids or fact["object_id"] in domain_ids)
-            and fact["subject_id"] in self.entities_by_id
-            and fact["object_id"] in self.entities_by_id
-        ]
+        references = []
+        env_var_ids = set()
+        for fact in self.facts:
+            if fact["predicate"] not in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}:
+                continue
+            if fact["subject_id"] not in domain_ids and fact["object_id"] not in domain_ids:
+                continue
+            subject = self.entities_by_id.get(fact["subject_id"])
+            object_ = self.entities_by_id.get(fact["object_id"])
+            if not subject or not object_:
+                continue
+            references.append(self._fact_result(fact, subject, object_))
+            if fact["predicate"] == "REFERENCES_DOMAIN" and subject.get("kind") == "EnvVar":
+                env_var_ids.add(subject["entity_id"])
+        for fact in self.facts:
+            if fact["predicate"] != "REFERENCES_ENV_VAR" or fact["object_id"] not in env_var_ids:
+                continue
+            qualifier = fact.get("qualifier", {})
+            if not isinstance(qualifier, dict) or qualifier.get("reference_kind") != "code_access":
+                continue
+            subject = self.entities_by_id.get(fact["subject_id"])
+            object_ = self.entities_by_id.get(fact["object_id"])
+            if subject and object_:
+                references.append(self._fact_result(fact, subject, object_))
+        references = _dedupe_fact_results(references)
         references = sorted(references, key=lambda row: (str(row.get("object")), str(row.get("subject"))))
         returned = references[:limit]
         return {
@@ -981,3 +998,15 @@ class KgSnapshot:
 
     def _display(self, entity: JsonObject) -> str:
         return display_entity(entity)
+
+
+def _dedupe_fact_results(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        fact_id = row.get("fact_id")
+        if fact_id in seen:
+            continue
+        seen.add(fact_id)
+        deduped.append(row)
+    return deduped

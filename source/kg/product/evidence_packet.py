@@ -98,6 +98,7 @@ class EvidencePacketBuilder:
                     "subject": row.get("subject"),
                     "object": row.get("object"),
                     "qualifier": row.get("qualifier", {}),
+                    "source_refs": _source_refs(row),
                     "reconciliation_group": row.get("reconciliation_group"),
                     "possible_match": row.get("possible_match"),
                     "similarity": row.get("similarity"),
@@ -121,6 +122,7 @@ class EvidencePacketBuilder:
                 "subject": row.get("subject"),
                 "object": row.get("object"),
                 "qualifier": row.get("qualifier", {}),
+                "source_refs": _source_refs(row),
                 "reconciliation_group": row.get("reconciliation_group"),
                 "possible_match": row.get("possible_match"),
                 "similarity": row.get("similarity"),
@@ -142,6 +144,8 @@ def _claim_for_row(row: JsonObject) -> str:
     prefix = f"{group}: " if group else ""
     if predicate == "REFERENCES_DOMAIN":
         return f"{prefix}{subject} references domain {object_}."
+    if predicate == "REFERENCES_ENV_VAR":
+        return f"{prefix}{subject} references environment variable {object_}."
     if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
         return f"{prefix}{subject} routes to deploy target {object_}."
     if predicate == "EXPOSES_ENDPOINT":
@@ -172,6 +176,19 @@ def _bytes_coordinates(evidence: JsonObject) -> JsonObject:
         "line_start": bytes_ref.get("line_start"),
         "line_end": bytes_ref.get("line_end"),
     }
+
+
+def _source_refs(row: JsonObject) -> list[JsonObject]:
+    qualifier = row.get("qualifier", {})
+    if not isinstance(qualifier, dict):
+        return []
+    resolution = qualifier.get("resolution")
+    if not isinstance(resolution, dict):
+        return []
+    source_refs = resolution.get("source_refs")
+    if not isinstance(source_refs, list):
+        return []
+    return [source_ref for source_ref in source_refs if isinstance(source_ref, dict)]
 
 
 def _dedupe_items(items: list[JsonObject]) -> list[JsonObject]:

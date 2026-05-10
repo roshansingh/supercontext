@@ -257,7 +257,8 @@ class PythonAstExtractor:
             module_name = self._module_name(repo, file_path)
             for name, value in module_literal_assignments(parsed.tree).items():
                 values[LiteralRef(module_name, name)] = value
-        return LiteralIndex(values, config_object_value_assignments(repo, parsed_trees))
+        config_values, config_sources = config_object_value_assignments(repo, parsed_trees)
+        return LiteralIndex(values, config_values, config_sources)
 
     def _collect_symbols(
         self,

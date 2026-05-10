@@ -27,10 +27,19 @@ class ConfigObjectRef:
 
 
 @dataclass(frozen=True)
+class ConfigSourceRef:
+    path: str
+    line: int
+    section: str
+    option: str
+
+
+@dataclass(frozen=True)
 class ResolvedValue:
     value: object
     source: str
     expression: str
+    source_refs: tuple[JsonObject, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,7 @@ class UnresolvedValue:
 class LiteralIndex:
     values: dict[LiteralRef, ast.AST]
     config_object_values: dict[ConfigObjectRef, tuple[ast.AST, ...]] = field(default_factory=dict)
+    config_object_sources: dict[ConfigObjectRef, tuple[ConfigSourceRef, ...]] = field(default_factory=dict)
 
     def get(self, module_name: str, name: str) -> ast.AST | None:
         return self.values.get(LiteralRef(module_name, name))
@@ -64,6 +74,14 @@ class LiteralIndex:
     ) -> tuple[ast.AST, ...]:
         return self.config_object_values.get(ConfigObjectRef(module_name, object_name, attribute_path), ())
 
+    def get_config_object_sources(
+        self,
+        module_name: str,
+        object_name: str,
+        attribute_path: tuple[str, ...],
+    ) -> tuple[ConfigSourceRef, ...]:
+        return self.config_object_sources.get(ConfigObjectRef(module_name, object_name, attribute_path), ())
+
 
 @dataclass(frozen=True)
 class ConfigChild:
@@ -82,6 +100,7 @@ class ConfigClassInfo:
 @dataclass(frozen=True)
 class ValueScope:
     local_values: dict[str, ast.AST] = field(default_factory=dict)
+    local_resolved_values: dict[str, ResolvedValue] = field(default_factory=dict)
     imported_modules: dict[str, str] = field(default_factory=dict)
     imported_values: dict[str, LiteralRef] = field(default_factory=dict)
     env_values: dict[str, str] = field(default_factory=dict)
@@ -141,8 +160,11 @@ class ValueResolver:
             finally:
                 self._resolving_names.remove(name)
             if isinstance(resolved, ResolvedValue):
-                return ResolvedValue(resolved.value, f"local:{name}", _expression(node))
+                return ResolvedValue(resolved.value, f"local:{name}", _expression(node), resolved.source_refs)
             return resolved
+        if name in self.scope.local_resolved_values:
+            resolved = self.scope.local_resolved_values[name]
+            return ResolvedValue(resolved.value, f"local:{name}", _expression(node), resolved.source_refs)
         imported_ref = self.scope.imported_values.get(name)
         if imported_ref is not None:
             return self._resolve_imported_name(imported_ref, _expression(node))
@@ -187,6 +209,11 @@ class ValueResolver:
             imported_ref.name,
             tuple(attribute_parts),
         )
+        config_source_refs = self.literal_index.get_config_object_sources(
+            imported_ref.module_name,
+            imported_ref.name,
+            tuple(attribute_parts),
+        )
         for value_node in config_values:
             resolved = self.resolve_value(value_node)
             if not isinstance(resolved, ResolvedValue):
@@ -200,9 +227,10 @@ class ValueResolver:
         if not unique_values:
             return None
         source = "literal_ref:" + ",".join(sources)
+        source_refs = tuple(_config_source_to_json(source_ref) for source_ref in config_source_refs)
         if len(unique_values) == 1:
-            return ResolvedValue(unique_values[0], source, expression)
-        return ResolvedValue(tuple(unique_values), source, expression)
+            return ResolvedValue(unique_values[0], source, expression, source_refs)
+        return ResolvedValue(tuple(unique_values), source, expression, source_refs)
 
     def _resolve_imported_name(self, imported_ref: LiteralRef, expression: str) -> ResolvedValue | UnresolvedValue:
         resolved = self._resolve_literal_ref(imported_ref, expression)
@@ -239,7 +267,12 @@ class ValueResolver:
         finally:
             self._resolving_refs.remove(ref)
         if isinstance(resolved, ResolvedValue):
-            return ResolvedValue(resolved.value, f"literal_ref:{ref.module_name}.{ref.name}", expression)
+            return ResolvedValue(
+                resolved.value,
+                f"literal_ref:{ref.module_name}.{ref.name}",
+                expression,
+                resolved.source_refs,
+            )
         return resolved
 
     def _resolve_call(self, node: ast.Call) -> ResolvedValue | UnresolvedValue:
@@ -328,15 +361,17 @@ def build_repo_literal_index(repo: RepoSnapshot) -> LiteralIndex:
         module_name = module_name_for_path(repo, file_path)
         for name, value in module_literal_assignments(tree).items():
             values[LiteralRef(module_name, name)] = value
-    return LiteralIndex(values, config_object_value_assignments(repo))
+    config_values, config_sources = config_object_value_assignments(repo)
+    return LiteralIndex(values, config_values, config_sources)
 
 
 def config_object_value_assignments(
     repo: RepoSnapshot,
     parsed_trees: dict[Path, ast.AST] | None = None,
-) -> dict[ConfigObjectRef, tuple[ast.AST, ...]]:
-    values_by_directory = _ini_option_values_by_directory(repo)
+) -> tuple[dict[ConfigObjectRef, tuple[ast.AST, ...]], dict[ConfigObjectRef, tuple[ConfigSourceRef, ...]]]:
+    records_by_directory = _ini_option_records_by_directory(repo)
     assignments: dict[ConfigObjectRef, tuple[ast.AST, ...]] = {}
+    source_assignments: dict[ConfigObjectRef, tuple[ConfigSourceRef, ...]] = {}
     if parsed_trees is None:
         parsed_trees = {}
         for file_path in repo.python_files:
@@ -346,38 +381,69 @@ def config_object_value_assignments(
             except SyntaxError:
                 continue
     for file_path, tree in parsed_trees.items():
-        option_values = values_by_directory.get(file_path.parent, {})
-        if not option_values:
+        option_records = records_by_directory.get(file_path.parent, {})
+        if not option_records:
             continue
         module_name = module_name_for_path(repo, file_path)
         for object_name, attribute_path, option_name in _config_object_option_paths(tree):
-            constants = tuple(ast.Constant(value=value) for value in option_values.get(option_name.casefold(), ()))
+            records = option_records.get(option_name.casefold(), ())
+            constants = tuple(ast.Constant(value=record.value) for record in records)
             if constants:
-                assignments[ConfigObjectRef(module_name, object_name, attribute_path)] = constants
-    return assignments
+                ref = ConfigObjectRef(module_name, object_name, attribute_path)
+                assignments[ref] = constants
+                source_assignments[ref] = tuple(record.source for record in records)
+    return assignments, source_assignments
 
 
-def _ini_option_values_by_directory(repo: RepoSnapshot) -> dict[Path, dict[str, tuple[str, ...]]]:
-    values_by_directory: dict[Path, dict[str, list[str]]] = {}
+@dataclass(frozen=True)
+class _IniOptionRecord:
+    value: str
+    source: ConfigSourceRef
+
+
+def _ini_option_records_by_directory(repo: RepoSnapshot) -> dict[Path, dict[str, tuple[_IniOptionRecord, ...]]]:
+    records_by_directory: dict[Path, dict[str, list[_IniOptionRecord]]] = {}
     for path in sorted(repo.root.rglob("*.ini"), key=lambda candidate: str(candidate.relative_to(repo.root))):
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        parser = configparser.ConfigParser()
+        parser = configparser.RawConfigParser()
         try:
             parser.read_string(text)
         except configparser.Error:
             continue
         local_options = _ini_local_options(text)
+        option_lines = _ini_option_lines(text)
         for option, value in parser.defaults().items():
-            values_by_directory.setdefault(path.parent, {}).setdefault(option.casefold(), []).append(value)
+            option_key = option.casefold()
+            records_by_directory.setdefault(path.parent, {}).setdefault(option_key, []).append(
+                _IniOptionRecord(
+                    value=value,
+                    source=ConfigSourceRef(
+                        path=str(path.relative_to(repo.root)),
+                        line=option_lines.get(("default", option_key), 1),
+                        section="DEFAULT",
+                        option=option,
+                    ),
+                )
+            )
         for section in parser.sections():
             for option in sorted(local_options.get(section.casefold(), ())):
                 if option in parser[section]:
-                    values_by_directory.setdefault(path.parent, {}).setdefault(option, []).append(parser[section][option])
+                    records_by_directory.setdefault(path.parent, {}).setdefault(option, []).append(
+                        _IniOptionRecord(
+                            value=parser[section][option],
+                            source=ConfigSourceRef(
+                                path=str(path.relative_to(repo.root)),
+                                line=option_lines.get((section.casefold(), option), 1),
+                                section=section,
+                                option=option,
+                            ),
+                        )
+                    )
     return {
-        directory: {option: tuple(_unique_strings(values)) for option, values in option_values.items()}
-        for directory, option_values in values_by_directory.items()
+        directory: {option: tuple(_unique_records(records)) for option, records in option_records.items()}
+        for directory, option_records in records_by_directory.items()
     }
 
 
@@ -400,6 +466,25 @@ def _ini_local_options(text: str) -> dict[str, set[str]]:
         if separator:
             options.setdefault(current_section, set()).add(key.strip().casefold())
     return options
+
+
+def _ini_option_lines(text: str) -> dict[tuple[str, str], int]:
+    current_section: str | None = None
+    lines: dict[tuple[str, str], int] = {}
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1].strip().casefold()
+            continue
+        section = current_section or "default"
+        key, separator, _ = line.partition("=")
+        if not separator:
+            key, separator, _ = line.partition(":")
+        if separator:
+            lines[(section, key.strip().casefold())] = line_number
+    return lines
 
 
 def _config_object_option_paths(tree: ast.AST) -> list[tuple[str, tuple[str, ...], str]]:
@@ -725,7 +810,21 @@ def module_name_for_path(repo: RepoSnapshot, file_path: Path) -> str:
 
 
 def resolved_to_json(value: ResolvedValue) -> JsonObject:
-    return {"value": _json_safe(value.value), "source": value.source, "expression": value.expression}
+    payload = {"value": _json_safe(value.value), "source": value.source, "expression": value.expression}
+    if value.source_refs:
+        payload["source_refs"] = list(value.source_refs)
+    return payload
+
+
+def _config_source_to_json(source_ref: ConfigSourceRef) -> JsonObject:
+    return {
+        "source_kind": "configparser_ini_option",
+        "path": source_ref.path,
+        "line_start": source_ref.line,
+        "line_end": source_ref.line,
+        "section": source_ref.section,
+        "option": source_ref.option,
+    }
 
 
 def _is_supported_literal_expression(node: ast.AST) -> bool:
@@ -882,6 +981,18 @@ def _unique_strings(values: list[str]) -> list[str]:
             continue
         seen.add(value)
         unique.append(value)
+    return unique
+
+
+def _unique_records(records: list[_IniOptionRecord]) -> list[_IniOptionRecord]:
+    unique = []
+    seen = set()
+    for record in records:
+        key = (record.value, record.source.path, record.source.line, record.source.section, record.source.option)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(record)
     return unique
 
 

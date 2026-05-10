@@ -332,7 +332,7 @@ def _events_from_wrapper_call(
             literal_index,
             imports,
             wrapper_node,
-            extra_local_values=resolved_bindings,
+            extra_resolved_values=resolved_bindings,
             before_node=nested_call,
             local_binding_names=wrapper_binding_names,
         )
@@ -499,16 +499,15 @@ def _resolver(
     literal_index: LiteralIndex,
     imports: list[NormalizedImport],
     function_node: FunctionDefNode,
-    extra_local_values: dict[str, ast.AST] | None = None,
+    extra_resolved_values: dict[str, ResolvedValue] | None = None,
     before_node: ast.AST | None = None,
     local_binding_names: set[str] | None = None,
 ) -> ValueResolver:
     imported_modules, imported_values = import_bindings(imports)
     local_values = _module_values(module_name, literal_index)
     known_local_names: set[str] = set()
-    if extra_local_values:
-        local_values.update(extra_local_values)
-        known_local_names.update(extra_local_values)
+    if extra_resolved_values:
+        known_local_names.update(extra_resolved_values)
     if before_node is None:
         local_literals = local_literal_assignments(function_node)
     else:
@@ -521,6 +520,7 @@ def _resolver(
     return ValueResolver(
         ValueScope(
             local_values=local_values,
+            local_resolved_values=extra_resolved_values or {},
             imported_modules=imported_modules,
             imported_values=imported_values,
             blocked_names=blocked_names,
@@ -533,15 +533,15 @@ def _resolved_bindings(
     call_node: ast.Call,
     function_node: FunctionDefNode,
     caller_resolver: ValueResolver,
-) -> dict[str, ast.AST] | None:
-    resolved_bindings: dict[str, ast.AST] = {}
+) -> dict[str, ResolvedValue] | None:
+    resolved_bindings: dict[str, ResolvedValue] = {}
     bindings = bind_args(call_node, function_node)
     if bindings is None:
         return None
     for name, value_node in bindings.items():
         resolved = caller_resolver.resolve_value(value_node)
         if isinstance(resolved, ResolvedValue):
-            resolved_bindings[name] = ast.Constant(value=resolved.value)
+            resolved_bindings[name] = resolved
         else:
             return None
     return resolved_bindings

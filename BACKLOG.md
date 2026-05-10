@@ -28,6 +28,7 @@ Format: `Item | Source | Trigger to revisit`.
 | Typed-client allowlist seeding — pick first design partner's stack, allowlist their typed clients (TS/JS, Go, Java/Kotlin per PRD) | TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md "Initial Entries" | When first design partner signed |
 | MCP install one-liner pattern documented (mirror `claude mcp add -s user -t http supercontext https://...`) | claude-deepwiki-analysis.md §2 | Tool Query Contract ADR or MCP install docs |
 | Mermaid in PR-bot blast-radius comments | claude-deepwiki-analysis.md §7 | Future PR-bot ADR |
+| Move private validation fixtures out of product source — `source/kg/product/validation_report.py` and `scenario_plans.py` currently include private corpus strings such as `api.shopagain.io`, `/api/token`, `la-prod-email`, `la-prod-campaign-messages`, `prod_shopagain_wsgi.py`, `mercury_api`, and `mercury_campaign_messages`; replace in-tree defaults with a public reference corpus and keep private checks under `examples/private-goldset/` | SOURCE-OSS-READINESS-PLAN.md PR-A; PR-18/PR-19 reviews | Before OSS publication or before adding more private smoke checks |
 
 ## Per-ADR open follow-ups
 
