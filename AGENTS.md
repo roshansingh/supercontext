@@ -72,7 +72,7 @@ After every `git push` to a PR branch, do not manually request Copilot review im
 - If denying, reply with concrete evidence for why the feedback is not applicable.
 - Reply to each Copilot thread with the decision and either the fix summary or denial rationale, then resolve the thread.
 - After any code/doc change, run `.codex/skills/pre-pr-semantic-review`, push again, and repeat this polling loop.
-- If no Copilot feedback appears within the polling window, state that auto-review was monitored and no feedback appeared.
+- If no Copilot feedback appears within the 6-minute polling window, stop the Copilot-review activity; state that auto-review was monitored and no feedback appeared.
 
 ## Agent-Specific Instructions
 
