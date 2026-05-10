@@ -1,0 +1,10 @@
+[
+  {
+    "predicate": "DOCUMENTS_ENDPOINT",
+    "state": "uninstrumented",
+    "scope_ref": {
+      "file_path": "openapi.json",
+      "reason": "openapi_json_parse_error"
+    }
+  }
+]

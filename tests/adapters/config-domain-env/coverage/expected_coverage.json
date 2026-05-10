@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "config-domain-env has no deterministic coverage branch yet"
+}

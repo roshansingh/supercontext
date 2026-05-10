@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "config-deploy-events has no deterministic coverage branch yet"
+}

@@ -1,0 +1,11 @@
+[
+  {
+    "predicate": "PRODUCES_EVENT",
+    "state": "uninstrumented",
+    "scope_ref": {
+      "path": "fixture.py",
+      "line": 6,
+      "reason": "unsupported_call"
+    }
+  }
+]

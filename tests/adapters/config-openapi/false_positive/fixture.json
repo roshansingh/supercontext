@@ -1,0 +1,4 @@
+{
+  "description": "mentions openapi but paths is not an object",
+  "paths": "not an object"
+}
