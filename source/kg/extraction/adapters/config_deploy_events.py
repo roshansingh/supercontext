@@ -19,10 +19,9 @@ class ConfigDeployEventsAdapter:
         framework_tags=("serverless", "zappa", "sqs", "sns"),
         produces_predicates=(
             "EXPOSES_ENDPOINT",
-            "REFERENCES_DOMAIN",
             "CONSUMES_EVENT",
         ),
-        produces_entity_kinds=("Endpoint", "Domain", "EventChannel"),
+        produces_entity_kinds=("Endpoint", "EventChannel"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )

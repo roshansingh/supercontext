@@ -261,7 +261,9 @@ class AdapterFrameworkTest(unittest.TestCase):
         capability = CONFIG_DEPLOY_EVENTS_ADAPTER.capability
 
         self.assertNotIn("apache", capability.framework_tags)
+        self.assertNotIn("REFERENCES_DOMAIN", capability.produces_predicates)
         self.assertNotIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
+        self.assertNotIn("Domain", capability.produces_entity_kinds)
         self.assertNotIn("DeployTarget", capability.produces_entity_kinds)
 
     def test_config_split_pipeline_matches_static_config_monolith(self) -> None:
