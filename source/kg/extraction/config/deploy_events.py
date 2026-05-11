@@ -76,7 +76,11 @@ def _looks_like_apache_vhost(scanned: ScannedFile) -> bool:
         stripped = line.strip().lower()
         if stripped.startswith("<virtualhost") or stripped.startswith("</virtualhost"):
             has_vhost_block = True
-        elif stripped.startswith("servername ") or stripped.startswith("serveralias ") or stripped.startswith("wsgiscriptalias "):
+            continue
+        if not stripped:
+            continue
+        directive = stripped.split(maxsplit=1)[0]
+        if directive in {"servername", "serveralias", "wsgiscriptalias"}:
             has_vhost_directive = True
     return has_vhost_block and has_vhost_directive
 

@@ -144,8 +144,8 @@ class EventChannelNormalizationTest(unittest.TestCase):
             apache_path = repo_root / "site.conf"
             apache_path.write_text(
                 "<VirtualHost *:80>\n"
-                "  ServerName api.example.com\n"
-                "  WSGIScriptAlias / /srv/app/wsgi.py\n"
+                "  ServerName\tapi.example.com\n"
+                "  WSGIScriptAlias   / /srv/app/wsgi.py\n"
                 "</VirtualHost>\n",
                 encoding="utf-8",
             )
