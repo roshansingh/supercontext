@@ -79,15 +79,21 @@ git fetch origin <current-branch>
 git status --short --branch
 ```
 
-8. After every push to a PR branch, poll auto-Copilot review.
+8. After every push to a PR branch, verify Copilot review state.
 
-Do not manually request Copilot review immediately. Auto-review is configured, but GitHub only reviews new pushes automatically when the `Review new pushes` option is active; otherwise it may review only once.
+Reality to account for: Copilot often auto-reviews only the first push. Follow-up pushes may not trigger a new review unless the user requests it manually in the GitHub UI.
 
 ```bash
 python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
-The poll script waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute. If no current-head Copilot activity appears after the first 2-minute poll, it requests `@copilot` once as a fallback and continues polling. If no feedback appears by the end of 6 minutes, stop the Copilot-review activity; do not keep polling.
+The poll script waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute.
+
+Interpret the result precisely:
+- If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
+- If current-head Copilot activity starts but no completed review appears within 6 minutes, stop and report that review activity did not finish in time.
+- If no current-head Copilot activity appears within 6 minutes, stop and ask the user to request Copilot review manually in the UI, then rerun the poll.
+- Do not auto-request Copilot from the script by default. Only use `--manual-request-after-seconds <N>` if the user explicitly wants CLI fallback requesting.
 
 For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, and repeat the polling loop.
 

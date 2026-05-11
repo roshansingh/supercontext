@@ -48,10 +48,11 @@ class CopilotPollingTest(unittest.TestCase):
             )
 
         self.assertFalse(result["activity"])
-        self.assertFalse(result["feedback"])
+        self.assertFalse(result["review_completed"])
+        self.assertFalse(result["actionable_feedback"])
         self.assertEqual(result["events"], [])
 
-    def test_poll_once_counts_current_head_review_as_feedback(self) -> None:
+    def test_poll_once_counts_current_head_review_as_completed_not_actionable(self) -> None:
         def gh_json(args: list[str]) -> object:
             endpoint = args[1] if len(args) > 1 else ""
             if endpoint.endswith("/reviews"):
@@ -80,8 +81,39 @@ class CopilotPollingTest(unittest.TestCase):
             )
 
         self.assertTrue(result["activity"])
-        self.assertTrue(result["feedback"])
+        self.assertTrue(result["review_completed"])
+        self.assertFalse(result["actionable_feedback"])
         self.assertEqual(len(result["reviews"]), 1)
+
+    def test_poll_once_counts_unresolved_thread_as_actionable(self) -> None:
+        def gh_json(args: list[str]) -> object:
+            endpoint = args[1] if len(args) > 1 else ""
+            if endpoint.endswith("/reviews"):
+                return []
+            if endpoint.endswith("/comments"):
+                return []
+            if endpoint.endswith("/events"):
+                return []
+            raise AssertionError(f"unexpected gh api call: {args}")
+
+        with (
+            patch.object(poll_copilot_review, "_gh_json", side_effect=gh_json),
+            patch.object(
+                poll_copilot_review,
+                "_unresolved_copilot_threads",
+                return_value=[{"id": "thread-1", "path": "source.py", "comments": []}],
+            ),
+        ):
+            result = poll_copilot_review._poll_once(
+                "owner/repo",
+                20,
+                "new-head",
+                "2026-05-10T11:00:00Z",
+            )
+
+        self.assertTrue(result["activity"])
+        self.assertFalse(result["review_completed"])
+        self.assertTrue(result["actionable_feedback"])
 
     def test_head_commit_timestamp_uses_pushed_date(self) -> None:
         with patch.object(

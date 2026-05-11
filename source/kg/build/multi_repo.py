@@ -18,8 +18,20 @@ LINKER_RULE_VERSION = "package-linker-v0.1"
 
 
 @dataclass(frozen=True)
+class RepoIdentity:
+    tenant_id: str
+    host: str
+    owner: str
+    name: str
+
+    def to_json(self) -> JsonObject:
+        return {"tenant_id": self.tenant_id, "host": self.host, "owner": self.owner, "name": self.name}
+
+
+@dataclass(frozen=True)
 class PackageProvider:
     repo: RepoSnapshot
+    repo_identity: RepoIdentity
     package_name: str
     aliases: tuple[str, ...]
     manifest_path: Path | None
@@ -46,8 +58,8 @@ def build_multi_kg(
     tenant_id: str | None = None,
 ) -> JsonObject:
     repos = [discover_repo(path) for path in repo_paths]
-    _validate_unique_repo_names(repos)
     resolved_tenant_id = resolve_tenant_id(tenant_id)
+    _validate_unique_repo_identities(repos, resolved_tenant_id)
     build = _build_multi(repos, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
     manifest: JsonObject = {
         "build_type": "multi_repo",
@@ -98,20 +110,37 @@ def _build_multi(
     evidence: list[Evidence] = []
     coverage = []
     extractor_errors: list[JsonObject] = []
+    repo_build_entities: list[tuple[RepoSnapshot, list[Entity]]] = []
+    entity_repo_identities: dict[str, set[RepoIdentity]] = {}
 
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     for repo in repos:
         repo_build = extract_repo(repo, tenant_id=resolved_tenant_id)
+        repo_identity = _repo_identity(repo, resolved_tenant_id)
+        repo_entities = list(repo_build.entities)
+        repo_build_entities.append((repo, repo_entities))
+        for entity in repo_entities:
+            if entity.kind == "ExternalPackage":
+                entity_repo_identities.setdefault(entity.entity_id, set()).add(repo_identity)
         entities.extend(repo_build.entities)
         facts.extend(repo_build.facts)
         evidence.extend(repo_build.evidence)
         coverage.extend(repo_build.coverage)
-        extractor_errors.extend({**error, "repo": repo.name} for error in repo_build.extractor_errors)
+        extractor_errors.extend(
+            {
+                **error,
+                "repo": _repo_identity_key(repo_identity),
+                "repo_name": repo.name,
+                "repo_identity": repo_identity.to_json(),
+                "repo_root": str(repo.root),
+            }
+            for error in repo_build.extractor_errors
+        )
     if strict_extractors and extractor_errors:
         raise RuntimeError(_multi_extractor_error_message(extractor_errors))
 
-    providers = _package_providers(repos, entities)
-    link_facts, link_evidence, ambiguous_count = _link_external_packages(entities, providers)
+    providers = _package_providers(repo_build_entities)
+    link_facts, link_evidence, ambiguous_count = _link_external_packages(entities, providers, entity_repo_identities)
     facts.extend(link_facts)
     evidence.extend(link_evidence)
     return MultiRepoBuild(
@@ -134,37 +163,45 @@ def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:
     return f"Extractor errors while indexing multi-repo snapshot: {details}"
 
 
-def _validate_unique_repo_names(repos: list[RepoSnapshot]) -> None:
-    paths_by_name: dict[str, list[str]] = {}
+def _repo_identity(repo: RepoSnapshot, tenant_id: str) -> RepoIdentity:
+    # V0 local builds do not preserve git forge host yet; owner/name still
+    # prevents same-directory-name repos under different org roots from merging.
+    return RepoIdentity(tenant_id=tenant_id, host="local", owner=repo.owner, name=repo.name)
+
+
+def _validate_unique_repo_identities(repos: list[RepoSnapshot], tenant_id: str) -> None:
+    paths_by_identity: dict[RepoIdentity, list[str]] = {}
     for repo in repos:
-        paths_by_name.setdefault(repo.name, []).append(str(repo.root))
-    duplicates = {name: paths for name, paths in paths_by_name.items() if len(paths) > 1}
+        paths_by_identity.setdefault(_repo_identity(repo, tenant_id), []).append(str(repo.root))
+    duplicates = {identity: paths for identity, paths in paths_by_identity.items() if len(paths) > 1}
     if not duplicates:
         return
-    details = "; ".join(f"{name}: {paths}" for name, paths in sorted(duplicates.items()))
-    raise ValueError(f"Multi-repo snapshots require unique repo directory names. Duplicates: {details}")
+    details = "; ".join(
+        f"{identity.tenant_id}/{identity.host}/{identity.owner}/{identity.name}: {paths}"
+        for identity, paths in sorted(
+            duplicates.items(),
+            key=lambda item: (item[0].tenant_id, item[0].host, item[0].owner, item[0].name),
+        )
+    )
+    raise ValueError(f"Multi-repo snapshots require unique repo identities. Duplicates: {details}")
 
 
-def _package_providers(repos: list[RepoSnapshot], entities: list[Entity]) -> list[PackageProvider]:
-    repo_entities: dict[str, Entity] = {}
-    service_entities: dict[str, list[Entity]] = {}
-    for entity in entities:
-        if entity.kind == "Repo":
-            repo_entities[str(entity.identity.get("name"))] = entity
-        elif entity.kind == "Service":
-            repo_name = str(entity.properties.get("repo"))
-            service_entities.setdefault(repo_name, []).append(entity)
-
+def _package_providers(repo_build_entities: list[tuple[RepoSnapshot, list[Entity]]]) -> list[PackageProvider]:
     providers: list[PackageProvider] = []
-    for repo in repos:
-        repo_entity = repo_entities.get(repo.name)
+    for repo, entities in repo_build_entities:
+        repo_identity = _repo_identity_from_entities(repo, entities)
+        if repo_identity is None:
+            continue
+        repo_entity = _select_repo_entity(entities, repo_identity)
         if repo_entity is None:
             continue
+        service_entities = [entity for entity in entities if entity.kind == "Service"]
         package_name, aliases, manifest_path = _package_metadata(repo)
-        service_entity = _select_service_entity(service_entities.get(repo.name, []), aliases)
+        service_entity = _select_service_entity(service_entities, aliases)
         providers.append(
             PackageProvider(
                 repo=repo,
+                repo_identity=repo_identity,
                 package_name=package_name,
                 aliases=tuple(sorted({alias for alias in aliases if alias})),
                 manifest_path=manifest_path,
@@ -173,6 +210,36 @@ def _package_providers(repos: list[RepoSnapshot], entities: list[Entity]) -> lis
             )
         )
     return providers
+
+
+def _repo_identity_from_entities(repo: RepoSnapshot, entities: list[Entity]) -> RepoIdentity | None:
+    identities = {
+        RepoIdentity(
+            tenant_id=str(entity.identity.get("tenant_id")),
+            host=str(entity.identity.get("host")),
+            owner=str(entity.identity.get("owner")),
+            name=str(entity.identity.get("name")),
+        )
+        for entity in entities
+        if entity.kind == "Repo"
+        and entity.identity.get("owner") == repo.owner
+        and entity.identity.get("name") == repo.name
+    }
+    return next(iter(identities)) if len(identities) == 1 else None
+
+
+def _select_repo_entity(entities: list[Entity], repo_identity: RepoIdentity) -> Entity | None:
+    matches_by_id = {
+        entity.entity_id: entity
+        for entity in entities
+        if entity.kind == "Repo"
+        and entity.identity.get("tenant_id") == repo_identity.tenant_id
+        and entity.identity.get("host") == repo_identity.host
+        and entity.identity.get("owner") == repo_identity.owner
+        and entity.identity.get("name") == repo_identity.name
+    }
+    matches = list(matches_by_id.values())
+    return matches[0] if len(matches) == 1 else None
 
 
 def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity | None:
@@ -231,6 +298,7 @@ def _python_package_roots(data: JsonObject, repo: RepoSnapshot) -> set[str]:
 def _link_external_packages(
     entities: list[Entity],
     providers: list[PackageProvider],
+    entity_repo_identities: dict[str, set[RepoIdentity]],
 ) -> tuple[list[Fact], list[Evidence], int]:
     provider_index: dict[str, list[PackageProvider]] = {}
     for provider in providers:
@@ -242,13 +310,13 @@ def _link_external_packages(
     ambiguous_count = 0
     packages_by_id = {entity.entity_id: entity for entity in entities if entity.kind == "ExternalPackage"}
     for package in packages_by_id.values():
-        consumer_repo = str(package.identity.get("repo"))
+        consumer_identities = entity_repo_identities.get(package.entity_id, set())
         candidate_names = _external_package_candidate_names(package)
         matches = {
             provider
             for name in candidate_names
             for provider in provider_index.get(_normalize_package_name(name), [])
-            if provider.repo.name != consumer_repo
+            if not _is_self_link(provider, package, consumer_identities)
         }
         if not matches:
             continue
@@ -262,7 +330,7 @@ def _link_external_packages(
                 predicate="RESOLVES_TO_REPO",
                 subject_id=package.entity_id,
                 object_id=provider.repo_entity_id,
-                qualifier=_link_qualifier(package, provider, matched_name),
+                qualifier=_link_qualifier(package, provider, matched_name, consumer_identities),
             )
         ]
         if provider.service_entity_id is not None:
@@ -271,12 +339,21 @@ def _link_external_packages(
                     predicate="RESOLVES_TO_SERVICE",
                     subject_id=package.entity_id,
                     object_id=provider.service_entity_id,
-                    qualifier=_link_qualifier(package, provider, matched_name),
+                    qualifier=_link_qualifier(package, provider, matched_name, consumer_identities),
                 )
             )
         facts.extend(package_facts)
-        evidence.extend(_link_evidence(package, provider, package_facts))
+        evidence.extend(_link_evidence(package, provider, package_facts, consumer_identities))
     return facts, evidence, ambiguous_count
+
+
+def _is_self_link(provider: PackageProvider, package: Entity, consumer_identities: set[RepoIdentity]) -> bool:
+    if not consumer_identities:
+        raise ValueError(
+            "ExternalPackage entity missing repo identity tracking: "
+            f"entity_id={package.entity_id}, identity={package.identity}"
+        )
+    return provider.repo_identity in consumer_identities
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:
@@ -297,19 +374,32 @@ def _matched_name(candidate_names: set[str], provider: PackageProvider) -> str:
     return sorted(candidate_names)[0]
 
 
-def _link_qualifier(package: Entity, provider: PackageProvider, matched_name: str) -> JsonObject:
-    return {
+def _link_qualifier(
+    package: Entity,
+    provider: PackageProvider,
+    matched_name: str,
+    consumer_identities: set[RepoIdentity],
+) -> JsonObject:
+    qualifier: JsonObject = {
         "rule": "unique_normalized_package_name_match",
         "rule_version": LINKER_RULE_VERSION,
         "consumer_repo": package.identity.get("repo"),
         "package_name": package.identity.get("name"),
         "matched_name": matched_name,
         "provider_repo": provider.repo.name,
+        "provider_repo_identity": provider.repo_identity.to_json(),
         "provider_package_name": provider.package_name,
     }
+    qualifier.update(_consumer_identity_ref(consumer_identities))
+    return qualifier
 
 
-def _link_evidence(package: Entity, provider: PackageProvider, facts: list[Fact]) -> list[Evidence]:
+def _link_evidence(
+    package: Entity,
+    provider: PackageProvider,
+    facts: list[Fact],
+    consumer_identities: set[RepoIdentity],
+) -> list[Evidence]:
     return [
         Evidence(
             target_type="fact",
@@ -320,7 +410,9 @@ def _link_evidence(package: Entity, provider: PackageProvider, facts: list[Fact]
                 "rule": "unique_normalized_package_name_match",
                 "rule_version": LINKER_RULE_VERSION,
                 "consumer_repo": package.identity.get("repo"),
+                **_consumer_identity_ref(consumer_identities),
                 "provider_repo": provider.repo.name,
+                "provider_repo_identity": provider.repo_identity.to_json(),
                 "provider_package_name": provider.package_name,
             },
             bytes_ref=_manifest_bytes_ref(provider),
@@ -330,11 +422,30 @@ def _link_evidence(package: Entity, provider: PackageProvider, facts: list[Fact]
     ]
 
 
+def _consumer_identity_ref(consumer_identities: set[RepoIdentity]) -> JsonObject:
+    if len(consumer_identities) == 1:
+        return {"consumer_repo_identity": next(iter(consumer_identities)).to_json()}
+    if len(consumer_identities) > 1:
+        return {
+            "consumer_repo_identities": [
+                identity.to_json()
+                for identity in _sort_repo_identities(consumer_identities)
+            ]
+        }
+    return {}
+
+
+def _sort_repo_identities(identities: set[RepoIdentity]) -> list[RepoIdentity]:
+    return sorted(identities, key=lambda value: (value.tenant_id, value.host, value.owner, value.name))
+
+
 def _manifest_bytes_ref(provider: PackageProvider) -> JsonObject | None:
     if provider.manifest_path is None or not provider.manifest_path.exists():
         return None
     return {
-        "repo": provider.repo.name,
+        "repo": _repo_identity_key(provider.repo_identity),
+        "repo_name": provider.repo.name,
+        "repo_identity": provider.repo_identity.to_json(),
         "commit_sha": provider.repo.commit_sha,
         "path": str(provider.manifest_path.relative_to(provider.repo.root)),
         "line_start": 1,
@@ -344,6 +455,10 @@ def _manifest_bytes_ref(provider: PackageProvider) -> JsonObject | None:
 
 def _normalize_package_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _repo_identity_key(identity: RepoIdentity) -> str:
+    return f"{identity.tenant_id}/{identity.host}/{identity.owner}/{identity.name}"
 
 
 def _unscoped_package_name(name: str) -> str:
