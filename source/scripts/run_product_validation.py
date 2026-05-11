@@ -14,23 +14,25 @@ from source.kg.product.validation_report import (
 
 DEFAULT_MERCURY_SNAPSHOT = "data/kg_runs/mercury_ml_eval_2026_05_10"
 DEFAULT_TRUE_LOOP_SNAPSHOT = "data/kg_runs/true_loop_eval_2026_05_10"
-DEFAULT_LATTICE_SNAPSHOT = "data/kg_runs/latticeai_23_eval_2026_05_10"
-DEFAULT_GOLDSET_PACKETS = "data/kg_runs/latticeai_23_eval_2026_05_10/goldset_packets_eval_2026_05_10.json"
-DEFAULT_GOLDSET_ANSWERS = "data/kg_runs/latticeai_23_eval_2026_05_10/goldset_answers_eval_2026_05_10.json"
-DEFAULT_GOLDSET_JUDGEMENT = "data/kg_runs/latticeai_23_eval_2026_05_10/goldset_judgement_eval_2026_05_10.json"
+DEFAULT_PRIVATE_SNAPSHOT = "data/kg_runs/private_goldset_eval"
+DEFAULT_GOLDSET_PACKETS = "data/kg_runs/private_goldset_eval/goldset_packets_eval_2026_05_10.json"
+DEFAULT_GOLDSET_ANSWERS = "data/kg_runs/private_goldset_eval/goldset_answers_eval_2026_05_10.json"
+DEFAULT_GOLDSET_JUDGEMENT = "data/kg_runs/private_goldset_eval/goldset_judgement_eval_2026_05_10.json"
 DEFAULT_MD_OUT = "docs/evaluation/CANONICAL-VALIDATION-REPORT.md"
 DEFAULT_EVALUATION_DIR = "docs/evaluation"
+DEFAULT_PRIVATE_SMOKE_FIXTURES = "examples/private-goldset/smoke_fixtures.json"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the canonical product-validation report.")
     parser.add_argument("--mercury-snapshot", default=DEFAULT_MERCURY_SNAPSHOT)
     parser.add_argument("--true-loop-snapshot", default=DEFAULT_TRUE_LOOP_SNAPSHOT)
-    parser.add_argument("--lattice-snapshot", default=DEFAULT_LATTICE_SNAPSHOT)
+    parser.add_argument("--private-snapshot", default=DEFAULT_PRIVATE_SNAPSHOT)
     parser.add_argument("--goldset-packets", default=DEFAULT_GOLDSET_PACKETS)
     parser.add_argument("--goldset-answers", default=DEFAULT_GOLDSET_ANSWERS)
     parser.add_argument("--goldset-judgement", default=DEFAULT_GOLDSET_JUDGEMENT)
     parser.add_argument("--evaluation-dir", default=DEFAULT_EVALUATION_DIR)
+    parser.add_argument("--private-smoke-fixtures", default=DEFAULT_PRIVATE_SMOKE_FIXTURES)
     parser.add_argument("--generated-at", default=default_generated_at())
     parser.add_argument("--json-out", help="Optional path to write the machine-readable report JSON.")
     parser.add_argument("--md-out", default=DEFAULT_MD_OUT, help="Markdown report output path.")
@@ -46,13 +48,14 @@ def main() -> None:
         ValidationConfig(
             mercury_snapshot=Path(args.mercury_snapshot),
             true_loop_snapshot=Path(args.true_loop_snapshot),
-            lattice_snapshot=Path(args.lattice_snapshot),
+            private_snapshot=Path(args.private_snapshot),
             goldset_packets=Path(args.goldset_packets),
             goldset_answers=Path(args.goldset_answers),
             goldset_judgement=Path(args.goldset_judgement),
             generated_at=args.generated_at,
             evaluation_dir=Path(args.evaluation_dir),
             strict_smoke_checks=not args.no_strict_smoke_checks,
+            private_smoke_fixtures=Path(args.private_smoke_fixtures),
         )
     )
     payload = json.dumps(report, indent=2, sort_keys=True)

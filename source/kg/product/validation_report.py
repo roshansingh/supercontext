@@ -20,13 +20,14 @@ CheckFn = Callable[[KgSnapshot], tuple[ValidationResult, str, JsonObject]]
 class ValidationConfig:
     mercury_snapshot: Path
     true_loop_snapshot: Path
-    lattice_snapshot: Path
+    private_snapshot: Path
     goldset_packets: Path
     goldset_answers: Path
     goldset_judgement: Path
     generated_at: str
     evaluation_dir: Path = Path("docs/evaluation")
     strict_smoke_checks: bool = True
+    private_smoke_fixtures: Path = Path("examples/private-goldset/smoke_fixtures.json")
 
 
 def default_generated_at() -> str:
@@ -36,12 +37,13 @@ def default_generated_at() -> str:
 def run_canonical_validation(config: ValidationConfig) -> JsonObject:
     mercury = KgSnapshot(config.mercury_snapshot)
     true_loop = KgSnapshot(config.true_loop_snapshot)
-    lattice = KgSnapshot(config.lattice_snapshot)
+    private_kg = KgSnapshot(config.private_snapshot)
+    private_smoke_fixtures = _load_private_smoke_fixtures(config.private_smoke_fixtures)
     smoke_checks = _run_smoke_checks(
         [
             ("Mercury ML", config.mercury_snapshot, mercury, _mercury_smoke_checks()),
             ("True Loop", config.true_loop_snapshot, true_loop, _true_loop_smoke_checks()),
-            ("LatticeAI 23", config.lattice_snapshot, lattice, _lattice_smoke_checks()),
+            ("Private Goldset", config.private_snapshot, private_kg, _private_fixture_smoke_checks(private_smoke_fixtures)),
         ],
         strict=config.strict_smoke_checks,
     )
@@ -52,7 +54,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "inputs": {
             "mercury_snapshot": _report_path(config.mercury_snapshot),
             "true_loop_snapshot": _report_path(config.true_loop_snapshot),
-            "lattice_snapshot": _report_path(config.lattice_snapshot),
+            "private_snapshot": _report_path(config.private_snapshot),
             "goldset_packets": _report_path(config.goldset_packets),
             "goldset_answers": _report_path(config.goldset_answers),
             "goldset_judgement": _report_path(config.goldset_judgement),
@@ -60,7 +62,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "snapshot_inventory": [
             _snapshot_inventory("Mercury ML", config.mercury_snapshot, mercury),
             _snapshot_inventory("True Loop", config.true_loop_snapshot, true_loop),
-            _snapshot_inventory("LatticeAI 23", config.lattice_snapshot, lattice),
+            _snapshot_inventory("Private Goldset", config.private_snapshot, private_kg),
         ],
         "deterministic_smoke": {
             "summary": _result_counts(smoke_checks),
@@ -69,7 +71,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "goldset": goldset,
         "supersedes": _superseded_artifacts(config.evaluation_dir),
         "next_feature_recommendation": (
-            "Use the config/env citation movement to rescore the LatticeAI goldset, then prioritize the repeated "
+            "Use the config/env citation movement to rescore the private goldset, then prioritize the repeated "
             "remaining failure owner rather than adding stack-specific extractors."
         ),
     }
@@ -83,7 +85,7 @@ def render_validation_markdown(report: JsonObject) -> str:
         "",
         f"Overall status: **{report['status']}**",
         "",
-        "This is the current canonical validation report for low/medium deterministic surfaces and the LatticeAI goldset. "
+        "This is the current canonical validation report for low/medium deterministic surfaces and the private goldset. "
         "Older dated artifacts are preserved for audit history only.",
         "",
         "## Inputs",
@@ -129,7 +131,7 @@ def render_validation_markdown(report: JsonObject) -> str:
     lines.extend(
         [
             "",
-            "## LatticeAI Goldset",
+            "## Private Goldset",
             "",
             _counts_sentence(goldset["answer_score_summary"], label="Answer scores"),
             "",
@@ -330,22 +332,29 @@ def _true_loop_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
     ]
 
 
-def _lattice_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
+def _private_fixture_smoke_checks(fixture: JsonObject | None) -> list[tuple[str, str, str, str, CheckFn]]:
+    if fixture is None:
+        return []
+    domain = _fixture_string(fixture, "api_domain")
+    token_path = _fixture_string(fixture, "token_endpoint_path")
+    primary_channel = _fixture_string(fixture, "primary_event_channel")
+    source_ref_channel = _fixture_string(fixture, "source_ref_event_channel")
+    deploy_target = _fixture_string(fixture, "deploy_target")
     return [
         (
             "Q082",
             "Medium",
             "domain-references",
-            "Which clients reference api.shopagain.io?",
-            _expect_count(lambda kg: kg.domain_references("api.shopagain.io", limit=100), "reference_count", 1),
+            "Which clients reference the private API domain fixture?",
+            _expect_count(lambda kg: kg.domain_references(domain, limit=100), "reference_count", 1),
         ),
         (
             "Q082",
             "Medium",
             "domain-references",
-            "Which code locations read env vars that resolve to api.shopagain.io?",
+            "Which code locations read env vars that resolve to the private API domain fixture?",
             _expect_predicate_count(
-                lambda kg: kg.domain_references("api.shopagain.io", limit=100),
+                lambda kg: kg.domain_references(domain, limit=100),
                 "references",
                 "REFERENCES_ENV_VAR",
                 1,
@@ -356,14 +365,14 @@ def _lattice_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
             "Medium",
             "endpoints",
             "Which token auth endpoints and callers are indexed?",
-            _expect_count(lambda kg: kg.endpoints("/api/token", limit=100), "endpoint_fact_count", 1),
+            _expect_count(lambda kg: kg.endpoints(token_path, limit=100), "endpoint_fact_count", 1),
         ),
         (
             "Q088",
             "Goldset",
             "event-channels",
-            "Which facts exist for la-prod-campaign-messages?",
-            _expect_count(lambda kg: kg.event_channels("la-prod-campaign-messages", limit=100), "event_fact_count", 1),
+            "Which facts exist for the primary private event-channel fixture?",
+            _expect_count(lambda kg: kg.event_channels(primary_channel, limit=100), "event_fact_count", 1),
         ),
         (
             "Q088",
@@ -371,7 +380,7 @@ def _lattice_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
             "event-channels",
             "Do ConfigParser-backed event facts carry source .ini citations?",
             _expect_source_ref_count(
-                lambda kg: kg.event_channels("la-prod-email", limit=100),
+                lambda kg: kg.event_channels(source_ref_channel, limit=100),
                 "event_channels",
                 1,
             ),
@@ -380,10 +389,30 @@ def _lattice_smoke_checks() -> list[tuple[str, str, str, str, CheckFn]]:
             "Q095",
             "Medium",
             "deploy-mappings",
-            "Which deploy mapping serves prod_shopagain_wsgi.py?",
-            _expect_count(lambda kg: kg.deploy_mappings("prod_shopagain_wsgi.py", limit=25), "mapping_count", 1),
+            "Which deploy mapping serves the private deploy-target fixture?",
+            _expect_count(lambda kg: kg.deploy_mappings(deploy_target, limit=25), "mapping_count", 1),
         ),
     ]
+
+
+def _load_private_smoke_fixtures(path: Path) -> JsonObject | None:
+    fixture_path = path.expanduser()
+    if not fixture_path.exists():
+        return None
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{fixture_path} must contain a JSON object")
+    fixture = payload.get("private_smoke")
+    if not isinstance(fixture, dict):
+        raise ValueError(f"{fixture_path} must contain an object field 'private_smoke'")
+    return fixture
+
+
+def _fixture_string(fixture: JsonObject, key: str) -> str:
+    value = fixture.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"private smoke fixture field {key!r} must be a non-empty string")
+    return value
 
 
 def _expect_list(label: str, run: Callable[[KgSnapshot], list[JsonObject]], minimum: int) -> CheckFn:
@@ -787,7 +816,7 @@ def _is_historical_evaluation_artifact(name: str) -> bool:
     return (
         "-RUN-" in name
         or "-RERUN-" in name
-        or name.startswith("LATTICEAI-GOLDSET-")
+        or "-GOLDSET-" in name
         or name.startswith("NEXT-GAP-EVALUATION-")
         or name.startswith("CONTRACT-RECONCILIATION-REGRESSION-RUN-")
         or name.startswith("MULTI-REPO-LINKING-SMOKE-")

@@ -12,6 +12,8 @@ from source.kg.product.validation_report import (
     _expect_count,
     _expect_list,
     _expect_status,
+    _load_private_smoke_fixtures,
+    _private_fixture_smoke_checks,
     _goldset_summary,
     _overall_status,
     _product_readout_lines,
@@ -325,7 +327,7 @@ class ValidationReportTest(unittest.TestCase):
             config = ValidationConfig(
                 mercury_snapshot=Path("~/mercury"),
                 true_loop_snapshot=Path("~/true_loop"),
-                lattice_snapshot=Path("~/lattice"),
+                private_snapshot=Path("~/private"),
                 goldset_packets=config.goldset_packets,
                 goldset_answers=config.goldset_answers,
                 goldset_judgement=config.goldset_judgement,
@@ -352,6 +354,41 @@ class ValidationReportTest(unittest.TestCase):
 
         self.assertEqual(report["inputs"]["mercury_snapshot"], (home / "mercury").resolve().as_posix())
         self.assertEqual(report["inputs"]["goldset_packets"], (home / "packets.json").resolve().as_posix())
+
+    def test_private_smoke_fixture_absence_skips_private_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _load_private_smoke_fixtures(Path(tmpdir) / "missing.json")
+
+        self.assertIsNone(fixture)
+        self.assertEqual(_private_fixture_smoke_checks(fixture), [])
+
+    def test_private_smoke_fixture_values_drive_checks_without_source_literals(self) -> None:
+        fixture = {
+            "api_domain": "api.example.com",
+            "token_endpoint_path": "/api/token",
+            "primary_event_channel": "orders-events",
+            "source_ref_event_channel": "status-events",
+            "deploy_target": "app_wsgi.py",
+        }
+        kg = _FakePrivateSmokeKg()
+
+        checks = _private_fixture_smoke_checks(fixture)
+        rows = _run_smoke_checks([("Private Fixture", Path("snapshot"), kg, checks)], strict=True)
+
+        self.assertEqual(len(rows), 6)
+        self.assertEqual({row["result"] for row in rows}, {"pass"})
+        self.assertIn(("domain_references", "api.example.com"), kg.calls)
+        self.assertIn(("event_channels", "orders-events"), kg.calls)
+        self.assertIn(("event_channels", "status-events"), kg.calls)
+        self.assertIn(("deploy_mappings", "app_wsgi.py"), kg.calls)
+
+    def test_private_smoke_fixture_rejects_malformed_json_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "fixtures.json"
+            path.write_text(json.dumps({"private_smoke": {"api_domain": ""}}), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "api_domain"):
+                _private_fixture_smoke_checks(_load_private_smoke_fixtures(path))
 
     def test_report_path_normalizes_repo_local_relative_segments(self) -> None:
         self.assertEqual(_report_path(Path("source") / ".." / "source"), "source")
@@ -530,13 +567,40 @@ def _config(root: Path, packets: Path, answers: Path, judgement: Path) -> Valida
     return ValidationConfig(
         mercury_snapshot=root / "mercury",
         true_loop_snapshot=root / "true_loop",
-        lattice_snapshot=root / "lattice",
+        private_snapshot=root / "private",
         goldset_packets=packets,
         goldset_answers=answers,
         goldset_judgement=judgement,
         generated_at="2026-05-10T00:00:00Z",
         evaluation_dir=root / "docs" / "evaluation",
     )
+
+
+class _FakePrivateSmokeKg:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def domain_references(self, domain: str, limit: int) -> dict[str, object]:
+        self.calls.append(("domain_references", domain))
+        return {
+            "reference_count": 1,
+            "references": [{"predicate": "REFERENCES_ENV_VAR"}],
+        }
+
+    def endpoints(self, path_query: str, limit: int) -> dict[str, object]:
+        self.calls.append(("endpoints", path_query))
+        return {"endpoint_fact_count": 1}
+
+    def event_channels(self, channel_query: str, limit: int) -> dict[str, object]:
+        self.calls.append(("event_channels", channel_query))
+        return {
+            "event_fact_count": 1,
+            "event_channels": [{"qualifier": {"resolution": {"source_refs": [{"path": "fixture.ini"}]}}}],
+        }
+
+    def deploy_mappings(self, target_query: str, limit: int) -> dict[str, object]:
+        self.calls.append(("deploy_mappings", target_query))
+        return {"mapping_count": 1}
 
 
 if __name__ == "__main__":
