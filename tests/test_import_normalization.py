@@ -102,7 +102,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
             with patch(
                 "source.kg.normalization.python.imports.metadata.packages_distributions",
                 return_value={"google": ["google-api-core", "protobuf"]},
-            ):
+            ), patch("source.kg.normalization.python.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
             python_imports._distributions_by_import_root.cache_clear()

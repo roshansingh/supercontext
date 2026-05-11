@@ -10,7 +10,7 @@ from source.kg.core.repo_source import RepoSnapshot
 
 
 # Regenerate with:
-# node -e "console.log(require('module').builtinModules.sort().join('\n'))"
+# node -e "console.log(require('module').builtinModules.map(m => m.startsWith('node:') ? m.slice(5) : m).sort().join('\n'))"
 FALLBACK_NODE_BUILTINS = {
     "_http_agent",
     "_http_client",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 from importlib import metadata
 from importlib import util
@@ -10,6 +11,10 @@ import sys
 import tomllib
 
 from source.kg.core.repo_source import RepoSnapshot
+
+
+class _DistributionResolution(Enum):
+    AMBIGUOUS = "ambiguous"
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,8 @@ class PythonImportNormalizer:
             return self._normalized(ref, "stdlib", root, root, None, None)
 
         distribution_name = self._distribution_name(target, root)
+        if distribution_name is _DistributionResolution.AMBIGUOUS:
+            return self._normalized(ref, "unknown", root, root, None, None)
         if distribution_name:
             return self._normalized(ref, "third_party", distribution_name, root, distribution_name, None)
 
@@ -141,7 +148,7 @@ class PythonImportNormalizer:
             return True
         return any(name.startswith(f"{module_name}.") for name in self.module_names)
 
-    def _distribution_name(self, target: str, import_root: str) -> str | None:
+    def _distribution_name(self, target: str, import_root: str) -> str | _DistributionResolution | None:
         normalized_root = import_root.replace("_", "-").lower()
         if normalized_root in self.declared_dependencies:
             return self.declared_dependencies[normalized_root]
@@ -158,7 +165,7 @@ class PythonImportNormalizer:
         if len(declared_matches) > 1 and "." in target:
             # Namespace packages such as google.* need subpath ownership checks.
             # V0 refuses ambiguous declared matches instead of guessing.
-            return None
+            return _DistributionResolution.AMBIGUOUS
         for distribution in distributions:
             normalized_distribution = distribution.replace("_", "-").lower()
             if normalized_distribution in self.declared_dependencies:
