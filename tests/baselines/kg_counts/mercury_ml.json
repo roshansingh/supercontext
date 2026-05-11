@@ -1,0 +1,35 @@
+{
+  "baseline_version": 1,
+  "coverage_reason_counts": {
+    "no_recognized_web_framework": 1,
+    "python_syntax_error": 1,
+    "unknown": 3
+  },
+  "entity_kind_counts": {
+    "CodeModule": 231,
+    "CodeSymbol": 935,
+    "Domain": 5287,
+    "EnvVar": 60,
+    "ExternalPackage": 98,
+    "Repo": 1,
+    "Service": 1
+  },
+  "extractor_errors_count": 0,
+  "fact_predicate_counts": {
+    "CALLS": 994,
+    "DEFINED_IN": 1159,
+    "IMPLEMENTS": 223,
+    "IMPORTS": 1264,
+    "REFERENCES_DOMAIN": 21133,
+    "REFERENCES_ENV_VAR": 63
+  },
+  "manifest_counts": {
+    "coverage": 5,
+    "entities": 6613,
+    "evidence": 103651,
+    "facts": 24836,
+    "python_files": 225,
+    "typescript_files": 0
+  },
+  "name": "mercury_ml"
+}

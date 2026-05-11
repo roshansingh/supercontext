@@ -29,6 +29,7 @@ Format: `Item | Source | Trigger to revisit`.
 | MCP install one-liner pattern documented (mirror `claude mcp add -s user -t http supercontext https://...`) | claude-deepwiki-analysis.md §2 | Tool Query Contract ADR or MCP install docs |
 | Mermaid in PR-bot blast-radius comments | claude-deepwiki-analysis.md §7 | Future PR-bot ADR |
 | Move private validation fixtures out of product source — `source/kg/product/validation_report.py` and `scenario_plans.py` currently include private corpus strings such as `api.shopagain.io`, `/api/token`, `la-prod-email`, `la-prod-campaign-messages`, `prod_shopagain_wsgi.py`, `mercury_api`, and `mercury_campaign_messages`; replace in-tree defaults with a public reference corpus and keep private checks under `examples/private-goldset/` | SOURCE-OSS-READINESS-PLAN.md PR-A; PR-18/PR-19 reviews | Before OSS publication or before adding more private smoke checks |
+| Classify KG coverage rows currently captured as `unknown` in count baselines by adding `scope_ref.reason` at emission sites and regenerating `tests/baselines/kg_counts/*.json` | Debate 8 PR-0 baseline review | Before treating T2 count-baseline drift as a strict OSS-readiness gate |
 
 ## Per-ADR open follow-ups
 
