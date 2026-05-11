@@ -10,6 +10,7 @@ from unittest.mock import patch
 from source.kg.product.answer_synthesis import AnswerSynthesisConfig, _prompt_for_packet, _validate_answer
 from source.kg.product.artifact_consistency import packet_fingerprint
 from source.kg.product.claude_tool_policy import resolve_claude_cli_path
+from source.kg.product.evidence_packet import EvidencePacketBuilder
 from source.kg.product.goldset_judgement import _validate_judgement, load_goldset_scenarios
 from source.kg.product.json_result import parse_json_object_result
 from source.kg.product.validation import normalize_unique_strings, require_unique_strings
@@ -43,6 +44,36 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "evidence_items must be a list"):
             _load_packets(("Q082",), str(path))
+
+    def test_evidence_packet_no_evidence_items_keep_repo_identity_shape(self) -> None:
+        packet = EvidencePacketBuilder("Q999", "query", "shape").build(
+            [
+                {
+                    "step": 1,
+                    "command": "test",
+                    "args": {},
+                    "purpose": "exercise no-evidence fact row",
+                    "result": {
+                        "status": "ok",
+                        "links": [
+                            {
+                                "fact_id": "fact_1",
+                                "predicate": "RESOLVES_TO_REPO",
+                                "subject": "pkg",
+                                "object": "repo",
+                                "evidence": [],
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        item = packet["evidence_items"][0]
+        self.assertIn("repo_name", item)
+        self.assertIn("repo_identity", item)
+        self.assertIsNone(item["repo_name"])
+        self.assertIsNone(item["repo_identity"])
 
     def test_public_answer_harness_refuses_to_build_private_packets(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires --packets-in"):

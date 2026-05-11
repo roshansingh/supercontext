@@ -107,6 +107,8 @@ class EvidencePacketBuilder:
                     "derivation_class": None,
                     "confidence": None,
                     "repo": None,
+                    "repo_name": None,
+                    "repo_identity": None,
                     "commit_sha": None,
                     "path": None,
                     "line_start": None,

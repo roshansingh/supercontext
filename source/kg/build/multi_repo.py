@@ -126,7 +126,16 @@ def _build_multi(
         facts.extend(repo_build.facts)
         evidence.extend(repo_build.evidence)
         coverage.extend(repo_build.coverage)
-        extractor_errors.extend({**error, "repo": repo.name} for error in repo_build.extractor_errors)
+        extractor_errors.extend(
+            {
+                **error,
+                "repo": _repo_identity_key(repo_identity),
+                "repo_name": repo.name,
+                "repo_identity": repo_identity.to_json(),
+                "repo_root": str(repo.root),
+            }
+            for error in repo_build.extractor_errors
+        )
     if strict_extractors and extractor_errors:
         raise RuntimeError(_multi_extractor_error_message(extractor_errors))
 
