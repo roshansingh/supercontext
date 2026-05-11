@@ -31,7 +31,7 @@ class ExtractionContext:
     """
 
     tenant_id: str = field(default_factory=resolve_tenant_id)
-    config_scans: dict[str, tuple[Any, ...]] = field(default_factory=dict, compare=False, repr=False)
+    config_scans: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
     python_parsed_files: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
     python_literal_indexes: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
     python_import_roots: set[str] = field(default_factory=set, compare=False, repr=False)

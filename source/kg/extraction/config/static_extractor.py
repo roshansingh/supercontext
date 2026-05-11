@@ -10,7 +10,7 @@ from source.kg.extraction.config.common import (
     ConfigKgBuild,
     add_fact,
     bytes_ref,
-    iter_scannable_files,
+    scan_config_files,
     ScannedFile,
 )
 from source.kg.core.tenant import resolve_tenant_id
@@ -51,7 +51,10 @@ class StaticConfigExtractor:
         if manifest_path is not None:
             add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, manifest_path, 1)
 
-        files = files if files is not None else iter_scannable_files(repo)
+        if files is None:
+            scan_result = scan_config_files(repo, resolved_tenant_id)
+            files = list(scan_result.files)
+            build.coverage.extend(scan_result.coverage)
         if self.include_domain_env:
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
         extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)

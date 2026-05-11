@@ -10,6 +10,11 @@ from source.kg.core.models import JsonObject
 
 IdentityKey = Literal["endpoint_path", "event_channel", "display_name"]
 MAX_POSSIBLE_MATCH_COMPARISONS_PER_LEFT = 250
+DEFAULT_POSSIBLE_MATCH_THRESHOLD = 0.78
+# Below this length ratio, endpoint keys are too different to be useful
+# fuzzy-match candidates and mostly add noise/cost.
+MIN_POSSIBLE_MATCH_LENGTH_RATIO = 0.35
+VERSION_PATH_PREFIXES = ("v",)
 
 
 @dataclass(frozen=True)
@@ -26,7 +31,9 @@ class ContractReconciliationSpec:
     left: ContractSide
     right: ContractSide
     identity_key: IdentityKey
-    possible_match_threshold: float = 0.78
+    # Calibrated on docs-vs-backend endpoint drift: keeps likely renames
+    # such as collection/product_collection while filtering weak noise.
+    possible_match_threshold: float = DEFAULT_POSSIBLE_MATCH_THRESHOLD
 
 
 def reconcile_contract(kg, spec: ContractReconciliationSpec) -> JsonObject:
@@ -145,7 +152,7 @@ def _candidate_match_keys(left_key: str, right_keys: list[str], used_right: set[
 def _could_be_possible_match(left_key: str, right_key: str) -> bool:
     shorter = max(1, min(len(left_key), len(right_key)))
     longer = max(len(left_key), len(right_key))
-    if shorter / longer < 0.35:
+    if shorter / longer < MIN_POSSIBLE_MATCH_LENGTH_RATIO:
         return False
     left_segments = _key_segments(left_key)
     right_segments = _key_segments(right_key)
@@ -162,7 +169,20 @@ def _cheap_match_score(left_key: str, right_key: str) -> float:
 
 
 def _key_segments(key: str) -> set[str]:
-    return {segment for segment in key.replace("_", "/").replace("-", "/").split("/") if segment and segment not in {"v1", "v2"}}
+    return {
+        segment
+        for segment in key.replace("_", "/").replace("-", "/").split("/")
+        if segment and not _is_version_path_segment(segment)
+    }
+
+
+def _is_version_path_segment(segment: str) -> bool:
+    """Return true for lowercase numeric version segments like v1 or v10."""
+    for prefix in VERSION_PATH_PREFIXES:
+        suffix = segment.removeprefix(prefix)
+        if suffix != segment and suffix.isdigit():
+            return True
+    return False
 
 
 def _common_prefix_len(left: str, right: str) -> int:
