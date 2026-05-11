@@ -130,7 +130,7 @@ class JsImportNormalizer:
 
         node_name = self._node_builtin_name(target, root)
         if node_name:
-            return self._normalized(ref, "node_builtin", node_name, root, None, None)
+            return self._normalized(ref, "node_builtin", node_name, self._node_builtin_root(node_name), None, None)
 
         distribution_name = self._distribution_name(root)
         if distribution_name:
@@ -190,6 +190,9 @@ class JsImportNormalizer:
             if candidate in self.node_builtins:
                 return candidate
         return None
+
+    def _node_builtin_root(self, node_name: str) -> str:
+        return node_name.split("/", 1)[0]
 
     def _declared_dependencies(self) -> dict[str, str]:
         names: set[str] = set()

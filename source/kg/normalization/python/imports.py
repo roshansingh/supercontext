@@ -162,7 +162,7 @@ class PythonImportNormalizer:
         ]
         if len(declared_matches) == 1:
             return declared_matches[0]
-        if len(declared_matches) > 1 and "." in target:
+        if len(declared_matches) > 1:
             # Namespace packages such as google.* need subpath ownership checks.
             # V0 refuses ambiguous declared matches instead of guessing.
             return _DistributionResolution.AMBIGUOUS

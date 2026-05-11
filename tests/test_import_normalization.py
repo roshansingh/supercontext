@@ -107,12 +107,17 @@ class PythonImportNormalizationTest(unittest.TestCase):
                 normalizer = PythonImportNormalizer(repo)
             python_imports._distributions_by_import_root.cache_clear()
 
-            normalized = normalizer.normalize(
+            dotted = normalizer.normalize(
                 ImportRef(raw_target="google.protobuf", line=1, import_root="google", imported_names=(), alias=None),
                 current_module="app",
             )
+            root_import = normalizer.normalize(
+                ImportRef(raw_target="google", line=1, import_root="google", imported_names=(), alias=None),
+                current_module="app",
+            )
 
-            self.assertEqual(normalized.category, "unknown")
+            self.assertEqual(dotted.category, "unknown")
+            self.assertEqual(root_import.category, "unknown")
 
 
 class TypeScriptImportNormalizationTest(unittest.TestCase):
@@ -173,7 +178,19 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
                 ),
                 current_module="src.index",
             )
+            node_prefixed_promises_import = normalizer.normalize(
+                JsImportRef(
+                    raw_target="node:fs/promises",
+                    line=1,
+                    imported_names=(),
+                    local_names=(),
+                ),
+                current_module="src.index",
+            )
             self.assertEqual(promises_import.target_name, "fs/promises")
+            self.assertEqual(promises_import.import_root, "fs")
+            self.assertEqual(node_prefixed_promises_import.target_name, "fs/promises")
+            self.assertEqual(node_prefixed_promises_import.import_root, "fs")
 
     def test_node_builtin_modules_fall_back_when_node_is_unavailable(self) -> None:
         typescript_imports._node_builtin_modules.cache_clear()
