@@ -53,7 +53,7 @@ def extract_serverless_yaml_routes(
         add_entity_evidence(build, repo, endpoint, scanned.path, route.line)
         qualifier: JsonObject = {
             "source_kind": "serverless_route",
-            "file_path": scanned.relative_path,
+            "path": scanned.relative_path,
             "route_kind": route.route_kind,
         }
         if route.handler:
@@ -66,7 +66,7 @@ def extract_serverless_yaml_routes(
             "websocket",
             route.path,
             tenant_id=resolved_tenant_id,
-            properties={"raw_literal": route.path, "source_kind": "serverless_route", "file_path": scanned.relative_path},
+            properties={"raw_literal": route.path, "source_kind": "serverless_route", "path": scanned.relative_path},
         )
         add_entity_evidence(build, repo, channel, scanned.path, route.line)
         add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, route.line, qualifier=qualifier)
