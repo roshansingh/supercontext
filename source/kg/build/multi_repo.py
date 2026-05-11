@@ -59,8 +59,8 @@ def build_multi_kg(
 ) -> JsonObject:
     repos = [discover_repo(path) for path in repo_paths]
     resolved_tenant_id = resolve_tenant_id(tenant_id)
-    _validate_unique_repo_identities(repos, resolved_tenant_id)
-    build = _build_multi(repos, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
+    validate_unique_repo_identities(repos, resolved_tenant_id)
+    build = build_multi(repos, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
     manifest: JsonObject = {
         "build_type": "multi_repo",
         "built_at": utc_now_iso(),
@@ -100,7 +100,7 @@ def build_multi_kg(
     return manifest
 
 
-def _build_multi(
+def build_multi(
     repos: list[RepoSnapshot],
     strict_extractors: bool = False,
     tenant_id: str | None = None,
@@ -155,6 +155,14 @@ def _build_multi(
     )
 
 
+def _build_multi(
+    repos: list[RepoSnapshot],
+    strict_extractors: bool = False,
+    tenant_id: str | None = None,
+) -> MultiRepoBuild:
+    return build_multi(repos, strict_extractors=strict_extractors, tenant_id=tenant_id)
+
+
 def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:
     details = "; ".join(
         f"{error['repo']}:{error['source_system']}: {error['error']}: {error['message']}"
@@ -169,7 +177,7 @@ def _repo_identity(repo: RepoSnapshot, tenant_id: str) -> RepoIdentity:
     return RepoIdentity(tenant_id=tenant_id, host="local", owner=repo.owner, name=repo.name)
 
 
-def _validate_unique_repo_identities(repos: list[RepoSnapshot], tenant_id: str) -> None:
+def validate_unique_repo_identities(repos: list[RepoSnapshot], tenant_id: str) -> None:
     paths_by_identity: dict[RepoIdentity, list[str]] = {}
     for repo in repos:
         paths_by_identity.setdefault(_repo_identity(repo, tenant_id), []).append(str(repo.root))
@@ -184,6 +192,10 @@ def _validate_unique_repo_identities(repos: list[RepoSnapshot], tenant_id: str) 
         )
     )
     raise ValueError(f"Multi-repo snapshots require unique repo identities. Duplicates: {details}")
+
+
+def _validate_unique_repo_identities(repos: list[RepoSnapshot], tenant_id: str) -> None:
+    validate_unique_repo_identities(repos, tenant_id)
 
 
 def _package_providers(repo_build_entities: list[tuple[RepoSnapshot, list[Entity]]]) -> list[PackageProvider]:
