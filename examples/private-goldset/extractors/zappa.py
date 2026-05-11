@@ -33,7 +33,10 @@ def extract_zappa_event_sources(
         for event_source in stage_config.get("events", []):
             if not isinstance(event_source, dict):
                 continue
-            arn = str(event_source.get("event_source", {}).get("arn") or "")
+            source = event_source.get("event_source")
+            if not isinstance(source, dict):
+                continue
+            arn = str(source.get("arn") or "")
             function = str(event_source.get("function") or "")
             channel_ref = normalize_sqs_arn(arn)
             if channel_ref is None:

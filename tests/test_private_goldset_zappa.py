@@ -70,6 +70,7 @@ class PrivateGoldsetZappaTest(unittest.TestCase):
             "[]",
             '{"prod": {"events": "not-a-list"}}',
             '{"prod": {"events": [{"function": "handlers.consume", "event_source": {"arn": "arn:aws:s3:::bucket"}}]}}',
+            '{"prod": {"events": [{"function": "handlers.consume", "event_source": "not-a-dict"}]}}',
             '{"prod": {"events": [{"function": "handlers.consume"}]}}',
         ]
         module = _load_zappa_module()
