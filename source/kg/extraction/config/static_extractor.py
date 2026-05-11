@@ -7,13 +7,13 @@ import tomllib
 
 from source.kg.extraction.config.common import (
     CONFIG_SOURCE_SYSTEM,
-    TENANT_ID,
     ConfigKgBuild,
     add_fact,
     bytes_ref,
     iter_scannable_files,
     ScannedFile,
 )
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.config.deploy_events import extract_deploy_events
 from source.kg.extraction.config.domain_env import extract_domain_env
 from source.kg.extraction.config.endpoints import extract_endpoints
@@ -35,10 +35,16 @@ class StaticConfigExtractor:
         self.include_openapi = include_openapi
         self.include_deploy_events = include_deploy_events
 
-    def extract(self, repo: RepoSnapshot, files: list[ScannedFile] | None = None) -> ConfigKgBuild:
+    def extract(
+        self,
+        repo: RepoSnapshot,
+        files: list[ScannedFile] | None = None,
+        tenant_id: str | None = None,
+    ) -> ConfigKgBuild:
+        resolved_tenant_id = resolve_tenant_id(tenant_id)
         build = ConfigKgBuild()
-        repo_entity = self._repo_entity(repo)
-        service_entity = self._service_entity(repo)
+        repo_entity = self._repo_entity(repo, resolved_tenant_id)
+        service_entity = self._service_entity(repo, resolved_tenant_id)
         build.entities.extend([repo_entity, service_entity])
         build.evidence.extend([self._repo_evidence(repo, repo_entity), self._service_evidence(repo, service_entity)])
         manifest_path = self._manifest_path(repo)
@@ -47,13 +53,13 @@ class StaticConfigExtractor:
 
         files = files if files is not None else iter_scannable_files(repo)
         if self.include_domain_env:
-            extract_domain_env(repo, files, service_entity, build)
-        extract_endpoints(repo, files, service_entity, build, include_openapi=self.include_openapi)
+            extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
+        extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)
         if self.include_deploy_events:
-            extract_deploy_events(repo, files, service_entity, build)
+            extract_deploy_events(repo, files, service_entity, build, resolved_tenant_id)
         build.coverage.append(
             Coverage(
-                tenant_id=TENANT_ID,
+                tenant_id=resolved_tenant_id,
                 predicate="CONFIG_FACTS",
                 scope_ref={"repo": repo.name, "path_prefix": "."},
                 state="instrumented",
@@ -62,18 +68,18 @@ class StaticConfigExtractor:
         )
         return build
 
-    def _repo_entity(self, repo: RepoSnapshot) -> Entity:
+    def _repo_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
         return Entity(
             kind="Repo",
-            identity={"tenant_id": TENANT_ID, "host": "local", "owner": repo.owner, "name": repo.name},
+            identity={"tenant_id": tenant_id, "host": "local", "owner": repo.owner, "name": repo.name},
             properties={"path": str(repo.root), "commit_sha": repo.commit_sha},
         )
 
-    def _service_entity(self, repo: RepoSnapshot) -> Entity:
+    def _service_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
         return Entity(
             kind="Service",
             identity={
-                "tenant_id": TENANT_ID,
+                "tenant_id": tenant_id,
                 "namespace": "default",
                 "repo": repo.name,
                 "slug": self._service_slug(repo),

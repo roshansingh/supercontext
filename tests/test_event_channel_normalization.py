@@ -56,11 +56,17 @@ class EventChannelNormalizationTest(unittest.TestCase):
     def test_event_channel_identity_matches_ontology_shape(self) -> None:
         repo = _repo_snapshot(Path.cwd())
 
-        channel = event_channel_entity(repo, "sqs", "orders-created", properties={"raw_literal": "orders-created"})
+        channel = event_channel_entity(
+            repo,
+            "sqs",
+            "orders-created",
+            tenant_id="default",
+            properties={"raw_literal": "orders-created"},
+        )
 
         self.assertEqual(
             channel.identity,
-            {"tenant_id": "local-dev", "broker_kind": "sqs", "channel_address": "orders-created"},
+            {"tenant_id": "default", "broker_kind": "sqs", "channel_address": "orders-created"},
         )
         self.assertNotIn("repo", channel.identity)
         self.assertNotIn("name", channel.identity)

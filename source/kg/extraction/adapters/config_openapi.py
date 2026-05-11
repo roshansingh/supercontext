@@ -28,9 +28,9 @@ class ConfigOpenApiAdapter:
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()
-        service_entity = StaticConfigExtractor()._service_entity(repo)
+        service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
         for scanned in scannable_config_files(repo, ctx):
-            extract_openapi_document(repo, scanned, service_entity, build)
+            extract_openapi_document(repo, scanned, service_entity, build, ctx.tenant_id)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),

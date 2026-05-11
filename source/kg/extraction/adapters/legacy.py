@@ -30,7 +30,7 @@ class LegacyAdapter:
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         if isinstance(self.extractor, StaticConfigExtractor):
-            build = self.extractor.extract(repo, files=scannable_config_files(repo, ctx))
+            build = self.extractor.extract(repo, files=scannable_config_files(repo, ctx), tenant_id=ctx.tenant_id)
         elif isinstance(self.extractor, PythonAstExtractor):
             build = self.extractor.extract_with_context(repo, ctx)
         elif isinstance(self.extractor, TypeScriptCompilerApiExtractor):

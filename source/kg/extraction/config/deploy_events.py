@@ -24,6 +24,7 @@ from source.kg.extraction.config.common import (
     endpoint_entity,
     event_channel_entity,
 )
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.core.models import Entity, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -36,20 +37,33 @@ APACHE_VHOST_START_RE = re.compile(r"^\s*<VirtualHost\b", re.IGNORECASE)
 APACHE_VHOST_END_RE = re.compile(r"^\s*</VirtualHost\s*>", re.IGNORECASE)
 
 
-def extract_deploy_events(repo: RepoSnapshot, files: list[ScannedFile], service_entity: Entity, build: ConfigKgBuild) -> None:
+def extract_deploy_events(
+    repo: RepoSnapshot,
+    files: list[ScannedFile],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str | None = None,
+) -> None:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     for scanned in files:
-        _extract_apache(repo, scanned, service_entity, build)
+        _extract_apache(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.name != "zappa_settings.json":
-            _extract_queue_lines(repo, scanned, service_entity, build)
-        _extract_serverless_routes(repo, scanned, service_entity, build)
+            _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
+        _extract_serverless_routes(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.name == "zappa_settings.json":
-            _extract_zappa_event_sources(repo, scanned, service_entity, build)
+            _extract_zappa_event_sources(repo, scanned, service_entity, build, resolved_tenant_id)
 
 
-def _extract_apache(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+def _extract_apache(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
     for domains_by_line, wsgi_by_line in _apache_vhost_blocks(scanned):
         for line_number, domain in domains_by_line:
-            _add_apache_domain_routes(repo, scanned, service_entity, build, line_number, domain, wsgi_by_line)
+            _add_apache_domain_routes(repo, scanned, service_entity, build, line_number, domain, wsgi_by_line, tenant_id)
 
 
 def _apache_vhost_blocks(scanned: ScannedFile) -> list[tuple[list[tuple[int, str]], list[tuple[int, str]]]]:
@@ -91,8 +105,9 @@ def _add_apache_domain_routes(
     line_number: int,
     domain: str,
     wsgi_by_line: list[tuple[int, str]],
+    tenant_id: str,
 ) -> None:
-    domain_ref = domain_entity(repo, domain)
+    domain_ref = domain_entity(repo, domain, tenant_id)
     add_entity_evidence(build, repo, domain_ref, scanned.path, line_number)
     add_fact(
         build,
@@ -105,7 +120,7 @@ def _add_apache_domain_routes(
         qualifier={"source_kind": "apache_server_name", "path": scanned.relative_path},
     )
     for wsgi_line, wsgi_path in wsgi_by_line:
-        target = deploy_target_entity(repo, "wsgi", wsgi_path)
+        target = deploy_target_entity(repo, "wsgi", wsgi_path, tenant_id)
         add_entity_evidence(build, repo, target, scanned.path, wsgi_line)
         qualifier: JsonObject = {"source_kind": "apache_vhost"}
         repo_hint = _repo_hint_from_path(wsgi_path)
@@ -124,15 +139,27 @@ def _add_apache_domain_routes(
         )
 
 
-def _extract_queue_lines(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+def _extract_queue_lines(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
     for line_number, channel in _ini_queue_channels(scanned):
-        _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "ini_queue_config")
+        _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "ini_queue_config", tenant_id)
     for line_number, line in enumerate(scanned.lines, start=1):
         for channel in _normalized_channels_in_line(line):
-            _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal")
+            _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal", tenant_id)
 
 
-def _extract_serverless_routes(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+def _extract_serverless_routes(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
     if scanned.path.suffix not in {".yml", ".yaml"}:
         return
     pending_handler: tuple[int, str] | None = None
@@ -145,7 +172,7 @@ def _extract_serverless_routes(repo: RepoSnapshot, scanned: ScannedFile, service
         if not route_match:
             continue
         route = route_match.group(1).strip()
-        endpoint = endpoint_entity(repo, "ANY", route)
+        endpoint = endpoint_entity(repo, "ANY", route, tenant_id=tenant_id)
         add_entity_evidence(build, repo, endpoint, scanned.path, line_number)
         qualifier: JsonObject = {"source_kind": "serverless_route", "path": scanned.relative_path}
         if pending_handler:
@@ -155,13 +182,20 @@ def _extract_serverless_routes(repo: RepoSnapshot, scanned: ScannedFile, service
             repo,
             "websocket",
             route,
+            tenant_id=tenant_id,
             properties={"raw_literal": route, "source_kind": "serverless_route", "path": scanned.relative_path},
         )
         add_entity_evidence(build, repo, channel, scanned.path, line_number)
         add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, line_number, qualifier=qualifier)
 
 
-def _extract_zappa_event_sources(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+def _extract_zappa_event_sources(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
     try:
         data = json.loads(scanned.text)
     except json.JSONDecodeError:
@@ -182,6 +216,7 @@ def _extract_zappa_event_sources(repo: RepoSnapshot, scanned: ScannedFile, servi
                 repo,
                 channel_ref.broker_kind,
                 channel_ref.channel_address,
+                tenant_id=tenant_id,
                 properties=channel_ref.properties,
             )
             add_entity_evidence(build, repo, channel, scanned.path, line_number)
@@ -215,6 +250,7 @@ def _add_event_reference(
     build: ConfigKgBuild,
     channel_ref: NormalizedChannel,
     source_kind: str,
+    tenant_id: str,
 ) -> None:
     if not channel_ref.channel_address:
         return
@@ -222,6 +258,7 @@ def _add_event_reference(
         repo,
         channel_ref.broker_kind,
         channel_ref.channel_address,
+        tenant_id=tenant_id,
         properties=channel_ref.properties,
     )
     add_entity_evidence(build, repo, channel, scanned.path, line_number)

@@ -21,11 +21,9 @@ from source.kg.extraction.python.transport_extractor import (
     module_transport_context,
 )
 from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
-
-
-TENANT_ID = "local-dev"
 
 
 @dataclass
@@ -66,9 +64,10 @@ class PythonAstExtractor:
         return self.extract_with_context(repo, None)
 
     def extract_with_context(self, repo: RepoSnapshot, ctx: ExtractionContext | None) -> KgBuild:
+        tenant_id = ctx.tenant_id if ctx is not None else resolve_tenant_id()
         build = KgBuild()
-        repo_entity = self._repo_entity(repo)
-        service_entity = self._service_entity(repo)
+        repo_entity = self._repo_entity(repo, tenant_id)
+        service_entity = self._service_entity(repo, tenant_id)
         build.entities.extend([repo_entity, service_entity])
         build.evidence.extend(
             [
@@ -92,11 +91,12 @@ class PythonAstExtractor:
                 literal_index,
                 build,
                 ctx,
+                tenant_id,
             )
 
         build.coverage.append(
             Coverage(
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 predicate="CALLS",
                 scope_ref={"repo": repo.name, "language": "python", "path_prefix": "."},
                 state="instrumented",
@@ -106,6 +106,7 @@ class PythonAstExtractor:
         return build
 
     def extract_transport_events_only(self, repo: RepoSnapshot, ctx: ExtractionContext | None = None) -> KgBuild:
+        tenant_id = ctx.tenant_id if ctx is not None else resolve_tenant_id()
         build = KgBuild()
         import_normalizer = PythonImportNormalizer(repo)
         parsed_files = self._parsed_files(repo, ctx)
@@ -119,6 +120,7 @@ class PythonAstExtractor:
                 literal_index,
                 build,
                 ctx,
+                tenant_id,
             )
         return build
 
@@ -161,13 +163,14 @@ class PythonAstExtractor:
         literal_index: LiteralIndex,
         build: KgBuild,
         ctx: ExtractionContext | None,
+        tenant_id: str,
     ) -> None:
         tree = parsed.tree
         if tree is None:
             exc = parsed.syntax_error
             build.coverage.append(
                 Coverage(
-                    tenant_id=TENANT_ID,
+                    tenant_id=tenant_id,
                     predicate="PARSES",
                     scope_ref={
                         "repo": repo.name,
@@ -202,7 +205,7 @@ class PythonAstExtractor:
         module_name = self._module_name(repo, file_path)
         module_entity = Entity(
             kind="CodeModule",
-            identity={"tenant_id": TENANT_ID, "repo": repo.name, "module": module_name},
+            identity={"tenant_id": tenant_id, "repo": repo.name, "module": module_name},
             properties={"path": str(file_path.relative_to(repo.root))},
         )
         build.entities.append(module_entity)
@@ -210,7 +213,7 @@ class PythonAstExtractor:
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
-        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree)
+        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree, tenant_id)
         by_qualname = {symbol.qualname: symbol for symbol in symbols}
         by_short_name = {symbol.qualname.rsplit(".", 1)[-1]: symbol for symbol in symbols}
         function_defs_by_short_name = {
@@ -228,7 +231,7 @@ class PythonAstExtractor:
             ctx.python_import_roots.update(import_ref.import_root for import_ref in imports)
         imports_by_root: dict[str, NormalizedImport] = {}
         for import_ref in imports:
-            dependency_entity = self._dependency_entity(repo, import_ref)
+            dependency_entity = self._dependency_entity(repo, import_ref, tenant_id)
             build.entities.append(dependency_entity)
             build.evidence.append(self._entity_evidence(repo, dependency_entity, file_path, import_ref.line, import_ref.line))
             self._add_fact(
@@ -263,7 +266,7 @@ class PythonAstExtractor:
                     continue
                 root = call_name.split(".", 1)[0]
                 if root in imports_by_root:
-                    package_entity = self._dependency_entity(repo, imports_by_root[root])
+                    package_entity = self._dependency_entity(repo, imports_by_root[root], tenant_id)
                     build.entities.append(package_entity)
                     self._add_fact(
                         build,
@@ -288,9 +291,10 @@ class PythonAstExtractor:
                     self.source_system,
                     self._add_entity_evidence,
                     self._add_fact,
-                    function_defs_by_short_name,
+                    function_defs=function_defs_by_short_name,
                     module_node=tree if isinstance(tree, ast.Module) else None,
                     module_context=module_context,
+                    tenant_id=tenant_id,
                 )
 
     def _extract_transport_file(
@@ -302,6 +306,7 @@ class PythonAstExtractor:
         literal_index: LiteralIndex,
         build: KgBuild,
         ctx: ExtractionContext | None,
+        tenant_id: str,
     ) -> None:
         tree = parsed.tree
         if tree is None:
@@ -310,7 +315,7 @@ class PythonAstExtractor:
         imports = import_normalizer.collect(tree, module_name)
         if ctx is not None:
             ctx.python_import_roots.update(import_ref.import_root for import_ref in imports)
-        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree)
+        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree, tenant_id)
         by_qualname = {symbol.qualname: symbol for symbol in symbols}
         function_defs_by_short_name = {
             symbol.qualname.rsplit(".", 1)[-1]: function_defs[symbol.qualname]
@@ -336,9 +341,10 @@ class PythonAstExtractor:
                 self.source_system,
                 self._add_entity_evidence,
                 self._add_fact,
-                function_defs_by_short_name,
+                function_defs=function_defs_by_short_name,
                 module_node=tree if isinstance(tree, ast.Module) else None,
                 module_context=module_context,
+                tenant_id=tenant_id,
             )
 
     def _parse_file(self, file_path: Path) -> ParsedPythonFile:
@@ -371,6 +377,7 @@ class PythonAstExtractor:
         file_path: Path,
         module_name: str,
         tree: ast.AST,
+        tenant_id: str,
     ) -> tuple[list[SymbolDef], dict[str, FunctionDefNode]]:
         symbols: list[SymbolDef] = []
         function_defs: dict[str, FunctionDefNode] = {}
@@ -379,14 +386,14 @@ class PythonAstExtractor:
             for node in body:
                 if isinstance(node, ast.ClassDef):
                     qualname = f"{prefix}.{node.name}" if prefix else node.name
-                    symbols.append(self._symbol(repo, file_path, module_name, qualname, "class", node))
+                    symbols.append(self._symbol(repo, file_path, module_name, qualname, "class", node, tenant_id))
                     visit(node.body, qualname)
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     qualname = f"{prefix}.{node.name}" if prefix else node.name
                     kind = "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function"
                     if prefix:
                         kind = "method"
-                    symbols.append(self._symbol(repo, file_path, module_name, qualname, kind, node))
+                    symbols.append(self._symbol(repo, file_path, module_name, qualname, kind, node, tenant_id))
                     function_defs[qualname] = node
 
         if isinstance(tree, ast.Module):
@@ -401,13 +408,14 @@ class PythonAstExtractor:
         qualname: str,
         symbol_kind: str,
         node: ast.AST,
+        tenant_id: str,
     ) -> SymbolDef:
         line = getattr(node, "lineno", 1)
         end_line = getattr(node, "end_lineno", line)
         entity = Entity(
             kind="CodeSymbol",
             identity={
-                "tenant_id": TENANT_ID,
+                "tenant_id": tenant_id,
                 "repo": repo.name,
                 "module": module_name,
                 "qualname": qualname,
@@ -451,18 +459,18 @@ class PythonAstExtractor:
             )
         )
 
-    def _repo_entity(self, repo: RepoSnapshot) -> Entity:
+    def _repo_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
         return Entity(
             kind="Repo",
-            identity={"tenant_id": TENANT_ID, "host": "local", "owner": repo.owner, "name": repo.name},
+            identity={"tenant_id": tenant_id, "host": "local", "owner": repo.owner, "name": repo.name},
             properties={"path": str(repo.root), "commit_sha": repo.commit_sha},
         )
 
-    def _service_entity(self, repo: RepoSnapshot) -> Entity:
+    def _service_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
         return Entity(
             kind="Service",
             identity={
-                "tenant_id": TENANT_ID,
+                "tenant_id": tenant_id,
                 "namespace": "default",
                 "repo": repo.name,
                 "slug": self._service_slug(repo),
@@ -470,19 +478,19 @@ class PythonAstExtractor:
             properties={"repo": repo.name},
         )
 
-    def _dependency_entity(self, repo: RepoSnapshot, import_ref: NormalizedImport) -> Entity:
+    def _dependency_entity(self, repo: RepoSnapshot, import_ref: NormalizedImport, tenant_id: str) -> Entity:
         if import_ref.category in {"internal_module", "relative_internal_module"}:
             return Entity(
                 kind="CodeModule",
-                identity={"tenant_id": TENANT_ID, "repo": repo.name, "module": import_ref.target_name},
+                identity={"tenant_id": tenant_id, "repo": repo.name, "module": import_ref.target_name},
                 properties={"dependency_category": import_ref.category},
             )
-        return self._external_package(repo, import_ref)
+        return self._external_package(repo, import_ref, tenant_id)
 
-    def _external_package(self, repo: RepoSnapshot, import_ref: NormalizedImport) -> Entity:
+    def _external_package(self, repo: RepoSnapshot, import_ref: NormalizedImport, tenant_id: str) -> Entity:
         return Entity(
             kind="ExternalPackage",
-            identity={"tenant_id": TENANT_ID, "repo": repo.name, "name": import_ref.target_name},
+            identity={"tenant_id": tenant_id, "repo": repo.name, "name": import_ref.target_name},
             properties={
                 "category": import_ref.category,
                 "import_root": import_ref.import_root,
