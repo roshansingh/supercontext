@@ -30,6 +30,8 @@ Format: `Item | Source | Trigger to revisit`.
 | Mermaid in PR-bot blast-radius comments | claude-deepwiki-analysis.md §7 | Future PR-bot ADR |
 | Move private validation fixtures out of product source — `source/kg/product/validation_report.py` and `scenario_plans.py` currently include private corpus strings such as `api.shopagain.io`, `/api/token`, `la-prod-email`, `la-prod-campaign-messages`, `prod_shopagain_wsgi.py`, `mercury_api`, and `mercury_campaign_messages`; replace in-tree defaults with a public reference corpus and keep private checks under `examples/private-goldset/` | SOURCE-OSS-READINESS-PLAN.md PR-A; PR-18/PR-19 reviews | Before OSS publication or before adding more private smoke checks |
 | Classify KG coverage rows currently captured as `unknown` in count baselines by adding `scope_ref.reason` at emission sites and regenerating `tests/baselines/kg_counts/*.json` | Debate 8 PR-0 baseline review | Before treating T2 count-baseline drift as a strict OSS-readiness gate |
+| Per-repo import-root metadata resolution — Python import normalization currently reads `importlib.metadata.packages_distributions()` from the runner environment, not the target repo's venv/lockfile; Node builtin normalization reads the runner `node` on `PATH` plus fallback inventory | Debate 8 PR-C review | Before hosted analysis claims target-repo environment fidelity |
+| Namespace-package subpath ownership for Python imports — `google.*` style namespace packages fail closed when multiple declared distributions share one import root; resolve with package file metadata or target-env module ownership | Debate 8 PR-C review | When namespace package imports become product-critical |
 
 ## Per-ADR open follow-ups
 

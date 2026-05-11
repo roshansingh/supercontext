@@ -15,3 +15,7 @@ python -m source.scripts.compare_snapshot_baseline data/kg_runs/<snapshot_dir> -
 ```
 
 Use `--allow-additions` only when a feature is expected to add facts without removing existing coverage or counts. Extractor error count changes remain strict even with this flag.
+
+## Baseline Change Notes
+
+- `true_loop` PR-C import-normalizer introspection: `ExternalPackage` 91 -> 92 and total entities 1814 -> 1815 because `fs/promises` is now preserved as its own Node builtin submodule instead of collapsing to `fs`. Mercury ML and LatticeAI 23 stayed unchanged.

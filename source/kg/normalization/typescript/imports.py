@@ -9,6 +9,8 @@ import subprocess
 from source.kg.core.repo_source import RepoSnapshot
 
 
+# Regenerate with:
+# node -e "console.log(require('module').builtinModules.sort().join('\n'))"
 FALLBACK_NODE_BUILTINS = {
     "_http_agent",
     "_http_client",
@@ -222,6 +224,11 @@ class JsImportNormalizer:
 
 @lru_cache(maxsize=1)
 def _node_builtin_modules() -> set[str]:
+    """Return Node builtins visible to the runner, widened by a static fallback.
+
+    The runtime probe follows the Node executable on PATH. This keeps local OSS
+    builds dependency-light; target-repo Node version resolution is backlog work.
+    """
     try:
         result = subprocess.run(
             ["node", "-e", "process.stdout.write(JSON.stringify(require('module').builtinModules))"],

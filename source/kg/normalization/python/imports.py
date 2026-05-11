@@ -6,7 +6,6 @@ from functools import lru_cache
 from importlib import metadata
 from importlib import util
 from pathlib import Path
-import re
 import sys
 import tomllib
 
@@ -65,7 +64,7 @@ class PythonImportNormalizer:
         if root in self.stdlib_modules:
             return self._normalized(ref, "stdlib", root, root, None, None)
 
-        distribution_name = self._distribution_name(root)
+        distribution_name = self._distribution_name(target, root)
         if distribution_name:
             return self._normalized(ref, "third_party", distribution_name, root, distribution_name, None)
 
@@ -142,13 +141,24 @@ class PythonImportNormalizer:
             return True
         return any(name.startswith(f"{module_name}.") for name in self.module_names)
 
-    def _distribution_name(self, import_root: str) -> str | None:
+    def _distribution_name(self, target: str, import_root: str) -> str | None:
         normalized_root = import_root.replace("_", "-").lower()
         if normalized_root in self.declared_dependencies:
             return self.declared_dependencies[normalized_root]
         if import_root.lower() in self.declared_dependencies:
             return self.declared_dependencies[import_root.lower()]
         distributions = self.distributions_by_import_root.get(import_root.lower(), ())
+        declared_matches = [
+            self.declared_dependencies[distribution.replace("_", "-").lower()]
+            for distribution in distributions
+            if distribution.replace("_", "-").lower() in self.declared_dependencies
+        ]
+        if len(declared_matches) == 1:
+            return declared_matches[0]
+        if len(declared_matches) > 1 and "." in target:
+            # Namespace packages such as google.* need subpath ownership checks.
+            # V0 refuses ambiguous declared matches instead of guessing.
+            return None
         for distribution in distributions:
             normalized_distribution = distribution.replace("_", "-").lower()
             if normalized_distribution in self.declared_dependencies:
@@ -200,12 +210,23 @@ class PythonImportNormalizer:
 
 
 def _requirement_name(requirement: str) -> str:
-    match = re.match(r"\s*([A-Za-z0-9_.-]+)", requirement)
-    return match.group(1) if match else ""
+    stripped = requirement.lstrip()
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+    chars = []
+    for char in stripped:
+        if char not in allowed:
+            break
+        chars.append(char)
+    return "".join(chars)
 
 
 @lru_cache(maxsize=1)
 def _distributions_by_import_root() -> dict[str, tuple[str, ...]]:
+    """Map import roots to distributions visible in the runner's Python env.
+
+    This is intentionally process-cached for v0. Hosted per-repo venv
+    resolution is tracked in BACKLOG.md and should revisit this cache scope.
+    """
     package_map = metadata.packages_distributions()
     return {
         import_root.lower(): tuple(sorted(distributions))

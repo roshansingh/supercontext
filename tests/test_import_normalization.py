@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -66,6 +67,52 @@ class PythonImportNormalizationTest(unittest.TestCase):
                     self.assertEqual(normalized.category, "third_party")
                     self.assertEqual(normalized.distribution_name, expected_distribution)
                     self.assertEqual(normalized.target_name, expected_distribution)
+
+    def test_single_distribution_metadata_match_does_not_require_declared_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={"bs4": ["beautifulsoup4"]},
+            ):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            normalized = normalizer.normalize(
+                ImportRef(raw_target="bs4", line=1, import_root="bs4", imported_names=(), alias=None),
+                current_module="app",
+            )
+
+            self.assertEqual(normalized.category, "third_party")
+            self.assertEqual(normalized.distribution_name, "beautifulsoup4")
+
+    def test_namespace_package_with_multiple_declared_matches_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[project]\ndependencies = [\"google-api-core\", \"protobuf\"]\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={"google": ["google-api-core", "protobuf"]},
+            ):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            normalized = normalizer.normalize(
+                ImportRef(raw_target="google.protobuf", line=1, import_root="google", imported_names=(), alias=None),
+                current_module="app",
+            )
+
+            self.assertEqual(normalized.category, "unknown")
 
 
 class TypeScriptImportNormalizationTest(unittest.TestCase):
@@ -139,6 +186,20 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
 
         self.assertIn("worker_threads", builtins)
         self.assertIn("fs/promises", builtins)
+
+    def test_node_builtin_modules_include_runtime_discovered_modules(self) -> None:
+        typescript_imports._node_builtin_modules.cache_clear()
+        completed = subprocess.CompletedProcess(
+            args=["node"],
+            returncode=0,
+            stdout='["node:fictional_builtin"]',
+            stderr="",
+        )
+        with patch("source.kg.normalization.typescript.imports.subprocess.run", return_value=completed):
+            builtins = typescript_imports._node_builtin_modules()
+        typescript_imports._node_builtin_modules.cache_clear()
+
+        self.assertIn("fictional_builtin", builtins)
 
 
 def _repo_snapshot(
