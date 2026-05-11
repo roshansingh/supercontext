@@ -61,7 +61,14 @@ class StaticConfigExtractor:
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
         extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)
         if self.include_deploy_events:
-            extract_deploy_events(repo, files, service_entity, build, resolved_tenant_id)
+            extract_deploy_events(
+                repo,
+                files,
+                service_entity,
+                build,
+                resolved_tenant_id,
+                include_event_channel_references=True,
+            )
         build.coverage.append(
             Coverage(
                 tenant_id=resolved_tenant_id,

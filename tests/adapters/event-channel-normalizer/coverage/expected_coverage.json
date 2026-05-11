@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "event-channel-normalizer has no deterministic coverage branch yet"
+}

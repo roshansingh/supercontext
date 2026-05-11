@@ -1,0 +1,4 @@
+values:
+  local_queue_word: orders created
+  malformed_arn: arn:aws:sqs:us-east-1:not-an-account:orders-created
+  non_sqs_url: https://example.com/123456789012/orders-created

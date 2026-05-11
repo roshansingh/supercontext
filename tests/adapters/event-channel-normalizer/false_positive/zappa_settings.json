@@ -1,0 +1,11 @@
+{
+  "prod": {
+    "events": [
+      {
+        "event_source": {
+          "arn": "arn:aws:sqs:us-east-1:123456789012:orders-created"
+        }
+      }
+    ]
+  }
+}
