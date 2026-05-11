@@ -13,12 +13,12 @@ from source.kg.product.validation_report import (
 )
 
 
-DEFAULT_MERCURY_SNAPSHOT = "data/kg_runs/mercury_ml_eval_2026_05_10"
-DEFAULT_TRUE_LOOP_SNAPSHOT = "data/kg_runs/true_loop_eval_2026_05_10"
-DEFAULT_PRIVATE_SNAPSHOT = "data/kg_runs/private_goldset_eval"
-DEFAULT_GOLDSET_PACKETS = "data/kg_runs/private_goldset_eval/goldset_packets_eval_2026_05_10.json"
-DEFAULT_GOLDSET_ANSWERS = "data/kg_runs/private_goldset_eval/goldset_answers_eval_2026_05_10.json"
-DEFAULT_GOLDSET_JUDGEMENT = "data/kg_runs/private_goldset_eval/goldset_judgement_eval_2026_05_10.json"
+DEFAULT_MERCURY_SNAPSHOT = "data/kg_runs/mercury_ml_eval_2026_05_11"
+DEFAULT_TRUE_LOOP_SNAPSHOT = "data/kg_runs/true_loop_eval_2026_05_11"
+DEFAULT_PRIVATE_SNAPSHOT = "data/kg_runs/private_goldset_eval_2026_05_11"
+DEFAULT_GOLDSET_PACKETS = "data/kg_runs/private_goldset_eval_2026_05_11/goldset_packets_eval_2026_05_11.json"
+DEFAULT_GOLDSET_ANSWERS = "data/kg_runs/private_goldset_eval_2026_05_11/goldset_answers_eval_2026_05_11.json"
+DEFAULT_GOLDSET_JUDGEMENT = "data/kg_runs/private_goldset_eval_2026_05_11/goldset_judgement_eval_2026_05_11.json"
 DEFAULT_MD_OUT = "docs/evaluation/CANONICAL-VALIDATION-REPORT.md"
 DEFAULT_EVALUATION_DIR = "docs/evaluation"
 DEFAULT_PRIVATE_SMOKE_FIXTURES = "examples/private-goldset/smoke_fixtures.json"

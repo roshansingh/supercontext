@@ -807,7 +807,9 @@ def _superseded_artifacts(evaluation_dir: Path) -> list[str]:
 
 
 def _is_historical_evaluation_artifact(name: str) -> bool:
-    return name.endswith(".md") and _has_iso_date_stamp(Path(name).stem)
+    if not name.endswith(".md"):
+        return False
+    return _has_iso_date_stamp(Path(name).stem) or _has_legacy_historical_marker(name)
 
 
 def _has_iso_date_stamp(value: str) -> bool:
@@ -820,3 +822,15 @@ def _has_iso_date_stamp(value: str) -> bool:
             continue
         return True
     return False
+
+
+def _has_legacy_historical_marker(name: str) -> bool:
+    return (
+        "-RUN-" in name
+        or "-RERUN-" in name
+        or "-GOLDSET-" in name
+        or name.startswith("NEXT-GAP-EVALUATION-")
+        or name.startswith("CONTRACT-RECONCILIATION-REGRESSION-RUN-")
+        or name.startswith("MULTI-REPO-LINKING-SMOKE-")
+        or name.startswith("SYMBOL-QUERY-SURFACES-SMOKE-")
+    )

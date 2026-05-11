@@ -511,6 +511,7 @@ class ValidationReportTest(unittest.TestCase):
             (evaluation / "LOW-QUERY-RUN-2026-05-06.md").write_text("old", encoding="utf-8")
             (evaluation / "LOW-QUERY-RERUN-IMPORT-NORMALIZATION-2026-05-06.md").write_text("old", encoding="utf-8")
             (evaluation / "GOLDSET-ARTIFACT-CONSISTENCY-TRIAGE-2026-05-10.md").write_text("old", encoding="utf-8")
+            (evaluation / "LATTICEAI-GOLDSET-ANSWERS-Q100-PR16.md").write_text("old", encoding="utf-8")
             (evaluation / "NEXT-GAP-ANALYSIS-POST-PR17-2026-05-10.md").write_text("scratch", encoding="utf-8")
             (evaluation / "NOT-HISTORICAL-NOTE.md").write_text("scratch", encoding="utf-8")
 
@@ -520,6 +521,7 @@ class ValidationReportTest(unittest.TestCase):
             artifacts,
             [
                 f"{evaluation.as_posix()}/GOLDSET-ARTIFACT-CONSISTENCY-TRIAGE-2026-05-10.md",
+                f"{evaluation.as_posix()}/LATTICEAI-GOLDSET-ANSWERS-Q100-PR16.md",
                 f"{evaluation.as_posix()}/LOW-QUERY-RERUN-IMPORT-NORMALIZATION-2026-05-06.md",
                 f"{evaluation.as_posix()}/LOW-QUERY-RUN-2026-05-06.md",
                 f"{evaluation.as_posix()}/NEXT-GAP-ANALYSIS-POST-PR17-2026-05-10.md",
