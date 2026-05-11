@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from source.kg.build.multi_repo import build_multi, validate_unique_repo_identities
+from source.kg.build.multi_repo import PackageProvider, build_multi, validate_unique_repo_identities
 from source.kg.core.models import Coverage, Entity, Evidence, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
@@ -85,6 +86,7 @@ def build_private_goldset_kg(
         repos,
         build.entities,
         build.evidence,
+        build.providers,
         resolved_tenant_id,
     )
     build.entities.extend(summary.entities)
@@ -142,16 +144,18 @@ def apply_private_goldset_extensions(
     repos: list[RepoSnapshot],
     public_entities: list[Entity],
     public_evidence: list[Evidence],
+    providers: list[PackageProvider],
     tenant_id: str,
 ) -> tuple[ConfigKgBuild, set[tuple[str, str, str]]]:
     private_build = ConfigKgBuild()
     cleared_gap_coverage: set[tuple[str, str, str]] = set()
     for repo in repos:
-        service_entity = _service_entity_for_repo(public_entities, public_evidence, repo, tenant_id)
+        service_entity = _service_entity_for_repo(public_entities, public_evidence, providers, repo, tenant_id)
         for scanned in scan_config_files(repo, tenant_id).files:
             file_build = ConfigKgBuild()
             extract_apache_vhost_routes(repo, scanned, service_entity, file_build, tenant_id)
-            extract_zappa_event_sources(repo, scanned, service_entity, file_build, tenant_id)
+            if scanned.path.name == "zappa_settings.json":
+                extract_zappa_event_sources(repo, scanned, service_entity, file_build, tenant_id)
             private_build.entities.extend(file_build.entities)
             private_build.facts.extend(file_build.facts)
             private_build.evidence.extend(file_build.evidence)
@@ -169,30 +173,64 @@ def apply_private_goldset_extensions(
 def _service_entity_for_repo(
     entities: list[Entity],
     evidence: list[Evidence],
+    providers: list[PackageProvider],
     repo: RepoSnapshot,
     tenant_id: str,
 ) -> Entity:
-    matches_by_id = {
-        entity.entity_id: entity
-        for entity in entities
+    matching_providers = [
+        provider
+        for provider in providers
+        if provider.repo_identity.tenant_id == tenant_id
+        and provider.repo_identity.owner == repo.owner
+        and provider.repo_identity.name == repo.name
+    ]
+    if len(matching_providers) != 1:
+        raise ValueError(
+            f"Expected exactly one package provider for repo {repo.owner}/{repo.name}; "
+            f"found {len(matching_providers)}"
+        )
+    service_entity_id = matching_providers[0].service_entity_id
+    entities_by_id = {entity.entity_id: entity for entity in entities}
+    if service_entity_id is not None and service_entity_id in entities_by_id:
+        return entities_by_id[service_entity_id]
+    if service_entity_id is not None:
+        raise ValueError(f"Provider for repo {repo.owner}/{repo.name} references missing Service entity {service_entity_id}")
+    service_matches = [
+        entity
+        for entity in entities_by_id.values()
         if entity.kind == "Service"
         and entity.identity.get("tenant_id") == tenant_id
         and entity.identity.get("repo") == repo.name
-    }
-    matches = list(matches_by_id.values())
+    ]
+    if len(service_matches) == 1:
+        return service_matches[0]
+    aliases = {_normalize_service_alias(alias) for alias in matching_providers[0].aliases}
+    alias_matches = [
+        entity
+        for entity in service_matches
+        if _normalize_service_alias(str(entity.identity.get("slug", ""))) in aliases
+    ]
+    if len(alias_matches) == 1:
+        return alias_matches[0]
+    alias_match_ids = {entity.entity_id for entity in alias_matches}
     config_service_ids = {
         row.target_id
         for row in evidence
         if row.target_type == "entity"
-        and row.target_id in matches_by_id
+        and row.target_id in alias_match_ids
         and row.source_system in CONFIG_SERVICE_SOURCE_SYSTEMS
     }
-    config_matches = [matches_by_id[entity_id] for entity_id in config_service_ids]
+    config_matches = [entities_by_id[entity_id] for entity_id in config_service_ids]
     if len(config_matches) == 1:
         return config_matches[0]
-    if len(matches) != 1:
-        raise ValueError(f"Expected exactly one Service entity for repo {repo.name}; found {len(matches)}")
-    return matches[0]
+    raise ValueError(
+        f"Expected exactly one Service entity for repo {repo.owner}/{repo.name}; "
+        f"found {len(service_matches)} candidates and {len(alias_matches)} alias matches"
+    )
+
+
+def _normalize_service_alias(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
 def _fact_has_evidence_from_file(fact_id: str, build: ConfigKgBuild, scanned: ScannedFile) -> bool:

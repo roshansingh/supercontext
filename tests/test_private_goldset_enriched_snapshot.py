@@ -59,6 +59,11 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             root = Path(tmpdir)
             repo = _repo(root / "service")
             (repo / "settings.json").write_text('{"debug": false}', encoding="utf-8")
+            (repo / "events.json").write_text(
+                '{"events": [{"function": "handlers.consume", "event_source": {"arn": "'
+                'arn:aws:sqs:eu-west-1:015424956416:orders-created"}}]}',
+                encoding="utf-8",
+            )
             out = root / "kg"
 
             manifest = module.build_private_goldset_kg([repo], out, tenant_id="tenant-a")
@@ -110,12 +115,31 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
 
+    def test_private_builder_uses_full_repo_identity_for_same_named_repos(self) -> None:
+        module = _load_builder_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            apache_repo = _repo(root / "owner-a" / "svc", package_name="apache-service")
+            zappa_repo = _repo(root / "owner-b" / "svc", package_name="zappa-service")
+            _write_apache_vhost(apache_repo)
+            _write_zappa_settings(zappa_repo)
+            out = root / "kg"
 
-def _repo(path: Path) -> Path:
+            manifest = module.build_private_goldset_kg([apache_repo, zappa_repo], out, tenant_id="default")
+            facts = read_jsonl(out / "facts.jsonl")
+
+        self.assertEqual(manifest["repo_count"], 2)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 2)
+        self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
+        self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
+
+
+def _repo(path: Path, package_name: str = "service") -> Path:
     path.mkdir(parents=True)
-    (path / "pyproject.toml").write_text('[project]\nname = "service"\n', encoding="utf-8")
-    (path / "service").mkdir()
-    (path / "service" / "__init__.py").write_text("", encoding="utf-8")
+    (path / "pyproject.toml").write_text(f'[project]\nname = "{package_name}"\n', encoding="utf-8")
+    package_dir = path / package_name.replace("-", "_")
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
     return path
 
 
