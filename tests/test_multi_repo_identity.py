@@ -85,7 +85,7 @@ def _python_repo(path: Path, package_name: str, source: str) -> Path:
     (path / "pyproject.toml").write_text(f'[project]\nname = "{package_name}"\n', encoding="utf-8")
     if source:
         (path / "module.py").write_text(source, encoding="utf-8")
-    package_dir = path / package_name
+    package_dir = path / package_name.replace("-", "_")
     package_dir.mkdir(exist_ok=True)
     (package_dir / "__init__.py").write_text("", encoding="utf-8")
     return path

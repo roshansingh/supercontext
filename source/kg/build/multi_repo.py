@@ -306,7 +306,7 @@ def _link_external_packages(
             provider
             for name in candidate_names
             for provider in provider_index.get(_normalize_package_name(name), [])
-            if not _is_self_link(provider, consumer_identities)
+            if not _is_self_link(provider, package, consumer_identities)
         }
         if not matches:
             continue
@@ -337,9 +337,12 @@ def _link_external_packages(
     return facts, evidence, ambiguous_count
 
 
-def _is_self_link(provider: PackageProvider, consumer_identities: set[RepoIdentity]) -> bool:
+def _is_self_link(provider: PackageProvider, package: Entity, consumer_identities: set[RepoIdentity]) -> bool:
     if not consumer_identities:
-        raise ValueError("ExternalPackage entity missing repo identity tracking")
+        raise ValueError(
+            "ExternalPackage entity missing repo identity tracking: "
+            f"entity_id={package.entity_id}, identity={package.identity}"
+        )
     return provider.repo_identity in consumer_identities
 
 
@@ -377,13 +380,7 @@ def _link_qualifier(
         "provider_repo_identity": provider.repo_identity.to_json(),
         "provider_package_name": provider.package_name,
     }
-    if len(consumer_identities) == 1:
-        qualifier["consumer_repo_identity"] = next(iter(consumer_identities)).to_json()
-    elif len(consumer_identities) > 1:
-        qualifier["consumer_repo_identities"] = [
-            identity.to_json()
-            for identity in _sort_repo_identities(consumer_identities)
-        ]
+    qualifier.update(_consumer_identity_ref(consumer_identities))
     return qualifier
 
 
@@ -403,7 +400,7 @@ def _link_evidence(
                 "rule": "unique_normalized_package_name_match",
                 "rule_version": LINKER_RULE_VERSION,
                 "consumer_repo": package.identity.get("repo"),
-                **_consumer_identity_source_ref(consumer_identities),
+                **_consumer_identity_ref(consumer_identities),
                 "provider_repo": provider.repo.name,
                 "provider_repo_identity": provider.repo_identity.to_json(),
                 "provider_package_name": provider.package_name,
@@ -415,7 +412,7 @@ def _link_evidence(
     ]
 
 
-def _consumer_identity_source_ref(consumer_identities: set[RepoIdentity]) -> JsonObject:
+def _consumer_identity_ref(consumer_identities: set[RepoIdentity]) -> JsonObject:
     if len(consumer_identities) == 1:
         return {"consumer_repo_identity": next(iter(consumer_identities)).to_json()}
     if len(consumer_identities) > 1:
