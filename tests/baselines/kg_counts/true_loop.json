@@ -11,7 +11,7 @@
     "Domain": 352,
     "Endpoint": 24,
     "EnvVar": 100,
-    "ExternalPackage": 91,
+    "ExternalPackage": 92,
     "Repo": 1,
     "Service": 1
   },
@@ -27,7 +27,7 @@
   },
   "manifest_counts": {
     "coverage": 6,
-    "entities": 1814,
+    "entities": 1815,
     "evidence": 7677,
     "facts": 3648,
     "python_files": 1,

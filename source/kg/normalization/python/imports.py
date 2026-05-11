@@ -2,20 +2,15 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
+from importlib import metadata
 from importlib import util
 from pathlib import Path
+import re
 import sys
 import tomllib
 
 from source.kg.core.repo_source import RepoSnapshot
-
-
-DEPENDENCY_ALIASES = {
-    "sklearn": "scikit-learn",
-    "cv2": "opencv-python",
-    "PIL": "pillow",
-    "yaml": "pyyaml",
-}
 
 
 @dataclass(frozen=True)
@@ -47,6 +42,7 @@ class PythonImportNormalizer:
         self.module_names = {self._module_name(path) for path in repo.python_files}
         self.package_roots = self._package_roots()
         self.declared_dependencies = self._declared_dependencies()
+        self.distributions_by_import_root = _distributions_by_import_root()
         self.stdlib_modules = set(getattr(sys, "stdlib_module_names", set()))
         self.stdlib_modules.update(sys.builtin_module_names)
 
@@ -147,13 +143,18 @@ class PythonImportNormalizer:
         return any(name.startswith(f"{module_name}.") for name in self.module_names)
 
     def _distribution_name(self, import_root: str) -> str | None:
-        if import_root in DEPENDENCY_ALIASES:
-            return DEPENDENCY_ALIASES[import_root]
         normalized_root = import_root.replace("_", "-").lower()
         if normalized_root in self.declared_dependencies:
             return self.declared_dependencies[normalized_root]
         if import_root.lower() in self.declared_dependencies:
             return self.declared_dependencies[import_root.lower()]
+        distributions = self.distributions_by_import_root.get(import_root.lower(), ())
+        for distribution in distributions:
+            normalized_distribution = distribution.replace("_", "-").lower()
+            if normalized_distribution in self.declared_dependencies:
+                return self.declared_dependencies[normalized_distribution]
+        if len(distributions) == 1:
+            return distributions[0]
         return None
 
     def _declared_dependencies(self) -> dict[str, str]:
@@ -164,12 +165,17 @@ class PythonImportNormalizer:
             data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError:
             return {}
-        dependencies = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
-        names = {
-            str(name)
-            for name in dependencies
-            if str(name).lower() != "python"
-        }
+        names = set()
+        poetry_dependencies = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+        names.update(str(name) for name in poetry_dependencies if str(name).lower() != "python")
+        project_dependencies = data.get("project", {}).get("dependencies", [])
+        names.update(_requirement_name(str(dependency)) for dependency in project_dependencies)
+        optional_dependencies = data.get("project", {}).get("optional-dependencies", {})
+        if isinstance(optional_dependencies, dict):
+            for dependencies in optional_dependencies.values():
+                if isinstance(dependencies, list):
+                    names.update(_requirement_name(str(dependency)) for dependency in dependencies)
+        names = {name for name in names if name}
         return {name.replace("_", "-").lower(): name for name in names}
 
     def _package_roots(self) -> set[str]:
@@ -191,3 +197,17 @@ class PythonImportNormalizer:
         relative = file_path.relative_to(self.repo.root).with_suffix("")
         parts = [part for part in relative.parts if part != "__init__"]
         return ".".join(parts) or self.repo.name
+
+
+def _requirement_name(requirement: str) -> str:
+    match = re.match(r"\s*([A-Za-z0-9_.-]+)", requirement)
+    return match.group(1) if match else ""
+
+
+@lru_cache(maxsize=1)
+def _distributions_by_import_root() -> dict[str, tuple[str, ...]]:
+    package_map = metadata.packages_distributions()
+    return {
+        import_root.lower(): tuple(sorted(distributions))
+        for import_root, distributions in package_map.items()
+    }

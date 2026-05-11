@@ -2,28 +2,82 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+import subprocess
 
 from source.kg.core.repo_source import RepoSnapshot
 
 
-NODE_BUILTINS = {
+FALLBACK_NODE_BUILTINS = {
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_wrap",
+    "_stream_writable",
+    "_tls_common",
+    "_tls_wrap",
     "assert",
+    "assert/strict",
+    "async_hooks",
     "buffer",
     "child_process",
+    "cluster",
+    "console",
+    "constants",
     "crypto",
+    "dgram",
+    "diagnostics_channel",
+    "dns",
+    "dns/promises",
+    "domain",
     "events",
     "fs",
+    "fs/promises",
     "http",
+    "http2",
     "https",
+    "inspector",
+    "inspector/promises",
+    "module",
     "net",
     "os",
     "path",
+    "path/posix",
+    "path/win32",
+    "perf_hooks",
     "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "readline/promises",
+    "repl",
     "stream",
+    "stream/consumers",
+    "stream/promises",
+    "stream/web",
+    "string_decoder",
+    "sys",
+    "test",
     "timers",
+    "timers/promises",
+    "tls",
+    "trace_events",
+    "tty",
     "url",
     "util",
+    "util/types",
+    "v8",
+    "vm",
+    "wasi",
+    "worker_threads",
     "zlib",
 }
 
@@ -56,6 +110,7 @@ class JsImportNormalizer:
         self.repo = repo
         self.module_names = {self._module_name(path) for path in repo.typescript_files}
         self.declared_dependencies = self._declared_dependencies()
+        self.node_builtins = _node_builtin_modules()
 
     def normalize(self, ref: JsImportRef, current_module: str) -> NormalizedJsImport:
         target = ref.raw_target
@@ -71,8 +126,8 @@ class JsImportNormalizer:
             category = "internal_module" if module_name in self.module_names else "unknown"
             return self._normalized(ref, category, module_name, root, None, module_name)
 
-        if root in NODE_BUILTINS or root.startswith("node:"):
-            node_name = root.removeprefix("node:")
+        node_name = self._node_builtin_name(target, root)
+        if node_name:
             return self._normalized(ref, "node_builtin", node_name, root, None, None)
 
         distribution_name = self._distribution_name(root)
@@ -124,6 +179,16 @@ class JsImportNormalizer:
     def _distribution_name(self, import_root: str) -> str | None:
         return self.declared_dependencies.get(import_root.lower())
 
+    def _node_builtin_name(self, target: str, root: str) -> str | None:
+        candidates = []
+        if target.startswith("node:"):
+            candidates.append(target.removeprefix("node:"))
+        candidates.extend([target, root.removeprefix("node:")])
+        for candidate in candidates:
+            if candidate in self.node_builtins:
+                return candidate
+        return None
+
     def _declared_dependencies(self) -> dict[str, str]:
         names: set[str] = set()
         for package_json in self.repo.root.glob("**/package.json"):
@@ -153,3 +218,19 @@ class JsImportNormalizer:
             parts = target.split("/")
             return "/".join(parts[:2]) if len(parts) >= 2 else target
         return target.split("/", 1)[0]
+
+
+@lru_cache(maxsize=1)
+def _node_builtin_modules() -> set[str]:
+    try:
+        result = subprocess.run(
+            ["node", "-e", "process.stdout.write(JSON.stringify(require('module').builtinModules))"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        modules = json.loads(result.stdout or "[]")
+    except (subprocess.SubprocessError, FileNotFoundError, json.JSONDecodeError):
+        return set(FALLBACK_NODE_BUILTINS)
+    return {str(module).removeprefix("node:") for module in modules} | set(FALLBACK_NODE_BUILTINS)
