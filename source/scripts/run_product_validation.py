@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from source.kg.product.validation_report import (
+    DEFAULT_NEXT_FEATURE_RECOMMENDATION,
     ValidationConfig,
     default_generated_at,
     render_validation_markdown,
@@ -33,6 +34,10 @@ def main() -> None:
     parser.add_argument("--goldset-judgement", default=DEFAULT_GOLDSET_JUDGEMENT)
     parser.add_argument("--evaluation-dir", default=DEFAULT_EVALUATION_DIR)
     parser.add_argument("--private-smoke-fixtures", default=DEFAULT_PRIVATE_SMOKE_FIXTURES)
+    parser.add_argument(
+        "--next-feature-recommendation",
+        help="Operator-authored recommendation to render in the Product Readout section.",
+    )
     parser.add_argument("--generated-at", default=default_generated_at())
     parser.add_argument("--json-out", help="Optional path to write the machine-readable report JSON.")
     parser.add_argument("--md-out", default=DEFAULT_MD_OUT, help="Markdown report output path.")
@@ -56,6 +61,9 @@ def main() -> None:
             evaluation_dir=Path(args.evaluation_dir),
             strict_smoke_checks=not args.no_strict_smoke_checks,
             private_smoke_fixtures=Path(args.private_smoke_fixtures),
+            next_feature_recommendation=(
+                args.next_feature_recommendation or DEFAULT_NEXT_FEATURE_RECOMMENDATION
+            ),
         )
     )
     payload = json.dumps(report, indent=2, sort_keys=True)

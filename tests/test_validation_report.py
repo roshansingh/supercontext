@@ -333,6 +333,7 @@ class ValidationReportTest(unittest.TestCase):
                 goldset_judgement=config.goldset_judgement,
                 generated_at=config.generated_at,
                 evaluation_dir=config.evaluation_dir,
+                next_feature_recommendation="Operator-authored next step.",
             )
 
             with (
@@ -354,6 +355,7 @@ class ValidationReportTest(unittest.TestCase):
 
         self.assertEqual(report["inputs"]["mercury_snapshot"], (home / "mercury").resolve().as_posix())
         self.assertEqual(report["inputs"]["goldset_packets"], (home / "packets.json").resolve().as_posix())
+        self.assertEqual(report["next_feature_recommendation"], "Operator-authored next step.")
 
     def test_private_smoke_fixture_absence_skips_private_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -508,15 +510,19 @@ class ValidationReportTest(unittest.TestCase):
             (evaluation / "README.md").write_text("active", encoding="utf-8")
             (evaluation / "LOW-QUERY-RUN-2026-05-06.md").write_text("old", encoding="utf-8")
             (evaluation / "LOW-QUERY-RERUN-IMPORT-NORMALIZATION-2026-05-06.md").write_text("old", encoding="utf-8")
+            (evaluation / "GOLDSET-ARTIFACT-CONSISTENCY-TRIAGE-2026-05-10.md").write_text("old", encoding="utf-8")
             (evaluation / "NEXT-GAP-ANALYSIS-POST-PR17-2026-05-10.md").write_text("scratch", encoding="utf-8")
+            (evaluation / "NOT-HISTORICAL-NOTE.md").write_text("scratch", encoding="utf-8")
 
             artifacts = _superseded_artifacts(evaluation)
 
         self.assertEqual(
             artifacts,
             [
+                f"{evaluation.as_posix()}/GOLDSET-ARTIFACT-CONSISTENCY-TRIAGE-2026-05-10.md",
                 f"{evaluation.as_posix()}/LOW-QUERY-RERUN-IMPORT-NORMALIZATION-2026-05-06.md",
                 f"{evaluation.as_posix()}/LOW-QUERY-RUN-2026-05-06.md",
+                f"{evaluation.as_posix()}/NEXT-GAP-ANALYSIS-POST-PR17-2026-05-10.md",
             ],
         )
 
