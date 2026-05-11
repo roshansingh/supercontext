@@ -11,6 +11,7 @@ from source.kg.extraction.config.common import (
     domain_entity,
     env_var_entity,
 )
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -26,12 +27,19 @@ SECRET_KEY_HINTS = ("KEY", "PASS", "PASSWORD", "SECRET", "TOKEN")
 IGNORED_DOMAIN_SUFFIXES = (".py", ".js", ".ts", ".tsx", ".jsx")
 
 
-def extract_domain_env(repo: RepoSnapshot, files: list[ScannedFile], service_entity: Entity, build: ConfigKgBuild) -> None:
+def extract_domain_env(
+    repo: RepoSnapshot,
+    files: list[ScannedFile],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str | None = None,
+) -> None:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     for scanned in files:
         for line_number, line in enumerate(scanned.lines, start=1):
-            _extract_domains(repo, scanned, line_number, line, service_entity, build)
-            _extract_env_references(repo, scanned, line_number, line, service_entity, build)
-            _extract_env_assignments(repo, scanned, line_number, line, service_entity, build)
+            _extract_domains(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
+            _extract_env_references(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
+            _extract_env_assignments(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
 
 
 def _extract_domains(
@@ -41,6 +49,7 @@ def _extract_domains(
     line: str,
     service_entity: Entity,
     build: ConfigKgBuild,
+    tenant_id: str,
 ) -> None:
     for url in URL_RE.findall(line):
         clean_url = _clean_url_literal(url)
@@ -49,12 +58,12 @@ def _extract_domains(
             continue
         hostname = _safe_hostname(parsed)
         if hostname:
-            _add_domain_reference(repo, scanned, line_number, service_entity, build, hostname, clean_url)
+            _add_domain_reference(repo, scanned, line_number, service_entity, build, hostname, clean_url, tenant_id)
     for domain in DOMAIN_RE.findall(line):
         if _looks_like_code_file(domain):
             continue
         if "://" in line or _line_has_domain_hint(line):
-            _add_domain_reference(repo, scanned, line_number, service_entity, build, domain, domain)
+            _add_domain_reference(repo, scanned, line_number, service_entity, build, domain, domain, tenant_id)
 
 
 def _extract_env_references(
@@ -64,9 +73,10 @@ def _extract_env_references(
     line: str,
     service_entity: Entity,
     build: ConfigKgBuild,
+    tenant_id: str,
 ) -> None:
     for env_name in sorted(set(JS_ENV_RE.findall(line) + PY_ENV_RE.findall(line))):
-        env_entity = env_var_entity(repo, env_name)
+        env_entity = env_var_entity(repo, env_name, tenant_id)
         add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
         add_fact(
             build,
@@ -87,6 +97,7 @@ def _extract_env_assignments(
     line: str,
     service_entity: Entity,
     build: ConfigKgBuild,
+    tenant_id: str,
 ) -> None:
     match = ENV_ASSIGN_RE.match(line)
     if not match:
@@ -96,7 +107,7 @@ def _extract_env_assignments(
     if not _is_config_key(key):
         return
 
-    env_entity = env_var_entity(repo, key)
+    env_entity = env_var_entity(repo, key, tenant_id)
     add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
     qualifier = {"name": key, "reference_kind": "config_assignment", "value_kind": _value_kind(key, value)}
     if qualifier["value_kind"] in {"domain", "url"}:
@@ -110,10 +121,10 @@ def _extract_env_assignments(
             continue
         hostname = _safe_hostname(parsed)
         if hostname:
-            _add_domain_reference(repo, scanned, line_number, env_entity, build, hostname, clean_url)
+            _add_domain_reference(repo, scanned, line_number, env_entity, build, hostname, clean_url, tenant_id)
     for domain in DOMAIN_RE.findall(value):
         if not _looks_like_code_file(domain):
-            _add_domain_reference(repo, scanned, line_number, env_entity, build, domain, domain)
+            _add_domain_reference(repo, scanned, line_number, env_entity, build, domain, domain, tenant_id)
 
 
 def _add_domain_reference(
@@ -124,11 +135,12 @@ def _add_domain_reference(
     build: ConfigKgBuild,
     domain: str,
     literal: str,
+    tenant_id: str,
 ) -> None:
     domain_ref = _normalize_domain_ref(domain)
     if not domain_ref:
         return
-    entity = domain_entity(repo, domain_ref)
+    entity = domain_entity(repo, domain_ref, tenant_id)
     add_entity_evidence(build, repo, entity, scanned.path, line_number)
     add_fact(
         build,

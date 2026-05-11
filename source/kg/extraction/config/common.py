@@ -7,9 +7,9 @@ from typing import Literal
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
 from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
+from source.kg.core.tenant import resolve_tenant_id
 
 
-TENANT_ID = "local-dev"
 CONFIG_SOURCE_SYSTEM = "static_config_v0"
 
 CONFIG_EXTENSIONS = {
@@ -136,27 +136,37 @@ def bytes_ref(repo: RepoSnapshot, file_path: Path, line_start: int, line_end: in
     }
 
 
-def domain_entity(repo: RepoSnapshot, domain: str) -> Entity:
+def domain_entity(repo: RepoSnapshot, domain: str, tenant_id: str | None = None) -> Entity:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     return Entity(
         kind="Domain",
-        identity={"tenant_id": TENANT_ID, "repo": repo.name, "name": domain.lower()},
+        identity={"tenant_id": resolved_tenant_id, "repo": repo.name, "name": domain.lower()},
         properties={},
     )
 
 
-def env_var_entity(repo: RepoSnapshot, name: str) -> Entity:
+def env_var_entity(repo: RepoSnapshot, name: str, tenant_id: str | None = None) -> Entity:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     return Entity(
         kind="EnvVar",
-        identity={"tenant_id": TENANT_ID, "repo": repo.name, "name": name},
+        identity={"tenant_id": resolved_tenant_id, "repo": repo.name, "name": name},
         properties={},
     )
 
 
-def endpoint_entity(repo: RepoSnapshot, method: str, path: str, host: str | None = None) -> Entity:
+def endpoint_entity(
+    repo: RepoSnapshot,
+    method: str,
+    path: str,
+    host: str | None = None,
+    *,
+    tenant_id: str | None = None,
+) -> Entity:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     return Entity(
         kind="Endpoint",
         identity={
-            "tenant_id": TENANT_ID,
+            "tenant_id": resolved_tenant_id,
             "repo": repo.name,
             "protocol": "http",
             "method": method.upper() if method else "ANY",
@@ -172,21 +182,24 @@ def event_channel_entity(
     broker_kind: str,
     channel_address: str,
     *,
+    tenant_id: str | None = None,
     properties: JsonObject | None = None,
     canonical_status: Literal["canonical", "candidate", "demoted"] = "canonical",
 ) -> Entity:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     return Entity(
         kind="EventChannel",
-        identity={"tenant_id": TENANT_ID, "broker_kind": broker_kind, "channel_address": channel_address},
+        identity={"tenant_id": resolved_tenant_id, "broker_kind": broker_kind, "channel_address": channel_address},
         properties=properties or {},
         canonical_status=canonical_status,
     )
 
 
-def deploy_target_entity(repo: RepoSnapshot, target_type: str, target: str) -> Entity:
+def deploy_target_entity(repo: RepoSnapshot, target_type: str, target: str, tenant_id: str | None = None) -> Entity:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     return Entity(
         kind="DeployTarget",
-        identity={"tenant_id": TENANT_ID, "repo": repo.name, "type": target_type, "target": target},
+        identity={"tenant_id": resolved_tenant_id, "repo": repo.name, "type": target_type, "target": target},
         properties={},
     )
 

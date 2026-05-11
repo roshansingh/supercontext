@@ -9,10 +9,8 @@ import subprocess
 from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework.adapter import ExtractionContext
-
-
-TENANT_ID = "local-dev"
 
 
 @dataclass
@@ -38,9 +36,10 @@ class TypeScriptCompilerApiExtractor:
         return self.extract_with_context(repo, None)
 
     def extract_with_context(self, repo: RepoSnapshot, ctx: ExtractionContext | None) -> KgBuild:
+        tenant_id = ctx.tenant_id if ctx is not None else resolve_tenant_id()
         build = KgBuild()
-        repo_entity = self._repo_entity(repo)
-        service_entity = self._service_entity(repo)
+        repo_entity = self._repo_entity(repo, tenant_id)
+        service_entity = self._service_entity(repo, tenant_id)
         build.entities.extend([repo_entity, service_entity])
         build.evidence.extend([self._repo_evidence(repo, repo_entity), self._service_evidence(repo, service_entity)])
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, self._package_json(repo), 1, 1)
@@ -49,11 +48,11 @@ class TypeScriptCompilerApiExtractor:
         parsed_files = self._parse_repo(repo)
         for file_path in repo.typescript_files:
             parsed_file = parsed_files.get(str(file_path.relative_to(repo.root)), {})
-            self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build, ctx)
+            self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build, ctx, tenant_id)
             for diagnostic in parsed_file.get("parse_diagnostics", []):
                 build.coverage.append(
                     Coverage(
-                        tenant_id=TENANT_ID,
+                        tenant_id=tenant_id,
                         predicate="PARSES",
                         scope_ref={
                             "repo": repo.name,
@@ -69,7 +68,7 @@ class TypeScriptCompilerApiExtractor:
 
         build.coverage.append(
             Coverage(
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 predicate="PARSES",
                 scope_ref={"repo": repo.name, "language": "typescript/javascript", "path_prefix": "."},
                 state="instrumented",
@@ -88,13 +87,14 @@ class TypeScriptCompilerApiExtractor:
         parsed_file: JsonObject,
         build: KgBuild,
         ctx: ExtractionContext | None,
+        tenant_id: str,
     ) -> None:
         source = file_path.read_text(encoding="utf-8", errors="replace")
         lines = source.splitlines()
         module_name = self._module_name(repo, file_path)
         module_entity = Entity(
             kind="CodeModule",
-            identity={"tenant_id": TENANT_ID, "repo": repo.name, "module": module_name},
+            identity={"tenant_id": tenant_id, "repo": repo.name, "module": module_name},
             properties={"path": str(file_path.relative_to(repo.root)), "language": self._language(file_path)},
         )
         build.entities.append(module_entity)
@@ -107,7 +107,7 @@ class TypeScriptCompilerApiExtractor:
             ctx.js_ts_import_roots.update(import_ref.import_root for import_ref in imports)
         imports_by_local = self._imports_by_local(imports)
         for import_ref in imports:
-            dependency_entity = self._dependency_entity(repo, import_ref)
+            dependency_entity = self._dependency_entity(repo, import_ref, tenant_id)
             build.entities.append(dependency_entity)
             build.evidence.append(self._entity_evidence(repo, dependency_entity, file_path, import_ref.line, import_ref.line))
             self._add_fact(
@@ -122,7 +122,10 @@ class TypeScriptCompilerApiExtractor:
                 qualifier=self._import_qualifier(import_ref),
             )
 
-        symbols = [self._symbol_from_row(repo, file_path, module_name, row) for row in parsed_file.get("symbols", [])]
+        symbols = [
+            self._symbol_from_row(repo, file_path, module_name, row, tenant_id)
+            for row in parsed_file.get("symbols", [])
+        ]
         symbols_by_short_name = {symbol.qualname.rsplit(".", 1)[-1]: symbol for symbol in symbols}
         for symbol in symbols:
             build.entities.append(symbol.entity)
@@ -155,7 +158,7 @@ class TypeScriptCompilerApiExtractor:
                     build,
                     "CALLS",
                     caller.entity,
-                    self._dependency_entity(repo, import_ref),
+                    self._dependency_entity(repo, import_ref, tenant_id),
                     repo,
                     file_path,
                     line_number,
@@ -172,14 +175,21 @@ class TypeScriptCompilerApiExtractor:
             is_type_only=bool(row.get("is_type_only", False)),
         )
 
-    def _symbol_from_row(self, repo: RepoSnapshot, file_path: Path, module_name: str, row: JsonObject) -> SymbolDef:
+    def _symbol_from_row(
+        self,
+        repo: RepoSnapshot,
+        file_path: Path,
+        module_name: str,
+        row: JsonObject,
+        tenant_id: str,
+    ) -> SymbolDef:
         name = str(row.get("name", "anonymous"))
         kind = str(row.get("kind", "value"))
         line = int(row.get("line") or 1)
         entity = Entity(
             kind="CodeSymbol",
             identity={
-                "tenant_id": TENANT_ID,
+                "tenant_id": tenant_id,
                 "repo": repo.name,
                 "module": module_name,
                 "qualname": name,
@@ -224,16 +234,16 @@ class TypeScriptCompilerApiExtractor:
                 by_local.setdefault(local_name, import_ref)
         return by_local
 
-    def _dependency_entity(self, repo: RepoSnapshot, import_ref: NormalizedJsImport) -> Entity:
+    def _dependency_entity(self, repo: RepoSnapshot, import_ref: NormalizedJsImport, tenant_id: str) -> Entity:
         if import_ref.category in {"internal_module", "relative_internal_module"}:
             return Entity(
                 kind="CodeModule",
-                identity={"tenant_id": TENANT_ID, "repo": repo.name, "module": import_ref.target_name},
+                identity={"tenant_id": tenant_id, "repo": repo.name, "module": import_ref.target_name},
                 properties={"dependency_category": import_ref.category},
             )
         return Entity(
             kind="ExternalPackage",
-            identity={"tenant_id": TENANT_ID, "repo": repo.name, "name": import_ref.target_name},
+            identity={"tenant_id": tenant_id, "repo": repo.name, "name": import_ref.target_name},
             properties={
                 "category": import_ref.category,
                 "import_root": import_ref.import_root,
@@ -279,18 +289,18 @@ class TypeScriptCompilerApiExtractor:
             )
         )
 
-    def _repo_entity(self, repo: RepoSnapshot) -> Entity:
+    def _repo_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
         return Entity(
             kind="Repo",
-            identity={"tenant_id": TENANT_ID, "host": "local", "owner": repo.owner, "name": repo.name},
+            identity={"tenant_id": tenant_id, "host": "local", "owner": repo.owner, "name": repo.name},
             properties={"path": str(repo.root), "commit_sha": repo.commit_sha},
         )
 
-    def _service_entity(self, repo: RepoSnapshot) -> Entity:
+    def _service_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
         return Entity(
             kind="Service",
             identity={
-                "tenant_id": TENANT_ID,
+                "tenant_id": tenant_id,
                 "namespace": "default",
                 "repo": repo.name,
                 "slug": self._service_slug(repo),

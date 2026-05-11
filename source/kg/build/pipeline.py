@@ -6,15 +6,24 @@ from pathlib import Path
 from source.kg.core.models import Coverage, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
+from source.kg.core.tenant import resolve_tenant_id
+from source.kg.extraction.framework import ExtractionContext
 
 
-def build_kg(repo_path: str | Path, output_dir: str | Path, strict_extractors: bool = False) -> JsonObject:
+def build_kg(
+    repo_path: str | Path,
+    output_dir: str | Path,
+    strict_extractors: bool = False,
+    tenant_id: str | None = None,
+) -> JsonObject:
     repo = discover_repo(repo_path)
-    build = extract_repo(repo, strict_extractors=strict_extractors)
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
+    build = extract_repo(repo, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
     extractor_names = build.extractor_names
     manifest: JsonObject = {
         "repo_path": str(repo.root),
         "repo_name": repo.name,
+        "tenant_id": resolved_tenant_id,
         "commit_sha": repo.commit_sha,
         "built_at": utc_now_iso(),
         "extractor": "+".join(extractor_names) if extractor_names else "none",
@@ -49,16 +58,22 @@ class RepoKgBuild:
     extractor_errors: list[JsonObject]
 
 
-def extract_repo(repo: RepoSnapshot, strict_extractors: bool = False) -> RepoKgBuild:
+def extract_repo(
+    repo: RepoSnapshot,
+    strict_extractors: bool = False,
+    tenant_id: str | None = None,
+) -> RepoKgBuild:
     from source.kg.extraction.adapters import REGISTERED_ADAPTERS
     from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
 
-    selected = select_applicable_adapter_specs(repo, REGISTERED_ADAPTERS)
+    ctx = ExtractionContext(tenant_id=resolve_tenant_id(tenant_id))
+    selected = select_applicable_adapter_specs(repo, REGISTERED_ADAPTERS, ctx=ctx)
     selected_adapters = [selection.adapter for selection in selected]
     entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(
         repo,
         selected_adapters,
         strict_extractors=strict_extractors,
+        ctx=ctx,
     )
     extractor_names = list(dict.fromkeys(selection.capability.source_system for selection in selected))
     return RepoKgBuild(

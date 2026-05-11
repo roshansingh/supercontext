@@ -7,10 +7,8 @@ from pathlib import Path
 
 from source.kg.core.models import Coverage, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.normalization.python.imports import NormalizedImport
-
-
-TENANT_ID = "local-dev"
 
 
 @dataclass(frozen=True)
@@ -786,9 +784,10 @@ def unresolved_coverage(
     *,
     predicate: str,
     line: int,
+    tenant_id: str | None = None,
 ) -> Coverage:
     return Coverage(
-        tenant_id=TENANT_ID,
+        tenant_id=resolve_tenant_id(tenant_id),
         predicate=predicate,
         scope_ref={
             "repo": repo.name,

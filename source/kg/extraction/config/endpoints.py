@@ -9,12 +9,12 @@ from source.kg.extraction.config.common import (
     CONFIG_SOURCE_SYSTEM,
     ConfigKgBuild,
     ScannedFile,
-    TENANT_ID,
     add_entity_evidence,
     add_fact,
     endpoint_entity,
     normalize_endpoint_path,
 )
+from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.config.openapi_yaml import extract_openapi_endpoints
 from source.kg.extraction.python.frameworks import extract_django_routes, extract_flask_routes
 from source.kg.extraction.python.frameworks.routes import EndpointRoute
@@ -47,8 +47,10 @@ def extract_endpoints(
     service_entity: Entity,
     build: ConfigKgBuild,
     *,
+    tenant_id: str | None = None,
     include_openapi: bool = True,
 ) -> None:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     saw_python = False
     saw_javascript_or_typescript = False
     saw_recognized_python_web_framework = False
@@ -56,20 +58,21 @@ def extract_endpoints(
         if scanned.path.suffix == ".py":
             saw_python = True
             saw_recognized_python_web_framework = (
-                _extract_python_backend_routes(repo, scanned, service_entity, build) or saw_recognized_python_web_framework
+                _extract_python_backend_routes(repo, scanned, service_entity, build, resolved_tenant_id)
+                or saw_recognized_python_web_framework
             )
         if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
             saw_javascript_or_typescript = True
         if include_openapi:
-            extract_openapi_document(repo, scanned, service_entity, build)
+            extract_openapi_document(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
             for line_number, line in enumerate(scanned.lines, start=1):
-                _extract_legacy_javascript_routes(repo, scanned, line_number, line, service_entity, build)
-                _extract_client_calls(repo, scanned, line_number, line, service_entity, build)
+                _extract_legacy_javascript_routes(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
+                _extract_client_calls(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
     if saw_python and not saw_recognized_python_web_framework:
         build.coverage.append(
             Coverage(
-                tenant_id=TENANT_ID,
+                tenant_id=resolved_tenant_id,
                 predicate="EXPOSES_ENDPOINT",
                 scope_ref={"repo": repo.name, "language": "python", "reason": "no_recognized_web_framework"},
                 state="uninstrumented",
@@ -80,7 +83,7 @@ def extract_endpoints(
         for predicate in ("EXPOSES_ENDPOINT", "CALLS_ENDPOINT"):
             build.coverage.append(
                 Coverage(
-                    tenant_id=TENANT_ID,
+                    tenant_id=resolved_tenant_id,
                     predicate=predicate,
                     scope_ref={
                         "repo": repo.name,
@@ -98,13 +101,14 @@ def _extract_python_backend_routes(
     scanned: ScannedFile,
     service_entity: Entity,
     build: ConfigKgBuild,
+    tenant_id: str,
 ) -> bool:
     try:
         tree = ast.parse(scanned.text, filename=str(scanned.path))
     except SyntaxError as exc:
         build.coverage.append(
             Coverage(
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 predicate="EXPOSES_ENDPOINT",
                 scope_ref={
                     "repo": repo.name,
@@ -134,17 +138,25 @@ def _extract_python_backend_routes(
             route.method,
             route.path,
             route.source_kind,
+            tenant_id,
             validate_path=False,
         )
     return flask_recognized or django_recognized
 
 
-def extract_openapi_document(repo: RepoSnapshot, scanned: ScannedFile, service_entity: Entity, build: ConfigKgBuild) -> None:
+def extract_openapi_document(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str | None = None,
+) -> None:
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     result = extract_openapi_endpoints(scanned)
     if result.coverage_reason:
         build.coverage.append(
             Coverage(
-                tenant_id=TENANT_ID,
+                tenant_id=resolved_tenant_id,
                 predicate="DOCUMENTS_ENDPOINT",
                 scope_ref={"repo": repo.name, "file_path": scanned.relative_path, "reason": result.coverage_reason},
                 state="uninstrumented",
@@ -163,6 +175,7 @@ def extract_openapi_document(repo: RepoSnapshot, scanned: ScannedFile, service_e
             endpoint.method,
             endpoint.path,
             endpoint.source_kind,
+            resolved_tenant_id,
             validate_path=False,
         )
 
@@ -174,6 +187,7 @@ def _extract_legacy_javascript_routes(
     line: str,
     service_entity: Entity,
     build: ConfigKgBuild,
+    tenant_id: str,
 ) -> None:
     for verb, route in JS_ROUTE_RE.findall(line):
         _add_endpoint_fact(
@@ -186,6 +200,7 @@ def _extract_legacy_javascript_routes(
             HTTP_METHOD_BY_VERB.get(verb.lower(), "ANY"),
             route,
             "legacy_javascript_route_regex",
+            tenant_id,
         )
 
 
@@ -196,13 +211,26 @@ def _extract_client_calls(
     line: str,
     service_entity: Entity,
     build: ConfigKgBuild,
+    tenant_id: str,
 ) -> None:
     for raw_target in CLIENT_CALL_RE.findall(line):
         method = _method_from_client_call(line)
         path, host = _split_endpoint_target(raw_target)
         if not path:
             continue
-        _add_endpoint_fact(repo, scanned, line_number, service_entity, build, "CALLS_ENDPOINT", method, path, "client_call", host=host)
+        _add_endpoint_fact(
+            repo,
+            scanned,
+            line_number,
+            service_entity,
+            build,
+            "CALLS_ENDPOINT",
+            method,
+            path,
+            "client_call",
+            tenant_id,
+            host=host,
+        )
 
 
 def _add_endpoint_fact(
@@ -215,13 +243,14 @@ def _add_endpoint_fact(
     method: str,
     path: str,
     source_kind: str,
+    tenant_id: str,
     host: str | None = None,
     validate_path: bool = True,
 ) -> None:
     normalized_path = normalize_endpoint_path(path)
     if validate_path and not _looks_like_endpoint(normalized_path):
         return
-    endpoint = endpoint_entity(repo, method, normalized_path, host=host)
+    endpoint = endpoint_entity(repo, method, normalized_path, host=host, tenant_id=tenant_id)
     add_entity_evidence(build, repo, endpoint, scanned.path, line_number)
     add_fact(
         build,

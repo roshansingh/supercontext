@@ -10,6 +10,7 @@ from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
+from source.kg.core.tenant import resolve_tenant_id
 
 
 LINKER_SOURCE_SYSTEM = "package_linker_v0"
@@ -42,13 +43,16 @@ def build_multi_kg(
     repo_paths: list[str | Path],
     output_dir: str | Path,
     strict_extractors: bool = False,
+    tenant_id: str | None = None,
 ) -> JsonObject:
     repos = [discover_repo(path) for path in repo_paths]
     _validate_unique_repo_names(repos)
-    build = _build_multi(repos, strict_extractors=strict_extractors)
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
+    build = _build_multi(repos, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
     manifest: JsonObject = {
         "build_type": "multi_repo",
         "built_at": utc_now_iso(),
+        "tenant_id": resolved_tenant_id,
         "repo_count": len(repos),
         "repos": [
             {
@@ -84,15 +88,20 @@ def build_multi_kg(
     return manifest
 
 
-def _build_multi(repos: list[RepoSnapshot], strict_extractors: bool = False) -> MultiRepoBuild:
+def _build_multi(
+    repos: list[RepoSnapshot],
+    strict_extractors: bool = False,
+    tenant_id: str | None = None,
+) -> MultiRepoBuild:
     entities: list[Entity] = []
     facts: list[Fact] = []
     evidence: list[Evidence] = []
     coverage = []
     extractor_errors: list[JsonObject] = []
 
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
     for repo in repos:
-        repo_build = extract_repo(repo)
+        repo_build = extract_repo(repo, tenant_id=resolved_tenant_id)
         entities.extend(repo_build.entities)
         facts.extend(repo_build.facts)
         evidence.extend(repo_build.evidence)

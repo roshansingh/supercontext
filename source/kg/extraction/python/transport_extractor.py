@@ -91,6 +91,8 @@ def extract_transport_events(
     function_defs: dict[str, FunctionDefNode] | None = None,
     module_node: ast.Module | None = None,
     module_context: ModuleTransportContext | None = None,
+    *,
+    tenant_id: str,
 ) -> None:
     boto3_names = _boto3_names(imports)
     binding_name_cache: BindingNameCache = {}
@@ -136,13 +138,22 @@ def extract_transport_events(
         for event in events:
             if isinstance(event.channel, UnresolvedValue):
                 build.coverage.append(
-                    unresolved_coverage(repo, file_path, event.channel, source_system, predicate=event.predicate, line=line)
+                    unresolved_coverage(
+                        repo,
+                        file_path,
+                        event.channel,
+                        source_system,
+                        predicate=event.predicate,
+                        line=line,
+                        tenant_id=tenant_id,
+                    )
                 )
                 continue
             channel = event_channel_entity(
                 repo,
                 event.channel.broker_kind,
                 event.channel.channel_address,
+                tenant_id=tenant_id,
                 properties=event.channel.properties,
             )
             add_entity_evidence(build, repo, channel, file_path, line, line)

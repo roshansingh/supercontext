@@ -34,8 +34,8 @@ class ConfigDeployEventsAdapter:
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()
-        service_entity = StaticConfigExtractor()._service_entity(repo)
-        extract_deploy_events(repo, scannable_config_files(repo, ctx), service_entity, build)
+        service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
+        extract_deploy_events(repo, scannable_config_files(repo, ctx), service_entity, build, ctx.tenant_id)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),
