@@ -1,12 +1,12 @@
 {
   "baseline_version": 1,
   "coverage_reason_counts": {
-    "external_endpoint_suppressed": 1,
+    "external_endpoint_suppressed": 2,
     "no_recognized_web_framework": 1,
     "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 1,
     "parser_backed_js_ts_route_extraction_partial_express_only": 1,
     "unknown": 3,
-    "unresolved_target": 6
+    "unresolved_target": 5
   },
   "entity_kind_counts": {
     "CodeModule": 186,

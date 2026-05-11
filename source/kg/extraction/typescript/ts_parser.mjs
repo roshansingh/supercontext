@@ -312,6 +312,8 @@ function resolveEndpointExpression(node, sourceFile, bindings) {
       if (resolved.kind === "env") {
         value += resolved.value;
         hostUnresolved = true;
+      } else if (resolved.kind === "resolved") {
+        value += resolved.value;
       } else {
         value += "{}";
       }
@@ -350,8 +352,7 @@ function splitResolvedEndpointTarget(value) {
     if (hostEnd >= 0) {
       const pathStart = trimmed.indexOf("/", hostEnd + 1);
       if (
-        pathStart >= 0 &&
-        !trimmed.slice(hostEnd + 1, pathStart).includes("${env:") &&
+        pathStart === hostEnd + 1 &&
         !trimmed.slice(pathStart).includes("${env:")
       ) {
         return {

@@ -400,6 +400,7 @@ class EndpointExtractionTest(unittest.TestCase):
             "const api = axios.create({ baseURL: 'http://localhost:3000' });\n"
             "axios.get(ORDERS);\n"
             "fetch(BASE + '/profiles');\n"
+            "fetch(`${BASE}/reports`);\n"
             "axios('/api/shorthand');\n"
             "axios({ method: 'post', url: '/api/direct' });\n"
             "axios.request({ method: 'delete', url: '/api/request' });\n"
@@ -414,6 +415,7 @@ class EndpointExtractionTest(unittest.TestCase):
             {
                 "/api/orders": {"GET"},
                 "/api/v1/profiles": {"ANY"},
+                "/api/v1/reports": {"ANY"},
                 "/api/shorthand": {"GET"},
                 "/api/direct": {"POST"},
                 "/api/request": {"DELETE"},
@@ -474,12 +476,13 @@ class EndpointExtractionTest(unittest.TestCase):
             "S += '/suffix';\n"
             "fetch(S);\n"
             "fetch(process.env.API_HOST + process.env.STAGE + '/api/orders');\n"
+            "fetch(process.env.API_HOST + 'tenant/api/orders');\n"
             "fetch(makeTarget());\n"
             "fetch('https://thirdparty.example.com/api/x');\n"
         )
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 5)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 6)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
 
     def test_non_express_javascript_routes_are_not_extracted_by_name(self) -> None:
