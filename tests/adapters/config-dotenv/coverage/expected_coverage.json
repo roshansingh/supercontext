@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "config-dotenv has no deterministic coverage branch yet"
+}

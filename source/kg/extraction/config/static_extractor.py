@@ -16,6 +16,7 @@ from source.kg.extraction.config.common import (
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.config.deploy_events import extract_deploy_events
 from source.kg.extraction.config.domain_env import extract_domain_env
+from source.kg.extraction.config.dotenv import extract_dotenv
 from source.kg.extraction.config.endpoints import extract_endpoints
 from source.kg.core.models import Coverage, Entity, Evidence
 from source.kg.core.repo_source import RepoSnapshot
@@ -56,6 +57,7 @@ class StaticConfigExtractor:
             files = list(scan_result.files)
             build.coverage.extend(scan_result.coverage)
         if self.include_domain_env:
+            extract_dotenv(repo, files, service_entity, build, resolved_tenant_id)
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
         extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)
         if self.include_deploy_events:

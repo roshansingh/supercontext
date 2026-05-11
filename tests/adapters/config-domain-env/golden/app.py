@@ -1,4 +1,4 @@
-import os
+from os import getenv
 
 
-API_URL = os.environ.get("API_URL")
+value = getenv("API_URL")
