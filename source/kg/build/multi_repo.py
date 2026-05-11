@@ -120,7 +120,8 @@ def _build_multi(
         repo_entities = list(repo_build.entities)
         repo_build_entities.append((repo, repo_entities))
         for entity in repo_entities:
-            entity_repo_identities.setdefault(entity.entity_id, set()).add(repo_identity)
+            if entity.kind == "ExternalPackage":
+                entity_repo_identities.setdefault(entity.entity_id, set()).add(repo_identity)
         entities.extend(repo_build.entities)
         facts.extend(repo_build.facts)
         evidence.extend(repo_build.evidence)
