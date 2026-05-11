@@ -34,6 +34,15 @@ class MultiRepoIdentityTest(unittest.TestCase):
             self.assertEqual(resolve_facts[0]["qualifier"]["consumer_repo_identity"]["owner"], "owner-a")
             self.assertEqual(resolve_facts[0]["qualifier"]["provider_repo_identity"]["tenant_id"], "default")
             self.assertEqual(resolve_facts[0]["qualifier"]["provider_repo_identity"]["owner"], "owner-b")
+            evidence_rows = [
+                row
+                for row in read_jsonl(out / "evidence.jsonl")
+                if row["target_id"] == resolve_facts[0]["fact_id"]
+            ]
+            self.assertEqual(len(evidence_rows), 1)
+            self.assertEqual(evidence_rows[0]["bytes_ref"]["repo"], "default/local/owner-b/svc")
+            self.assertEqual(evidence_rows[0]["bytes_ref"]["repo_name"], "svc")
+            self.assertEqual(evidence_rows[0]["bytes_ref"]["repo_identity"]["owner"], "owner-b")
 
     def test_collapsed_external_package_records_plural_consumer_identities(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

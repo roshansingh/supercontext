@@ -171,6 +171,8 @@ def _bytes_coordinates(evidence: JsonObject) -> JsonObject:
     bytes_ref = evidence.get("bytes_ref") or {}
     return {
         "repo": bytes_ref.get("repo"),
+        "repo_name": bytes_ref.get("repo_name"),
+        "repo_identity": bytes_ref.get("repo_identity"),
         "commit_sha": bytes_ref.get("commit_sha"),
         "path": bytes_ref.get("path"),
         "line_start": bytes_ref.get("line_start"),

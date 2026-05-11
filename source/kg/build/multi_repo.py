@@ -433,7 +433,9 @@ def _manifest_bytes_ref(provider: PackageProvider) -> JsonObject | None:
     if provider.manifest_path is None or not provider.manifest_path.exists():
         return None
     return {
-        "repo": provider.repo.name,
+        "repo": _repo_identity_key(provider.repo_identity),
+        "repo_name": provider.repo.name,
+        "repo_identity": provider.repo_identity.to_json(),
         "commit_sha": provider.repo.commit_sha,
         "path": str(provider.manifest_path.relative_to(provider.repo.root)),
         "line_start": 1,
@@ -443,6 +445,10 @@ def _manifest_bytes_ref(provider: PackageProvider) -> JsonObject | None:
 
 def _normalize_package_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _repo_identity_key(identity: RepoIdentity) -> str:
+    return f"{identity.tenant_id}/{identity.host}/{identity.owner}/{identity.name}"
 
 
 def _unscoped_package_name(name: str) -> str:
