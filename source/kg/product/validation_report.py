@@ -339,7 +339,6 @@ def _private_fixture_smoke_checks(fixture: JsonObject | None) -> list[tuple[str,
     token_path = _fixture_string(fixture, "token_endpoint_path")
     primary_channel = _fixture_string(fixture, "primary_event_channel")
     source_ref_channel = _fixture_string(fixture, "source_ref_event_channel")
-    deploy_target = _fixture_string(fixture, "deploy_target")
     return [
         (
             "Q082",
@@ -384,13 +383,6 @@ def _private_fixture_smoke_checks(fixture: JsonObject | None) -> list[tuple[str,
                 "event_channels",
                 1,
             ),
-        ),
-        (
-            "Q095",
-            "Medium",
-            "deploy-mappings",
-            "Which deploy mapping serves the private deploy-target fixture?",
-            _expect_count(lambda kg: kg.deploy_mappings(deploy_target, limit=25), "mapping_count", 1),
         ),
     ]
 

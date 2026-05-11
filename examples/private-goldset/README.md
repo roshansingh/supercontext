@@ -15,3 +15,5 @@ python -m source.scripts.run_goldset_answers --packets-in data/kg_runs/latticeai
 ```
 
 The private scenario IDs currently implemented are `Q082`, `Q083`, `Q088`, `Q095`, `Q100`, and `Q106`.
+
+Private extractor extensions live under `extractors/`. Because `private-goldset` contains a hyphen, do not use dotted imports that include that directory name. Load modules by file path with `importlib.util.spec_from_file_location`, or add `examples/private-goldset` to `sys.path` and import from the valid `extractors` package, for example `import extractors.apache_vhost`.
