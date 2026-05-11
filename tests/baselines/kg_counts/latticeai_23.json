@@ -2,6 +2,7 @@
   "baseline_version": 1,
   "coverage_reason_counts": {
     "exceeds_max_scan_bytes": 7,
+    "external_endpoint_suppressed": 1,
     "no_oss_adapter_for_apache_vhosts": 9,
     "no_oss_adapter_for_zappa_event_sources": 2,
     "no_recognized_web_framework": 3,
@@ -9,13 +10,15 @@
     "parser_backed_js_ts_route_extraction_partial_express_only": 11,
     "python_syntax_error": 1,
     "unknown": 61,
-    "unknown_attribute_root": 6
+    "unknown_attribute_root": 6,
+    "unresolved_host": 1,
+    "unresolved_target": 30
   },
   "entity_kind_counts": {
     "CodeModule": 2556,
     "CodeSymbol": 8167,
     "Domain": 3996,
-    "Endpoint": 234,
+    "Endpoint": 235,
     "EnvVar": 558,
     "EventChannel": 73,
     "ExternalPackage": 937,
@@ -25,7 +28,7 @@
   "extractor_errors_count": 0,
   "fact_predicate_counts": {
     "CALLS": 3919,
-    "CALLS_ENDPOINT": 4,
+    "CALLS_ENDPOINT": 5,
     "CONSUMES_EVENT": 54,
     "DEFINED_IN": 10728,
     "DOCUMENTS_ENDPOINT": 26,
@@ -40,10 +43,10 @@
     "RESOLVES_TO_SERVICE": 2
   },
   "manifest_counts": {
-    "coverage": 111,
-    "entities": 16567,
-    "evidence": 90983,
-    "facts": 45253
+    "coverage": 143,
+    "entities": 16568,
+    "evidence": 90985,
+    "facts": 45254
   },
   "name": "latticeai_23"
 }

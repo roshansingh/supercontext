@@ -392,6 +392,96 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_methods_by_path(calls), {"/api/orders": {"ANY"}})
 
+    def test_typescript_client_calls_resolve_constants_concat_and_axios_config_shapes(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const ORDERS = '/api/orders';\n"
+            "const BASE = '/api/v1';\n"
+            "const api = axios.create({ baseURL: 'http://localhost:3000' });\n"
+            "axios.get(ORDERS);\n"
+            "fetch(BASE + '/profiles');\n"
+            "axios('/api/shorthand');\n"
+            "axios({ method: 'post', url: '/api/direct' });\n"
+            "axios.request({ method: 'delete', url: '/api/request' });\n"
+            "api('/api/client-shorthand');\n"
+            "api.patch('/api/profile');\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/orders": {"GET"},
+                "/api/v1/profiles": {"ANY"},
+                "/api/shorthand": {"GET"},
+                "/api/direct": {"POST"},
+                "/api/request": {"DELETE"},
+                "/api/client-shorthand": {"GET"},
+                "/api/profile": {"PATCH"},
+            },
+        )
+        self.assertEqual(_hosts_by_path(calls)["/api/profile"], {"localhost"})
+        self.assertEqual(_hosts_by_path(calls)["/api/client-shorthand"], {"localhost"})
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")[
+                "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only"
+            ],
+            1,
+        )
+        self.assertFalse(_call_site_coverage(build))
+
+    def test_typescript_client_calls_emit_env_host_confidence_and_coverage(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const api = axios.create({ baseURL: process.env.API_HOST });\n"
+            "api.get('/api/orders');\n"
+            "fetch(`${process.env.API_HOST}/api/users`);\n"
+            "fetch(import.meta.env['VITE_API_HOST'] + '/api/config');\n"
+            "fetch(process.env['ALT_API_HOST'] + '/api/alt');\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {"/api/orders": {"GET"}, "/api/users": {"ANY"}, "/api/config": {"ANY"}, "/api/alt": {"ANY"}},
+        )
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"${env:API_HOST}"})
+        self.assertEqual(_hosts_by_path(calls)["/api/users"], {"${env:API_HOST}"})
+        self.assertEqual(_hosts_by_path(calls)["/api/config"], {"${env:VITE_API_HOST}"})
+        self.assertEqual(_hosts_by_path(calls)["/api/alt"], {"${env:ALT_API_HOST}"})
+        self.assertEqual(
+            {path: rows[0]["confidence"] for path, rows in qualifiers_by_path.items()},
+            {
+                "/api/orders": "host_unresolved_path_resolved",
+                "/api/users": "host_unresolved_path_resolved",
+                "/api/config": "host_unresolved_path_resolved",
+                "/api/alt": "host_unresolved_path_resolved",
+            },
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 4)
+
+    def test_typescript_client_calls_emit_coverage_for_unresolved_external_and_shadowed_targets(self) -> None:
+        build = _extract_typescript_client(
+            "const P = '/api/orders';\n"
+            "function shadowed(P) { fetch(P); }\n"
+            "let R = '/api/first';\n"
+            "R = '/api/second';\n"
+            "fetch(R);\n"
+            "let S = '/api/base';\n"
+            "S += '/suffix';\n"
+            "fetch(S);\n"
+            "fetch(process.env.API_HOST + process.env.STAGE + '/api/orders');\n"
+            "fetch(makeTarget());\n"
+            "fetch('https://thirdparty.example.com/api/x');\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 5)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
     def test_non_express_javascript_routes_are_not_extracted_by_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -570,6 +660,22 @@ def _extract_config(files: dict[str, str]):
         return StaticConfigExtractor().extract(repo)
 
 
+def _extract_typescript_client(source: str):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        source_path = root / "client.ts"
+        source_path.write_text(source, encoding="utf-8")
+        repo = RepoSnapshot(
+            root=root,
+            name="web-client",
+            owner="test",
+            commit_sha="test-sha",
+            python_files=(),
+            typescript_files=(source_path,),
+        )
+        return extract_repo(repo)
+
+
 def _service_entity(repo: str) -> Entity:
     return Entity(kind="Service", identity={"tenant_id": "local-dev", "repo": repo, "namespace": "default", "slug": repo})
 
@@ -614,6 +720,40 @@ def _source_kinds_by_path(rows: list[tuple[object, object]]) -> dict[str, set[st
     for fact, endpoint in rows:
         grouped.setdefault(endpoint.identity["path"], set()).add(fact.qualifier["source_kind"])
     return grouped
+
+
+def _hosts_by_path(rows: list[tuple[object, object]]) -> dict[str, set[str | None]]:
+    grouped: dict[str, set[str | None]] = {}
+    for _, endpoint in rows:
+        grouped.setdefault(endpoint.identity["path"], set()).add(endpoint.identity["host"])
+    return grouped
+
+
+def _qualifiers_by_path(rows: list[tuple[object, object]]) -> dict[str, list[dict[str, object]]]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for fact, endpoint in rows:
+        grouped.setdefault(endpoint.identity["path"], []).append(fact.qualifier)
+    return grouped
+
+
+def _coverage_reason_counts(build, predicate: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in build.coverage:
+        if row.predicate != predicate:
+            continue
+        reason = row.scope_ref.get("reason")
+        if isinstance(reason, str):
+            counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _call_site_coverage(build) -> list[Coverage]:
+    call_site_reasons = {"external_endpoint_suppressed", "unresolved_host", "unresolved_target"}
+    return [
+        row
+        for row in build.coverage
+        if row.predicate == "CALLS_ENDPOINT" and row.scope_ref.get("reason") in call_site_reasons
+    ]
 
 
 def _channel_addresses(rows: list[tuple[object, object]]) -> set[str]:

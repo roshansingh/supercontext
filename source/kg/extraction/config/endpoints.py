@@ -232,14 +232,49 @@ def extract_typescript_client_endpoint_calls(
         for row in parsed_file.get("client_endpoint_calls", []):
             if not isinstance(row, dict):
                 continue
+            line_number = int(row.get("line") or 1)
+            raw_target = _raw_target(row)
+            if row.get("external") is True:
+                _add_endpoint_coverage(
+                    build,
+                    repo,
+                    tenant_id,
+                    "external_endpoint_suppressed",
+                    scanned.relative_path,
+                    line_number,
+                    raw_target,
+                    "uninstrumented",
+                )
+                continue
+            if row.get("unresolved") is True:
+                _add_endpoint_coverage(
+                    build,
+                    repo,
+                    tenant_id,
+                    "unresolved_target",
+                    scanned.relative_path,
+                    line_number,
+                    raw_target,
+                    "uninstrumented",
+                )
+                continue
             path = row.get("path")
             if not isinstance(path, str):
+                _add_endpoint_coverage(
+                    build,
+                    repo,
+                    tenant_id,
+                    "unresolved_target",
+                    scanned.relative_path,
+                    line_number,
+                    raw_target,
+                    "uninstrumented",
+                )
                 continue
             method = str(row.get("method") or "ANY").upper()
-            line_number = int(row.get("line") or 1)
             source_kind = str(row.get("source_kind") or "client_call")
-            raw_target = str(row.get("raw_target") or path)
             host = row.get("host")
+            confidence = row.get("confidence")
             _add_endpoint_fact(
                 repo,
                 scanned,
@@ -253,8 +288,54 @@ def extract_typescript_client_endpoint_calls(
                 tenant_id,
                 host=host if isinstance(host, str) else None,
                 raw_target=raw_target,
+                confidence=confidence if isinstance(confidence, str) else None,
                 validate_path=False,
             )
+            if confidence == "host_unresolved_path_resolved":
+                _add_endpoint_coverage(
+                    build,
+                    repo,
+                    tenant_id,
+                    "unresolved_host",
+                    scanned.relative_path,
+                    line_number,
+                    raw_target,
+                    "partially_instrumented",
+                )
+
+
+def _raw_target(row: dict) -> str:
+    raw_target = row.get("raw_target")
+    if isinstance(raw_target, str):
+        return raw_target[:80]
+    return ""
+
+
+def _add_endpoint_coverage(
+    build: ConfigKgBuild,
+    repo: RepoSnapshot,
+    tenant_id: str,
+    reason: str,
+    file_path: str,
+    line_number: int,
+    raw_target: str,
+    state: str,
+) -> None:
+    build.coverage.append(
+        Coverage(
+            tenant_id=tenant_id,
+            predicate="CALLS_ENDPOINT",
+            scope_ref={
+                "repo": repo.name,
+                "file_path": file_path,
+                "line": line_number,
+                "reason": reason,
+                "raw_target": raw_target,
+            },
+            state=state,
+            source_system=CONFIG_SOURCE_SYSTEM,
+        )
+    )
 
 
 def _add_endpoint_fact(
@@ -270,6 +351,7 @@ def _add_endpoint_fact(
     tenant_id: str,
     host: str | None = None,
     raw_target: str | None = None,
+    confidence: str | None = None,
     validate_path: bool = True,
 ) -> None:
     normalized_path = normalize_endpoint_path(path)
@@ -277,6 +359,9 @@ def _add_endpoint_fact(
         return
     endpoint = endpoint_entity(repo, method, normalized_path, host=host, tenant_id=tenant_id)
     add_entity_evidence(build, repo, endpoint, scanned.path, line_number)
+    qualifier = {"source_kind": source_kind, "raw_target": raw_target or path, "path": scanned.relative_path}
+    if confidence is not None:
+        qualifier["confidence"] = confidence
     add_fact(
         build,
         predicate,
@@ -285,7 +370,7 @@ def _add_endpoint_fact(
         repo,
         scanned.path,
         line_number,
-        qualifier={"source_kind": source_kind, "raw_target": raw_target or path, "path": scanned.relative_path},
+        qualifier=qualifier,
     )
 
 
