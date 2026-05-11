@@ -63,20 +63,20 @@ Before creating a PR for the first time, after coding is finished, tests pass, a
 - If denying, document the concrete reason in the PR notes or a reply/comment.
 - Only create the PR after accepted/actionable Claude findings are handled.
 
-After every `git push` to a PR branch, verify Copilot review state. Copilot often auto-reviews only the first push; follow-up pushes may require the user to request Copilot review manually in the GitHub UI.
+After every `git push` to a PR branch, request and verify Copilot review state. Copilot auto-reviews the first PR push, but follow-up pushes usually do not auto-review. Do not just wait after follow-up pushes; explicitly request Copilot review from the CLI.
 
-- Run `python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>` after each push.
+- Run `python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>` after each push. This script requests `@copilot` first, then polls.
+- Use `python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER> --skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll.
 - Poll on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute.
 - If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
 - If current-head Copilot activity starts but no completed review appears within 6 minutes, stop and report that review activity did not finish in time.
-- If no current-head Copilot activity appears within 6 minutes, stop and ask the user to request Copilot review manually in the UI, then rerun the poll.
-- Do not auto-request Copilot from the script by default. Only use `--manual-request-after-seconds <N>` if the user explicitly wants CLI fallback requesting.
+- If no current-head Copilot activity appears within 6 minutes after the CLI request, stop and report that the request produced no review activity.
 - Check both top-level Copilot reviews and inline review comments.
 - For each Copilot comment, make an explicit decision: `accept`, `deny`, or `act`.
 - If accepting/acting, implement the fix with a regression test when behavior changes.
 - If denying, reply with concrete evidence for why the feedback is not applicable.
 - Reply to each Copilot thread with the decision and either the fix summary or denial rationale, then resolve the thread.
-- After any code/doc change, run `.codex/skills/pre-pr-semantic-review`, push again, and repeat this polling loop.
+- After any code/doc change, run `.codex/skills/pre-pr-semantic-review`, push again, request Copilot again, and repeat this loop until a requested current-head review completes with zero actionable feedback.
 - If no actionable Copilot feedback appears after a completed current-head review, state that Copilot reviewed the current head and produced no actionable feedback.
 
 ## Agent-Specific Instructions
