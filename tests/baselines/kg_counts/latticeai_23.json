@@ -1,6 +1,7 @@
 {
   "baseline_version": 1,
   "coverage_reason_counts": {
+    "exceeds_max_scan_bytes": 7,
     "no_recognized_web_framework": 3,
     "parser_backed_js_ts_endpoint_extraction_deferred": 22,
     "python_syntax_error": 1,
@@ -38,7 +39,7 @@
     "ROUTES_DOMAIN_TO_DEPLOY": 6
   },
   "manifest_counts": {
-    "coverage": 93,
+    "coverage": 100,
     "entities": 16834,
     "evidence": 91688,
     "facts": 45585

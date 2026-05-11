@@ -44,6 +44,7 @@ def run_selected_adapters(
     facts_by_id: dict[str, Fact] = {}
     evidence_by_id: dict[str, Evidence] = {}
     coverage: list[Coverage] = []
+    result_coverage_ids: set[str] = set()
     errors: list[JsonObject] = []
     capabilities: list[AdapterCapability] = []
 
@@ -72,7 +73,11 @@ def run_selected_adapters(
             facts_by_id.setdefault(fact.fact_id, fact)
         for row in result.evidence:
             evidence_by_id.setdefault(row.evidence_id, row)
-        coverage.extend(result.coverage)
+        for row in result.coverage:
+            if row.coverage_id in result_coverage_ids:
+                continue
+            result_coverage_ids.add(row.coverage_id)
+            coverage.append(row)
 
     coverage.extend(_unsupported_known_stack_coverage(repo, ctx, capabilities))
 

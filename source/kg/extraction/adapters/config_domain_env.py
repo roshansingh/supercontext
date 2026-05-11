@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from source.kg.extraction.adapters.config_shared import scannable_config_files
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.extraction.adapters.config_shared import scan_coverage_rows, scannable_config_files
 from source.kg.extraction.config.common import ConfigKgBuild
 from source.kg.extraction.config.domain_env import extract_domain_env
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
@@ -34,7 +34,7 @@ class ConfigDomainEnvAdapter:
             entities=list(build.entities),
             facts=list(build.facts),
             evidence=list(build.evidence),
-            coverage=list(build.coverage),
+            coverage=list(build.coverage) + scan_coverage_rows(repo, ctx),
         )
 
 

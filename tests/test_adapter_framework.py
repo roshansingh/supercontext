@@ -7,11 +7,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from source.kg.build.pipeline import extract_repo
-from source.kg.core.models import Entity, Evidence, Fact
+from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.adapters import config_shared
-from source.kg.extraction.adapters.legacy import LegacyAdapter
+from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
+from source.kg.extraction.adapters.legacy import LEGACY_STATIC_CONFIG_ADAPTER, LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
@@ -80,6 +81,36 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertEqual([row.fact_id for row in facts], [fact.fact_id])
         self.assertEqual({row.evidence_id for row in evidence}, {evidence_a.evidence_id, evidence_b.evidence_id})
+
+    def test_runner_dedupes_coverage_by_coverage_id(self) -> None:
+        repo = _repo()
+        row = Coverage(
+            tenant_id="local-dev",
+            predicate="CONFIG_SCAN",
+            scope_ref={"repo": "repo", "file_path": ".env", "reason": "exceeds_max_scan_bytes"},
+            state="uninstrumented",
+            source_system="static_config_v0",
+        )
+        adapter_a = _Adapter("a", "a_v0", result=AdapterResult(coverage=[row]))
+        adapter_b = _Adapter("b", "b_v0", result=AdapterResult(coverage=[row]))
+
+        _, _, _, coverage, _ = run_adapters(repo, (adapter_a, adapter_b))
+
+        self.assertEqual([coverage_row.coverage_id for coverage_row in coverage], [row.coverage_id])
+
+    def test_runner_does_not_dedupe_adapter_error_coverage(self) -> None:
+        repo = _repo()
+
+        _, _, _, coverage, errors = run_adapters(
+            repo,
+            (
+                _Adapter("same", "same_v0", error=RuntimeError("boom")),
+                _Adapter("same", "same_v0", error=RuntimeError("boom")),
+            ),
+        )
+
+        self.assertEqual(len(errors), 2)
+        self.assertEqual(len([row for row in coverage if row.scope_ref.get("reason") == "adapter_error"]), 2)
 
     def test_runner_strict_mode_raises_aggregate_runtime_error_after_collecting_errors(self) -> None:
         repo = _repo()
@@ -268,12 +299,61 @@ class AdapterFrameworkTest(unittest.TestCase):
             )
 
             with patch(
-                "source.kg.extraction.adapters.config_shared.iter_scannable_files",
-                wraps=config_shared.iter_scannable_files,
+                "source.kg.extraction.adapters.config_shared.scan_config_files",
+                wraps=config_shared.scan_config_files,
             ) as scan:
                 extract_repo(repo)
 
         self.assertEqual(scan.call_count, 1)
+
+    def test_large_config_file_skip_emits_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("API_URL=https://api.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="large-config",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            with patch("source.kg.extraction.config.common.MAX_SCAN_BYTES", 4):
+                build = extract_repo(repo)
+
+        rows = {
+            row.coverage_id: row
+            for row in build.coverage
+            if row.predicate == "CONFIG_SCAN" and row.scope_ref.get("reason") == "exceeds_max_scan_bytes"
+        }
+        self.assertEqual(len(rows), 1)
+        row = next(iter(rows.values()))
+        self.assertEqual(row.state, "uninstrumented")
+        self.assertEqual(row.source_system, "static_config_v0")
+        self.assertEqual(row.scope_ref["repo"], "large-config")
+        self.assertEqual(row.scope_ref["file_path"], ".env")
+        self.assertEqual(row.scope_ref["max_scan_bytes"], 4)
+
+    def test_split_config_adapters_dedupe_shared_scan_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("API_URL=https://api.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="config-dedupe",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            with patch("source.kg.extraction.config.common.MAX_SCAN_BYTES", 4):
+                _, _, _, coverage, _ = run_adapters(repo, (LEGACY_STATIC_CONFIG_ADAPTER, CONFIG_DOMAIN_ENV_ADAPTER))
+
+        rows = [row for row in coverage if row.scope_ref.get("reason") == "exceeds_max_scan_bytes"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].scope_ref["file_path"], ".env")
 
     def test_python_transport_split_matches_python_ast_monolith(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
