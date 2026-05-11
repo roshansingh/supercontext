@@ -1,0 +1,12 @@
+functions:
+  websocket:
+    handler: app.ws
+    events:
+      - websocket:
+          route: $connect
+  api:
+    handler: app.http
+    events:
+      - http:
+          path: /orders
+          method: post

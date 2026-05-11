@@ -148,6 +148,92 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(len(coverage), 1)
 
+    def test_serverless_yaml_is_parsed_with_safe_load(self) -> None:
+        build = _extract_config(
+            {
+                "serverless.yml": (
+                    "functions:\n"
+                    "  websocket:\n"
+                    "    handler: app.ws\n"
+                    "    events:\n"
+                    "      - websocket:\n"
+                    "          route: $connect\n"
+                    "  api:\n"
+                    "    handler: app.http\n"
+                    "    events:\n"
+                    "      - http:\n"
+                    "          path: /orders\n"
+                    "          method: post\n"
+                    "      - httpApi:\n"
+                    "          path: /reply\n"
+                    "          method: post\n"
+                    "      - http: GET /short\n"
+                )
+            }
+        )
+
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+        events = _endpoint_rows(build, "CONSUMES_EVENT")
+
+        self.assertEqual(
+            _methods_by_path(routes),
+            {"/$connect": {"ANY"}, "/orders": {"POST"}, "/reply": {"POST"}, "/short": {"GET"}},
+        )
+        self.assertEqual(_source_kinds_by_path(routes)["/$connect"], {"serverless_route"})
+        self.assertEqual(_channel_addresses(events), {"$connect"})
+        self.assertEqual(_fact_lines_by_path(build, "EXPOSES_ENDPOINT", "/orders"), [12])
+        self.assertEqual(_fact_lines_by_path(build, "EXPOSES_ENDPOINT", "/reply"), [15])
+        self.assertEqual(_fact_lines_by_path(build, "EXPOSES_ENDPOINT", "/short"), [16])
+
+    def test_serverless_yaml_variant_filename_is_parsed(self) -> None:
+        build = _extract_config(
+            {
+                "serverless.dev.yml": (
+                    "functions:\n"
+                    "  api:\n"
+                    "    handler: app.http\n"
+                    "    events:\n"
+                    "      - httpApi:\n"
+                    "          path: /dev-orders\n"
+                    "          method: get\n"
+                )
+            }
+        )
+
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(routes), {"/dev-orders": {"GET"}})
+
+    def test_serverless_yaml_parse_error_emits_coverage_for_serverless_filename(self) -> None:
+        build = _extract_config({"serverless.yml": "functions: [not valid yaml\n"})
+
+        coverage = [
+            row
+            for row in build.coverage
+            if row.predicate == "EXPOSES_ENDPOINT" and row.scope_ref.get("reason") == "serverless_yaml_parse_error"
+        ]
+
+        self.assertEqual(len(coverage), 1)
+
+    def test_pyyaml_unavailable_emits_coverage_for_serverless_filename(self) -> None:
+        real_import = builtins.__import__
+
+        def import_without_yaml(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("blocked by test")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=import_without_yaml):
+            build = _extract_config({"serverless.yml": "functions:\n  api:\n    events:\n      - http: GET /orders\n"})
+
+        coverage = [
+            row
+            for row in build.coverage
+            if row.predicate == "EXPOSES_ENDPOINT" and row.scope_ref.get("reason") == "pyyaml_unavailable"
+        ]
+
+        self.assertEqual(len(coverage), 1)
+
     def test_non_openapi_file_with_openapi_word_does_not_emit_coverage(self) -> None:
         build = _extract_config({"fixture.json": '{"description": "mentions openapi", "paths": "not an object"}'})
 
@@ -528,6 +614,24 @@ def _source_kinds_by_path(rows: list[tuple[object, object]]) -> dict[str, set[st
     for fact, endpoint in rows:
         grouped.setdefault(endpoint.identity["path"], set()).add(fact.qualifier["source_kind"])
     return grouped
+
+
+def _channel_addresses(rows: list[tuple[object, object]]) -> set[str]:
+    return {entity.identity["channel_address"] for _, entity in rows}
+
+
+def _fact_lines_by_path(build, predicate: str, endpoint_path: str) -> list[int]:
+    entities_by_id = {entity.entity_id: entity for entity in build.entities}
+    fact_ids = [
+        fact.fact_id
+        for fact in build.facts
+        if fact.predicate == predicate and entities_by_id[fact.object_id].identity["path"] == endpoint_path
+    ]
+    return sorted(
+        evidence.bytes_ref["line_start"]
+        for evidence in build.evidence
+        if evidence.target_type == "fact" and evidence.target_id in fact_ids
+    )
 
 
 if __name__ == "__main__":

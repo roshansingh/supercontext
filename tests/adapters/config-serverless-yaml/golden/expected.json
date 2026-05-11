@@ -1,0 +1,10 @@
+{
+  "entities": {
+    "Endpoint": 2,
+    "EventChannel": 1
+  },
+  "facts": {
+    "EXPOSES_ENDPOINT": 2,
+    "CONSUMES_EVENT": 1
+  }
+}

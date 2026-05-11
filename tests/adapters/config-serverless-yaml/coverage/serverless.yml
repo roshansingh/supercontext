@@ -1,0 +1,5 @@
+functions:
+  broken:
+    handler: app.handler
+    events:
+      - websocket: [

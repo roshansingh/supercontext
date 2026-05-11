@@ -1,0 +1,10 @@
+[
+  {
+    "predicate": "EXPOSES_ENDPOINT",
+    "state": "uninstrumented",
+    "scope_ref": {
+      "file_path": "serverless.yml",
+      "reason": "serverless_yaml_parse_error"
+    }
+  }
+]

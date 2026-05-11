@@ -5,25 +5,20 @@ from dataclasses import dataclass
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters.config_shared import scan_coverage_rows, scannable_config_files
 from source.kg.extraction.config.common import ConfigKgBuild
-from source.kg.extraction.config.deploy_events import extract_deploy_events
+from source.kg.extraction.config.serverless_yaml import extract_serverless_yaml_routes
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 
 
 @dataclass(frozen=True)
-class ConfigDeployEventsAdapter:
-    """Coverage-only adapter for deploy/event config gaps moved to private extensions."""
-
+class ConfigServerlessYamlAdapter:
     capability = AdapterCapability(
-        name="config-deploy-events",
+        name="config-serverless-yaml",
         languages=("config",),
-        file_kinds=("config", "ini", "json", "yaml", "yml"),
-        # SQS/SNS references are owned by event-channel-normalizer and Python
-        # transport extraction; serverless.yml has a parser-backed adapter;
-        # Apache/Zappa deploy-event parsing is private scope.
-        framework_tags=(),
-        produces_predicates=(),
-        produces_entity_kinds=(),
+        file_kinds=("yaml", "yml"),
+        framework_tags=("serverless",),
+        produces_predicates=("EXPOSES_ENDPOINT", "CONSUMES_EVENT"),
+        produces_entity_kinds=("Endpoint", "EventChannel"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )
@@ -34,14 +29,8 @@ class ConfigDeployEventsAdapter:
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()
         service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
-        extract_deploy_events(
-            repo,
-            scannable_config_files(repo, ctx),
-            service_entity,
-            build,
-            ctx.tenant_id,
-            include_event_channel_references=False,
-        )
+        for scanned in scannable_config_files(repo, ctx):
+            extract_serverless_yaml_routes(repo, scanned, service_entity, build, ctx.tenant_id)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),
@@ -50,4 +39,4 @@ class ConfigDeployEventsAdapter:
         )
 
 
-CONFIG_DEPLOY_EVENTS_ADAPTER = ConfigDeployEventsAdapter()
+CONFIG_SERVERLESS_YAML_ADAPTER = ConfigServerlessYamlAdapter()
