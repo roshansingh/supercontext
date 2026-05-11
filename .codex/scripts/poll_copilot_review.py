@@ -10,6 +10,7 @@ from typing import Any
 
 COPILOT_LOGINS = {"copilot", "copilot-pull-request-reviewer"}
 DEFAULT_POLL_DELAYS_SECONDS = (120, 120, 60, 60)
+DEFAULT_MANUAL_REQUEST_AFTER_SECONDS = 0
 
 
 def main() -> None:
@@ -30,10 +31,11 @@ def main() -> None:
     parser.add_argument(
         "--manual-request-after-seconds",
         type=int,
-        default=120,
+        default=DEFAULT_MANUAL_REQUEST_AFTER_SECONDS,
         help=(
             "Request @copilot once if no current-head Copilot activity appears after this many seconds. "
-            "Use 0 to disable the fallback."
+            "Defaults to 0 because Copilot often only auto-reviews the first push; prefer a user/UI "
+            "manual request for later pushes unless explicitly enabled."
         ),
     )
     args = parser.parse_args()
@@ -50,7 +52,10 @@ def main() -> None:
     while True:
         result = _poll_once(repo, pr_number, head_sha, head_pushed_at)
         _print_summary(result, attempt, repo, pr_number, head_sha)
-        if result["feedback"]:
+        if result["actionable_feedback"]:
+            return
+        if result["review_completed"]:
+            print("Copilot review completed for the current head with no actionable feedback.")
             return
         elapsed = int(time.monotonic() - started_at)
         should_request = (
@@ -72,7 +77,13 @@ def main() -> None:
                     f"{elapsed}s; attempted @copilot fallback request but GitHub rejected it."
                 )
         if attempt > len(poll_delays):
-            print("No Copilot feedback appeared within the polling window.")
+            if result["activity"]:
+                print("Copilot activity appeared, but no completed review or actionable feedback arrived in time.")
+            else:
+                print(
+                    "No current-head Copilot activity appeared within the polling window. "
+                    "For follow-up pushes, ask the user to request Copilot review manually in the UI, then rerun."
+                )
             return
         sleep_seconds = poll_delays[attempt - 1]
         time.sleep(sleep_seconds)
@@ -103,7 +114,8 @@ def _poll_once(repo: str, pr_number: int, head_sha: str, head_pushed_at: str) ->
     ]
     return {
         "activity": bool(copilot_events or copilot_reviews or unresolved_threads or copilot_issue),
-        "feedback": bool(copilot_reviews or unresolved_threads or copilot_issue),
+        "review_completed": bool(copilot_reviews),
+        "actionable_feedback": bool(unresolved_threads or copilot_issue),
         "reviews": copilot_reviews,
         "threads": unresolved_threads,
         "issue_comments": copilot_issue,
@@ -138,12 +150,13 @@ def _poll_delays(interval_seconds: int | None, timeout_seconds: int) -> list[int
 def _print_summary(result: dict[str, Any], attempt: int, repo: str, pr_number: int, head_sha: str) -> None:
     print(f"Poll {attempt}: {repo} PR #{pr_number} @ {head_sha[:12]}")
     print(f"Copilot activity: {'yes' if result['activity'] else 'no'}")
+    print(f"Copilot current-head review completed: {'yes' if result['review_completed'] else 'no'}")
     print(
-        "Copilot feedback: "
-        f"{len(result['reviews'])} reviews, "
+        "Copilot actionable feedback: "
         f"{len(result['threads'])} unresolved threads, "
         f"{len(result['issue_comments'])} issue comments"
     )
+    print(f"Copilot reviews on current head: {len(result['reviews'])}")
     for thread in result["threads"]:
         comment = thread["comments"][0]
         print(f"- unresolved: {thread.get('path')} {comment.get('url')}")
