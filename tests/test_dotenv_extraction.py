@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from source.kg.core.repo_source import RepoSnapshot
+from source.kg.extraction.config.common import ScannedFile, is_dotenv_file, scan_config_files
+from source.kg.extraction.config.dotenv import parse_dotenv_assignment
+from source.kg.extraction.config.static_extractor import StaticConfigExtractor
+
+
+class DotenvExtractionTest(unittest.TestCase):
+    def test_parse_dotenv_assignment_handles_export_quotes_and_comments(self) -> None:
+        cases = {
+            "export API_URL='https://api.example.com/v1' # ignored": ("API_URL", "https://api.example.com/v1"),
+            'WS_HOST="ws.example.com"': ("WS_HOST", "ws.example.com"),
+            "WS_URL=wss://stream.example.com/socket": ("WS_URL", "wss://stream.example.com/socket"),
+            "EMPTY_VALUE=": ("EMPTY_VALUE", ""),
+            "MULTI_EQUALS=a=b=c": ("MULTI_EQUALS", "a=b=c"),
+            " SPACED_KEY = spaced value ": ("SPACED_KEY", "spaced value"),
+            'QUOTED_SPACE="  value  "': ("QUOTED_SPACE", "value"),
+            "ESCAPED_HASH=val\\#ue": ("ESCAPED_HASH", "val#ue"),
+            "not a dotenv assignment": None,
+            "KEY:value": None,
+            "K#EY=value": None,
+        }
+        for line, expected in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(parse_dotenv_assignment(line), expected)
+
+    def test_dotenv_file_detection_excludes_direnv_files(self) -> None:
+        self.assertTrue(is_dotenv_file(_scanned(".env")))
+        self.assertTrue(is_dotenv_file(_scanned(".env.production")))
+        self.assertTrue(is_dotenv_file(_scanned("settings/.env.testing")))
+        self.assertFalse(is_dotenv_file(_scanned(".envrc")))
+        self.assertFalse(is_dotenv_file(_scanned(".envrc.local")))
+        self.assertFalse(is_dotenv_file(_scanned(".environments")))
+
+    def test_config_scan_excludes_direnv_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("API_URL=https://api.example.com\n", encoding="utf-8")
+            (root / ".envrc").write_text("export API_URL=https://direnv.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="dotenv-app",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            result = scan_config_files(repo)
+
+        self.assertEqual([scanned.relative_path for scanned in result.files], [".env"])
+
+    def test_static_config_extracts_dotenv_without_domain_env_double_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("API_URL=https://api.example.com/v1\nLOG_LEVEL=info\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="dotenv-app",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            build = StaticConfigExtractor().extract(repo)
+
+        domain_facts = [fact for fact in build.facts if fact.predicate == "REFERENCES_DOMAIN"]
+        env_facts = [
+            fact
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == "config_assignment"
+        ]
+        self.assertEqual(len(domain_facts), 1)
+        self.assertEqual(len(env_facts), 2)
+        self.assertEqual({fact.qualifier["name"] for fact in env_facts}, {"API_URL", "LOG_LEVEL"})
+
+    def test_secret_like_dotenv_assignment_does_not_surface_safe_literal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("API_SECRET=https://secret.example.com/token\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="dotenv-app",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            build = StaticConfigExtractor().extract(repo)
+
+        env_fact = next(
+            fact
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("name") == "API_SECRET"
+        )
+        self.assertEqual(env_fact.qualifier["value_kind"], "secret_like")
+        self.assertNotIn("safe_literal", env_fact.qualifier)
+
+    def test_dotenv_host_port_value_emits_domain_fact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("API_HOST=api.example.com:443\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="dotenv-app",
+                owner="test",
+                commit_sha="sha",
+                python_files=(),
+                typescript_files=(),
+            )
+
+            build = StaticConfigExtractor().extract(repo)
+
+        env_fact = next(
+            fact
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("name") == "API_HOST"
+        )
+        domain_facts = [fact for fact in build.facts if fact.predicate == "REFERENCES_DOMAIN"]
+        self.assertEqual(env_fact.qualifier["value_kind"], "domain")
+        self.assertEqual(env_fact.qualifier["safe_literal"], "api.example.com:443")
+        self.assertEqual(len(domain_facts), 1)
+        self.assertEqual(domain_facts[0].qualifier["literal"], "api.example.com:443")
+
+
+def _scanned(filename: str) -> ScannedFile:
+    path = Path(filename)
+    return ScannedFile(path=path, relative_path=filename, text="", lines=())
+
+
+if __name__ == "__main__":
+    unittest.main()

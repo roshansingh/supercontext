@@ -12,6 +12,10 @@ from source.kg.core.tenant import resolve_tenant_id
 
 CONFIG_SOURCE_SYSTEM = "static_config_v0"
 
+CONFIG_KEY_HINTS = ("API", "BASE", "DOMAIN", "HOST", "URL", "WS")
+SECRET_KEY_HINTS = ("KEY", "PASS", "PASSWORD", "SECRET", "TOKEN")
+IGNORED_DOMAIN_SUFFIXES = (".py", ".js", ".ts", ".tsx", ".jsx")
+
 CONFIG_EXTENSIONS = {
     ".cfg",
     ".conf",
@@ -74,7 +78,7 @@ def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> Confi
             path = Path(dirpath) / filename
             if filename in IGNORED_CONFIG_FILENAMES:
                 continue
-            if path.suffix not in CONFIG_EXTENSIONS and not filename.startswith(".env"):
+            if path.suffix not in CONFIG_EXTENSIONS and not is_dotenv_filename(filename):
                 continue
             candidates.append(path)
 
@@ -105,6 +109,14 @@ def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> Confi
 
 def iter_scannable_files(repo: RepoSnapshot) -> list[ScannedFile]:
     return list(scan_config_files(repo).files)
+
+
+def is_dotenv_file(scanned: ScannedFile) -> bool:
+    return is_dotenv_filename(scanned.path.name)
+
+
+def is_dotenv_filename(filename: str) -> bool:
+    return filename == ".env" or filename.startswith(".env.")
 
 
 def add_entity_evidence(

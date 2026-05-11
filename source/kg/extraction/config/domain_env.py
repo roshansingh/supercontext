@@ -4,12 +4,16 @@ import re
 from urllib.parse import urlparse, urlunparse
 
 from source.kg.extraction.config.common import (
+    CONFIG_KEY_HINTS,
     ConfigKgBuild,
+    IGNORED_DOMAIN_SUFFIXES,
     ScannedFile,
+    SECRET_KEY_HINTS,
     add_entity_evidence,
     add_fact,
     domain_entity,
     env_var_entity,
+    is_dotenv_file,
 )
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.core.models import Entity
@@ -22,11 +26,6 @@ JS_ENV_RE = re.compile(r"\b(?:process\.env|import\.meta\.env)\.([A-Za-z_][A-Za-z
 PY_ENV_RE = re.compile(r"\b(?:os\.environ(?:\.get)?|getenv)\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
 ENV_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*['\"]?([^'\"#\n]+)")
 
-CONFIG_KEY_HINTS = ("API", "BASE", "DOMAIN", "HOST", "URL", "WS")
-SECRET_KEY_HINTS = ("KEY", "PASS", "PASSWORD", "SECRET", "TOKEN")
-IGNORED_DOMAIN_SUFFIXES = (".py", ".js", ".ts", ".tsx", ".jsx")
-
-
 def extract_domain_env(
     repo: RepoSnapshot,
     files: list[ScannedFile],
@@ -36,6 +35,8 @@ def extract_domain_env(
 ) -> None:
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     for scanned in files:
+        if is_dotenv_file(scanned):
+            continue
         for line_number, line in enumerate(scanned.lines, start=1):
             _extract_domains(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
             _extract_env_references(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)

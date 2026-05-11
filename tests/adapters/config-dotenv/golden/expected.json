@@ -1,0 +1,10 @@
+{
+  "entities": {
+    "Domain": 4,
+    "EnvVar": 6
+  },
+  "facts": {
+    "REFERENCES_DOMAIN": 4,
+    "REFERENCES_ENV_VAR": 6
+  }
+}

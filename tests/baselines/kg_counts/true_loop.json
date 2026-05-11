@@ -10,7 +10,7 @@
     "CodeSymbol": 1059,
     "Domain": 352,
     "Endpoint": 24,
-    "EnvVar": 100,
+    "EnvVar": 101,
     "ExternalPackage": 92,
     "Repo": 1,
     "Service": 1
@@ -22,14 +22,14 @@
     "DEFINED_IN": 1246,
     "IMPLEMENTS": 186,
     "IMPORTS": 612,
-    "REFERENCES_DOMAIN": 597,
-    "REFERENCES_ENV_VAR": 137
+    "REFERENCES_DOMAIN": 586,
+    "REFERENCES_ENV_VAR": 168
   },
   "manifest_counts": {
     "coverage": 6,
-    "entities": 1815,
-    "evidence": 7677,
-    "facts": 3648,
+    "entities": 1816,
+    "evidence": 7764,
+    "facts": 3668,
     "python_files": 1,
     "typescript_files": 185
   },
