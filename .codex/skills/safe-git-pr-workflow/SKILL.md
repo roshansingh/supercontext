@@ -79,23 +79,22 @@ git fetch origin <current-branch>
 git status --short --branch
 ```
 
-8. After every push to a PR branch, verify Copilot review state.
+8. After every push to a PR branch, request and verify Copilot review state.
 
-Reality to account for: Copilot often auto-reviews only the first push. Follow-up pushes may not trigger a new review unless the user requests it manually in the GitHub UI.
+Reality to account for: Copilot auto-reviews the first PR push, but follow-up pushes usually do not auto-review. After every follow-up push, explicitly request Copilot review from the CLI, then poll.
 
 ```bash
 python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
-The poll script waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute.
+The poll script requests `@copilot` first, then waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll.
 
 Interpret the result precisely:
 - If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
 - If current-head Copilot activity starts but no completed review appears within 6 minutes, stop and report that review activity did not finish in time.
-- If no current-head Copilot activity appears within 6 minutes, stop and ask the user to request Copilot review manually in the UI, then rerun the poll.
-- Do not auto-request Copilot from the script by default. Only use `--manual-request-after-seconds <N>` if the user explicitly wants CLI fallback requesting.
+- If no current-head Copilot activity appears within 6 minutes after the CLI request, stop and report that the request produced no review activity.
 
-For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, and repeat the polling loop.
+For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, request Copilot again, and repeat until a requested current-head review completes with zero actionable feedback.
 
 ## PR Review Comments
 

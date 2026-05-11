@@ -10,11 +10,10 @@ from typing import Any
 
 COPILOT_LOGINS = {"copilot", "copilot-pull-request-reviewer"}
 DEFAULT_POLL_DELAYS_SECONDS = (120, 120, 60, 60)
-DEFAULT_MANUAL_REQUEST_AFTER_SECONDS = 0
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Poll a PR for Copilot auto-review feedback.")
+    parser = argparse.ArgumentParser(description="Request and poll a PR for Copilot review feedback.")
     parser.add_argument("--pr", type=int, help="Pull request number. Defaults to the current branch PR.")
     parser.add_argument("--repo", help="owner/name. Defaults to `gh repo view`.")
     parser.add_argument(
@@ -29,14 +28,9 @@ def main() -> None:
         help="Maximum polling window. Defaults to 6 minutes.",
     )
     parser.add_argument(
-        "--manual-request-after-seconds",
-        type=int,
-        default=DEFAULT_MANUAL_REQUEST_AFTER_SECONDS,
-        help=(
-            "Request @copilot once if no current-head Copilot activity appears after this many seconds. "
-            "Defaults to 0 because Copilot often only auto-reviews the first push; prefer a user/UI "
-            "manual request for later pushes unless explicitly enabled."
-        ),
+        "--skip-request",
+        action="store_true",
+        help="Only poll; do not request @copilot first. Use only when verifying an already-requested review.",
     )
     args = parser.parse_args()
 
@@ -46,8 +40,12 @@ def main() -> None:
     head_sha = _gh_text(["pr", "view", str(pr_number), "--json", "headRefOid", "--jq", ".headRefOid"])
     head_pushed_at = _head_commit_pushed_at(repo, head_sha)
     poll_delays = _poll_delays(args.interval_seconds, args.timeout_seconds)
+    if not args.skip_request:
+        if _request_copilot_review(repo, pr_number):
+            print(f"Requested @copilot review for PR #{pr_number} at head {head_sha[:12]}.")
+        else:
+            print(f"Attempted @copilot review request for PR #{pr_number}; continuing to poll current head.")
     started_at = time.monotonic()
-    manual_request_sent = False
     attempt = 1
     while True:
         result = _poll_once(repo, pr_number, head_sha, head_pushed_at)
@@ -57,32 +55,13 @@ def main() -> None:
         if result["review_completed"]:
             print("Copilot review completed for the current head with no actionable feedback.")
             return
-        elapsed = int(time.monotonic() - started_at)
-        should_request = (
-            args.manual_request_after_seconds > 0
-            and not manual_request_sent
-            and not result["activity"]
-            and elapsed >= args.manual_request_after_seconds
-        )
-        if should_request:
-            manual_request_sent = True
-            if _request_copilot_review(pr_number):
-                print(
-                    "No current-head Copilot activity appeared after "
-                    f"{elapsed}s; requested @copilot review once as fallback."
-                )
-            else:
-                print(
-                    "No current-head Copilot activity appeared after "
-                    f"{elapsed}s; attempted @copilot fallback request but GitHub rejected it."
-                )
         if attempt > len(poll_delays):
             if result["activity"]:
                 print("Copilot activity appeared, but no completed review or actionable feedback arrived in time.")
             else:
                 print(
-                    "No current-head Copilot activity appeared within the polling window. "
-                    "For follow-up pushes, ask the user to request Copilot review manually in the UI, then rerun."
+                    "No current-head Copilot activity appeared within the polling window after requesting review. "
+                    "Stop here unless the user manually requests Copilot in the UI and asks to poll again."
                 )
             return
         sleep_seconds = poll_delays[attempt - 1]
@@ -211,17 +190,34 @@ def _head_commit_pushed_at(repo: str, head_sha: str) -> str:
     return str(pushed_at or committed_at)
 
 
-def _request_copilot_review(pr_number: int) -> bool:
-    result = subprocess.run(
-        ["gh", "pr", "edit", str(pr_number), "--add-reviewer", "@copilot"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        return True
-    message = (result.stderr or result.stdout or "").strip()
-    if message:
-        print(message, file=sys.stderr)
+def _request_copilot_review(repo: str, pr_number: int) -> bool:
+    reviewer_logins = ("copilot-pull-request-reviewer", "copilot")
+    for reviewer in reviewer_logins:
+        try:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    "-X",
+                    "POST",
+                    f"repos/{repo}/pulls/{pr_number}/requested_reviewers",
+                    "-f",
+                    f"reviewers[]={reviewer}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"Timed out requesting Copilot review as {reviewer}.", file=sys.stderr)
+            continue
+        if result.returncode == 0:
+            return True
+        message = (result.stderr or result.stdout or "").strip()
+        if "Review cannot be requested" in message or "already requested" in message.lower():
+            return True
+        if message:
+            print(message, file=sys.stderr)
     return False
 
 
