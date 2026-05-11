@@ -1,0 +1,47 @@
+{
+  "baseline_version": 1,
+  "coverage_reason_counts": {
+    "no_recognized_web_framework": 3,
+    "parser_backed_js_ts_endpoint_extraction_deferred": 22,
+    "python_syntax_error": 1,
+    "unknown": 61,
+    "unknown_attribute_root": 6
+  },
+  "entity_kind_counts": {
+    "CodeModule": 2556,
+    "CodeSymbol": 8167,
+    "DeployTarget": 6,
+    "Domain": 3998,
+    "Endpoint": 523,
+    "EnvVar": 528,
+    "EventChannel": 73,
+    "ExternalPackage": 937,
+    "Repo": 23,
+    "Service": 23
+  },
+  "extractor_errors_count": 0,
+  "fact_predicate_counts": {
+    "CALLS": 3919,
+    "CALLS_ENDPOINT": 320,
+    "CONSUMES_EVENT": 63,
+    "DEFINED_IN": 10728,
+    "DOCUMENTS_ENDPOINT": 26,
+    "EXPOSES_ENDPOINT": 220,
+    "IMPLEMENTS": 2541,
+    "IMPORTS": 16428,
+    "PRODUCES_EVENT": 82,
+    "REFERENCES_DOMAIN": 10412,
+    "REFERENCES_ENV_VAR": 764,
+    "REFERENCES_EVENT_CHANNEL": 72,
+    "RESOLVES_TO_REPO": 2,
+    "RESOLVES_TO_SERVICE": 2,
+    "ROUTES_DOMAIN_TO_DEPLOY": 6
+  },
+  "manifest_counts": {
+    "coverage": 93,
+    "entities": 16834,
+    "evidence": 91688,
+    "facts": 45585
+  },
+  "name": "latticeai_23"
+}
