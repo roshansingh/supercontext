@@ -78,8 +78,21 @@ class ServerlessRouteExtraction:
     coverage_reason: str | None = None
 
 
+def is_serverless_yaml_filename(name: str) -> bool:
+    lower_name = name.lower()
+    if lower_name in {"serverless.yml", "serverless.yaml"}:
+        return True
+    if lower_name.startswith("serverless.") and lower_name.endswith((".yml", ".yaml")):
+        return True
+    if lower_name.startswith("serverless-") and lower_name.endswith((".yml", ".yaml")):
+        return True
+    if lower_name.endswith((".serverless.yml", ".serverless.yaml")):
+        return True
+    return False
+
+
 def serverless_routes(scanned: ScannedFile) -> ServerlessRouteExtraction:
-    if not _is_serverless_filename(scanned.path.name):
+    if not is_serverless_yaml_filename(scanned.path.name):
         return ServerlessRouteExtraction([])
     try:
         import yaml
@@ -114,19 +127,6 @@ def _is_serverless_document(data: object) -> bool:
     return isinstance(data, dict) and isinstance(data.get("functions"), dict)
 
 
-def _is_serverless_filename(name: str) -> bool:
-    lower_name = name.lower()
-    if lower_name in {"serverless.yml", "serverless.yaml"}:
-        return True
-    if lower_name.startswith("serverless.") and lower_name.endswith((".yml", ".yaml")):
-        return True
-    if lower_name.startswith("serverless-") and lower_name.endswith((".yml", ".yaml")):
-        return True
-    if lower_name.endswith((".serverless.yml", ".serverless.yaml")):
-        return True
-    return False
-
-
 def _route_from_event(event: dict[object, object], handler: str | None, scanned: ScannedFile) -> ServerlessRoute | None:
     for route_kind in ("websocket", "http", "httpApi"):
         if route_kind not in event:
@@ -145,7 +145,7 @@ def _route_from_event(event: dict[object, object], handler: str | None, scanned:
             path=path,
             method=method,
             handler=handler,
-            line=_line_for_key(scanned, path),
+            line=_route_line(route_kind, event_config, scanned, path),
         )
     return None
 
@@ -180,9 +180,19 @@ def _route_method(route_kind: str, event_config: dict[object, object]) -> str:
     return "ANY"
 
 
-def _line_for_key(scanned: ScannedFile, key: str) -> int:
+def _route_line(route_kind: str, event_config: dict[object, object], scanned: ScannedFile, path: str) -> int:
+    path_line = _line_for_key(scanned, path)
+    if route_kind == "websocket":
+        return path_line
+    method = event_config.get("method")
+    if isinstance(method, str) and method.lower() in HTTP_METHODS:
+        return _line_for_key(scanned, method, start_line=path_line)
+    return path_line
+
+
+def _line_for_key(scanned: ScannedFile, key: str, start_line: int = 1) -> int:
     needle = str(key)
-    for line_number, line in enumerate(scanned.lines, start=1):
+    for line_number, line in enumerate(scanned.lines[start_line - 1 :], start=start_line):
         if needle in line:
             return line_number
-    return 1
+    return start_line

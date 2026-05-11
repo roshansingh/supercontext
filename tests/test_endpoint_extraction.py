@@ -181,6 +181,9 @@ class EndpointExtractionTest(unittest.TestCase):
         )
         self.assertEqual(_source_kinds_by_path(routes)["/$connect"], {"serverless_route"})
         self.assertEqual(_channel_addresses(events), {"$connect"})
+        self.assertEqual(_fact_lines_by_path(build, "EXPOSES_ENDPOINT", "/orders"), [12])
+        self.assertEqual(_fact_lines_by_path(build, "EXPOSES_ENDPOINT", "/reply"), [15])
+        self.assertEqual(_fact_lines_by_path(build, "EXPOSES_ENDPOINT", "/short"), [16])
 
     def test_serverless_yaml_variant_filename_is_parsed(self) -> None:
         build = _extract_config(
@@ -615,6 +618,20 @@ def _source_kinds_by_path(rows: list[tuple[object, object]]) -> dict[str, set[st
 
 def _channel_addresses(rows: list[tuple[object, object]]) -> set[str]:
     return {entity.identity["channel_address"] for _, entity in rows}
+
+
+def _fact_lines_by_path(build, predicate: str, endpoint_path: str) -> list[int]:
+    entities_by_id = {entity.entity_id: entity for entity in build.entities}
+    fact_ids = [
+        fact.fact_id
+        for fact in build.facts
+        if fact.predicate == predicate and entities_by_id[fact.object_id].identity["path"] == endpoint_path
+    ]
+    return sorted(
+        evidence.bytes_ref["line_start"]
+        for evidence in build.evidence
+        if evidence.target_type == "fact" and evidence.target_id in fact_ids
+    )
 
 
 if __name__ == "__main__":
