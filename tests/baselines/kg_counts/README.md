@@ -2,6 +2,8 @@
 
 These baselines are distilled regression gates for KG snapshot shape. They intentionally track aggregate counts and distributions, not identity-level facts.
 
+`latticeai_23.json` is captured from the public `data/kg_runs/latticeai_23` snapshot. The canonical validation report uses `data/kg_runs/private_goldset_eval_2026_05_11`, which applies private example extensions for Apache vhost and Zappa coverage. Small count differences between these two artifacts are expected; compare each artifact only against the snapshot it names.
+
 Regenerate a baseline after rebuilding a corpus snapshot:
 
 ```bash
@@ -30,3 +32,4 @@ Use `--allow-additions` only when a feature is expected to add facts without rem
 - `latticeai_23` PR-F'.6 serverless.yml parser: `Endpoint` 233 -> 234, `EXPOSES_ENDPOINT` 220 -> 221, facts 45252 -> 45253, and evidence 90981 -> 90983 because `mercury_websocket/serverless.yml` now parser-extracts the `httpApi` `POST /reply` route in addition to the existing websocket routes. Mercury ML and True Loop stayed unchanged.
 - `true_loop` JS/TS endpoint caller resolution v1: `Endpoint` 19 -> 18, `CALLS_ENDPOINT` 26 -> 25, and coverage 6 -> 13 because parser-backed client-call extraction now suppresses external full-URL calls (`https://api.vapi.ai/call/{}` and `https://texttospeech.googleapis.com/v1/text:synthesize?key={}`) instead of treating them as internal endpoints, and emits per-call-site coverage for two `external_endpoint_suppressed` and five `unresolved_target` fetch/axios targets.
 - `latticeai_23` JS/TS endpoint caller resolution v1: `Endpoint` 234 -> 235, `CALLS_ENDPOINT` 4 -> 5, facts 45253 -> 45254, evidence 90983 -> 90985, and coverage 111 -> 143 because `ShopAgainMobile/src/api/axiosConfig.tsx` now resolves the env-host axios refresh call to `/api/token/refresh/` with `confidence=host_unresolved_path_resolved`, while parser-recognized but unresolved/external client targets emit explicit call-site coverage (`unresolved_target`: 30, `unresolved_host`: 1, `external_endpoint_suppressed`: 1). Mercury ML stayed unchanged because it has no JS/TS files.
+- `latticeai_23` JS/TS imported axios provenance v1: `Endpoint` 235 -> 642, `CALLS_ENDPOINT` 5 -> 454, facts 45254 -> 45703, evidence 90985 -> 91895, and coverage 143 -> 621 because single-hop relative imports of proven exported `axios.create(...)` clients now emit `CALLS_ENDPOINT` facts. The coverage growth is expected from `unresolved_host` rows attached to env-host resolved calls (`1 -> 456`) plus unresolved targets on proven imported clients (`30 -> 53`). True Loop stayed unchanged after non-client relative imports were made fail-closed without coverage.
