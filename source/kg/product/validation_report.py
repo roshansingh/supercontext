@@ -14,6 +14,10 @@ from source.kg.query.snapshot import KgSnapshot
 
 ValidationResult = Literal["pass", "partial", "fail"]
 CheckFn = Callable[[KgSnapshot], tuple[ValidationResult, str, JsonObject]]
+DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
+    "Add generic client-side endpoint caller extraction and retrieval for JS/TS HTTP clients, then rerun "
+    "Q083 and Q100 to distinguish true no-caller cases from missing caller evidence."
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ class ValidationConfig:
     evaluation_dir: Path = Path("docs/evaluation")
     strict_smoke_checks: bool = True
     private_smoke_fixtures: Path = Path("examples/private-goldset/smoke_fixtures.json")
+    next_feature_recommendation: str = DEFAULT_NEXT_FEATURE_RECOMMENDATION
 
 
 def default_generated_at() -> str:
@@ -70,10 +75,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         },
         "goldset": goldset,
         "supersedes": _superseded_artifacts(config.evaluation_dir),
-        "next_feature_recommendation": (
-            "Use the config/env citation movement to rescore the private goldset, then prioritize the repeated "
-            "remaining failure owner rather than adding stack-specific extractors."
-        ),
+        "next_feature_recommendation": config.next_feature_recommendation,
     }
 
 
@@ -805,6 +807,24 @@ def _superseded_artifacts(evaluation_dir: Path) -> list[str]:
 
 
 def _is_historical_evaluation_artifact(name: str) -> bool:
+    if not name.endswith(".md"):
+        return False
+    return _has_iso_date_stamp(Path(name).stem) or _has_legacy_historical_marker(name)
+
+
+def _has_iso_date_stamp(value: str) -> bool:
+    parts = value.split("-")
+    for index in range(len(parts) - 2):
+        candidate = "-".join(parts[index : index + 3])
+        try:
+            datetime.strptime(candidate, "%Y-%m-%d")
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _has_legacy_historical_marker(name: str) -> bool:
     return (
         "-RUN-" in name
         or "-RERUN-" in name
