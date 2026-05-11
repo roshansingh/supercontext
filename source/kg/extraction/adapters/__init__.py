@@ -2,6 +2,7 @@ from source.kg.extraction.adapters.config_deploy_events import CONFIG_DEPLOY_EVE
 from source.kg.extraction.adapters.config_dotenv import CONFIG_DOTENV_ADAPTER
 from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
 from source.kg.extraction.adapters.config_openapi import CONFIG_OPENAPI_ADAPTER
+from source.kg.extraction.adapters.event_channel_normalizer import EVENT_CHANNEL_NORMALIZER_ADAPTER
 from source.kg.extraction.adapters.legacy import (
     LEGACY_PYTHON_AST_ADAPTER,
     LEGACY_STATIC_CONFIG_ADAPTER,
@@ -17,6 +18,7 @@ REGISTERED_ADAPTERS = validate_adapters(
         CONFIG_DOTENV_ADAPTER,
         CONFIG_DOMAIN_ENV_ADAPTER,
         CONFIG_OPENAPI_ADAPTER,
+        EVENT_CHANNEL_NORMALIZER_ADAPTER,
         CONFIG_DEPLOY_EVENTS_ADAPTER,
         LEGACY_PYTHON_AST_ADAPTER,
         PYTHON_BOTO3_TRANSPORT_ADAPTER,

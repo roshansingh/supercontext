@@ -6,9 +6,20 @@ from pathlib import Path
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.channel_normalization import normalize_sqs_arn, normalize_sqs_queue_name, normalize_sqs_url
+from source.kg.extraction.adapters.config_deploy_events import CONFIG_DEPLOY_EVENTS_ADAPTER
+from source.kg.extraction.adapters.event_channel_normalizer import EVENT_CHANNEL_NORMALIZER_ADAPTER
+from source.kg.extraction.config.channel_normalization import (
+    normalize_sns_arn,
+    normalize_sqs_arn,
+    normalize_sqs_queue_name,
+    normalize_sqs_url,
+    normalized_channels_in_text,
+)
 from source.kg.extraction.config.common import ConfigKgBuild, ScannedFile, event_channel_entity
 from source.kg.extraction.config.deploy_events import extract_deploy_events
+from source.kg.extraction.config.static_extractor import StaticConfigExtractor
+from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.extraction.framework.runner import run_adapters
 
 
 class EventChannelNormalizationTest(unittest.TestCase):
@@ -38,6 +49,26 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertEqual(channel.channel_address, "orders-created")
         self.assertEqual(channel.properties["queue_url"], url)
         self.assertIsNone(normalize_sqs_url("https://sqs.us-east-1.amazonaws.com/123456789012/orders.created"))
+        self.assertIsNone(normalize_sqs_url("https://sqs..amazonaws.com/123456789012/orders-created"))
+        self.assertIsNone(normalize_sqs_url("https://sqs.us_east_1.amazonaws.com/123456789012/orders-created"))
+
+    def test_sns_arn_rejects_nested_resource_names(self) -> None:
+        self.assertIsNotNone(normalize_sns_arn("arn:aws:sns:us-east-1:123456789012:orders-topic"))
+        self.assertIsNone(normalize_sns_arn("arn:aws:sns:us-east-1:123456789012:orders:topic"))
+        self.assertIsNone(normalize_sns_arn("arn:aws:sns:us-east-1:123456789012:orders.topic"))
+        self.assertIsNone(normalize_sns_arn("arn:aws:sns:us_east_1:123456789012:orders-topic"))
+        self.assertIsNone(normalize_sns_arn("arn:aws:sns:us-east-1:123456789012:orders-１２３"))
+
+    def test_sqs_arn_rejects_invalid_region(self) -> None:
+        self.assertIsNone(normalize_sqs_arn("arn:aws:sqs:us_east_1:123456789012:orders-created"))
+
+    def test_channel_tokens_are_extracted_from_config_text_without_regex(self) -> None:
+        channels = normalized_channels_in_text(
+            "queue=arn:aws:sqs:us-east-1:123456789012:orders-created, "
+            "url='https://sqs.us-east-1.amazonaws.com/123456789012/payments-created'"
+        )
+
+        self.assertEqual([channel.channel_address for channel in channels], ["orders-created", "payments-created"])
 
     def test_sqs_queue_name_normalizes_only_valid_queue_names(self) -> None:
         channel = normalize_sqs_queue_name("orders-created")
@@ -52,6 +83,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertIsNone(normalize_sqs_queue_name("orders-created.fifo.fifo"))
         self.assertIsNone(normalize_sqs_queue_name("a" * 76 + ".fifo"))
         self.assertIsNone(normalize_sqs_queue_name("a" * 81))
+        self.assertIsNone(normalize_sqs_queue_name("orders-１２３"))
 
     def test_event_channel_identity_matches_ontology_shape(self) -> None:
         repo = _repo_snapshot(Path.cwd())
@@ -93,7 +125,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 lines=tuple(zappa_path.read_text(encoding="utf-8").splitlines()),
             )
 
-            extract_deploy_events(repo, [scanned], service, build)
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=False)
 
             channels = [entity for entity in build.entities if entity.kind == "EventChannel"]
             self.assertEqual(len(channels), 1)
@@ -121,7 +153,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
             )
 
-            extract_deploy_events(repo, [scanned], service, build)
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=True)
 
             self.assertFalse([entity for entity in build.entities if entity.kind == "EventChannel"])
             self.assertFalse([fact for fact in build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"])
@@ -141,7 +173,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
             )
 
-            extract_deploy_events(repo, [scanned], service, build)
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=True)
 
             channels = [entity for entity in build.entities if entity.kind == "EventChannel"]
             self.assertEqual(len(channels), 1)
@@ -167,7 +199,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
             )
 
-            extract_deploy_events(repo, [scanned], service, build)
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=True)
 
             channels = [entity for entity in build.entities if entity.kind == "EventChannel"]
             self.assertEqual(len(channels), 1)
@@ -191,10 +223,58 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
             )
 
-            extract_deploy_events(repo, [scanned], service, build)
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=False)
 
             self.assertFalse([entity for entity in build.entities if entity.kind == "EventChannel"])
             self.assertFalse([fact for fact in build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"])
+
+    def test_event_channel_adapter_matches_legacy_deploy_event_reference_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            config_path = repo_root / "prod.ini"
+            config_path.write_text("[messaging]\nemail_queue = orders-created\n", encoding="utf-8")
+            repo = _repo_snapshot(repo_root)
+            scanned = ScannedFile(
+                path=config_path,
+                relative_path="prod.ini",
+                text=config_path.read_text(encoding="utf-8"),
+                lines=tuple(config_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            legacy_build = ConfigKgBuild()
+            service = StaticConfigExtractor()._service_entity(repo, "default")
+            extract_deploy_events(
+                repo,
+                [scanned],
+                service,
+                legacy_build,
+                "default",
+                include_event_channel_references=True,
+            )
+            _, normalizer_first_facts, _, _, normalizer_first_errors = run_adapters(
+                repo,
+                [EVENT_CHANNEL_NORMALIZER_ADAPTER, CONFIG_DEPLOY_EVENTS_ADAPTER],
+                ctx=ExtractionContext(tenant_id="default"),
+            )
+            _, deploy_first_facts, _, _, deploy_first_errors = run_adapters(
+                repo,
+                [CONFIG_DEPLOY_EVENTS_ADAPTER, EVENT_CHANNEL_NORMALIZER_ADAPTER],
+                ctx=ExtractionContext(tenant_id="default"),
+            )
+
+        self.assertEqual(normalizer_first_errors, [])
+        self.assertEqual(deploy_first_errors, [])
+        legacy_fact_ids = {
+            fact.fact_id for fact in legacy_build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
+        }
+        normalizer_first_fact_ids = {
+            fact.fact_id for fact in normalizer_first_facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
+        }
+        deploy_first_fact_ids = {
+            fact.fact_id for fact in deploy_first_facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
+        }
+        self.assertEqual(legacy_fact_ids, normalizer_first_fact_ids)
+        self.assertEqual(legacy_fact_ids, deploy_first_fact_ids)
 
 
 def _repo_snapshot(root: Path) -> RepoSnapshot:

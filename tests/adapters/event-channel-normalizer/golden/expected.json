@@ -1,0 +1,8 @@
+{
+  "entities": {
+    "EventChannel": 6
+  },
+  "facts": {
+    "REFERENCES_EVENT_CHANNEL": 6
+  }
+}

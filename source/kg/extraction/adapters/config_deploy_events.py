@@ -20,7 +20,6 @@ class ConfigDeployEventsAdapter:
         produces_predicates=(
             "EXPOSES_ENDPOINT",
             "REFERENCES_DOMAIN",
-            "REFERENCES_EVENT_CHANNEL",
             "ROUTES_DOMAIN_TO_DEPLOY",
             "CONSUMES_EVENT",
         ),
@@ -35,7 +34,14 @@ class ConfigDeployEventsAdapter:
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()
         service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
-        extract_deploy_events(repo, scannable_config_files(repo, ctx), service_entity, build, ctx.tenant_id)
+        extract_deploy_events(
+            repo,
+            scannable_config_files(repo, ctx),
+            service_entity,
+            build,
+            ctx.tenant_id,
+            include_event_channel_references=False,
+        )
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),

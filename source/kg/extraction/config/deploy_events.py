@@ -3,16 +3,12 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-import configparser
 
 from source.kg.extraction.config.channel_normalization import (
-    ARN_RE,
-    SQS_URL_RE,
-    NormalizedChannel,
-    normalize_sns_arn,
+    add_event_channel_reference,
+    normalized_channels_in_text,
+    normalized_ini_queue_channels,
     normalize_sqs_arn,
-    normalize_sqs_queue_name,
-    normalize_sqs_url,
 )
 from source.kg.extraction.config.common import (
     ConfigKgBuild,
@@ -43,11 +39,13 @@ def extract_deploy_events(
     service_entity: Entity,
     build: ConfigKgBuild,
     tenant_id: str | None = None,
+    *,
+    include_event_channel_references: bool = False,
 ) -> None:
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     for scanned in files:
         _extract_apache(repo, scanned, service_entity, build, resolved_tenant_id)
-        if scanned.path.name != "zappa_settings.json":
+        if include_event_channel_references and scanned.path.name != "zappa_settings.json":
             _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
         _extract_serverless_routes(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.name == "zappa_settings.json":
@@ -146,11 +144,11 @@ def _extract_queue_lines(
     build: ConfigKgBuild,
     tenant_id: str,
 ) -> None:
-    for line_number, channel in _ini_queue_channels(scanned):
-        _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "ini_queue_config", tenant_id)
+    for line_number, channel in normalized_ini_queue_channels(scanned):
+        add_event_channel_reference(repo, scanned, line_number, service_entity, build, channel, "ini_queue_config", tenant_id)
     for line_number, line in enumerate(scanned.lines, start=1):
-        for channel in _normalized_channels_in_line(line):
-            _add_event_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal", tenant_id)
+        for channel in normalized_channels_in_text(line):
+            add_event_channel_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal", tenant_id)
 
 
 def _extract_serverless_routes(
@@ -240,119 +238,6 @@ def _extract_zappa_event_sources(
                 },
                 derivation_class="authoritative_static",
             )
-
-
-def _add_event_reference(
-    repo: RepoSnapshot,
-    scanned: ScannedFile,
-    line_number: int,
-    service_entity: Entity,
-    build: ConfigKgBuild,
-    channel_ref: NormalizedChannel,
-    source_kind: str,
-    tenant_id: str,
-) -> None:
-    if not channel_ref.channel_address:
-        return
-    channel = event_channel_entity(
-        repo,
-        channel_ref.broker_kind,
-        channel_ref.channel_address,
-        tenant_id=tenant_id,
-        properties=channel_ref.properties,
-    )
-    add_entity_evidence(build, repo, channel, scanned.path, line_number)
-    add_fact(
-        build,
-        "REFERENCES_EVENT_CHANNEL",
-        service_entity,
-        channel,
-        repo,
-        scanned.path,
-        line_number,
-        qualifier={
-            "source_kind": source_kind,
-            "path": scanned.relative_path,
-            "raw_literal": channel_ref.properties.get("raw_literal"),
-            "broker_kind": channel_ref.broker_kind,
-            "channel_address": channel_ref.channel_address,
-            "normalized_channel": channel_ref.channel_address,
-        },
-    )
-
-
-def _normalized_channels_in_line(line: str) -> list[NormalizedChannel]:
-    channels = []
-    for match in ARN_RE.finditer(line):
-        arn = match.group(0)
-        channel = normalize_sqs_arn(arn) or normalize_sns_arn(arn)
-        if channel is not None:
-            channels.append(channel)
-    for match in SQS_URL_RE.finditer(line):
-        channel = normalize_sqs_url(match.group(0))
-        if channel is not None:
-            channels.append(channel)
-    return channels
-
-
-def _ini_queue_channels(scanned: ScannedFile) -> list[tuple[int, NormalizedChannel]]:
-    if scanned.path.suffix.lower() != ".ini":
-        return []
-    parser = configparser.RawConfigParser()
-    try:
-        parser.read_string(scanned.text)
-    except configparser.Error:
-        return []
-    line_by_option = _ini_option_lines(scanned)
-    channels: list[tuple[int, NormalizedChannel]] = []
-    for option, value in parser.defaults().items():
-        channel = _normalized_ini_queue_value(value)
-        if channel is not None:
-            channels.append((line_by_option.get(("default", option.casefold()), 1), channel))
-    for section in parser.sections():
-        section_key = section.casefold()
-        for option in sorted(option for candidate_section, option in line_by_option if candidate_section == section_key):
-            if option not in parser[section]:
-                continue
-            channel = _normalized_ini_queue_value(parser[section][option])
-            if channel is not None:
-                channels.append((line_by_option.get((section_key, option), 1), channel))
-    return channels
-
-
-def _normalized_ini_queue_value(value: str) -> NormalizedChannel | None:
-    if not _looks_like_queue_config_value(value):
-        return None
-    return normalize_sqs_queue_name(value)
-
-
-def _looks_like_queue_config_value(value: str) -> bool:
-    channel = normalize_sqs_queue_name(value)
-    if channel is None:
-        return False
-    if not any(character.isalpha() for character in value):
-        return False
-    return "-" in value or "_" in value or value.endswith(".fifo")
-
-
-def _ini_option_lines(scanned: ScannedFile) -> dict[tuple[str, str], int]:
-    current_section: str | None = None
-    lines: dict[tuple[str, str], int] = {}
-    for line_number, raw_line in enumerate(scanned.lines, start=1):
-        line = raw_line.strip()
-        if not line or line.startswith(("#", ";")):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            current_section = line[1:-1].strip().casefold()
-            continue
-        if current_section is None:
-            continue
-        key, separator, _ = line.partition("=")
-        if not separator:
-            key, separator, _ = line.partition(":")
-        if separator:
-            lines[(current_section, key.strip().casefold())] = line_number
-    return lines
 
 
 def _repo_hint_from_path(path: str) -> str | None:
