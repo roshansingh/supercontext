@@ -4,13 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import re
-import subprocess
 
 from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.extraction.typescript.parser_bridge import parse_typescript_repo
 
 
 @dataclass
@@ -45,7 +45,7 @@ class TypeScriptCompilerApiExtractor:
         self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, self._package_json(repo), 1, 1)
 
         normalizer = JsImportNormalizer(repo)
-        parsed_files = self._parse_repo(repo)
+        parsed_files = parse_typescript_repo(repo, ctx)
         for file_path in repo.typescript_files:
             parsed_file = parsed_files.get(str(file_path.relative_to(repo.root)), {})
             self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build, ctx, tenant_id)
@@ -203,29 +203,6 @@ class TypeScriptCompilerApiExtractor:
             },
         )
         return SymbolDef(entity=entity, qualname=name, symbol_kind=kind, line=line)
-
-    def _parse_repo(self, repo: RepoSnapshot) -> dict[str, JsonObject]:
-        parser_path = Path(__file__).with_name("ts_parser.mjs")
-        payload = {
-            "repoRoot": str(repo.root),
-            "files": [str(path.relative_to(repo.root)) for path in repo.typescript_files],
-        }
-        try:
-            result = subprocess.run(
-                ["node", str(parser_path)],
-                input=json.dumps(payload),
-                capture_output=True,
-                check=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            stderr = (exc.stderr or "").strip()
-            stdout = (exc.stdout or "").strip()
-            detail = stderr or stdout or str(exc)
-            raise RuntimeError(f"TypeScript parser bridge failed: {detail}") from exc
-        except FileNotFoundError as exc:
-            raise RuntimeError("TypeScript parser bridge failed: node executable was not found") from exc
-        return json.loads(result.stdout or "{}")
 
     def _imports_by_local(self, imports: list[NormalizedJsImport]) -> dict[str, NormalizedJsImport]:
         by_local: dict[str, NormalizedJsImport] = {}

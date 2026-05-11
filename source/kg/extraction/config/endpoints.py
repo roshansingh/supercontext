@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import ast
-import re
-from urllib.parse import urlparse
 
 from source.kg.core.models import Coverage, Entity
 from source.kg.extraction.config.common import (
@@ -21,11 +19,6 @@ from source.kg.extraction.python.frameworks.routes import EndpointRoute
 from source.kg.core.repo_source import RepoSnapshot
 
 
-JS_ROUTE_RE = re.compile(r"\b(?:app|router|server)\.(get|post|put|delete|patch|all|use)\(\s*['\"`]([^'\"`]+)['\"`]", re.IGNORECASE)
-CLIENT_CALL_RE = re.compile(
-    r"\b(?:fetch|axios\.(?:get|post|put|delete|patch)|[A-Za-z_][A-Za-z0-9_]*\.(?:get|post|put|delete|patch))\(\s*['\"`]([^'\"`]+)['\"`]",
-    re.IGNORECASE,
-)
 JAVASCRIPT_TYPESCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
 HTTP_METHOD_BY_VERB = {
     "get": "GET",
@@ -65,10 +58,6 @@ def extract_endpoints(
             saw_javascript_or_typescript = True
         if include_openapi:
             extract_openapi_document(repo, scanned, service_entity, build, resolved_tenant_id)
-        if scanned.path.suffix in JAVASCRIPT_TYPESCRIPT_SUFFIXES:
-            for line_number, line in enumerate(scanned.lines, start=1):
-                _extract_legacy_javascript_routes(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
-                _extract_client_calls(repo, scanned, line_number, line, service_entity, build, resolved_tenant_id)
     if saw_python and not saw_recognized_python_web_framework:
         build.coverage.append(
             Coverage(
@@ -80,20 +69,32 @@ def extract_endpoints(
             )
         )
     if saw_javascript_or_typescript:
-        for predicate in ("EXPOSES_ENDPOINT", "CALLS_ENDPOINT"):
-            build.coverage.append(
-                Coverage(
-                    tenant_id=resolved_tenant_id,
-                    predicate=predicate,
-                    scope_ref={
-                        "repo": repo.name,
-                        "language": "javascript/typescript",
-                        "reason": "parser_backed_js_ts_endpoint_extraction_deferred",
-                    },
-                    state="partially_instrumented",
-                    source_system=CONFIG_SOURCE_SYSTEM,
-                )
+        build.coverage.append(
+            Coverage(
+                tenant_id=resolved_tenant_id,
+                predicate="EXPOSES_ENDPOINT",
+                scope_ref={
+                    "repo": repo.name,
+                    "language": "javascript/typescript",
+                    "reason": "parser_backed_js_ts_route_extraction_partial_express_only",
+                },
+                state="partially_instrumented",
+                source_system=CONFIG_SOURCE_SYSTEM,
             )
+        )
+        build.coverage.append(
+            Coverage(
+                tenant_id=resolved_tenant_id,
+                predicate="CALLS_ENDPOINT",
+                scope_ref={
+                    "repo": repo.name,
+                    "language": "javascript/typescript",
+                    "reason": "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only",
+                },
+                state="partially_instrumented",
+                source_system=CONFIG_SOURCE_SYSTEM,
+            )
+        )
 
 
 def _extract_python_backend_routes(
@@ -180,57 +181,80 @@ def extract_openapi_document(
         )
 
 
-def _extract_legacy_javascript_routes(
+def extract_typescript_express_routes(
     repo: RepoSnapshot,
-    scanned: ScannedFile,
-    line_number: int,
-    line: str,
+    parsed_files: dict[str, object],
     service_entity: Entity,
     build: ConfigKgBuild,
     tenant_id: str,
 ) -> None:
-    for verb, route in JS_ROUTE_RE.findall(line):
-        _add_endpoint_fact(
-            repo,
-            scanned,
-            line_number,
-            service_entity,
-            build,
-            "EXPOSES_ENDPOINT",
-            HTTP_METHOD_BY_VERB.get(verb.lower(), "ANY"),
-            route,
-            "legacy_javascript_route_regex",
-            tenant_id,
-        )
-
-
-def _extract_client_calls(
-    repo: RepoSnapshot,
-    scanned: ScannedFile,
-    line_number: int,
-    line: str,
-    service_entity: Entity,
-    build: ConfigKgBuild,
-    tenant_id: str,
-) -> None:
-    for raw_target in CLIENT_CALL_RE.findall(line):
-        method = _method_from_client_call(line)
-        path, host = _split_endpoint_target(raw_target)
-        if not path:
+    for relative_path, parsed_file in parsed_files.items():
+        if not isinstance(parsed_file, dict):
             continue
-        _add_endpoint_fact(
-            repo,
-            scanned,
-            line_number,
-            service_entity,
-            build,
-            "CALLS_ENDPOINT",
-            method,
-            path,
-            "client_call",
-            tenant_id,
-            host=host,
-        )
+        file_path = repo.root / str(relative_path)
+        scanned = ScannedFile(path=file_path, relative_path=str(relative_path), text="", lines=())
+        for row in parsed_file.get("express_routes", []):
+            if not isinstance(row, dict):
+                continue
+            path = row.get("path")
+            if not isinstance(path, str):
+                continue
+            method = HTTP_METHOD_BY_VERB.get(str(row.get("method", "")).lower(), "ANY")
+            line_number = int(row.get("line") or 1)
+            source_kind = str(row.get("source_kind") or "express_route")
+            _add_endpoint_fact(
+                repo,
+                scanned,
+                line_number,
+                service_entity,
+                build,
+                "EXPOSES_ENDPOINT",
+                method,
+                path,
+                source_kind,
+                tenant_id,
+                validate_path=False,
+            )
+
+
+def extract_typescript_client_endpoint_calls(
+    repo: RepoSnapshot,
+    parsed_files: dict[str, object],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
+    for relative_path, parsed_file in parsed_files.items():
+        if not isinstance(parsed_file, dict):
+            continue
+        file_path = repo.root / str(relative_path)
+        scanned = ScannedFile(path=file_path, relative_path=str(relative_path), text="", lines=())
+        for row in parsed_file.get("client_endpoint_calls", []):
+            if not isinstance(row, dict):
+                continue
+            path = row.get("path")
+            if not isinstance(path, str):
+                continue
+            method = str(row.get("method") or "ANY").upper()
+            line_number = int(row.get("line") or 1)
+            source_kind = str(row.get("source_kind") or "client_call")
+            raw_target = str(row.get("raw_target") or path)
+            host = row.get("host")
+            _add_endpoint_fact(
+                repo,
+                scanned,
+                line_number,
+                service_entity,
+                build,
+                "CALLS_ENDPOINT",
+                method,
+                path,
+                source_kind,
+                tenant_id,
+                host=host if isinstance(host, str) else None,
+                raw_target=raw_target,
+                validate_path=False,
+            )
 
 
 def _add_endpoint_fact(
@@ -245,6 +269,7 @@ def _add_endpoint_fact(
     source_kind: str,
     tenant_id: str,
     host: str | None = None,
+    raw_target: str | None = None,
     validate_path: bool = True,
 ) -> None:
     normalized_path = normalize_endpoint_path(path)
@@ -260,35 +285,8 @@ def _add_endpoint_fact(
         repo,
         scanned.path,
         line_number,
-        qualifier={"source_kind": source_kind, "raw_target": path, "path": scanned.relative_path},
+        qualifier={"source_kind": source_kind, "raw_target": raw_target or path, "path": scanned.relative_path},
     )
-
-
-def _method_from_client_call(line: str) -> str:
-    lower = line.lower()
-    for verb, method in HTTP_METHOD_BY_VERB.items():
-        if f".{verb}(" in lower:
-            return method
-    return "ANY"
-
-
-def _split_endpoint_target(raw_target: str) -> tuple[str, str | None]:
-    target = raw_target.strip()
-    if target.startswith("http://") or target.startswith("https://"):
-        try:
-            parsed = urlparse(target)
-        except ValueError:
-            return "", None
-        try:
-            host = parsed.hostname
-        except ValueError:
-            host = None
-        return parsed.path or "/", host
-    if "}" in target:
-        target = target[target.rfind("}") + 1 :]
-    if "/" not in target:
-        return "", None
-    return target, None
 
 
 def _looks_like_endpoint(path: str) -> bool:

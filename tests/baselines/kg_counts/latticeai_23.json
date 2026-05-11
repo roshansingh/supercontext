@@ -3,7 +3,8 @@
   "coverage_reason_counts": {
     "exceeds_max_scan_bytes": 7,
     "no_recognized_web_framework": 3,
-    "parser_backed_js_ts_endpoint_extraction_deferred": 22,
+    "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 11,
+    "parser_backed_js_ts_route_extraction_partial_express_only": 11,
     "python_syntax_error": 1,
     "unknown": 61,
     "unknown_attribute_root": 6
@@ -13,7 +14,7 @@
     "CodeSymbol": 8167,
     "DeployTarget": 6,
     "Domain": 3998,
-    "Endpoint": 523,
+    "Endpoint": 233,
     "EnvVar": 558,
     "EventChannel": 73,
     "ExternalPackage": 937,
@@ -23,7 +24,7 @@
   "extractor_errors_count": 0,
   "fact_predicate_counts": {
     "CALLS": 3919,
-    "CALLS_ENDPOINT": 320,
+    "CALLS_ENDPOINT": 4,
     "CONSUMES_EVENT": 63,
     "DEFINED_IN": 10728,
     "DOCUMENTS_ENDPOINT": 26,
@@ -40,9 +41,9 @@
   },
   "manifest_counts": {
     "coverage": 100,
-    "entities": 16864,
-    "evidence": 91780,
-    "facts": 45589
+    "entities": 16574,
+    "evidence": 91020,
+    "facts": 45273
   },
   "name": "latticeai_23"
 }
