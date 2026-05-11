@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 from source.kg.extraction.config.channel_normalization import (
     add_event_channel_reference,
@@ -13,18 +12,10 @@ from source.kg.extraction.config.common import (
     CONFIG_SOURCE_SYSTEM,
     ConfigKgBuild,
     ScannedFile,
-    add_entity_evidence,
-    add_fact,
-    endpoint_entity,
-    event_channel_entity,
 )
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.core.models import Coverage, Entity, JsonObject
+from source.kg.core.models import Coverage, Entity
 from source.kg.core.repo_source import RepoSnapshot
-
-
-SERVERLESS_ROUTE_RE = re.compile(r"^\s*route:\s*['\"]?([^'\"\n]+)")
-SERVERLESS_HANDLER_RE = re.compile(r"^\s*handler:\s*['\"]?([^'\"\n]+)")
 
 
 def extract_deploy_events(
@@ -41,7 +32,6 @@ def extract_deploy_events(
         _add_apache_vhost_coverage_if_present(scanned, build, resolved_tenant_id, repo)
         if include_event_channel_references and scanned.path.name != "zappa_settings.json":
             _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
-        _extract_serverless_routes(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.name == "zappa_settings.json":
             _add_zappa_event_source_coverage_if_present(scanned, build, resolved_tenant_id, repo)
 
@@ -145,39 +135,3 @@ def _extract_queue_lines(
     for line_number, line in enumerate(scanned.lines, start=1):
         for channel in normalized_channels_in_text(line):
             add_event_channel_reference(repo, scanned, line_number, service_entity, build, channel, "transport_literal", tenant_id)
-
-
-def _extract_serverless_routes(
-    repo: RepoSnapshot,
-    scanned: ScannedFile,
-    service_entity: Entity,
-    build: ConfigKgBuild,
-    tenant_id: str,
-) -> None:
-    if scanned.path.suffix not in {".yml", ".yaml"}:
-        return
-    pending_handler: tuple[int, str] | None = None
-    for line_number, line in enumerate(scanned.lines, start=1):
-        handler_match = SERVERLESS_HANDLER_RE.match(line)
-        if handler_match:
-            pending_handler = (line_number, handler_match.group(1).strip())
-            continue
-        route_match = SERVERLESS_ROUTE_RE.match(line)
-        if not route_match:
-            continue
-        route = route_match.group(1).strip()
-        endpoint = endpoint_entity(repo, "ANY", route, tenant_id=tenant_id)
-        add_entity_evidence(build, repo, endpoint, scanned.path, line_number)
-        qualifier: JsonObject = {"source_kind": "serverless_route", "path": scanned.relative_path}
-        if pending_handler:
-            qualifier["handler"] = pending_handler[1]
-        add_fact(build, "EXPOSES_ENDPOINT", service_entity, endpoint, repo, scanned.path, line_number, qualifier=qualifier)
-        channel = event_channel_entity(
-            repo,
-            "websocket",
-            route,
-            tenant_id=tenant_id,
-            properties={"raw_literal": route, "source_kind": "serverless_route", "path": scanned.relative_path},
-        )
-        add_entity_evidence(build, repo, channel, scanned.path, line_number)
-        add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, line_number, qualifier=qualifier)

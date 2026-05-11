@@ -1,4 +1,10 @@
-{
-  "unsupported": true,
-  "reason": "config-deploy-events has no deterministic coverage branch yet"
-}
+[
+  {
+    "predicate": "CONSUMES_EVENT",
+    "state": "uninstrumented",
+    "scope_ref": {
+      "file_path": "zappa_settings.json",
+      "reason": "no_oss_adapter_for_zappa_event_sources"
+    }
+  }
+]

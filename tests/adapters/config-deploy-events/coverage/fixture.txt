@@ -1,1 +1,0 @@
-No coverage branch exists for this deterministic scanner yet.
