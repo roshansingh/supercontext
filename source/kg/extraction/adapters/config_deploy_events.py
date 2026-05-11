@@ -16,14 +16,13 @@ class ConfigDeployEventsAdapter:
         name="config-deploy-events",
         languages=("config",),
         file_kinds=("config", "ini", "json", "yaml", "yml"),
-        framework_tags=("apache", "serverless", "zappa", "sqs", "sns"),
+        framework_tags=("serverless", "zappa", "sqs", "sns"),
         produces_predicates=(
             "EXPOSES_ENDPOINT",
             "REFERENCES_DOMAIN",
-            "ROUTES_DOMAIN_TO_DEPLOY",
             "CONSUMES_EVENT",
         ),
-        produces_entity_kinds=("Endpoint", "Domain", "DeployTarget", "EventChannel"),
+        produces_entity_kinds=("Endpoint", "Domain", "EventChannel"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )

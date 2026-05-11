@@ -138,6 +138,67 @@ class EventChannelNormalizationTest(unittest.TestCase):
             self.assertEqual(fact_evidence[0].derivation_class, "authoritative_static")
             self.assertEqual(consume_fact.qualifier["raw_literal"], arn)
 
+    def test_apache_vhost_config_emits_uninstrumented_oss_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            apache_path = repo_root / "site.conf"
+            apache_path.write_text(
+                "<VirtualHost *:80>\n"
+                "  ServerName api.example.com\n"
+                "  WSGIScriptAlias / /srv/app/wsgi.py\n"
+                "</VirtualHost>\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "default", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=apache_path,
+                relative_path="site.conf",
+                text=apache_path.read_text(encoding="utf-8"),
+                lines=tuple(apache_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build, "default", include_event_channel_references=False)
+
+        self.assertFalse([entity for entity in build.entities if entity.kind == "DeployTarget"])
+        self.assertFalse([fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY"])
+        apache_coverage = [
+            row
+            for row in build.coverage
+            if row.predicate == "ROUTES_DOMAIN_TO_DEPLOY"
+            and row.scope_ref.get("reason") == "no_oss_adapter_for_apache_vhosts"
+        ]
+        self.assertEqual(len(apache_coverage), 1)
+        self.assertEqual(apache_coverage[0].state, "uninstrumented")
+        self.assertEqual(apache_coverage[0].scope_ref["file_path"], "site.conf")
+
+    def test_non_apache_conf_does_not_emit_apache_vhost_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            conf_path = repo_root / "app.conf"
+            conf_path.write_text("server_name=api.example.com\n", encoding="utf-8")
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "default", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=conf_path,
+                relative_path="app.conf",
+                text=conf_path.read_text(encoding="utf-8"),
+                lines=tuple(conf_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build, "default", include_event_channel_references=False)
+
+        self.assertFalse(
+            [
+                row
+                for row in build.coverage
+                if row.predicate == "ROUTES_DOMAIN_TO_DEPLOY"
+                and row.scope_ref.get("reason") == "no_oss_adapter_for_apache_vhosts"
+            ]
+        )
+
     def test_keyword_only_queue_like_config_does_not_emit_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)

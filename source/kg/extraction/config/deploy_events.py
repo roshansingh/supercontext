@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 from source.kg.extraction.config.channel_normalization import (
     add_event_channel_reference,
@@ -11,26 +10,21 @@ from source.kg.extraction.config.channel_normalization import (
     normalize_sqs_arn,
 )
 from source.kg.extraction.config.common import (
+    CONFIG_SOURCE_SYSTEM,
     ConfigKgBuild,
     ScannedFile,
     add_entity_evidence,
     add_fact,
-    deploy_target_entity,
-    domain_entity,
     endpoint_entity,
     event_channel_entity,
 )
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.core.models import Entity, JsonObject
+from source.kg.core.models import Coverage, Entity, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 
 
-APACHE_SERVER_NAME_RE = re.compile(r"^\s*Server(?:Name|Alias)\s+([^\s#]+)")
-APACHE_WSGI_RE = re.compile(r"^\s*WSGIScriptAlias\s+\S+\s+([^\s#]+)")
 SERVERLESS_ROUTE_RE = re.compile(r"^\s*route:\s*['\"]?([^'\"\n]+)")
 SERVERLESS_HANDLER_RE = re.compile(r"^\s*handler:\s*['\"]?([^'\"\n]+)")
-APACHE_VHOST_START_RE = re.compile(r"^\s*<VirtualHost\b", re.IGNORECASE)
-APACHE_VHOST_END_RE = re.compile(r"^\s*</VirtualHost\s*>", re.IGNORECASE)
 
 
 def extract_deploy_events(
@@ -44,7 +38,7 @@ def extract_deploy_events(
 ) -> None:
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     for scanned in files:
-        _extract_apache(repo, scanned, service_entity, build, resolved_tenant_id)
+        _add_apache_vhost_coverage_if_present(scanned, build, resolved_tenant_id, repo)
         if include_event_channel_references and scanned.path.name != "zappa_settings.json":
             _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
         _extract_serverless_routes(repo, scanned, service_entity, build, resolved_tenant_id)
@@ -52,89 +46,39 @@ def extract_deploy_events(
             _extract_zappa_event_sources(repo, scanned, service_entity, build, resolved_tenant_id)
 
 
-def _extract_apache(
-    repo: RepoSnapshot,
+def _add_apache_vhost_coverage_if_present(
     scanned: ScannedFile,
-    service_entity: Entity,
     build: ConfigKgBuild,
     tenant_id: str,
-) -> None:
-    for domains_by_line, wsgi_by_line in _apache_vhost_blocks(scanned):
-        for line_number, domain in domains_by_line:
-            _add_apache_domain_routes(repo, scanned, service_entity, build, line_number, domain, wsgi_by_line, tenant_id)
-
-
-def _apache_vhost_blocks(scanned: ScannedFile) -> list[tuple[list[tuple[int, str]], list[tuple[int, str]]]]:
-    blocks: list[tuple[list[tuple[int, str]], list[tuple[int, str]]]] = []
-    domains_by_line: list[tuple[int, str]] = []
-    wsgi_by_line: list[tuple[int, str]] = []
-
-    def flush() -> None:
-        nonlocal domains_by_line, wsgi_by_line
-        if domains_by_line or wsgi_by_line:
-            blocks.append((domains_by_line, wsgi_by_line))
-        domains_by_line = []
-        wsgi_by_line = []
-
-    for line_number, line in enumerate(scanned.lines, start=1):
-        if APACHE_VHOST_START_RE.match(line):
-            flush()
-            continue
-        if APACHE_VHOST_END_RE.match(line):
-            flush()
-            continue
-
-        server_match = APACHE_SERVER_NAME_RE.match(line)
-        if server_match:
-            domains_by_line.append((line_number, server_match.group(1)))
-        wsgi_match = APACHE_WSGI_RE.match(line)
-        if wsgi_match:
-            wsgi_by_line.append((line_number, wsgi_match.group(1)))
-
-    flush()
-    return blocks
-
-
-def _add_apache_domain_routes(
     repo: RepoSnapshot,
-    scanned: ScannedFile,
-    service_entity: Entity,
-    build: ConfigKgBuild,
-    line_number: int,
-    domain: str,
-    wsgi_by_line: list[tuple[int, str]],
-    tenant_id: str,
 ) -> None:
-    domain_ref = domain_entity(repo, domain, tenant_id)
-    add_entity_evidence(build, repo, domain_ref, scanned.path, line_number)
-    add_fact(
-        build,
-        "REFERENCES_DOMAIN",
-        service_entity,
-        domain_ref,
-        repo,
-        scanned.path,
-        line_number,
-        qualifier={"source_kind": "apache_server_name", "path": scanned.relative_path},
-    )
-    for wsgi_line, wsgi_path in wsgi_by_line:
-        target = deploy_target_entity(repo, "wsgi", wsgi_path, tenant_id)
-        add_entity_evidence(build, repo, target, scanned.path, wsgi_line)
-        qualifier: JsonObject = {"source_kind": "apache_vhost"}
-        repo_hint = _repo_hint_from_path(wsgi_path)
-        if repo_hint:
-            qualifier["target_repo_hint"] = repo_hint
-        add_fact(
-            build,
-            "ROUTES_DOMAIN_TO_DEPLOY",
-            domain_ref,
-            target,
-            repo,
-            scanned.path,
-            min(line_number, wsgi_line),
-            max(line_number, wsgi_line),
-            qualifier=qualifier,
+    if not _looks_like_apache_vhost(scanned):
+        return
+    build.coverage.append(
+        Coverage(
+            tenant_id=tenant_id,
+            predicate="ROUTES_DOMAIN_TO_DEPLOY",
+            scope_ref={
+                "repo": repo.name,
+                "file_path": scanned.relative_path,
+                "reason": "no_oss_adapter_for_apache_vhosts",
+            },
+            state="uninstrumented",
+            source_system=CONFIG_SOURCE_SYSTEM,
         )
+    )
+
+
+def _looks_like_apache_vhost(scanned: ScannedFile) -> bool:
+    has_vhost_block = False
+    has_vhost_directive = False
+    for line in scanned.lines:
+        stripped = line.strip().lower()
+        if stripped.startswith("<virtualhost") or stripped.startswith("</virtualhost"):
+            has_vhost_block = True
+        elif stripped.startswith("servername ") or stripped.startswith("serveralias ") or stripped.startswith("wsgiscriptalias "):
+            has_vhost_directive = True
+    return has_vhost_block and has_vhost_directive
 
 
 def _extract_queue_lines(
@@ -238,13 +182,6 @@ def _extract_zappa_event_sources(
                 },
                 derivation_class="authoritative_static",
             )
-
-
-def _repo_hint_from_path(path: str) -> str | None:
-    parts = Path(path).parts
-    if len(parts) >= 4 and parts[1] == "home":
-        return parts[3]
-    return None
 
 
 def _line_number_for(scanned: ScannedFile, needle: str) -> int:

@@ -368,19 +368,17 @@ class ValidationReportTest(unittest.TestCase):
             "token_endpoint_path": "/api/token",
             "primary_event_channel": "orders-events",
             "source_ref_event_channel": "status-events",
-            "deploy_target": "app_wsgi.py",
         }
         kg = _FakePrivateSmokeKg()
 
         checks = _private_fixture_smoke_checks(fixture)
         rows = _run_smoke_checks([("Private Fixture", Path("snapshot"), kg, checks)], strict=True)
 
-        self.assertEqual(len(rows), 6)
+        self.assertEqual(len(rows), 5)
         self.assertEqual({row["result"] for row in rows}, {"pass"})
         self.assertIn(("domain_references", "api.example.com"), kg.calls)
         self.assertIn(("event_channels", "orders-events"), kg.calls)
         self.assertIn(("event_channels", "status-events"), kg.calls)
-        self.assertIn(("deploy_mappings", "app_wsgi.py"), kg.calls)
 
     def test_private_smoke_fixture_rejects_malformed_json_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -597,10 +595,6 @@ class _FakePrivateSmokeKg:
             "event_fact_count": 1,
             "event_channels": [{"qualifier": {"resolution": {"source_refs": [{"path": "fixture.ini"}]}}}],
         }
-
-    def deploy_mappings(self, target_query: str, limit: int) -> dict[str, object]:
-        self.calls.append(("deploy_mappings", target_query))
-        return {"mapping_count": 1}
 
 
 if __name__ == "__main__":

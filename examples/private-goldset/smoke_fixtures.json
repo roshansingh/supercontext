@@ -1,7 +1,6 @@
 {
   "private_smoke": {
     "api_domain": "api.shopagain.io",
-    "deploy_target": "prod_shopagain_wsgi.py",
     "primary_event_channel": "la-prod-campaign-messages",
     "source_ref_event_channel": "la-prod-email",
     "token_endpoint_path": "/api/token"

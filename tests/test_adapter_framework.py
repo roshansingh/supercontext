@@ -11,6 +11,7 @@ from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.adapters import config_shared
+from source.kg.extraction.adapters.config_deploy_events import CONFIG_DEPLOY_EVENTS_ADAPTER
 from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
 from source.kg.extraction.adapters.legacy import LEGACY_STATIC_CONFIG_ADAPTER, LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
@@ -255,6 +256,13 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
         self.assertIn("yml", capabilities["config-deploy-events"].file_kinds)
+
+    def test_deploy_events_adapter_does_not_claim_private_apache_scope(self) -> None:
+        capability = CONFIG_DEPLOY_EVENTS_ADAPTER.capability
+
+        self.assertNotIn("apache", capability.framework_tags)
+        self.assertNotIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
+        self.assertNotIn("DeployTarget", capability.produces_entity_kinds)
 
     def test_config_split_pipeline_matches_static_config_monolith(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
