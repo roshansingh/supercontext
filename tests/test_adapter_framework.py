@@ -257,10 +257,14 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
         self.assertIn("yml", capabilities["config-deploy-events"].file_kinds)
 
-    def test_deploy_events_adapter_does_not_claim_private_apache_scope(self) -> None:
+    def test_deploy_events_adapter_only_claims_public_serverless_scope(self) -> None:
         capability = CONFIG_DEPLOY_EVENTS_ADAPTER.capability
 
         self.assertNotIn("apache", capability.framework_tags)
+        self.assertNotIn("zappa", capability.framework_tags)
+        self.assertNotIn("sqs", capability.framework_tags)
+        self.assertNotIn("sns", capability.framework_tags)
+        self.assertEqual(capability.framework_tags, ("serverless",))
         self.assertNotIn("REFERENCES_DOMAIN", capability.produces_predicates)
         self.assertNotIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
         self.assertNotIn("Domain", capability.produces_entity_kinds)

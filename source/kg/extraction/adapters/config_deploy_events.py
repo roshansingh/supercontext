@@ -16,7 +16,9 @@ class ConfigDeployEventsAdapter:
         name="config-deploy-events",
         languages=("config",),
         file_kinds=("config", "ini", "json", "yaml", "yml"),
-        framework_tags=("serverless", "zappa", "sqs", "sns"),
+        # SQS/SNS references are owned by event-channel-normalizer and Python
+        # transport extraction; Zappa event-source parsing is private scope.
+        framework_tags=("serverless",),
         produces_predicates=(
             "EXPOSES_ENDPOINT",
             "CONSUMES_EVENT",

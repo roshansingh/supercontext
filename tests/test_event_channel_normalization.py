@@ -104,7 +104,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertNotIn("name", channel.identity)
         self.assertEqual(channel.properties["raw_literal"], "orders-created")
 
-    def test_zappa_sqs_event_source_uses_channel_address_and_authoritative_evidence(self) -> None:
+    def test_zappa_event_source_emits_uninstrumented_oss_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             zappa_path = repo_root / "zappa_settings.json"
@@ -127,16 +127,98 @@ class EventChannelNormalizationTest(unittest.TestCase):
 
             extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=False)
 
-            channels = [entity for entity in build.entities if entity.kind == "EventChannel"]
-            self.assertEqual(len(channels), 1)
-            self.assertEqual(channels[0].identity["broker_kind"], "sqs")
-            self.assertEqual(channels[0].identity["channel_address"], "orders-created")
-            self.assertNotIn("repo", channels[0].identity)
-            self.assertEqual(channels[0].properties["arn"], arn)
-            consume_fact = next(fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT")
-            fact_evidence = [row for row in build.evidence if row.target_id == consume_fact.fact_id]
-            self.assertEqual(fact_evidence[0].derivation_class, "authoritative_static")
-            self.assertEqual(consume_fact.qualifier["raw_literal"], arn)
+            self.assertFalse([entity for entity in build.entities if entity.kind == "EventChannel"])
+            self.assertFalse([fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT"])
+            zappa_coverage = [
+                row
+                for row in build.coverage
+                if row.predicate == "CONSUMES_EVENT"
+                and row.scope_ref.get("reason") == "no_oss_adapter_for_zappa_event_sources"
+            ]
+            self.assertEqual(len(zappa_coverage), 1)
+            self.assertEqual(zappa_coverage[0].state, "uninstrumented")
+            self.assertEqual(zappa_coverage[0].scope_ref["file_path"], "zappa_settings.json")
+
+    def test_zappa_settings_without_events_does_not_emit_zappa_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            zappa_path = repo_root / "zappa_settings.json"
+            zappa_path.write_text('{"prod": {"aws_region": "us-east-1"}}', encoding="utf-8")
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "local-dev", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=zappa_path,
+                relative_path="zappa_settings.json",
+                text=zappa_path.read_text(encoding="utf-8"),
+                lines=tuple(zappa_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=False)
+
+            self.assertFalse(
+                [
+                    row
+                    for row in build.coverage
+                    if row.predicate == "CONSUMES_EVENT"
+                    and row.scope_ref.get("reason") == "no_oss_adapter_for_zappa_event_sources"
+                ]
+            )
+
+    def test_zappa_settings_with_empty_events_does_not_emit_zappa_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            zappa_path = repo_root / "zappa_settings.json"
+            zappa_path.write_text('{"prod": {"events": []}}', encoding="utf-8")
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "local-dev", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=zappa_path,
+                relative_path="zappa_settings.json",
+                text=zappa_path.read_text(encoding="utf-8"),
+                lines=tuple(zappa_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=False)
+
+            self.assertFalse(
+                [
+                    row
+                    for row in build.coverage
+                    if row.predicate == "CONSUMES_EVENT"
+                    and row.scope_ref.get("reason") == "no_oss_adapter_for_zappa_event_sources"
+                ]
+            )
+
+    def test_zappa_settings_with_non_sqs_event_source_does_not_emit_zappa_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            zappa_path = repo_root / "zappa_settings.json"
+            zappa_path.write_text(
+                '{"prod": {"events": [{"function": "handlers.consume", "event_source": {"arn": "arn:aws:s3:::bucket"}}]}}',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(repo_root)
+            build = ConfigKgBuild()
+            service = Entity(kind="Service", identity={"tenant_id": "local-dev", "namespace": "default", "slug": "svc"})
+            scanned = ScannedFile(
+                path=zappa_path,
+                relative_path="zappa_settings.json",
+                text=zappa_path.read_text(encoding="utf-8"),
+                lines=tuple(zappa_path.read_text(encoding="utf-8").splitlines()),
+            )
+
+            extract_deploy_events(repo, [scanned], service, build, include_event_channel_references=False)
+
+            self.assertFalse(
+                [
+                    row
+                    for row in build.coverage
+                    if row.predicate == "CONSUMES_EVENT"
+                    and row.scope_ref.get("reason") == "no_oss_adapter_for_zappa_event_sources"
+                ]
+            )
 
     def test_apache_vhost_config_emits_uninstrumented_oss_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
