@@ -13,7 +13,7 @@ from source.kg.product.claude_tool_policy import resolve_claude_cli_path
 from source.kg.product.goldset_judgement import _validate_judgement, load_goldset_scenarios
 from source.kg.product.json_result import parse_json_object_result
 from source.kg.product.validation import normalize_unique_strings, require_unique_strings
-from source.scripts.run_goldset_answers import _load_or_build_packets, _synthesize_answers
+from source.scripts.run_goldset_answers import _load_or_build_packets, _load_packets, _synthesize_answers
 from source.scripts.run_goldset_judgement import _load_by_scenario
 
 
@@ -21,21 +21,32 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
     def test_packets_in_accepts_top_level_list_and_normalizes_id(self) -> None:
         path = _write_json([{"scenario_id": " Q082\n", "evidence_items": [], "retrieval_steps": [], "unknowns": []}])
 
-        packets = _load_or_build_packets("unused", ("Q082",), str(path))
+        packets = _load_packets(("Q082",), str(path))
 
         self.assertEqual(packets[0]["scenario_id"], "Q082")
+
+    def test_packets_in_without_scenario_filter_loads_all_packets(self) -> None:
+        path = _write_json([{"scenario_id": "Q082"}, {"scenario_id": "CUSTOM"}])
+
+        packets = _load_packets(None, str(path))
+
+        self.assertEqual([packet["scenario_id"] for packet in packets], ["Q082", "CUSTOM"])
 
     def test_packets_in_rejects_duplicate_requested_scenario(self) -> None:
         path = _write_json([{"scenario_id": "Q082"}, {"scenario_id": "Q082"}])
 
         with self.assertRaisesRegex(ValueError, "duplicates scenario_id"):
-            _load_or_build_packets("unused", ("Q082",), str(path))
+            _load_packets(("Q082",), str(path))
 
     def test_packets_in_rejects_malformed_list_fields(self) -> None:
         path = _write_json([{"scenario_id": "Q082", "evidence_items": "bad"}])
 
         with self.assertRaisesRegex(ValueError, "evidence_items must be a list"):
-            _load_or_build_packets("unused", ("Q082",), str(path))
+            _load_packets(("Q082",), str(path))
+
+    def test_public_answer_harness_refuses_to_build_private_packets(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires --packets-in"):
+            _load_or_build_packets("unused", ("Q082",), None)
 
     def test_load_by_scenario_accepts_object_wrapper_and_normalizes_id(self) -> None:
         path = _write_json({"answers": [{"scenario_id": " Q082\n", "answer": "ok"}]})
@@ -132,9 +143,18 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
             result = asyncio.run(_synthesize_answers("snapshot", [packet], AnswerSynthesisConfig()))
 
         answer = result["answers"][0]
+        self.assertEqual(result["snapshot"], "snapshot")
         self.assertEqual(answer["evidence_item_count"], 1)
         self.assertEqual(answer["retrieval_step_count"], 1)
         self.assertEqual(answer["packet_fingerprint"], packet_fingerprint(packet))
+
+    def test_synthesized_answers_preserve_raw_snapshot_label(self) -> None:
+        packet = {"scenario_id": "Q082", "evidence_items": [], "retrieval_steps": [], "unknowns": []}
+
+        with patch("source.scripts.run_goldset_answers.ClaudeAnswerSynthesizer", _FakeSynthesizer):
+            result = asyncio.run(_synthesize_answers("~/not-a-path", [packet], AnswerSynthesisConfig()))
+
+        self.assertEqual(result["snapshot"], "~/not-a-path")
 
     def test_answer_prompt_adds_reconciliation_rules_for_reconciliation_packets(self) -> None:
         packet = {

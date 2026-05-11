@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from source.kg.product import EvidencePacketBuilder, SCENARIO_PLANS
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from scenario_plans import SCENARIO_PLANS
+
+from source.kg.product import EvidencePacketBuilder
 from source.kg.product.validation import normalize_unique_strings
 from source.kg.query.snapshot import KgSnapshot
 
