@@ -43,7 +43,7 @@ def extract_deploy_events(
             _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
         _extract_serverless_routes(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.name == "zappa_settings.json":
-            _extract_zappa_event_sources(repo, scanned, service_entity, build, resolved_tenant_id)
+            _add_zappa_event_source_coverage_if_present(scanned, build, resolved_tenant_id, repo)
 
 
 def _add_apache_vhost_coverage_if_present(
@@ -83,6 +83,54 @@ def _looks_like_apache_vhost(scanned: ScannedFile) -> bool:
         if directive in {"servername", "serveralias", "wsgiscriptalias"}:
             has_vhost_directive = True
     return has_vhost_block and has_vhost_directive
+
+
+def _add_zappa_event_source_coverage_if_present(
+    scanned: ScannedFile,
+    build: ConfigKgBuild,
+    tenant_id: str,
+    repo: RepoSnapshot,
+) -> None:
+    if not _looks_like_zappa_event_sources(scanned):
+        return
+    build.coverage.append(
+        Coverage(
+            tenant_id=tenant_id,
+            predicate="CONSUMES_EVENT",
+            scope_ref={
+                "repo": repo.name,
+                "file_path": scanned.relative_path,
+                "reason": "no_oss_adapter_for_zappa_event_sources",
+            },
+            state="uninstrumented",
+            source_system=CONFIG_SOURCE_SYSTEM,
+        )
+    )
+
+
+def _looks_like_zappa_event_sources(scanned: ScannedFile) -> bool:
+    try:
+        data = json.loads(scanned.text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    for stage_config in data.values():
+        if not isinstance(stage_config, dict):
+            continue
+        events = stage_config.get("events")
+        if not isinstance(events, list):
+            continue
+        for event_source in events:
+            if not isinstance(event_source, dict):
+                continue
+            source = event_source.get("event_source")
+            if not isinstance(source, dict):
+                continue
+            arn = source.get("arn")
+            if isinstance(arn, str) and normalize_sqs_arn(arn) is not None:
+                return True
+    return False
 
 
 def _extract_queue_lines(
@@ -133,63 +181,3 @@ def _extract_serverless_routes(
         )
         add_entity_evidence(build, repo, channel, scanned.path, line_number)
         add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, line_number, qualifier=qualifier)
-
-
-def _extract_zappa_event_sources(
-    repo: RepoSnapshot,
-    scanned: ScannedFile,
-    service_entity: Entity,
-    build: ConfigKgBuild,
-    tenant_id: str,
-) -> None:
-    try:
-        data = json.loads(scanned.text)
-    except json.JSONDecodeError:
-        return
-    for stage_name, stage_config in data.items():
-        if not isinstance(stage_config, dict):
-            continue
-        for event_source in stage_config.get("events", []):
-            if not isinstance(event_source, dict):
-                continue
-            arn = str(event_source.get("event_source", {}).get("arn") or "")
-            function = str(event_source.get("function") or "")
-            channel_ref = normalize_sqs_arn(arn)
-            if channel_ref is None:
-                continue
-            line_number = _line_number_for(scanned, channel_ref.properties["raw_literal"])
-            channel = event_channel_entity(
-                repo,
-                channel_ref.broker_kind,
-                channel_ref.channel_address,
-                tenant_id=tenant_id,
-                properties=channel_ref.properties,
-            )
-            add_entity_evidence(build, repo, channel, scanned.path, line_number)
-            add_fact(
-                build,
-                "CONSUMES_EVENT",
-                service_entity,
-                channel,
-                repo,
-                scanned.path,
-                line_number,
-                qualifier={
-                    "source_kind": "zappa_event_source",
-                    "stage": stage_name,
-                    "function": function,
-                    "path": scanned.relative_path,
-                    "raw_literal": channel_ref.properties["raw_literal"],
-                    "broker_kind": channel_ref.broker_kind,
-                    "channel_address": channel_ref.channel_address,
-                    "normalized_channel": channel_ref.channel_address,
-                },
-                derivation_class="authoritative_static",
-            )
-
-
-def _line_number_for(scanned: ScannedFile, needle: str) -> int:
-    for line_number, line in enumerate(scanned.lines, start=1):
-        if needle in line:
-            return line_number
-    return 1
