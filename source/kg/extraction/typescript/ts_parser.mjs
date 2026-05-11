@@ -119,6 +119,293 @@ function collectImports(sourceFile) {
   return imports;
 }
 
+const HTTP_METHODS = new Set(["get", "post", "put", "delete", "patch", "options", "head"]);
+const EXPRESS_ROUTE_METHODS = new Set([...HTTP_METHODS, "all"]);
+
+function stringLiteralValue(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
+function endpointTargetValue(node) {
+  const literal = stringLiteralValue(node);
+  if (literal != null) return literal;
+  if (!ts.isTemplateExpression(node)) return null;
+  let value = node.head.text;
+  for (const span of node.templateSpans) {
+    value += "{}";
+    value += span.literal.text;
+  }
+  return value;
+}
+
+function splitEndpointTarget(rawTarget) {
+  const value = rawTarget.trim();
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    try {
+      const parsed = new URL(value);
+      return { path: parsed.pathname || "/", host: parsed.hostname || null };
+    } catch {
+      return null;
+    }
+  }
+  if (!value.startsWith("/")) return null;
+  return { path: value, host: null };
+}
+
+function collectExpressFactories(sourceFile) {
+  const expressFactories = new Set();
+  const routerFactories = new Set();
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "express") {
+      const clause = statement.importClause;
+      if (clause?.name) expressFactories.add(clause.name.text);
+      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) expressFactories.add(clause.namedBindings.name.text);
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const element of clause.namedBindings.elements) {
+          if ((element.propertyName ?? element.name).text === "Router") routerFactories.add(element.name.text);
+        }
+      }
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        const init = declaration.initializer;
+        if (
+          init &&
+          ts.isCallExpression(init) &&
+          ts.isIdentifier(init.expression) &&
+          init.expression.text === "require" &&
+          init.arguments.length === 1 &&
+          ts.isStringLiteral(init.arguments[0]) &&
+          init.arguments[0].text === "express" &&
+          ts.isIdentifier(declaration.name)
+        ) {
+          expressFactories.add(declaration.name.text);
+        }
+      }
+    }
+  }
+  return { expressFactories, routerFactories };
+}
+
+function isRequireCall(node, moduleName) {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "require" &&
+    node.arguments.length === 1 &&
+    ts.isStringLiteral(node.arguments[0]) &&
+    node.arguments[0].text === moduleName
+  );
+}
+
+function isExpressFactoryCall(node, expressFactories) {
+  return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && expressFactories.has(node.expression.text);
+}
+
+function isInlineExpressFactoryCall(node) {
+  return ts.isCallExpression(node) && isRequireCall(node.expression, "express");
+}
+
+function isExpressRouterFactoryCall(node, expressFactories, routerFactories) {
+  if (!ts.isCallExpression(node)) return false;
+  if (ts.isIdentifier(node.expression) && routerFactories.has(node.expression.text)) return true;
+  if (!ts.isPropertyAccessExpression(node.expression)) return false;
+  return (
+    node.expression.name.text === "Router" &&
+    ts.isIdentifier(node.expression.expression) &&
+    expressFactories.has(node.expression.expression.text)
+  );
+}
+
+function collectExpressReceivers(sourceFile) {
+  const { expressFactories, routerFactories } = collectExpressFactories(sourceFile);
+  const receivers = new Set();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      if (
+        isExpressFactoryCall(node.initializer, expressFactories) ||
+        isInlineExpressFactoryCall(node.initializer) ||
+        isExpressRouterFactoryCall(node.initializer, expressFactories, routerFactories)
+      ) {
+        receivers.add(node.name.text);
+      }
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      (isExpressFactoryCall(node.right, expressFactories) ||
+        isInlineExpressFactoryCall(node.right) ||
+        isExpressRouterFactoryCall(node.right, expressFactories, routerFactories))
+    ) {
+      receivers.add(node.left.text);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return receivers;
+}
+
+function directExpressRoute(node, sourceFile, receivers) {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
+  const method = node.expression.name.text;
+  if (!EXPRESS_ROUTE_METHODS.has(method)) return null;
+  if (!ts.isIdentifier(node.expression.expression) || !receivers.has(node.expression.expression.text)) return null;
+  if (node.arguments.length < 1) return null;
+  const routePath = stringLiteralValue(node.arguments[0]);
+  if (routePath == null) return null;
+  return { method, path: routePath, line: lineOf(sourceFile, node.expression.getStart(sourceFile)), source_kind: `express_${method}` };
+}
+
+function chainedExpressRoute(node, sourceFile, receivers) {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
+  const method = node.expression.name.text;
+  if (!EXPRESS_ROUTE_METHODS.has(method)) return null;
+  const innerCall = node.expression.expression;
+  if (!ts.isCallExpression(innerCall) || !ts.isPropertyAccessExpression(innerCall.expression)) return null;
+  if (innerCall.expression.name.text !== "route") return null;
+  if (!ts.isIdentifier(innerCall.expression.expression) || !receivers.has(innerCall.expression.expression.text)) return null;
+  if (innerCall.arguments.length < 1) return null;
+  const routePath = stringLiteralValue(innerCall.arguments[0]);
+  if (routePath == null) return null;
+  return { method, path: routePath, line: lineOf(sourceFile, node.expression.getStart(sourceFile)), source_kind: `express_${method}` };
+}
+
+function collectExpressRoutes(sourceFile) {
+  const receivers = collectExpressReceivers(sourceFile);
+  if (receivers.size === 0) return [];
+  const routes = [];
+  function visit(node) {
+    const route = directExpressRoute(node, sourceFile, receivers) ?? chainedExpressRoute(node, sourceFile, receivers);
+    if (route) routes.push(route);
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return routes;
+}
+
+function collectAxiosLocals(sourceFile) {
+  const locals = new Set();
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "axios") {
+      const clause = statement.importClause;
+      if (clause?.name) locals.add(clause.name.text);
+      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) locals.add(clause.namedBindings.name.text);
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        const init = declaration.initializer;
+        if (
+          init &&
+          ts.isCallExpression(init) &&
+          ts.isIdentifier(init.expression) &&
+          init.expression.text === "require" &&
+          init.arguments.length === 1 &&
+          ts.isStringLiteral(init.arguments[0]) &&
+          init.arguments[0].text === "axios" &&
+          ts.isIdentifier(declaration.name)
+        ) {
+          locals.add(declaration.name.text);
+        }
+      }
+    }
+  }
+  return locals;
+}
+
+function collectAxiosClients(sourceFile, axiosLocals) {
+  const clients = new Set();
+  function visit(node) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      ts.isPropertyAccessExpression(node.initializer.expression) &&
+      node.initializer.expression.name.text === "create" &&
+      ts.isIdentifier(node.initializer.expression.expression) &&
+      axiosLocals.has(node.initializer.expression.expression.text)
+    ) {
+      clients.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return clients;
+}
+
+function fetchMethod(node) {
+  if (node.arguments.length < 2 || !ts.isObjectLiteralExpression(node.arguments[1])) return "ANY";
+  for (const property of node.arguments[1].properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = property.name;
+    const isMethod =
+      (ts.isIdentifier(name) && name.text === "method") ||
+      (ts.isStringLiteral(name) && name.text === "method");
+    if (!isMethod) continue;
+    const value = stringLiteralValue(property.initializer);
+    return value == null ? "ANY" : value.toUpperCase();
+  }
+  return "ANY";
+}
+
+function clientCallFromNode(node, sourceFile, axiosLocals, axiosClients) {
+  if (!ts.isCallExpression(node)) return null;
+  if (ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
+    if (node.arguments.length < 1) return null;
+    const rawTarget = endpointTargetValue(node.arguments[0]);
+    if (rawTarget == null) return null;
+    const target = splitEndpointTarget(rawTarget);
+    if (target == null) return null;
+    return {
+      method: fetchMethod(node),
+      path: target.path,
+      host: target.host,
+      raw_target: rawTarget,
+      line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
+      source_kind: "fetch_call",
+    };
+  }
+
+  if (!ts.isPropertyAccessExpression(node.expression)) return null;
+  const method = node.expression.name.text;
+  if (!HTTP_METHODS.has(method)) return null;
+  if (!ts.isIdentifier(node.expression.expression)) return null;
+  const receiver = node.expression.expression.text;
+  if (!axiosLocals.has(receiver) && !axiosClients.has(receiver)) return null;
+  if (node.arguments.length < 1) return null;
+  const rawTarget = endpointTargetValue(node.arguments[0]);
+  if (rawTarget == null) return null;
+  const target = splitEndpointTarget(rawTarget);
+  if (target == null) return null;
+  return {
+    method: method.toUpperCase(),
+    path: target.path,
+    host: target.host,
+    raw_target: rawTarget,
+    line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
+    source_kind: "axios_call",
+  };
+}
+
+function collectClientEndpointCalls(sourceFile) {
+  const axiosLocals = collectAxiosLocals(sourceFile);
+  const axiosClients = collectAxiosClients(sourceFile, axiosLocals);
+  const calls = [];
+  function visit(node) {
+    const call = clientCallFromNode(node, sourceFile, axiosLocals, axiosClients);
+    if (call) calls.push(call);
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return calls;
+}
+
 function symbolFromStatement(statement, sourceFile) {
   if (ts.isFunctionDeclaration(statement) && statement.name) {
     return { name: statement.name.text, kind: "function", line: lineOf(sourceFile, statement.name.getStart(sourceFile)), end_line: lineOf(sourceFile, statement.end), pos: statement.pos, end: statement.end };
@@ -193,6 +480,8 @@ for (const relativePath of files) {
       line: diagnostic.start == null ? 1 : lineOf(sourceFile, diagnostic.start),
     })),
     imports: collectImports(sourceFile),
+    express_routes: collectExpressRoutes(sourceFile),
+    client_endpoint_calls: collectClientEndpointCalls(sourceFile),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
     calls: symbols.flatMap((symbol) =>
       collectCallsForSymbol(sourceFile, symbol).map((call) => ({

@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "no meaningful route-extraction coverage case beyond parser bridge adapter errors"
+}

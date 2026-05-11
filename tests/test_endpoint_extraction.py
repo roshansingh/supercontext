@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Coverage, Entity, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import JsonlKgStore
@@ -188,22 +189,145 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(len(coverage), 1)
         self.assertEqual(coverage[0].scope_ref["file_path"], "bad_app.py")
 
-    def test_javascript_endpoint_parser_gap_is_explicit_coverage(self) -> None:
+    def test_static_config_does_not_use_javascript_endpoint_regexes(self) -> None:
         build = _extract_config({"server.ts": "app.post('/orders', handler)\nfetch('/orders')\n"})
 
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+        client_calls = _endpoint_rows(build, "CALLS_ENDPOINT")
         coverage_reasons = {
             (row.predicate, row.scope_ref.get("reason"))
             for row in build.coverage
             if row.scope_ref.get("language") == "javascript/typescript"
         }
 
+        self.assertEqual(routes, [])
+        self.assertEqual(client_calls, [])
         self.assertEqual(
             coverage_reasons,
             {
-                ("EXPOSES_ENDPOINT", "parser_backed_js_ts_endpoint_extraction_deferred"),
-                ("CALLS_ENDPOINT", "parser_backed_js_ts_endpoint_extraction_deferred"),
+                ("EXPOSES_ENDPOINT", "parser_backed_js_ts_route_extraction_partial_express_only"),
+                ("CALLS_ENDPOINT", "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only"),
             },
         )
+
+    def test_typescript_express_routes_are_parser_backed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "server.ts"
+            source_path.write_text(
+                "import express from 'express';\n"
+                "import { Router } from 'express';\n"
+                "const app = express();\n"
+                "const router = Router();\n"
+                "app.post('/123', handler);\n"
+                "router.get('/orders/:id', handler);\n"
+                "app.route('/batch').delete(handler);\n"
+                "const cjsApp = require('express')();\n"
+                "cjsApp.put('/inline-cjs', handler);\n"
+                "app.use('/mounted', router);\n"
+                "function handler() { return undefined; }\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="express-api",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = extract_repo(repo)
+
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(routes),
+            {"/123": {"POST"}, "/orders/:id": {"GET"}, "/batch": {"DELETE"}, "/inline-cjs": {"PUT"}},
+        )
+        self.assertEqual(_source_kinds_by_path(routes)["/123"], {"express_post"})
+        self.assertNotIn("/mounted", _methods_by_path(routes))
+
+    def test_typescript_client_calls_are_parser_backed_for_fetch_and_axios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "client.ts"
+            source_path.write_text(
+                "import axios from 'axios';\n"
+                "const api = axios.create();\n"
+                "fetch('/api/orders', { method: 'POST' });\n"
+                "fetch(`/api/orders/${orderId}`);\n"
+                "axios.get('/api/profile');\n"
+                "api.patch('/api/profile');\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="web-client",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = extract_repo(repo)
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/orders": {"POST"},
+                "/api/orders/{}": {"ANY"},
+                "/api/profile": {"GET", "PATCH"},
+            },
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"fetch_call"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/profile"], {"axios_call"})
+
+    def test_fetch_with_unresolved_method_keeps_any_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "client.ts"
+            source_path.write_text(
+                "const methodName = 'POST';\n"
+                "fetch('/api/orders', { method: methodName });\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="web-client",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = extract_repo(repo)
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"ANY"}})
+
+    def test_non_express_javascript_routes_are_not_extracted_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "server.ts"
+            source_path.write_text(
+                "const app = createApp();\n"
+                "app.post('/orders', handler);\n"
+                "function handler() { return undefined; }\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="not-express",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = extract_repo(repo)
+
+        self.assertEqual(_endpoint_rows(build, "EXPOSES_ENDPOINT"), [])
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
 
     def test_domain_references_include_env_var_consumer_citations(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -28,8 +28,11 @@ class KnownStacksContractTest(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_unsupported_known_stack_fixtures_emit_expected_coverage(self) -> None:
+        supported_tags = {tag for adapter in REGISTERED_ADAPTERS for tag in adapter.capability.framework_tags}
         for fixture_dir in sorted(FIXTURE_ROOT.glob("*/*")):
             if not fixture_dir.is_dir():
+                continue
+            if fixture_dir.name in supported_tags:
                 continue
             with self.subTest(fixture=str(fixture_dir.relative_to(FIXTURE_ROOT))):
                 result = _run_fixture(fixture_dir)

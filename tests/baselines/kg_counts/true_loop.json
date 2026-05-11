@@ -2,14 +2,15 @@
   "baseline_version": 1,
   "coverage_reason_counts": {
     "no_recognized_web_framework": 1,
-    "parser_backed_js_ts_endpoint_extraction_deferred": 2,
+    "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 1,
+    "parser_backed_js_ts_route_extraction_partial_express_only": 1,
     "unknown": 3
   },
   "entity_kind_counts": {
     "CodeModule": 186,
     "CodeSymbol": 1059,
     "Domain": 352,
-    "Endpoint": 24,
+    "Endpoint": 19,
     "EnvVar": 101,
     "ExternalPackage": 92,
     "Repo": 1,
@@ -18,7 +19,7 @@
   "extractor_errors_count": 0,
   "fact_predicate_counts": {
     "CALLS": 836,
-    "CALLS_ENDPOINT": 34,
+    "CALLS_ENDPOINT": 26,
     "DEFINED_IN": 1246,
     "IMPLEMENTS": 186,
     "IMPORTS": 612,
@@ -27,9 +28,9 @@
   },
   "manifest_counts": {
     "coverage": 6,
-    "entities": 1816,
-    "evidence": 7764,
-    "facts": 3668,
+    "entities": 1811,
+    "evidence": 7704,
+    "facts": 3660,
     "python_files": 1,
     "typescript_files": 185
   },
