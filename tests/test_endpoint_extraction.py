@@ -589,6 +589,26 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/profile/": {"PATCH"}})
         self.assertEqual(_hosts_by_path(calls)["/profile/"], {"localhost"})
 
+    def test_typescript_imported_default_axios_client_resolves_mjs_module(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.mjs": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                    "export default client;\n"
+                ),
+                "src/orders.js": (
+                    "import api from './api';\n"
+                    "api.get('/orders/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/orders/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders/"], {"localhost"})
+
     def test_typescript_imported_client_calls_fail_closed_for_aliases_missing_exports_and_shadowing(self) -> None:
         build = _extract_typescript_client_files(
             {

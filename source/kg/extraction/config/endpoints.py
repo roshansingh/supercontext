@@ -22,6 +22,7 @@ from source.kg.core.repo_source import RepoSnapshot
 
 
 JAVASCRIPT_TYPESCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
+JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 HTTP_METHOD_BY_VERB = {
     "get": "GET",
     "post": "POST",
@@ -489,8 +490,8 @@ def _resolve_relative_import(
         return None
     candidates = [normalized]
     if posixpath.splitext(normalized)[1] == "":
-        candidates.extend(f"{normalized}{suffix}" for suffix in (".ts", ".tsx", ".js", ".jsx"))
-        candidates.extend(posixpath.join(normalized, f"index{suffix}") for suffix in (".ts", ".tsx", ".js", ".jsx"))
+        candidates.extend(f"{normalized}{suffix}" for suffix in JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES)
+        candidates.extend(posixpath.join(normalized, f"index{suffix}") for suffix in JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES)
     for candidate in candidates:
         if candidate in module_clients:
             return candidate
