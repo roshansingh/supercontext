@@ -703,6 +703,85 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_hosts_by_path(calls)["/api/users/"], {"localhost"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/users/"], {"imported_axios_call"})
 
+    def test_typescript_path_alias_prefers_more_specific_pattern(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "paths": {\n'
+                    '      "@/*": ["src/*"],\n'
+                    '      "@/api/*": ["lib/api/*"]\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/api/users.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000/wrong' });\n"
+                ),
+                "lib/api/users.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000/right' });\n"
+                ),
+                "src/consumer.js": (
+                    "import api from '@/api/users';\n"
+                    "api.get('profile/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/right/profile/": {"GET"}})
+        self.assertNotIn("/wrong/profile/", _methods_by_path(calls))
+
+    def test_typescript_path_alias_uses_jsconfig_base_url_and_fallback_targets(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "jsconfig.json": (
+                    "\ufeff{\n"
+                    '  "compilerOptions": {\n'
+                    '    "baseUrl": "app",\n'
+                    '    "paths": {\n'
+                    '      "~/*": ["missing/*", "clients/*",],\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "app/clients/http.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000/app' });\n"
+                ),
+                "app/consumer.js": (
+                    "import api from '~/http';\n"
+                    "api.get('status/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/app/status/": {"GET"}})
+
+    def test_typescript_malformed_path_alias_config_fails_closed(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": "{ invalid json",
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from '@/api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertFalse(_call_site_coverage(build))
+
     def test_typescript_imported_client_calls_fail_closed_for_aliases_missing_exports_and_shadowing(self) -> None:
         build = _extract_typescript_client_files(
             {

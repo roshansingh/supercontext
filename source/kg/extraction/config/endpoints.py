@@ -506,7 +506,7 @@ def _resolve_path_alias_import(
     module_clients: dict[str, dict[str, object]],
     path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> str | None:
-    for pattern, targets in path_aliases:
+    for pattern, targets in sorted(path_aliases, key=_typescript_path_pattern_sort_key, reverse=True):
         capture = _match_typescript_path_pattern(pattern, import_source)
         if capture is None:
             continue
@@ -545,6 +545,16 @@ def _match_typescript_path_pattern(pattern: str, import_source: str) -> str | No
     return import_source[len(prefix) : len(import_source) - len(suffix) if suffix else len(import_source)]
 
 
+def _typescript_path_pattern_sort_key(alias: tuple[str, tuple[str, ...]]) -> tuple[int, int, int]:
+    pattern, _targets = alias
+    if "*" not in pattern:
+        return (1, len(pattern), 0)
+    if pattern.count("*") != 1:
+        return (-1, 0, 0)
+    prefix, suffix = pattern.split("*", 1)
+    return (0, len(prefix), len(suffix))
+
+
 def _load_typescript_path_aliases(repo_root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
     aliases: list[tuple[str, tuple[str, ...]]] = []
     for config_name in ("tsconfig.json", "jsconfig.json"):
@@ -580,7 +590,7 @@ def _normalize_repo_relative_path(value: str) -> str:
 
 def _load_jsonc_object(path: Path) -> dict[str, object]:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except OSError:
         return {}
     try:
@@ -622,7 +632,7 @@ def _strip_jsonc_comments(text: str) -> str:
             index += 2
             while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
                 index += 1
-            index += 2
+            index = min(index + 2, len(text))
             continue
         result.append(char)
         index += 1
