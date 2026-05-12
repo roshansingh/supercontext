@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Coverage, Entity, Fact
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import RepoSnapshot, TYPESCRIPT_EXTENSIONS
 from source.kg.core.store import JsonlKgStore
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.query.snapshot import KgSnapshot
@@ -749,7 +749,7 @@ class EndpointExtractionTest(unittest.TestCase):
                     "  }\n"
                     "}\n"
                 ),
-                "app/clients/http.js": (
+                "app/clients/http.mts": (
                     "import axios from 'axios';\n"
                     "export default axios.create({ baseURL: 'http://localhost:3000/app' });\n"
                 ),
@@ -763,6 +763,31 @@ class EndpointExtractionTest(unittest.TestCase):
         calls = _endpoint_rows(build, "CALLS_ENDPOINT")
 
         self.assertEqual(_methods_by_path(calls), {"/app/status/": {"GET"}})
+
+    def test_typescript_exact_path_alias_does_not_apply_wildcard_target(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "paths": {\n'
+                    '      "api": ["src/*"]\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/index.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from 'api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
 
     def test_typescript_malformed_path_alias_config_fails_closed(self) -> None:
         build = _extract_typescript_client_files(
@@ -1012,7 +1037,7 @@ def _extract_typescript_client_files(files: dict[str, str]):
             source_path = root / relative_path
             source_path.parent.mkdir(parents=True, exist_ok=True)
             source_path.write_text(source, encoding="utf-8")
-            if source_path.suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+            if source_path.suffix in TYPESCRIPT_EXTENSIONS:
                 source_paths.append(source_path)
         repo = RepoSnapshot(
             root=root,

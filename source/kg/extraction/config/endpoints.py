@@ -20,11 +20,11 @@ from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.config.openapi_yaml import extract_openapi_endpoints
 from source.kg.extraction.python.frameworks import extract_django_routes, extract_flask_routes
 from source.kg.extraction.python.frameworks.routes import EndpointRoute
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import RepoSnapshot, TYPESCRIPT_EXTENSIONS
 
 
-JAVASCRIPT_TYPESCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
-JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+JAVASCRIPT_TYPESCRIPT_SUFFIXES = TYPESCRIPT_EXTENSIONS
+JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 HTTP_METHOD_BY_VERB = {
     "get": "GET",
     "post": "POST",
@@ -510,8 +510,9 @@ def _resolve_path_alias_import(
         capture = _match_typescript_path_pattern(pattern, import_source)
         if capture is None:
             continue
+        pattern_has_wildcard = "*" in pattern
         for target in targets:
-            candidate = target.replace("*", capture) if "*" in target else target
+            candidate = target.replace("*", capture) if pattern_has_wildcard and "*" in target else target
             normalized = posixpath.normpath(candidate)
             if not normalized or normalized == "." or normalized.startswith("/") or normalized.startswith("../") or normalized == "..":
                 continue
