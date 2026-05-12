@@ -709,6 +709,30 @@ class ValidationReportTest(unittest.TestCase):
         self.assertIn("Judged scenarios not marked as planned goldset:", markdown)
         self.assertIn("`Q999`", markdown)
 
+    def test_render_validation_markdown_tolerates_older_goldset_reports(self) -> None:
+        report = {
+            "generated_at": "2026-05-10T00:00:00Z",
+            "status": "pass",
+            "inputs": {},
+            "snapshot_inventory": [],
+            "deterministic_smoke": {"summary": {}, "checks": []},
+            "goldset": {
+                "answer_score_summary": {"Pass": 1},
+                "evidence_summary": {"complete": 1},
+                "artifact_summary": {"current": 1},
+                "scenarios": [],
+                "answer_only_scenarios": [],
+                "packet_only_scenarios": [],
+            },
+            "next_feature_recommendation": "Next.",
+            "supersedes": [],
+        }
+
+        markdown = render_validation_markdown(report)
+
+        self.assertIn("Overall status: **pass**", markdown)
+        self.assertNotIn("Goldset plan coverage:", markdown)
+
     def test_product_readout_is_derived_from_goldset_rows(self) -> None:
         goldset = {
             "scenarios": [

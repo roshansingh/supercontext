@@ -144,6 +144,8 @@ def render_validation_markdown(report: JsonObject) -> str:
         )
 
     goldset = report["goldset"]
+    planned_scenario_count = int(goldset.get("planned_scenario_count", 0) or 0)
+    planned_judged_count = int(goldset.get("planned_judged_count", 0) or 0)
     lines.extend(
         [
             "",
@@ -154,11 +156,17 @@ def render_validation_markdown(report: JsonObject) -> str:
             _counts_sentence(goldset["evidence_summary"], label="Evidence completeness"),
             "",
             _counts_sentence(goldset["artifact_summary"], label="Artifact consistency"),
-            "",
-            (
-                "Goldset plan coverage: "
-                f"{goldset['planned_judged_count']} judged / {goldset['planned_scenario_count']} planned."
-            ),
+        ]
+    )
+    if planned_scenario_count:
+        lines.extend(
+            [
+                "",
+                f"Goldset plan coverage: {planned_judged_count} judged / {planned_scenario_count} planned.",
+            ]
+        )
+    lines.extend(
+        [
             "",
             "| Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |",
             "|---|---|---|---|---|---|",
@@ -185,17 +193,18 @@ def render_validation_markdown(report: JsonObject) -> str:
         lines.extend(["", "Packet-only scenarios without answer or judgement rows:"])
         for row in goldset["packet_only_scenarios"]:
             lines.append(f"- `{row['scenario_id']}`: {row['notes']}")
-    if goldset["unrun_planned_scenarios"]:
+    unrun_planned_scenarios = goldset.get("unrun_planned_scenarios", [])
+    if unrun_planned_scenarios:
         lines.extend(["", "Planned goldset scenarios not yet judged:"])
-        unrun = goldset["unrun_planned_scenarios"]
-        for row in unrun[:READOUT_UNRUN_DISPLAY_CAP]:
+        for row in unrun_planned_scenarios[:READOUT_UNRUN_DISPLAY_CAP]:
             lines.append(f"- `{row['scenario_id']}`: {row['user_query']}")
-        remaining_count = len(unrun) - READOUT_UNRUN_DISPLAY_CAP
+        remaining_count = len(unrun_planned_scenarios) - READOUT_UNRUN_DISPLAY_CAP
         if remaining_count > 0:
             lines.append(f"- ...and {remaining_count} more planned scenario(s).")
-    if goldset.get("judged_but_not_planned_scenarios"):
+    judged_but_not_planned_scenarios = goldset.get("judged_but_not_planned_scenarios", [])
+    if judged_but_not_planned_scenarios:
         lines.extend(["", "Judged scenarios not marked as planned goldset:"])
-        for scenario_id in goldset["judged_but_not_planned_scenarios"]:
+        for scenario_id in judged_but_not_planned_scenarios:
             lines.append(f"- `{scenario_id}`")
 
     lines.extend(

@@ -40,9 +40,9 @@ def main() -> None:
     args = parser.parse_args()
 
     repo = args.repo or _gh_text(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
-    pr_number = args.pr or int(_gh_text(["pr", "view", "--json", "number", "--jq", ".number"]))
+    pr_number = args.pr or int(_gh_text(["pr", "view", "--repo", repo, "--json", "number", "--jq", ".number"]))
 
-    head_sha = _gh_text(["pr", "view", str(pr_number), "--json", "headRefOid", "--jq", ".headRefOid"])
+    head_sha = _gh_text(["pr", "view", str(pr_number), "--repo", repo, "--json", "headRefOid", "--jq", ".headRefOid"])
     head_pushed_at = _head_commit_pushed_at(repo, head_sha)
     poll_delays = _poll_delays(args.interval_seconds, args.timeout_seconds)
     if not args.skip_request:
