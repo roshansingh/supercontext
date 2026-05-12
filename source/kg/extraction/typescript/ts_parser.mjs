@@ -759,7 +759,7 @@ function importedClientCallFromNode(node, sourceFile, importedBindings, bindings
       receiver_local: receiver,
       imported_name: binding.imported_name,
       import_source: binding.import_source,
-      method: target.method ?? "GET",
+      method: target.method ?? (ts.isObjectLiteralExpression(firstArg) ? "ANY" : "GET"),
       target: target.target,
       raw_target: target.target.raw,
       line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
