@@ -58,6 +58,9 @@ class PrivateGoldsetScenarioPlansTest(unittest.TestCase):
                                 "repo": "mercury_api",
                                 "module": "billing.views.stripe",
                                 "symbol_kind": "class",
+                                "path": "billing/views/stripe.py",
+                                "line": 10,
+                                "end_line": 20,
                                 "evidence": [],
                             }
                         ],
@@ -70,7 +73,10 @@ class PrivateGoldsetScenarioPlansTest(unittest.TestCase):
         item = packet["evidence_items"][0]
         self.assertEqual(item["fact_type"], "SYMBOL")
         self.assertEqual(item["subject"], "billing.views.stripe.StripeView")
-        self.assertIsNone(item["path"])
+        self.assertEqual(item["repo"], "mercury_api")
+        self.assertEqual(item["path"], "billing/views/stripe.py")
+        self.assertEqual(item["line_start"], 10)
+        self.assertEqual(item["line_end"], 20)
 
     def test_q081_runtime_topology_plan_records_missing_ml_api_deploy_mapping(self) -> None:
         module = _load_scenario_plans_module()

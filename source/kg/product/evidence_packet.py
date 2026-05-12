@@ -66,13 +66,7 @@ class EvidencePacketBuilder:
                     "source_system": None,
                     "derivation_class": None,
                     "confidence": None,
-                    "repo": None,
-                    "repo_name": None,
-                    "repo_identity": None,
-                    "commit_sha": None,
-                    "path": None,
-                    "line_start": None,
-                    "line_end": None,
+                    **_symbol_coordinates(row, None),
                 }
             ]
         return [
@@ -81,7 +75,7 @@ class EvidencePacketBuilder:
                 "source_system": evidence.get("source_system"),
                 "derivation_class": evidence.get("derivation_class"),
                 "confidence": evidence.get("confidence"),
-                **_bytes_coordinates(evidence),
+                **_symbol_coordinates(row, evidence),
             }
             for evidence in evidence_rows
         ]
@@ -231,6 +225,26 @@ def _bytes_coordinates(evidence: JsonObject) -> JsonObject:
         "line_start": bytes_ref.get("line_start"),
         "line_end": bytes_ref.get("line_end"),
     }
+
+
+def _symbol_coordinates(row: JsonObject, evidence: JsonObject | None) -> JsonObject:
+    coordinates = _bytes_coordinates(evidence or {})
+    return {
+        "repo": _first_present(coordinates.get("repo"), row.get("repo")),
+        "repo_name": coordinates.get("repo_name"),
+        "repo_identity": coordinates.get("repo_identity"),
+        "commit_sha": coordinates.get("commit_sha"),
+        "path": _first_present(coordinates.get("path"), row.get("path")),
+        "line_start": _first_present(coordinates.get("line_start"), row.get("line")),
+        "line_end": _first_present(coordinates.get("line_end"), row.get("end_line"), row.get("line")),
+    }
+
+
+def _first_present(*values: object) -> object:
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def _source_refs(row: JsonObject) -> list[JsonObject]:
