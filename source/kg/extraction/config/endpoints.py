@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import json
 import posixpath
+from pathlib import Path
 from urllib.parse import urlparse
 
 from source.kg.core.models import Coverage, Entity
@@ -18,11 +20,11 @@ from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.config.openapi_yaml import extract_openapi_endpoints
 from source.kg.extraction.python.frameworks import extract_django_routes, extract_flask_routes
 from source.kg.extraction.python.frameworks.routes import EndpointRoute
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import RepoSnapshot, TYPESCRIPT_EXTENSIONS
 
 
-JAVASCRIPT_TYPESCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
-JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+JAVASCRIPT_TYPESCRIPT_SUFFIXES = TYPESCRIPT_EXTENSIONS
+JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 HTTP_METHOD_BY_VERB = {
     "get": "GET",
     "post": "POST",
@@ -228,6 +230,7 @@ def extract_typescript_client_endpoint_calls(
     tenant_id: str,
 ) -> None:
     module_clients = _build_module_clients_index(parsed_files)
+    path_aliases = _load_typescript_path_aliases(repo.root)
     for relative_path, parsed_file in parsed_files.items():
         if not isinstance(parsed_file, dict):
             continue
@@ -247,6 +250,7 @@ def extract_typescript_client_endpoint_calls(
                     row,
                     imports_by_local,
                     module_clients,
+                    path_aliases,
                     service_entity,
                     build,
                     tenant_id,
@@ -329,12 +333,13 @@ def _add_imported_client_endpoint_call(
     row: dict,
     imports_by_local: dict[str, dict[str, str]],
     module_clients: dict[str, dict[str, object]],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
     service_entity: Entity,
     build: ConfigKgBuild,
     tenant_id: str,
 ) -> None:
     raw_target = _raw_target(row)
-    client_info = _resolve_imported_client(scanned.relative_path, row, imports_by_local, module_clients)
+    client_info = _resolve_imported_client(scanned.relative_path, row, imports_by_local, module_clients, path_aliases)
     if client_info is None:
         return
 
@@ -445,7 +450,9 @@ def _build_imports_by_local(parsed_file: dict) -> dict[str, dict[str, str]]:
         local_names = row.get("local_names")
         if not isinstance(raw_target, str) or not isinstance(imported_names, list) or not isinstance(local_names, list):
             continue
-        for imported_name, local_name in zip(imported_names, local_names, strict=False):
+        if len(imported_names) != len(local_names):
+            continue
+        for imported_name, local_name in zip(imported_names, local_names, strict=True):
             if not isinstance(imported_name, str) or not isinstance(local_name, str):
                 continue
             if local_name in imports_by_local:
@@ -461,6 +468,7 @@ def _resolve_imported_client(
     row: dict,
     imports_by_local: dict[str, dict[str, str]],
     module_clients: dict[str, dict[str, object]],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> dict[str, object] | None:
     receiver = row.get("receiver_local")
     if not isinstance(receiver, str):
@@ -468,7 +476,7 @@ def _resolve_imported_client(
     import_binding = imports_by_local.get(receiver)
     if import_binding is None:
         return None
-    module_path = _resolve_relative_import(importer_path, import_binding["import_source"], module_clients)
+    module_path = _resolve_import(importer_path, import_binding["import_source"], module_clients, path_aliases)
     if module_path is None:
         return None
     imported_name = row.get("imported_name")
@@ -478,16 +486,46 @@ def _resolve_imported_client(
     return client_info if isinstance(client_info, dict) else None
 
 
-def _resolve_relative_import(
+def _resolve_import(
     importer_path: str,
     import_source: str,
     module_clients: dict[str, dict[str, object]],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> str | None:
     if not import_source.startswith("."):
-        return None
+        return _resolve_path_alias_import(import_source, module_clients, path_aliases)
     importer_dir = posixpath.dirname(importer_path)
     normalized = posixpath.normpath(posixpath.join(importer_dir, import_source))
     if normalized == "." or normalized.startswith("../") or normalized == "..":
+        return None
+    return _resolve_module_path_candidate(normalized, module_clients)
+
+
+def _resolve_path_alias_import(
+    import_source: str,
+    module_clients: dict[str, dict[str, object]],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
+) -> str | None:
+    for pattern, targets in path_aliases:
+        capture = _match_typescript_path_pattern(pattern, import_source)
+        if capture is None:
+            continue
+        pattern_has_wildcard = "*" in pattern
+        for target in targets:
+            if pattern_has_wildcard and target.count("*") > 1:
+                continue
+            candidate = target.replace("*", capture) if pattern_has_wildcard and "*" in target else target
+            normalized = posixpath.normpath(candidate)
+            if not normalized or normalized == "." or normalized.startswith("/") or normalized.startswith("../") or normalized == "..":
+                continue
+            resolved = _resolve_module_path_candidate(normalized, module_clients)
+            if resolved is not None:
+                return resolved
+    return None
+
+
+def _resolve_module_path_candidate(normalized: str, module_clients: dict[str, dict[str, object]]) -> str | None:
+    if not normalized or normalized.startswith("/"):
         return None
     candidates = [normalized]
     if posixpath.splitext(normalized)[1] == "":
@@ -497,6 +535,145 @@ def _resolve_relative_import(
         if candidate in module_clients:
             return candidate
     return None
+
+
+def _match_typescript_path_pattern(pattern: str, import_source: str) -> str | None:
+    if "*" not in pattern:
+        return "" if pattern == import_source else None
+    if pattern.count("*") != 1:
+        return None
+    prefix, suffix = pattern.split("*", 1)
+    if not import_source.startswith(prefix) or not import_source.endswith(suffix):
+        return None
+    return import_source[len(prefix) : len(import_source) - len(suffix) if suffix else len(import_source)]
+
+
+def _typescript_path_pattern_sort_key(alias: tuple[str, tuple[str, ...]]) -> tuple[int, int, int]:
+    pattern, _targets = alias
+    if "*" not in pattern:
+        return (1, len(pattern), 0)
+    if pattern.count("*") != 1:
+        return (-1, 0, 0)
+    prefix, suffix = pattern.split("*", 1)
+    return (0, len(prefix), len(suffix))
+
+
+def _load_typescript_path_aliases(repo_root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    aliases: list[tuple[str, tuple[str, ...]]] = []
+    for config_name in ("tsconfig.json", "jsconfig.json"):
+        config_path = repo_root / config_name
+        if not config_path.exists():
+            continue
+        config = _load_jsonc_object(config_path)
+        compiler_options = config.get("compilerOptions") if isinstance(config, dict) else None
+        if not isinstance(compiler_options, dict):
+            continue
+        paths = compiler_options.get("paths")
+        if not isinstance(paths, dict):
+            continue
+        base_url = compiler_options.get("baseUrl")
+        base_prefix = _normalize_repo_relative_path(base_url) if isinstance(base_url, str) else "."
+        for pattern, raw_targets in paths.items():
+            if not isinstance(pattern, str) or not isinstance(raw_targets, list):
+                continue
+            targets = tuple(
+                _normalize_repo_relative_path(posixpath.join(base_prefix, target))
+                for target in raw_targets
+                if isinstance(target, str)
+            )
+            if targets:
+                aliases.append((pattern, targets))
+    return tuple(sorted(aliases, key=_typescript_path_pattern_sort_key, reverse=True))
+
+
+def _normalize_repo_relative_path(value: str) -> str:
+    normalized = posixpath.normpath(value.replace("\\", "/"))
+    return "" if normalized == "." else normalized
+
+
+def _load_jsonc_object(path: Path) -> dict[str, object]:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(_strip_trailing_json_commas(_strip_jsonc_comments(text)))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _strip_jsonc_comments(text: str) -> str:
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
+                index += 1
+            index = min(index + 2, len(text))
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _strip_trailing_json_commas(text: str) -> str:
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+        if char == ",":
+            lookahead = index + 1
+            while lookahead < len(text) and text[lookahead].isspace():
+                lookahead += 1
+            if lookahead < len(text) and text[lookahead] in "}]":
+                index += 1
+                continue
+        result.append(char)
+        index += 1
+    return "".join(result)
 
 
 def _compose_imported_client_target(target: dict, base_url: object) -> dict[str, object]:

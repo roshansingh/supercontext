@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Coverage, Entity, Fact
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import RepoSnapshot, TYPESCRIPT_EXTENSIONS
 from source.kg.core.store import JsonlKgStore
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.query.snapshot import KgSnapshot
@@ -671,7 +671,168 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/users/": {"GET"}})
         self.assertEqual(_hosts_by_path(calls)["/users/"], {"localhost"})
 
-    def test_typescript_imported_client_calls_fail_closed_for_aliases_missing_exports_and_shadowing(self) -> None:
+    def test_typescript_imported_default_axios_client_resolves_tsconfig_path_alias(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    "  // jsonc comments are valid in tsconfig files\n"
+                    '  "compilerOptions": {\n'
+                    '    "baseUrl": ".",\n'
+                    '    "paths": {\n'
+                    '      "@/*": ["src/*"],\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000/api' });\n"
+                    "export default client;\n"
+                ),
+                "src/users.js": (
+                    "import api from '@/api';\n"
+                    "api.get('users/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/users/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/users/"], {"localhost"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/users/"], {"imported_axios_call"})
+
+    def test_typescript_path_alias_prefers_more_specific_pattern(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "paths": {\n'
+                    '      "@/*": ["src/*"],\n'
+                    '      "@/api/*": ["lib/api/*"]\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/api/users.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000/wrong' });\n"
+                ),
+                "lib/api/users.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000/right' });\n"
+                ),
+                "src/consumer.js": (
+                    "import api from '@/api/users';\n"
+                    "api.get('profile/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/right/profile/": {"GET"}})
+        self.assertNotIn("/wrong/profile/", _methods_by_path(calls))
+
+    def test_typescript_path_alias_uses_jsconfig_base_url_and_fallback_targets(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "jsconfig.json": (
+                    "\ufeff{\n"
+                    '  "compilerOptions": {\n'
+                    '    "baseUrl": "app",\n'
+                    '    "paths": {\n'
+                    '      "~/*": ["missing/*", "clients/*",],\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "app/clients/http.mts": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000/app' });\n"
+                ),
+                "app/consumer.js": (
+                    "import api from '~/http';\n"
+                    "api.get('status/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/app/status/": {"GET"}})
+
+    def test_typescript_exact_path_alias_does_not_apply_wildcard_target(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "paths": {\n'
+                    '      "api": ["src/*"]\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/index.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from 'api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+
+    def test_typescript_path_alias_target_with_multiple_wildcards_fails_closed(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "paths": {\n'
+                    '      "@/*": ["src/*/*"]\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/api/api.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from '@/api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+
+    def test_typescript_malformed_path_alias_config_fails_closed(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": "{ invalid json",
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from '@/api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertFalse(_call_site_coverage(build))
+
+    def test_typescript_imported_client_calls_fail_closed_for_bare_packages_missing_exports_and_shadowing(self) -> None:
         build = _extract_typescript_client_files(
             {
                 "src/api.ts": (
@@ -683,12 +844,12 @@ class EndpointExtractionTest(unittest.TestCase):
                 "src/auth.ts": (
                     "import api from './api';\n"
                     "import missing from './notClient';\n"
-                    "import aliasApi from '@/api';\n"
+                    "import externalApi from 'external-api';\n"
                     "function shadowed(api) { return api.get('/shadowed'); }\n"
                     "api.get('/safe');\n"
                     "api.get(makeTarget());\n"
                     "missing.get('/missing');\n"
-                    "aliasApi.get('/alias');\n"
+                    "externalApi.get('/external');\n"
                 ),
             }
         )
@@ -901,7 +1062,8 @@ def _extract_typescript_client_files(files: dict[str, str]):
             source_path = root / relative_path
             source_path.parent.mkdir(parents=True, exist_ok=True)
             source_path.write_text(source, encoding="utf-8")
-            source_paths.append(source_path)
+            if source_path.suffix in TYPESCRIPT_EXTENSIONS:
+                source_paths.append(source_path)
         repo = RepoSnapshot(
             root=root,
             name="web-client",
