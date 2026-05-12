@@ -18,8 +18,12 @@ python -m source.scripts.compare_snapshot_baseline data/kg_runs/<snapshot_dir> -
 
 Use `--allow-additions` only when a feature is expected to add facts without removing existing coverage or counts. Extractor error count changes remain strict even with this flag.
 
+Public multi-repo fixture commands for `llm-app-stack` and `otel-demo` live in `examples/public-orgs/README.md`.
+
 ## Baseline Change Notes
 
+- `llm-app-stack` public-corpus baseline: initial capture from five local public repos (`langfuse`, `langfuse-python`, `litellm`, `open-webui`, `open-webui-pipelines`) with 0 extractor errors, 523 package-linker edges, 112443 entities, 299505 facts, 685030 evidence rows, and 966 coverage rows.
+- `otel-demo` public-corpus baseline: initial capture from local `opentelemetry-demo` checkout with 0 extractor errors, 2138 entities, 3296 facts, 6721 evidence rows, and 9 coverage rows.
 - `true_loop` PR-C import-normalizer introspection: `ExternalPackage` 91 -> 92 and total entities 1814 -> 1815 because `fs/promises` is now preserved as its own Node builtin submodule instead of collapsing to `fs`. Mercury ML and LatticeAI 23 stayed unchanged.
 - `mercury_ml` PR-E config scan observability: coverage 5 -> 6 because `mercury_ml/chatbot/frustration_classification/frustration-data/embeddings_cache.json` is 4.18 MB and now emits `exceeds_max_scan_bytes` coverage instead of silently skipping.
 - `latticeai_23` PR-E config scan observability: coverage 93 -> 100 because seven oversized JSON config/template files in `mercury_api` now emit `exceeds_max_scan_bytes` coverage instead of silently skipping: `campaigns/management/commands/popup_library_02_06_23.json`, `engagement/static_email_templates/email_library_templates.json`, `engagement/static_email_templates/new_templates.json`, `engagement/static_email_templates/templates_01_06_23.json`, `engagement/static_email_templates/templates_16_02_23.json`, `engagement/static_email_templates/templates_json.json`, and `engagement/static_email_templates/themed.json`.

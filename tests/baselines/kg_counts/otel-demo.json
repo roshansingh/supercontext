@@ -1,0 +1,36 @@
+{
+  "baseline_version": 1,
+  "coverage_reason_counts": {
+    "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 1,
+    "parser_backed_js_ts_route_extraction_partial_express_only": 1,
+    "unknown": 3,
+    "unresolved_target": 4
+  },
+  "entity_kind_counts": {
+    "CodeModule": 173,
+    "CodeSymbol": 1306,
+    "Domain": 342,
+    "Endpoint": 2,
+    "EnvVar": 152,
+    "ExternalPackage": 161,
+    "Repo": 1,
+    "Service": 1
+  },
+  "extractor_errors_count": 0,
+  "fact_predicate_counts": {
+    "CALLS": 201,
+    "DEFINED_IN": 1480,
+    "EXPOSES_ENDPOINT": 2,
+    "IMPLEMENTS": 173,
+    "IMPORTS": 634,
+    "REFERENCES_DOMAIN": 638,
+    "REFERENCES_ENV_VAR": 168
+  },
+  "manifest_counts": {
+    "coverage": 9,
+    "entities": 2138,
+    "evidence": 6721,
+    "facts": 3296
+  },
+  "name": "otel-demo"
+}
