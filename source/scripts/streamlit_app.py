@@ -57,7 +57,7 @@ def build_multi_kg_hint(orgs_root: Path, snapshots_root: Path = Path(DEFAULT_SNA
     return (
         "python -m source.scripts.build_multi_kg "
         f"--repo {repo_arg} "
-        f"--out {snapshots_root / (org_name or '<snapshot_name>')}"
+        f'--out "{snapshots_root / (org_name or "<snapshot_name>")}"'
     )
 
 

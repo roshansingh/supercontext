@@ -66,7 +66,7 @@ class StreamlitAppImportsTest(unittest.TestCase):
             "example-org",
         )
         self.assertIn("$SUPERCONTEXT_ORGS_ROOT/example-org/<repo>", hint)
-        self.assertIn("--out $SNAPSHOTS_ROOT/example-org", hint)
+        self.assertIn('--out "$SNAPSHOTS_ROOT/example-org"', hint)
         self.assertNotIn("/Users/", hint)
 
     def test_required_query_args_fail_closed(self) -> None:
