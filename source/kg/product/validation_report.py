@@ -788,6 +788,12 @@ def _product_query_matrix(path: Path | None, smoke_checks: list[JsonObject], gol
         }
     query_by_id = {str(row["query_id"]): row for row in query_rows}
     measured_rows = _aggregate_product_query_rows(_measured_product_query_rows(smoke_checks, goldset))
+    unknown_measured_ids = sorted({str(row["query_id"]) for row in measured_rows} - set(query_by_id))
+    if unknown_measured_ids:
+        raise ValueError(
+            "Measured product-query rows are not present in the product query set: "
+            + ", ".join(unknown_measured_ids)
+        )
     measured_tuples = {(str(row["query_id"]), str(row["corpus"])) for row in measured_rows}
     rows = measured_rows
     for query in query_rows:

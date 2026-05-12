@@ -154,6 +154,34 @@ class ProductQueryMatrixRunnerTest(unittest.TestCase):
         self.assertEqual(matrix["rows"], [])
         self.assertEqual(matrix["status_summary"], {})
 
+    def test_product_query_matrix_rejects_measured_rows_missing_from_query_set(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "PRODUCT-QUERY-SET.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Difficulty | Tool / surface | Persona | Fixture | User question | Expected answer shape | Main capabilities exercised |",
+                        "|---|---|---|---|---|---|---|---|",
+                        "| Q001 | Low | CLI | Engineer | `$PY_REPO` | What imports pandas? | Importers. | Imports. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            smoke_rows = [
+                {
+                    "query_id": "Q999",
+                    "difficulty": "Low",
+                    "corpus": "Mercury ML",
+                    "snapshot": "data/kg_runs/mercury_ml",
+                    "surface": "modules-importing",
+                    "result": "pass",
+                    "notes": "stale harness row",
+                }
+            ]
+
+            with self.assertRaisesRegex(ValueError, "Q999"):
+                _product_query_matrix(query_set, smoke_rows, {"scenarios": []})
+
     def test_product_query_matrix_preserves_unmeasured_tuple_for_partial_multi_corpus_coverage(self) -> None:
         with TemporaryDirectory() as tmpdir:
             query_set = Path(tmpdir) / "PRODUCT-QUERY-SET.md"
