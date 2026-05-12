@@ -772,6 +772,20 @@ def _planned_goldset_scenarios(path: Path | None) -> list[JsonObject]:
 
 def _product_query_matrix(path: Path | None, smoke_checks: list[JsonObject], goldset: JsonObject) -> JsonObject:
     query_rows = _product_query_rows(path)
+    if path is None:
+        return {
+            "product_query_set": None,
+            "query_count": 0,
+            "tuple_count": 0,
+            "measured_query_count": 0,
+            "unmeasured_query_count": 0,
+            "measured_query_coverage_pct": 0.0,
+            "harness_sources": [],
+            "status_summary": {},
+            "difficulty_summary": {},
+            "failure_owner_summary": _matrix_failure_owner_summary([]),
+            "rows": [],
+        }
     query_by_id = {str(row["query_id"]): row for row in query_rows}
     measured_rows = _aggregate_product_query_rows(_measured_product_query_rows(smoke_checks, goldset))
     measured_tuples = {(str(row["query_id"]), str(row["corpus"])) for row in measured_rows}
@@ -909,13 +923,13 @@ def _merge_product_query_matrix_rows(rows: list[JsonObject]) -> JsonObject:
             owner
             for row in rows
             for owner in row.get("failure_owners", [])
-            if owner != "none"
+            if owner != NO_FAILURE_OWNER
         }
     )
     return {
         **first,
         "status": status,
-        "failure_owners": failure_owners or ["none"],
+        "failure_owners": failure_owners or [NO_FAILURE_OWNER],
         "harness": ", ".join(sorted({str(row["harness"]) for row in rows})),
         "notes": "; ".join(str(row.get("notes", "")).strip() for row in rows if str(row.get("notes", "")).strip()),
         "sources": [source for row in rows for source in row.get("sources", [])],
@@ -1144,7 +1158,7 @@ def _compare_count_metadata(issues: list[str], label: str, answer_count: object,
 
 
 def _failure_owner_summary(rows: list[JsonObject]) -> str:
-    owners = Counter(owner for row in rows for owner in row.get("failure_owners", []) if owner != "none")
+    owners = Counter(owner for row in rows for owner in row.get("failure_owners", []) if owner != NO_FAILURE_OWNER)
     if not owners:
         return ""
     return ", ".join(f"{owner}={count}" for owner, count in sorted(owners.items()))

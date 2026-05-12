@@ -121,6 +121,39 @@ class ProductQueryMatrixRunnerTest(unittest.TestCase):
 
         self.assertEqual(matrix["rows"][0]["corpus"], "Unspecified fixture")
 
+    def test_product_query_matrix_disabled_path_does_not_report_external_measurements(self) -> None:
+        smoke_rows = [
+            {
+                "query_id": "Q001",
+                "difficulty": "Low",
+                "corpus": "Mercury ML",
+                "snapshot": "data/kg_runs/mercury_ml",
+                "surface": "modules-importing",
+                "result": "pass",
+                "notes": "pandas importers: 3 rows",
+            }
+        ]
+        goldset = {
+            "scenarios": [
+                {
+                    "scenario_id": "Q081",
+                    "answer_score": "Partial",
+                    "failure_owners": ["missing KG fact"],
+                    "notes": "Missing deploy evidence.",
+                }
+            ]
+        }
+
+        matrix = _product_query_matrix(None, smoke_rows, goldset)
+
+        self.assertIsNone(matrix["product_query_set"])
+        self.assertEqual(matrix["query_count"], 0)
+        self.assertEqual(matrix["tuple_count"], 0)
+        self.assertEqual(matrix["measured_query_count"], 0)
+        self.assertEqual(matrix["unmeasured_query_count"], 0)
+        self.assertEqual(matrix["rows"], [])
+        self.assertEqual(matrix["status_summary"], {})
+
     def test_product_query_matrix_preserves_unmeasured_tuple_for_partial_multi_corpus_coverage(self) -> None:
         with TemporaryDirectory() as tmpdir:
             query_set = Path(tmpdir) / "PRODUCT-QUERY-SET.md"
