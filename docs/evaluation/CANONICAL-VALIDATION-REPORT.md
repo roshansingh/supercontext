@@ -1,6 +1,6 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-12T14:10:53Z
+Generated: 2026-05-12T15:31:50Z
 
 Overall status: **partial**
 Quality status: **pass**
@@ -26,7 +26,7 @@ This is the current canonical validation report for low/medium deterministic sur
 |---|---|---:|---:|---:|---:|
 | Mercury ML | `data/kg_runs/mercury_ml_eval_2026_05_11` | 6613 | 24836 | 103651 | 6 |
 | True Loop | `data/kg_runs/true_loop_eval_2026_05_11` | 1810 | 3659 | 7702 | 13 |
-| Private Goldset | `data/kg_runs/private_goldset_eval_2026_05_11` | 16983 | 45724 | 91934 | 610 |
+| Private Goldset | `data/kg_runs/private_goldset_eval_2026_05_11` | 17000 | 45745 | 91987 | 610 |
 
 ## Low/Medium And Goldset Retrieval Smoke
 
