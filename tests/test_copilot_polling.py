@@ -141,6 +141,82 @@ class CopilotPollingTest(unittest.TestCase):
     def test_fixed_poll_interval_respects_timeout(self) -> None:
         self.assertEqual(poll_copilot_review._poll_delays(120, 300), [120, 120, 60])
 
+    def test_request_copilot_review_uses_gh_pr_edit(self) -> None:
+        completed = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "pr", "edit"],
+            0,
+            stdout="",
+            stderr="",
+        )
+
+        with patch.object(poll_copilot_review.subprocess, "run", return_value=completed) as run:
+            result = poll_copilot_review._request_copilot_review(
+                "owner/repo",
+                42,
+                "abcdef123456",
+                comment_fallback=True,
+            )
+
+        self.assertTrue(result["requested"])
+        self.assertIn("gh pr edit", result["message"])
+        self.assertEqual(
+            run.call_args.args[0],
+            ["gh", "pr", "edit", "42", "--add-reviewer", "@copilot"],
+        )
+
+    def test_request_copilot_review_posts_comment_fallback_when_reviewer_request_fails(self) -> None:
+        failed_reviewer_request = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "pr", "edit"],
+            1,
+            stdout="",
+            stderr="Reviews may only be requested from collaborators.",
+        )
+        posted_comment = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "api"],
+            0,
+            stdout='{"id":1}',
+            stderr="",
+        )
+
+        with patch.object(
+            poll_copilot_review.subprocess,
+            "run",
+            side_effect=[failed_reviewer_request, posted_comment],
+        ) as run:
+            result = poll_copilot_review._request_copilot_review(
+                "owner/repo",
+                42,
+                "abcdef123456",
+                comment_fallback=True,
+            )
+
+        self.assertTrue(result["requested"])
+        self.assertIn("comment fallback", result["message"])
+        self.assertEqual(run.call_count, 2)
+        fallback_command = run.call_args.args[0]
+        self.assertEqual(fallback_command[:5], ["gh", "api", "-X", "POST", "repos/owner/repo/issues/42/comments"])
+        self.assertIn("@copilot please review the latest changes", fallback_command[-1])
+
+    def test_request_copilot_review_can_disable_comment_fallback(self) -> None:
+        failed_reviewer_request = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "pr", "edit"],
+            1,
+            stdout="",
+            stderr="Reviews may only be requested from collaborators.",
+        )
+
+        with patch.object(poll_copilot_review.subprocess, "run", return_value=failed_reviewer_request) as run:
+            result = poll_copilot_review._request_copilot_review(
+                "owner/repo",
+                42,
+                "abcdef123456",
+                comment_fallback=False,
+            )
+
+        self.assertFalse(result["requested"])
+        self.assertIn("Could not request", result["message"])
+        self.assertEqual(run.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

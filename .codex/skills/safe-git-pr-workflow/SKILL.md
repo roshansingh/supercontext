@@ -83,11 +83,25 @@ git status --short --branch
 
 Reality to account for: Copilot auto-reviews the first PR push, but follow-up pushes usually do not auto-review. After every follow-up push, explicitly request Copilot review from the CLI, then poll.
 
+The reliable documented request path is:
+
+```bash
+gh pr edit <PR_NUMBER> --add-reviewer @copilot
+```
+
+The poll script uses that first. If GitHub refuses the reviewer request, the script posts a PR comment fallback:
+
+```text
+@copilot please review the latest changes on this PR head (<sha>).
+```
+
+Treat the comment fallback as experimental because GitHub documents reviewer requests, not PR comments, as the official Copilot code-review trigger.
+
 ```bash
 python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
-The poll script requests `@copilot` first, then waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll.
+The poll script requests `@copilot` first, then waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll. Use `--no-comment-fallback` only when comment noise is unacceptable.
 
 Interpret the result precisely:
 - If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
