@@ -32,19 +32,25 @@ def main() -> None:
         action="store_true",
         help="Only poll; do not request @copilot first. Use only when verifying an already-requested review.",
     )
+    parser.add_argument(
+        "--no-comment-fallback",
+        action="store_true",
+        help="Do not post a PR comment fallback if the documented @copilot reviewer request fails.",
+    )
     args = parser.parse_args()
 
     repo = args.repo or _gh_text(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
-    pr_number = args.pr or int(_gh_text(["pr", "view", "--json", "number", "--jq", ".number"]))
+    pr_number = args.pr or int(_gh_text(["pr", "view", "--repo", repo, "--json", "number", "--jq", ".number"]))
 
-    head_sha = _gh_text(["pr", "view", str(pr_number), "--json", "headRefOid", "--jq", ".headRefOid"])
+    head_sha = _gh_text(["pr", "view", str(pr_number), "--repo", repo, "--json", "headRefOid", "--jq", ".headRefOid"])
     head_pushed_at = _head_commit_pushed_at(repo, head_sha)
     poll_delays = _poll_delays(args.interval_seconds, args.timeout_seconds)
     if not args.skip_request:
-        if _request_copilot_review(repo, pr_number):
-            print(f"Requested @copilot review for PR #{pr_number} at head {head_sha[:12]}.")
+        request_result = _request_copilot_review(repo, pr_number, head_sha, comment_fallback=not args.no_comment_fallback)
+        if request_result["requested"]:
+            print(f"{request_result['message']} for PR #{pr_number} at head {head_sha[:12]}.")
         else:
-            print(f"Attempted @copilot review request for PR #{pr_number}; continuing to poll current head.")
+            print(f"{request_result['message']} Continuing to poll current head.")
     started_at = time.monotonic()
     attempt = 1
     while True:
@@ -190,35 +196,74 @@ def _head_commit_pushed_at(repo: str, head_sha: str) -> str:
     return str(pushed_at or committed_at)
 
 
-def _request_copilot_review(repo: str, pr_number: int) -> bool:
-    reviewer_logins = ("copilot-pull-request-reviewer", "copilot")
-    for reviewer in reviewer_logins:
-        try:
-            result = subprocess.run(
-                [
-                    "gh",
-                    "api",
-                    "-X",
-                    "POST",
-                    f"repos/{repo}/pulls/{pr_number}/requested_reviewers",
-                    "-f",
-                    f"reviewers[]={reviewer}",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except subprocess.TimeoutExpired:
-            print(f"Timed out requesting Copilot review as {reviewer}.", file=sys.stderr)
-            continue
-        if result.returncode == 0:
-            return True
-        message = (result.stderr or result.stdout or "").strip()
-        if "Review cannot be requested" in message or "already requested" in message.lower():
-            return True
-        if message:
-            print(message, file=sys.stderr)
-    return False
+def _request_copilot_review(
+    repo: str,
+    pr_number: int,
+    head_sha: str,
+    *,
+    comment_fallback: bool,
+) -> dict[str, Any]:
+    reviewer_result = _request_copilot_review_via_gh_pr_edit(repo, pr_number)
+    if reviewer_result["requested"]:
+        return reviewer_result
+    if not comment_fallback:
+        return {
+            "requested": False,
+            "message": f"Could not request @copilot review: {reviewer_result['message']}.",
+        }
+    comment_result = _request_copilot_review_via_comment(repo, pr_number, head_sha)
+    if comment_result["requested"]:
+        return comment_result
+    return {
+        "requested": False,
+        "message": (
+            "Could not request @copilot review via reviewer assignment or comment fallback: "
+            f"{reviewer_result['message']}; {comment_result['message']}."
+        ),
+    }
+
+
+def _request_copilot_review_via_gh_pr_edit(repo: str, pr_number: int) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "edit", str(pr_number), "--repo", repo, "--add-reviewer", "@copilot"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return {"requested": False, "message": "timed out running `gh pr edit --add-reviewer @copilot`"}
+    message = (result.stderr or result.stdout or "").strip()
+    if result.returncode == 0:
+        return {"requested": True, "message": "Requested @copilot review with `gh pr edit --add-reviewer @copilot`"}
+    if "Review cannot be requested" in message or "already requested" in message.lower():
+        return {"requested": True, "message": "Copilot review was already requested"}
+    return {"requested": False, "message": message or f"`gh pr edit` exited {result.returncode}"}
+
+
+def _request_copilot_review_via_comment(repo: str, pr_number: int, head_sha: str) -> dict[str, Any]:
+    body = f"@copilot please review the latest changes on this PR head ({head_sha[:12]})."
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                "-X",
+                "POST",
+                f"repos/{repo}/issues/{pr_number}/comments",
+                "-f",
+                f"body={body}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return {"requested": False, "message": "timed out posting @copilot PR comment fallback"}
+    message = (result.stderr or result.stdout or "").strip()
+    if result.returncode == 0:
+        return {"requested": True, "message": "Posted @copilot PR comment fallback"}
+    return {"requested": False, "message": message or f"comment fallback exited {result.returncode}"}
 
 
 def _unresolved_copilot_threads(repo: str, pr_number: int) -> list[dict[str, Any]]:

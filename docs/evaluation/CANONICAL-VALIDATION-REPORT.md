@@ -1,8 +1,10 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-11T23:47:45Z
+Generated: 2026-05-12T09:26:29Z
 
-Overall status: **pass**
+Overall status: **partial**
+Quality status: **pass**
+Coverage status: **partial**
 
 This is the current canonical validation report for low/medium deterministic surfaces and the private goldset. Older dated artifacts are preserved for audit history only.
 
@@ -16,6 +18,7 @@ This is the current canonical validation report for low/medium deterministic sur
 | `goldset_packets` | `data/kg_runs/private_goldset_eval_2026_05_11/goldset_packets_eval_2026_05_11.json` |
 | `goldset_answers` | `data/kg_runs/private_goldset_eval_2026_05_11/goldset_answers_eval_2026_05_11.json` |
 | `goldset_judgement` | `data/kg_runs/private_goldset_eval_2026_05_11/goldset_judgement_eval_2026_05_11.json` |
+| `product_query_set` | `docs/evaluation/PRODUCT-QUERY-SET.md` |
 
 ## Snapshot Inventory
 
@@ -61,6 +64,8 @@ Evidence completeness: complete=6.
 
 Artifact consistency: current=6.
 
+Goldset plan coverage: 6 judged / 14 planned.
+
 | Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |
 |---|---|---|---|---|---|
 | Q082 | current | complete | Pass | none | Evidence packet contains the Apache vhost mapping to mercury_api's prod_shopagain_wsgi.py and ServerName api.shopagain.io, the three backend service prod.ini references, and both client env-var entrypoints (REACT_APP_API_ROOT in mercury_ui/src/services/api.js:10 and VITE_API_ROOT in ShopAgainMobile/src/api/axiosConfig.tsx:8). The generated answer correctly identifies mercury_api as the backend with the WSGI entrypoint and enumerates the env-driven clients plus sibling services, matching the ground truth. |
@@ -70,11 +75,22 @@ Artifact consistency: current=6.
 | Q100 | current | complete | Pass | none | The evidence packet contains all the facts needed: documented endpoints in shopagain_api_docs (company, contacts, products, collections, carts, checkouts, orders, store_data), backend implementations in mercury_api/urls.py (with /v1/product_collections, /v1/elementor, /v1/chatbot as right_only), the matched /v1/store_data in mercury_webhooks/app.py:101, and the fuzzy /v1/collections vs /v1/product_collections drift. The answer correctly identifies /v1/collections as the documented-but-not-obviously-implemented case, notes the /v1/store_data placement drift to mercury_webhooks, and lists all documented endpoints lacking client callers, with citations. |
 | Q106 | current | complete | Pass | none | The EvidencePacket contains the producer send-site (user_messaging.py:469), Zappa-bound consumer handler with the full queue ARN, and the downstream la-prod-email producer/consumer edges. The generated answer accurately reflects the producer, consumer, queue ARN, and downstream lineage with correct citations. |
 
+Planned goldset scenarios not yet judged:
+- `Q081`: What are the runtime building blocks of ShopAgain across these repos, and which domains route to each backend?
+- `Q084`: If Stripe billing behavior changes, which UI flows, backend handlers, and webhook processors need validation?
+- `Q086`: Which repo depends on the packaged ML library, and what needs rebuild or retest if `mercury_ml` changes?
+- `Q087`: If model feature-generation code changes in `mercury_ml`, which API service and deployment scripts must be checked before release?
+- `Q092`: What repos participate in live chat, from customer widget to websocket to backend API and operator UI?
+- `Q093`: If websocket route `postChatMessage` changes, which clients and backend callbacks are affected?
+- `Q099`: If `hipo-drf-exceptions` changes API error response shape, which services and clients should be validated?
+- `Q101`: Which client API calls are missing from public API docs?
+
 ## Product Readout
 
 - KG-first answers pass independent judgement when indexed facts exist: Q082, Q083, Q088, Q095, Q100, Q106.
 - No current judged scenario failed or partially passed in this run.
-- Recommended next feature: No immediate extractor gap is proven by the current judged goldset: all six scenarios pass with complete evidence. Next validation step should expand the goldset or add harder scenarios; conditional JS/TS targets, path aliases, and re-export chains should be implemented only when a new failing scenario proves the need.
+- Product-validation breadth is incomplete: 6/14 planned goldset scenarios have judgement rows; next run should cover Q081, Q084, Q086, Q087, Q092, Q093, Q099, Q101.
+- Recommended next feature: No immediate extractor gap is proven by the current judged goldset: all current judged scenarios pass with complete evidence. Next validation step should expand judged goldset coverage or add harder scenarios; implement parked extractor breadth only when a new failing scenario proves the need.
 
 ## Superseded Artifacts
 

@@ -141,6 +141,126 @@ class CopilotPollingTest(unittest.TestCase):
     def test_fixed_poll_interval_respects_timeout(self) -> None:
         self.assertEqual(poll_copilot_review._poll_delays(120, 300), [120, 120, 60])
 
+    def test_main_scopes_pr_view_calls_to_repo_argument(self) -> None:
+        text_calls: list[list[str]] = []
+
+        def gh_text(args: list[str]) -> str:
+            text_calls.append(args)
+            if args[:2] == ["pr", "view"] and "--jq" in args:
+                jq_value = args[args.index("--jq") + 1]
+                if jq_value == ".number":
+                    return "42"
+                if jq_value == ".headRefOid":
+                    return "abcdef123456"
+            raise AssertionError(f"unexpected gh text call: {args}")
+
+        with (
+            patch.object(poll_copilot_review.sys, "argv", ["poll_copilot_review.py", "--repo", "owner/repo", "--timeout-seconds", "0"]),
+            patch.object(poll_copilot_review, "_gh_text", side_effect=gh_text),
+            patch.object(poll_copilot_review, "_head_commit_pushed_at", return_value="2026-05-10T12:00:00Z"),
+            patch.object(
+                poll_copilot_review,
+                "_request_copilot_review",
+                return_value={"requested": True, "message": "requested"},
+            ),
+            patch.object(
+                poll_copilot_review,
+                "_poll_once",
+                return_value={
+                    "activity": False,
+                    "review_completed": False,
+                    "actionable_feedback": False,
+                    "threads": [],
+                    "issue_comments": [],
+                    "reviews": [],
+                },
+            ),
+            patch.object(poll_copilot_review.time, "sleep", return_value=None),
+        ):
+            poll_copilot_review.main()
+
+        self.assertIn(["pr", "view", "--repo", "owner/repo", "--json", "number", "--jq", ".number"], text_calls)
+        self.assertIn(
+            ["pr", "view", "42", "--repo", "owner/repo", "--json", "headRefOid", "--jq", ".headRefOid"],
+            text_calls,
+        )
+
+    def test_request_copilot_review_uses_gh_pr_edit(self) -> None:
+        completed = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "pr", "edit"],
+            0,
+            stdout="",
+            stderr="",
+        )
+
+        with patch.object(poll_copilot_review.subprocess, "run", return_value=completed) as run:
+            result = poll_copilot_review._request_copilot_review(
+                "owner/repo",
+                42,
+                "abcdef123456",
+                comment_fallback=True,
+            )
+
+        self.assertTrue(result["requested"])
+        self.assertIn("gh pr edit", result["message"])
+        self.assertEqual(
+            run.call_args.args[0],
+            ["gh", "pr", "edit", "42", "--repo", "owner/repo", "--add-reviewer", "@copilot"],
+        )
+
+    def test_request_copilot_review_posts_comment_fallback_when_reviewer_request_fails(self) -> None:
+        failed_reviewer_request = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "pr", "edit"],
+            1,
+            stdout="",
+            stderr="Reviews may only be requested from collaborators.",
+        )
+        posted_comment = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "api"],
+            0,
+            stdout='{"id":1}',
+            stderr="",
+        )
+
+        with patch.object(
+            poll_copilot_review.subprocess,
+            "run",
+            side_effect=[failed_reviewer_request, posted_comment],
+        ) as run:
+            result = poll_copilot_review._request_copilot_review(
+                "owner/repo",
+                42,
+                "abcdef123456",
+                comment_fallback=True,
+            )
+
+        self.assertTrue(result["requested"])
+        self.assertIn("comment fallback", result["message"])
+        self.assertEqual(run.call_count, 2)
+        fallback_command = run.call_args.args[0]
+        self.assertEqual(fallback_command[:5], ["gh", "api", "-X", "POST", "repos/owner/repo/issues/42/comments"])
+        self.assertIn("@copilot please review the latest changes", fallback_command[-1])
+
+    def test_request_copilot_review_can_disable_comment_fallback(self) -> None:
+        failed_reviewer_request = poll_copilot_review.subprocess.CompletedProcess(
+            ["gh", "pr", "edit"],
+            1,
+            stdout="",
+            stderr="Reviews may only be requested from collaborators.",
+        )
+
+        with patch.object(poll_copilot_review.subprocess, "run", return_value=failed_reviewer_request) as run:
+            result = poll_copilot_review._request_copilot_review(
+                "owner/repo",
+                42,
+                "abcdef123456",
+                comment_fallback=False,
+            )
+
+        self.assertFalse(result["requested"])
+        self.assertIn("Could not request", result["message"])
+        self.assertEqual(run.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

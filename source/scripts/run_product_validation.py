@@ -22,6 +22,7 @@ DEFAULT_GOLDSET_JUDGEMENT = "data/kg_runs/private_goldset_eval_2026_05_11/goldse
 DEFAULT_MD_OUT = "docs/evaluation/CANONICAL-VALIDATION-REPORT.md"
 DEFAULT_EVALUATION_DIR = "docs/evaluation"
 DEFAULT_PRIVATE_SMOKE_FIXTURES = "examples/private-goldset/smoke_fixtures.json"
+DEFAULT_PRODUCT_QUERY_SET = "docs/evaluation/PRODUCT-QUERY-SET.md"
 
 
 def main() -> None:
@@ -32,6 +33,7 @@ def main() -> None:
     parser.add_argument("--goldset-packets", default=DEFAULT_GOLDSET_PACKETS)
     parser.add_argument("--goldset-answers", default=DEFAULT_GOLDSET_ANSWERS)
     parser.add_argument("--goldset-judgement", default=DEFAULT_GOLDSET_JUDGEMENT)
+    parser.add_argument("--product-query-set", default=DEFAULT_PRODUCT_QUERY_SET)
     parser.add_argument("--evaluation-dir", default=DEFAULT_EVALUATION_DIR)
     parser.add_argument("--private-smoke-fixtures", default=DEFAULT_PRIVATE_SMOKE_FIXTURES)
     parser.add_argument(
@@ -58,6 +60,7 @@ def main() -> None:
             goldset_answers=Path(args.goldset_answers),
             goldset_judgement=Path(args.goldset_judgement),
             generated_at=args.generated_at,
+            product_query_set=Path(args.product_query_set) if args.product_query_set else None,
             evaluation_dir=Path(args.evaluation_dir),
             strict_smoke_checks=not args.no_strict_smoke_checks,
             private_smoke_fixtures=Path(args.private_smoke_fixtures),

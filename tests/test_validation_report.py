@@ -13,6 +13,7 @@ from source.kg.product.validation_report import (
     _expect_list,
     _expect_status,
     _load_private_smoke_fixtures,
+    _planned_goldset_scenarios,
     _private_fixture_smoke_checks,
     _goldset_summary,
     _overall_status,
@@ -86,6 +87,213 @@ class ValidationReportTest(unittest.TestCase):
         self.assertEqual(summary["artifact_summary"], {"current": 1})
         self.assertEqual(summary["answer_only_scenarios"], [{"scenario_id": "Q002", "self_score": "Partial", "notes": "No judgement ground truth available in PRODUCT-QUERY-SET."}])
         self.assertEqual(summary["packet_only_scenarios"], [])
+        self.assertEqual(summary["planned_scenario_count"], 0)
+        self.assertEqual(summary["unrun_planned_scenarios"], [])
+        self.assertEqual(summary["judged_but_not_planned_scenarios"], [])
+
+    def test_goldset_summary_reports_unrun_planned_goldset_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            query_set = root / "PRODUCT-QUERY-SET.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Difficulty | Surface | Persona | Scope | User Query | Goldset? |",
+                        "|---|---|---|---|---|---|---|",
+                        "| Q001 | Medium | CLI | Engineer | repo | Covered question? | Yes |",
+                        "| Q002 | Hard | CLI | SRE | org | Missing question? | Yes |",
+                        "| Q003 | Hard | CLI | SRE | org | Non-gold question? | No |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            packets.write_text(json.dumps({"packets": [{"scenario_id": "Q001"}]}), encoding="utf-8")
+            answers.write_text(
+                json.dumps(
+                    {
+                        "answers": [
+                            {
+                                "scenario_id": "Q001",
+                                "score": "Pass",
+                                "packet_fingerprint": packet_fingerprint({"scenario_id": "Q001"}),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            judgement.write_text(
+                json.dumps(
+                    {
+                        "judgements": [
+                            {
+                                "scenario_id": "Q001",
+                                "evidence_completeness": "complete",
+                                "answer_score": "Pass",
+                                "failure_owners": ["none"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement, product_query_set=query_set))
+
+        self.assertEqual(summary["planned_scenario_count"], 2)
+        self.assertEqual(summary["planned_judged_count"], 1)
+        self.assertEqual(
+            summary["unrun_planned_scenarios"],
+            [
+                {
+                    "scenario_id": "Q002",
+                    "difficulty": "Hard",
+                    "surface": "CLI",
+                    "persona": "SRE",
+                    "scope": "org",
+                    "user_query": "Missing question?",
+                }
+            ],
+        )
+        self.assertEqual(summary["judged_but_not_planned_scenarios"], [])
+
+    def test_goldset_summary_reports_judged_scenarios_not_marked_as_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            query_set = root / "PRODUCT-QUERY-SET.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Goldset? | User Query |",
+                        "|---|---|---|",
+                        "| Q001 | Yes | Planned. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            packets.write_text(json.dumps({"packets": [{"scenario_id": "Q999"}]}), encoding="utf-8")
+            answers.write_text(
+                json.dumps(
+                    {
+                        "answers": [
+                            {
+                                "scenario_id": "Q999",
+                                "score": "Pass",
+                                "packet_fingerprint": packet_fingerprint({"scenario_id": "Q999"}),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            judgement.write_text(
+                json.dumps(
+                    {
+                        "judgements": [
+                            {
+                                "scenario_id": "Q999",
+                                "evidence_completeness": "complete",
+                                "answer_score": "Pass",
+                                "failure_owners": ["none"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement, product_query_set=query_set))
+
+        self.assertEqual(summary["planned_judged_count"], 0)
+        self.assertEqual(summary["unrun_planned_scenarios"][0]["scenario_id"], "Q001")
+        self.assertEqual(summary["judged_but_not_planned_scenarios"], ["Q999"])
+
+    def test_planned_goldset_scenarios_parse_markdown_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "queries.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Goldset? | User Query |",
+                        "|---|---|---|",
+                        "| Q010 | Yes | Keep this \\| escaped pipe. |",
+                        "| Q011 | No | Skip this. |",
+                        "| Q012 | yes | Keep lowercase yes. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            planned = _planned_goldset_scenarios(query_set)
+
+        self.assertEqual([row["scenario_id"] for row in planned], ["Q010", "Q012"])
+        self.assertEqual(planned[0]["user_query"], "Keep this | escaped pipe.")
+
+    def test_planned_goldset_scenarios_preserve_non_pipe_backslashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "queries.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Goldset? | User Query |",
+                        "|---|---|---|",
+                        r"| Q010 | Yes | Keep C:\tmp\file and \d regex. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            planned = _planned_goldset_scenarios(query_set)
+
+        self.assertEqual(planned[0]["user_query"], r"Keep C:\tmp\file and \d regex.")
+
+    def test_planned_goldset_scenarios_reject_missing_query_set_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "missing.md"
+
+            with self.assertRaisesRegex(FileNotFoundError, "Product query set not found"):
+                _planned_goldset_scenarios(missing)
+
+    def test_planned_goldset_scenarios_reject_missing_required_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "queries.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| Scenario | Planned? | User Query |",
+                        "|---|---|---|",
+                        "| Q010 | Yes | Missing required headers. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "ID and Goldset\\? columns"):
+                _planned_goldset_scenarios(query_set)
+
+    def test_planned_goldset_scenarios_reject_duplicate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "queries.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Goldset? | User Query |",
+                        "|---|---|---|",
+                        "| Q010 | Yes | First. |",
+                        "| Q010 | Yes | Duplicate. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "duplicate planned goldset scenario ID 'Q010'"):
+                _planned_goldset_scenarios(query_set)
 
     def test_goldset_summary_flags_stale_answer_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -332,6 +540,7 @@ class ValidationReportTest(unittest.TestCase):
                 goldset_answers=config.goldset_answers,
                 goldset_judgement=config.goldset_judgement,
                 generated_at=config.generated_at,
+                product_query_set=Path("~/PRODUCT-QUERY-SET.md"),
                 evaluation_dir=config.evaluation_dir,
                 next_feature_recommendation="Operator-authored next step.",
             )
@@ -355,7 +564,41 @@ class ValidationReportTest(unittest.TestCase):
 
         self.assertEqual(report["inputs"]["mercury_snapshot"], (home / "mercury").resolve().as_posix())
         self.assertEqual(report["inputs"]["goldset_packets"], (home / "packets.json").resolve().as_posix())
+        self.assertEqual(report["inputs"]["product_query_set"], (home / "PRODUCT-QUERY-SET.md").resolve().as_posix())
         self.assertEqual(report["next_feature_recommendation"], "Operator-authored next step.")
+
+    def test_run_canonical_validation_omits_disabled_product_query_set_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            config = ValidationConfig(
+                mercury_snapshot=home / "mercury",
+                true_loop_snapshot=home / "true_loop",
+                private_snapshot=home / "private",
+                goldset_packets=home / "packets.json",
+                goldset_answers=home / "answers.json",
+                goldset_judgement=home / "judgement.json",
+                generated_at="2026-05-10T00:00:00Z",
+                product_query_set=None,
+                evaluation_dir=home / "docs" / "evaluation",
+            )
+
+            with (
+                patch("source.kg.product.validation_report.KgSnapshot", return_value=object()),
+                patch("source.kg.product.validation_report._run_smoke_checks", return_value=[]),
+                patch(
+                    "source.kg.product.validation_report._goldset_summary",
+                    return_value={
+                        "scenarios": [],
+                        "answer_only_scenarios": [],
+                        "packet_only_scenarios": [],
+                    },
+                ),
+                patch("source.kg.product.validation_report._snapshot_inventory", return_value={}),
+                patch("source.kg.product.validation_report._superseded_artifacts", return_value=[]),
+            ):
+                report = run_canonical_validation(config)
+
+        self.assertNotIn("product_query_set", report["inputs"])
 
     def test_private_smoke_fixture_absence_skips_private_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -397,6 +640,8 @@ class ValidationReportTest(unittest.TestCase):
         report = {
             "generated_at": "2026-05-10T00:00:00Z",
             "status": "partial",
+            "quality_status": "pass",
+            "coverage_status": "partial",
             "inputs": {"mercury_snapshot": "data/kg_runs/mercury"},
             "snapshot_inventory": [
                 {"corpus": "Mercury", "snapshot": "data/kg_runs/mercury", "entities": 1, "facts": 2, "evidence": 3, "coverage": 4}
@@ -406,6 +651,10 @@ class ValidationReportTest(unittest.TestCase):
                 "answer_score_summary": {"Pass": 1},
                 "evidence_summary": {"complete": 1},
                 "artifact_summary": {"current": 1},
+                "planned_scenario_count": 1,
+                "planned_judged_count": 1,
+                "unrun_planned_scenarios": [],
+                "judged_but_not_planned_scenarios": [],
                 "scenarios": [],
                 "answer_only_scenarios": [],
                 "packet_only_scenarios": [],
@@ -418,6 +667,71 @@ class ValidationReportTest(unittest.TestCase):
 
         self.assertIn(r"docs/evaluation/OLD\|PIPE.md", markdown)
         self.assertIn("Superseded by this canonical report", markdown)
+        self.assertIn("Quality status: **pass**", markdown)
+        self.assertIn("Coverage status: **partial**", markdown)
+
+    def test_render_validation_markdown_includes_goldset_plan_coverage(self) -> None:
+        report = {
+            "generated_at": "2026-05-10T00:00:00Z",
+            "status": "partial",
+            "quality_status": "pass",
+            "coverage_status": "partial",
+            "inputs": {},
+            "snapshot_inventory": [],
+            "deterministic_smoke": {"summary": {}, "checks": []},
+            "goldset": {
+                "answer_score_summary": {"Pass": 1},
+                "evidence_summary": {"complete": 1},
+                "artifact_summary": {"current": 1},
+                "planned_scenario_count": 10,
+                "planned_judged_count": 1,
+                "unrun_planned_scenarios": [
+                    {"scenario_id": f"Q00{index}", "user_query": f"Missing question {index}?"}
+                    for index in range(2, 11)
+                ],
+                "judged_but_not_planned_scenarios": ["Q999"],
+                "scenarios": [],
+                "answer_only_scenarios": [],
+                "packet_only_scenarios": [],
+            },
+            "next_feature_recommendation": "Next.",
+            "supersedes": [],
+        }
+
+        markdown = render_validation_markdown(report)
+
+        self.assertIn("Goldset plan coverage: 1 judged / 10 planned.", markdown)
+        self.assertIn("Planned goldset scenarios not yet judged:", markdown)
+        self.assertIn("`Q002`: Missing question 2?", markdown)
+        self.assertIn("`Q009`: Missing question 9?", markdown)
+        self.assertNotIn("`Q0010`: Missing question 10?", markdown)
+        self.assertIn("...and 1 more planned scenario(s).", markdown)
+        self.assertIn("Judged scenarios not marked as planned goldset:", markdown)
+        self.assertIn("`Q999`", markdown)
+
+    def test_render_validation_markdown_tolerates_older_goldset_reports(self) -> None:
+        report = {
+            "generated_at": "2026-05-10T00:00:00Z",
+            "status": "pass",
+            "inputs": {},
+            "snapshot_inventory": [],
+            "deterministic_smoke": {"summary": {}, "checks": []},
+            "goldset": {
+                "answer_score_summary": {"Pass": 1},
+                "evidence_summary": {"complete": 1},
+                "artifact_summary": {"current": 1},
+                "scenarios": [],
+                "answer_only_scenarios": [],
+                "packet_only_scenarios": [],
+            },
+            "next_feature_recommendation": "Next.",
+            "supersedes": [],
+        }
+
+        markdown = render_validation_markdown(report)
+
+        self.assertIn("Overall status: **pass**", markdown)
+        self.assertNotIn("Goldset plan coverage:", markdown)
 
     def test_product_readout_is_derived_from_goldset_rows(self) -> None:
         goldset = {
@@ -476,6 +790,11 @@ class ValidationReportTest(unittest.TestCase):
 
         goldset["answer_only_scenarios"] = []
         goldset["packet_only_scenarios"] = [{"scenario_id": "Q003"}]
+
+        self.assertEqual(_overall_status([], goldset), "partial")
+
+        goldset["packet_only_scenarios"] = []
+        goldset["unrun_planned_scenarios"] = [{"scenario_id": "Q004"}]
 
         self.assertEqual(_overall_status([], goldset), "partial")
 
@@ -569,7 +888,13 @@ class ValidationReportTest(unittest.TestCase):
         self.assertEqual(list_actual["row_count"], 1)
 
 
-def _config(root: Path, packets: Path, answers: Path, judgement: Path) -> ValidationConfig:
+def _config(
+    root: Path,
+    packets: Path,
+    answers: Path,
+    judgement: Path,
+    product_query_set: Path | None = None,
+) -> ValidationConfig:
     return ValidationConfig(
         mercury_snapshot=root / "mercury",
         true_loop_snapshot=root / "true_loop",
@@ -578,6 +903,7 @@ def _config(root: Path, packets: Path, answers: Path, judgement: Path) -> Valida
         goldset_answers=answers,
         goldset_judgement=judgement,
         generated_at="2026-05-10T00:00:00Z",
+        product_query_set=product_query_set,
         evaluation_dir=root / "docs" / "evaluation",
     )
 
