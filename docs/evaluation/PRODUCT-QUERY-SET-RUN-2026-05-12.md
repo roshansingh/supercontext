@@ -1,6 +1,6 @@
 # Product Query Set Run
 
-Generated: 2026-05-12T19:42:06Z
+Generated: 2026-05-12T21:21:15Z
 
 Product query set: `docs/evaluation/PRODUCT-QUERY-SET.md`
 
@@ -9,53 +9,52 @@ This report is the Debate 12 Step 1 measurement matrix. It records every product
 ## Summary
 
 - Unique queries: 110
-- Query/corpus tuples: 118
-- Measured queries: 21 / 110
-- Unmeasured queries: 89 / 110
-- Measured query coverage: 19.1%
-- Current harness sources: deterministic smoke, goldset judgement
+- Query/corpus tuples: 117
+- Measured queries: 24 / 110
+- Unmeasured queries: 86 / 110
+- Measured query coverage: 21.8%
+- Current harness sources: deterministic smoke, fixture binding, goldset judgement
 
-Status counts: partial=1, pass=22, unmeasured=95.
+Status counts: partial=2, pass=24, unmeasured=91.
 
 Difficulty counts: Hard=55, Low=15, Medium=40.
 
 ## Failure Owners
 
-Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, bad ground truth=0, coverage gap=95.
+Failure-owner counts: missing KG fact=2, bad retrieval plan=1, bad synthesis=0, bad ground truth=0, coverage gap=91.
 
 | Failure owner | Query/corpus tuples |
 |---|---:|
-| missing KG fact | 1 |
+| missing KG fact | 2 |
 | bad retrieval plan | 1 |
 | bad synthesis | 0 |
 | bad ground truth | 0 |
-| coverage gap | 95 |
+| coverage gap | 91 |
 
 ## Matrix
 
 | ID | Difficulty | Corpus | Status | Failure Owner | Harness | Notes |
 |---|---|---|---|---|---|---|
 | Q001 | Low | Mercury ML | pass | none | deterministic smoke | pandas importers: 5 rows |
-| Q002 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q002 | Low | Mercury ML | pass | none | fixture binding | openai direct third-party importers: 37 rows |
 | Q003 | Low | Mercury ML | pass | none | deterministic smoke | status `ambiguous`, expected `ambiguous` |
 | Q004 | Low | Mercury ML | pass | none | deterministic smoke | callee_count=9, expected >= 5 |
 | Q005 | Low | Mercury ML | pass | none | deterministic smoke | symbol_count=12, expected >= 1 |
 | Q005 | Low | True Loop | pass | none | deterministic smoke | symbol_count=29, expected >= 1 |
-| Q006 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q006 | Low | Mercury ML | pass | none | fixture binding | coverage rows for mercury_ml/tests/intent_based_predictions/feature_builder_test.py: 2 rows |
 | Q007 | Low | Mercury ML | pass | none | deterministic smoke | match_count=1, expected >= 1 |
 | Q008 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q009 | Low | Mercury ML | pass | none | deterministic smoke | top dependencies: 5 rows |
 | Q010 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q010 | Low | True Loop | pass | none | deterministic smoke | status `resolved`, expected `resolved` |
 | Q011 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q012 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q012 | Low | Mercury ML | partial | missing KG fact | fixture binding | sklearn importers: 89 rows; distribution mapping missing |
 | Q013 | Low | Mercury ML | pass | none | deterministic smoke | caller_count=1, expected >= 1 |
 | Q014 | Low | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q015 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q016 | Medium | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q017 | Medium | Mercury ML | pass | none | deterministic smoke | status `resolved`, expected `resolved` |
-| Q017 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q018 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q018 | Medium | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q019 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q020 | Medium | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q021 | Medium | PR fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
@@ -65,26 +64,26 @@ Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, 
 | Q025 | Medium | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q026 | Medium | Mercury ML | pass | none | deterministic smoke | status `resolved`, expected `resolved` |
 | Q026 | Medium | True Loop | pass | none | deterministic smoke | status `resolved`, expected `resolved` |
-| Q027 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q027 | Medium | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q028 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q029 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q030 | Medium | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q031 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q032 | Medium | True Loop | pass | none | deterministic smoke | endpoint_fact_count=25, expected >= 1 |
-| Q032 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q033 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q032 | Medium | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $SERVICE has no binding for corpus Unspecified fixture. |
+| Q033 | Medium | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $ENDPOINT has no binding for corpus Unspecified fixture. |
 | Q034 | Medium | PR fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q035 | Medium | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q035 | Medium | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $SERVICE has no binding for corpus Unspecified fixture. |
 | Q036 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q037 | Hard | PR fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q038 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q039 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q040 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q038 | Hard | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $EVENT has no binding for corpus Unspecified fixture. |
+| Q039 | Hard | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $SERVICE has no binding for corpus Unspecified fixture. |
+| Q040 | Hard | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $SERVICE has no binding for corpus Unspecified fixture. |
 | Q041 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q042 | Hard | PR fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q043 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q043 | Hard | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $ENDPOINT has no binding for corpus Unspecified fixture. |
 | Q044 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q045 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q045 | Hard | Unspecified fixture | unmeasured | coverage gap | none | Fixture variable $SERVICE has no binding for corpus Unspecified fixture. |
 | Q046 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q047 | Hard | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q048 | Hard | PR fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
