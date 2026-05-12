@@ -15,8 +15,9 @@ from source.kg.query.snapshot import KgSnapshot
 ValidationResult = Literal["pass", "partial", "fail"]
 CheckFn = Callable[[KgSnapshot], tuple[ValidationResult, str, JsonObject]]
 DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
-    "Add generic client-side endpoint caller extraction and retrieval for JS/TS HTTP clients, then rerun "
-    "Q083 and Q100 to distinguish true no-caller cases from missing caller evidence."
+    "No immediate extractor gap is proven by the current judged goldset: all current judged scenarios pass with "
+    "complete evidence. Next validation step should expand judged goldset coverage or add harder scenarios; "
+    "implement parked extractor breadth only when a new failing scenario proves the need."
 )
 
 
@@ -29,6 +30,7 @@ class ValidationConfig:
     goldset_answers: Path
     goldset_judgement: Path
     generated_at: str
+    product_query_set: Path | None = Path("docs/evaluation/PRODUCT-QUERY-SET.md")
     evaluation_dir: Path = Path("docs/evaluation")
     strict_smoke_checks: bool = True
     private_smoke_fixtures: Path = Path("examples/private-goldset/smoke_fixtures.json")
@@ -63,6 +65,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
             "goldset_packets": _report_path(config.goldset_packets),
             "goldset_answers": _report_path(config.goldset_answers),
             "goldset_judgement": _report_path(config.goldset_judgement),
+            "product_query_set": _report_path(config.product_query_set) if config.product_query_set else None,
         },
         "snapshot_inventory": [
             _snapshot_inventory("Mercury ML", config.mercury_snapshot, mercury),
@@ -141,6 +144,11 @@ def render_validation_markdown(report: JsonObject) -> str:
             "",
             _counts_sentence(goldset["artifact_summary"], label="Artifact consistency"),
             "",
+            (
+                "Goldset plan coverage: "
+                f"{goldset['planned_judged_count']} judged / {goldset['planned_scenario_count']} planned."
+            ),
+            "",
             "| Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |",
             "|---|---|---|---|---|---|",
         ]
@@ -166,6 +174,10 @@ def render_validation_markdown(report: JsonObject) -> str:
         lines.extend(["", "Packet-only scenarios without answer or judgement rows:"])
         for row in goldset["packet_only_scenarios"]:
             lines.append(f"- `{row['scenario_id']}`: {row['notes']}")
+    if goldset["unrun_planned_scenarios"]:
+        lines.extend(["", "Planned goldset scenarios not yet judged:"])
+        for row in goldset["unrun_planned_scenarios"]:
+            lines.append(f"- `{row['scenario_id']}`: {row['user_query']}")
 
     lines.extend(
         [
@@ -526,6 +538,7 @@ def _snapshot_inventory(corpus: str, snapshot_path: Path, kg: KgSnapshot) -> Jso
 def _goldset_summary(config: ValidationConfig) -> JsonObject:
     packets = _load_rows(config.goldset_packets, "packets")
     answers = _load_rows(config.goldset_answers, "answers")
+    planned = _planned_goldset_scenarios(config.product_query_set)
     judgement_payload = json.loads(config.goldset_judgement.expanduser().read_text(encoding="utf-8"))
     if not isinstance(judgement_payload, dict):
         raise ValueError(f"{config.goldset_judgement} must contain an object with a 'judgements' list")
@@ -584,11 +597,20 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
                 "notes": "EvidencePacket exists but no synthesized answer or judgement row was found.",
             }
         )
+    planned_by_id = {row["scenario_id"]: row for row in planned}
+    unrun_planned = [
+        planned_by_id[scenario_id]
+        for scenario_id in sorted(set(planned_by_id) - judged_ids)
+    ]
 
     return {
         "packets_path": _report_path(config.goldset_packets),
         "answers_path": _report_path(config.goldset_answers),
         "judgement_path": _report_path(config.goldset_judgement),
+        "planned_path": _report_path(config.product_query_set) if config.product_query_set else None,
+        "planned_scenario_count": len(planned),
+        "planned_judged_count": len(set(planned_by_id) & judged_ids),
+        "unrun_planned_scenarios": unrun_planned,
         "scenario_count": len(judgement_rows),
         "answer_score_summary": _result_counts(judgement_rows, key="answer_score"),
         "evidence_summary": _result_counts(judgement_rows, key="evidence_completeness"),
@@ -598,6 +620,87 @@ def _goldset_summary(config: ValidationConfig) -> JsonObject:
         "answer_only_scenarios": answer_only,
         "packet_only_scenarios": packet_only,
     }
+
+
+def _planned_goldset_scenarios(path: Path | None) -> list[JsonObject]:
+    if path is None:
+        return []
+    query_set_path = path.expanduser()
+    if not query_set_path.exists():
+        return []
+    planned: list[JsonObject] = []
+    seen: set[str] = set()
+    header: list[str] | None = None
+    for raw_line in query_set_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or not line.endswith("|"):
+            header = None
+            continue
+        cells = _split_markdown_table_row(line)
+        if not cells:
+            header = None
+            continue
+        if _is_markdown_separator_row(cells):
+            continue
+        normalized_cells = [_normalize_table_header(cell) for cell in cells]
+        if "id" in normalized_cells and "goldset?" in normalized_cells:
+            header = normalized_cells
+            continue
+        if header is None or len(cells) != len(header):
+            continue
+        row = dict(zip(header, cells, strict=True))
+        if row.get("goldset?", "").strip().lower() != "yes":
+            continue
+        scenario_id = row.get("id", "").strip()
+        if not scenario_id:
+            continue
+        if scenario_id in seen:
+            raise ValueError(f"{query_set_path} contains duplicate planned goldset scenario ID {scenario_id!r}")
+        seen.add(scenario_id)
+        planned.append(
+            {
+                "scenario_id": scenario_id,
+                "difficulty": row.get("difficulty", "").strip(),
+                "surface": row.get("surface", "").strip(),
+                "persona": row.get("persona", "").strip(),
+                "scope": row.get("scope", "").strip(),
+                "user_query": row.get("user query", "").strip(),
+            }
+        )
+    return planned
+
+
+def _split_markdown_table_row(line: str) -> list[str]:
+    cells = []
+    current: list[str] = []
+    escaped = False
+    for char in line:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "|":
+            cells.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    cells.append("".join(current).strip())
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells
+
+
+def _is_markdown_separator_row(cells: list[str]) -> bool:
+    return all(cell and set(cell.replace(":", "").replace("-", "")) <= {" "} for cell in cells)
+
+
+def _normalize_table_header(value: str) -> str:
+    return value.strip().lower().replace("`", "")
 
 
 def _goldset_artifact_consistency(packet: object, answer: object) -> tuple[str, list[str]]:
@@ -730,7 +833,14 @@ def _overall_status(smoke_checks: list[JsonObject], goldset: JsonObject) -> str:
     ]
     if smoke_failures or judged_failures:
         return "fail"
-    if partials or artifact_issues or unknown_scores or goldset["answer_only_scenarios"] or goldset["packet_only_scenarios"]:
+    if (
+        partials
+        or artifact_issues
+        or unknown_scores
+        or goldset["answer_only_scenarios"]
+        or goldset["packet_only_scenarios"]
+        or goldset.get("unrun_planned_scenarios")
+    ):
         return "partial"
     return "pass"
 
@@ -778,6 +888,14 @@ def _product_readout_lines(goldset: JsonObject, next_feature_recommendation: str
             lines.append("- Remaining judged failures do not have classified failure owners.")
     else:
         lines.append("- No current judged scenario failed or partially passed in this run.")
+    unrun = goldset.get("unrun_planned_scenarios", [])
+    planned_count = int(goldset.get("planned_scenario_count", 0) or 0)
+    if unrun and planned_count:
+        lines.append(
+            f"- Product-validation breadth is incomplete: {planned_count - len(unrun)}/{planned_count} planned "
+            f"goldset scenarios have judgement rows; next run should cover {', '.join(row['scenario_id'] for row in unrun[:8])}"
+            f"{'...' if len(unrun) > 8 else ''}."
+        )
     lines.append(f"- Recommended next feature: {next_feature_recommendation}")
     return lines
 

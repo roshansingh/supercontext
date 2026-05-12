@@ -13,6 +13,7 @@ from source.kg.product.validation_report import (
     _expect_list,
     _expect_status,
     _load_private_smoke_fixtures,
+    _planned_goldset_scenarios,
     _private_fixture_smoke_checks,
     _goldset_summary,
     _overall_status,
@@ -86,6 +87,115 @@ class ValidationReportTest(unittest.TestCase):
         self.assertEqual(summary["artifact_summary"], {"current": 1})
         self.assertEqual(summary["answer_only_scenarios"], [{"scenario_id": "Q002", "self_score": "Partial", "notes": "No judgement ground truth available in PRODUCT-QUERY-SET."}])
         self.assertEqual(summary["packet_only_scenarios"], [])
+        self.assertEqual(summary["planned_scenario_count"], 0)
+        self.assertEqual(summary["unrun_planned_scenarios"], [])
+
+    def test_goldset_summary_reports_unrun_planned_goldset_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            packets = root / "packets.json"
+            answers = root / "answers.json"
+            judgement = root / "judgement.json"
+            query_set = root / "PRODUCT-QUERY-SET.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Difficulty | Surface | Persona | Scope | User Query | Goldset? |",
+                        "|---|---|---|---|---|---|---|",
+                        "| Q001 | Medium | CLI | Engineer | repo | Covered question? | Yes |",
+                        "| Q002 | Hard | CLI | SRE | org | Missing question? | Yes |",
+                        "| Q003 | Hard | CLI | SRE | org | Non-gold question? | No |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            packets.write_text(json.dumps({"packets": [{"scenario_id": "Q001"}]}), encoding="utf-8")
+            answers.write_text(
+                json.dumps(
+                    {
+                        "answers": [
+                            {
+                                "scenario_id": "Q001",
+                                "score": "Pass",
+                                "packet_fingerprint": packet_fingerprint({"scenario_id": "Q001"}),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            judgement.write_text(
+                json.dumps(
+                    {
+                        "judgements": [
+                            {
+                                "scenario_id": "Q001",
+                                "evidence_completeness": "complete",
+                                "answer_score": "Pass",
+                                "failure_owners": ["none"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = _goldset_summary(_config(root, packets, answers, judgement, product_query_set=query_set))
+
+        self.assertEqual(summary["planned_scenario_count"], 2)
+        self.assertEqual(summary["planned_judged_count"], 1)
+        self.assertEqual(
+            summary["unrun_planned_scenarios"],
+            [
+                {
+                    "scenario_id": "Q002",
+                    "difficulty": "Hard",
+                    "surface": "CLI",
+                    "persona": "SRE",
+                    "scope": "org",
+                    "user_query": "Missing question?",
+                }
+            ],
+        )
+
+    def test_planned_goldset_scenarios_parse_markdown_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "queries.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Goldset? | User Query |",
+                        "|---|---|---|",
+                        "| Q010 | Yes | Keep this \\| escaped pipe. |",
+                        "| Q011 | No | Skip this. |",
+                        "| Q012 | yes | Keep lowercase yes. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            planned = _planned_goldset_scenarios(query_set)
+
+        self.assertEqual([row["scenario_id"] for row in planned], ["Q010", "Q012"])
+        self.assertEqual(planned[0]["user_query"], "Keep this | escaped pipe.")
+
+    def test_planned_goldset_scenarios_reject_duplicate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "queries.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Goldset? | User Query |",
+                        "|---|---|---|",
+                        "| Q010 | Yes | First. |",
+                        "| Q010 | Yes | Duplicate. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "duplicate planned goldset scenario ID 'Q010'"):
+                _planned_goldset_scenarios(query_set)
 
     def test_goldset_summary_flags_stale_answer_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -406,6 +516,9 @@ class ValidationReportTest(unittest.TestCase):
                 "answer_score_summary": {"Pass": 1},
                 "evidence_summary": {"complete": 1},
                 "artifact_summary": {"current": 1},
+                "planned_scenario_count": 1,
+                "planned_judged_count": 1,
+                "unrun_planned_scenarios": [],
                 "scenarios": [],
                 "answer_only_scenarios": [],
                 "packet_only_scenarios": [],
@@ -476,6 +589,11 @@ class ValidationReportTest(unittest.TestCase):
 
         goldset["answer_only_scenarios"] = []
         goldset["packet_only_scenarios"] = [{"scenario_id": "Q003"}]
+
+        self.assertEqual(_overall_status([], goldset), "partial")
+
+        goldset["packet_only_scenarios"] = []
+        goldset["unrun_planned_scenarios"] = [{"scenario_id": "Q004"}]
 
         self.assertEqual(_overall_status([], goldset), "partial")
 
@@ -569,7 +687,13 @@ class ValidationReportTest(unittest.TestCase):
         self.assertEqual(list_actual["row_count"], 1)
 
 
-def _config(root: Path, packets: Path, answers: Path, judgement: Path) -> ValidationConfig:
+def _config(
+    root: Path,
+    packets: Path,
+    answers: Path,
+    judgement: Path,
+    product_query_set: Path | None = None,
+) -> ValidationConfig:
     return ValidationConfig(
         mercury_snapshot=root / "mercury",
         true_loop_snapshot=root / "true_loop",
@@ -578,6 +702,7 @@ def _config(root: Path, packets: Path, answers: Path, judgement: Path) -> Valida
         goldset_answers=answers,
         goldset_judgement=judgement,
         generated_at="2026-05-10T00:00:00Z",
+        product_query_set=product_query_set,
         evaluation_dir=root / "docs" / "evaluation",
     )
 
