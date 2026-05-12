@@ -49,15 +49,15 @@ def discover_snapshots(root: Path = Path(DEFAULT_SNAPSHOTS_ROOT)) -> list[Path]:
 
 
 def is_snapshot_dir(path: Path) -> bool:
-    return path.is_dir() and all((path / filename).exists() for filename in REQUIRED_SNAPSHOT_FILES)
+    return path.is_dir() and all((path / filename).is_file() for filename in REQUIRED_SNAPSHOT_FILES)
 
 
-def build_multi_kg_hint(orgs_root: Path, org_name: str | None = None) -> str:
+def build_multi_kg_hint(orgs_root: Path, snapshots_root: Path = Path(DEFAULT_SNAPSHOTS_ROOT), org_name: str | None = None) -> str:
     repo_arg = f'"{orgs_root / (org_name or "<org>") / "<repo>"}"'
     return (
         "python -m source.scripts.build_multi_kg "
         f"--repo {repo_arg} "
-        f"--out data/kg_runs/{org_name or '<snapshot_name>'}"
+        f"--out {snapshots_root / (org_name or '<snapshot_name>')}"
     )
 
 
@@ -137,7 +137,10 @@ def main() -> None:
     snapshots = discover_snapshots(snapshots_root)
     if not snapshots:
         st.warning("No complete KG snapshots found.")
-        st.code(build_multi_kg_hint(orgs_root, None if selected_org == "<none>" else selected_org), language="bash")
+        st.code(
+            build_multi_kg_hint(orgs_root, snapshots_root, None if selected_org == "<none>" else selected_org),
+            language="bash",
+        )
         return
 
     snapshot_labels = [str(path) for path in snapshots]

@@ -38,6 +38,14 @@ class StreamlitAppImportsTest(unittest.TestCase):
             incomplete = root / "incomplete"
             incomplete.mkdir()
             (incomplete / "entities.jsonl").write_text("", encoding="utf-8")
+            directory_entry = root / "directory-entry"
+            directory_entry.mkdir()
+            for filename in streamlit_app.REQUIRED_SNAPSHOT_FILES:
+                path = directory_entry / filename
+                if filename == "entities.jsonl":
+                    path.mkdir()
+                else:
+                    path.write_text("", encoding="utf-8")
 
             self.assertEqual(streamlit_app.discover_snapshots(root), [complete])
 
@@ -52,8 +60,13 @@ class StreamlitAppImportsTest(unittest.TestCase):
             self.assertEqual(streamlit_app.discover_orgs(root), ["org-a", "org-b"])
 
     def test_build_hint_uses_org_root_without_private_names(self) -> None:
-        hint = streamlit_app.build_multi_kg_hint(Path("$SUPERCONTEXT_ORGS_ROOT"), "example-org")
+        hint = streamlit_app.build_multi_kg_hint(
+            Path("$SUPERCONTEXT_ORGS_ROOT"),
+            Path("$SNAPSHOTS_ROOT"),
+            "example-org",
+        )
         self.assertIn("$SUPERCONTEXT_ORGS_ROOT/example-org/<repo>", hint)
+        self.assertIn("--out $SNAPSHOTS_ROOT/example-org", hint)
         self.assertNotIn("/Users/", hint)
 
     def test_required_query_args_fail_closed(self) -> None:
