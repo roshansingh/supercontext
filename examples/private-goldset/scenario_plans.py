@@ -15,6 +15,7 @@ ScenarioCommand = Literal[
     "event_channels",
     "reconcile_contract",
     "repo_dependencies",
+    "symbols",
 ]
 
 
@@ -38,6 +39,8 @@ class RetrievalStep:
             return reconcile_contract(kg, _contract_spec_from_args(self.args))
         if self.command == "repo_dependencies":
             return kg.repo_dependencies(str(self.args["repo"]), limit=int(self.args.get("limit", 25)))
+        if self.command == "symbols":
+            return kg.lookup_symbol(str(self.args["query"]), limit=int(self.args.get("limit", 25)))
         raise ValueError(f"Unsupported scenario command: {self.command}")
 
 
@@ -162,6 +165,128 @@ SCENARIO_PLANS: dict[str, ScenarioPlan] = {
                 command="endpoints",
                 args={"path": "auth", "limit": 100},
                 purpose="Find broader auth routes and web auth callers.",
+            ),
+        ),
+    ),
+    "Q084": ScenarioPlan(
+        scenario_id="Q084",
+        user_query="If Stripe billing behavior changes, which UI flows, backend handlers, and webhook processors need validation?",
+        expected_answer_shape=(
+            "Feature-slice impact map covering billing UI screens/actions, backend Stripe routes and handlers, "
+            "external webhook ingestion, queue producer/consumer evidence, and explicit gaps for unproved edges."
+        ),
+        steps=(
+            RetrievalStep(
+                name="ui_billing_screen_symbols",
+                command="symbols",
+                args={"query": "PlansAndBenifits", "limit": 25},
+                purpose="Find the billing UI screen that launches Stripe portal or plan flows.",
+            ),
+            RetrievalStep(
+                name="ui_billing_route_symbols",
+                command="symbols",
+                args={"query": "Billing", "limit": 25},
+                purpose="Find UI billing route/navigation symbols.",
+            ),
+            RetrievalStep(
+                name="backend_stripe_endpoints",
+                command="endpoints",
+                args={"path": "stripe", "limit": 100},
+                purpose="Find backend Stripe routes and the external Stripe webhook route.",
+            ),
+            RetrievalStep(
+                name="backend_create_charge_endpoint",
+                command="endpoints",
+                args={"path": "create-charge", "limit": 100},
+                purpose="Find the backend create-charge endpoint used by billing plan flows.",
+            ),
+            RetrievalStep(
+                name="backend_stripe_symbols",
+                command="symbols",
+                args={"query": "Stripe", "limit": 50},
+                purpose="Find backend and webhook Stripe handler symbols.",
+            ),
+            RetrievalStep(
+                name="stripe_event_channel",
+                command="event_channels",
+                args={"channel": "la-prod-stripe", "limit": 100},
+                purpose="Find Stripe webhook queue producer/config references.",
+            ),
+            RetrievalStep(
+                name="stripe_queue_consumer_symbols",
+                command="symbols",
+                args={"query": "stripe_event_processor", "limit": 25},
+                purpose="Find backend Stripe queue consumer/processor symbols.",
+            ),
+            RetrievalStep(
+                name="stripe_queue_command_symbols",
+                command="symbols",
+                args={"query": "process_stripe_queue", "limit": 25},
+                purpose="Find the backend management command that polls or processes the Stripe queue.",
+            ),
+        ),
+    ),
+    "Q092": ScenarioPlan(
+        scenario_id="Q092",
+        user_query="What repos participate in live chat, from customer widget to websocket to backend API and operator UI?",
+        expected_answer_shape=(
+            "End-to-end live-chat topology covering storefront/widget entrypoints, websocket routes/handlers, "
+            "backend live-chat APIs, mobile/operator UI callers, and explicit gaps for unproved callback edges."
+        ),
+        steps=(
+            RetrievalStep(
+                name="storefront_script_symbols",
+                command="symbols",
+                args={"query": "shopagain_script", "limit": 25},
+                purpose="Find storefront script symbols that can expose customer widget entrypoints.",
+            ),
+            RetrievalStep(
+                name="widget_model_symbols",
+                command="symbols",
+                args={"query": "Widget", "limit": 25},
+                purpose="Find backend widget configuration symbols.",
+            ),
+            RetrievalStep(
+                name="websocket_post_chat_route",
+                command="endpoints",
+                args={"path": "postChatMessage", "limit": 100},
+                purpose="Find websocket route declarations for posting chat messages.",
+            ),
+            RetrievalStep(
+                name="websocket_get_history_route",
+                command="endpoints",
+                args={"path": "getChatHistory", "limit": 100},
+                purpose="Find websocket route declarations for chat history.",
+            ),
+            RetrievalStep(
+                name="websocket_handler_symbols",
+                command="symbols",
+                args={"query": "postChatMessage", "limit": 25},
+                purpose="Find websocket handler function symbols.",
+            ),
+            RetrievalStep(
+                name="backend_live_chat_symbols",
+                command="symbols",
+                args={"query": "live_chat", "limit": 50},
+                purpose="Find backend live-chat view and handler symbols.",
+            ),
+            RetrievalStep(
+                name="chat_endpoint_inventory",
+                command="endpoints",
+                args={"path": "chat", "limit": 100},
+                purpose="Find chat-related backend endpoints and client calls.",
+            ),
+            RetrievalStep(
+                name="operator_conversation_symbols",
+                command="symbols",
+                args={"query": "Conversations", "limit": 25},
+                purpose="Find operator/mobile conversation UI symbols.",
+            ),
+            RetrievalStep(
+                name="backend_live_chat_endpoint",
+                command="endpoints",
+                args={"path": "campaigns/live_chat", "limit": 100},
+                purpose="Check whether the KG can prove the exact backend live-chat callback endpoint.",
             ),
         ),
     ),

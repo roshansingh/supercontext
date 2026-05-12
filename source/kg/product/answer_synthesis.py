@@ -90,7 +90,10 @@ def render_answers_markdown(result: JsonObject) -> str:
         "",
         "## Summary",
         "",
-        "| Scenario | Score | Failure Modes | Notes |",
+        "Scores in this document are synthesis self-scores. Use the judgement report or canonical validation report "
+        "for independent pass/partial/fail verdicts.",
+        "",
+        "| Scenario | Self-Score | Self-Reported Failure Modes | Notes |",
         "|---|---|---|---|",
     ]
     for answer in result["answers"]:
@@ -107,7 +110,7 @@ def render_answers_markdown(result: JsonObject) -> str:
         lines.extend(
             [
                 "",
-                f"## {answer['scenario_id']} - {answer['score']}",
+                f"## {answer['scenario_id']} - Self-Score {answer['score']}",
                 "",
                 f"**Question:** {answer.get('user_query', '')}",
                 "",
@@ -122,7 +125,7 @@ def render_answers_markdown(result: JsonObject) -> str:
         lines.extend(bullet_lines(answer.get("caveats", [])))
         lines.extend(["", "### Unknown Because Missing Evidence", ""])
         lines.extend(bullet_lines(answer.get("unknowns", [])))
-        lines.extend(["", "### Score Notes", "", answer["score_reason"].strip()])
+        lines.extend(["", "### Self-Score Notes", "", answer["score_reason"].strip()])
 
     return "\n".join(lines).rstrip() + "\n"
 
