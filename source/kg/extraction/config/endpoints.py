@@ -352,7 +352,8 @@ def _add_imported_client_endpoint_call(
         )
         return
 
-    resolved = _compose_imported_client_target(target, client_info.get("base_url"))
+    base_url = row.get("base_url")
+    resolved = _compose_imported_client_target(target, base_url if isinstance(base_url, dict) else client_info.get("base_url"))
     if resolved["kind"] == "external":
         _add_endpoint_coverage(
             build,

@@ -742,9 +742,11 @@ function targetExpressionFromConfig(configNode, sourceFile, bindings) {
   if (!ts.isObjectLiteralExpression(configNode)) return { target: { kind: "unresolved", value: null, raw: rawNodeText(configNode, sourceFile) }, method: null };
   const urlNode = objectLiteralProperty(configNode, "url");
   if (!urlNode) return { target: { kind: "unresolved", value: null, raw: rawNodeText(configNode, sourceFile) }, method: null };
+  const baseUrlNode = objectLiteralProperty(configNode, "baseURL");
   return {
     target: resolveEndpointExpression(urlNode, sourceFile, bindings),
     method: methodFromOptionsLike(configNode),
+    base_url: baseUrlNode ? resolveEndpointExpression(baseUrlNode, sourceFile, bindings) : null,
   };
 }
 
@@ -766,6 +768,7 @@ function importedClientCallFromNode(node, sourceFile, importedBindings, bindings
       import_source: binding.import_source,
       method: target.method ?? (ts.isObjectLiteralExpression(firstArg) ? "ANY" : "GET"),
       target: target.target,
+      base_url: target.base_url ?? null,
       raw_target: target.target.raw,
       line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
     };
@@ -787,6 +790,7 @@ function importedClientCallFromNode(node, sourceFile, importedBindings, bindings
       import_source: binding.import_source,
       method: target.method ?? "ANY",
       target: target.target,
+      base_url: target.base_url ?? null,
       raw_target: target.target.raw,
       line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
     };

@@ -589,6 +589,29 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/orders/": {"ANY"}})
         self.assertEqual(_hosts_by_path(calls)["/orders/"], {"localhost"})
 
+    def test_typescript_imported_config_call_uses_per_call_base_url_override(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000/api' });\n"
+                    "export default client;\n"
+                ),
+                "src/orders.js": (
+                    "import api from './api';\n"
+                    "api.request({ baseURL: process.env.ALT_API_ROOT, url: 'orders/', method: 'post' });\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/orders/": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders/"], {"${env:ALT_API_ROOT}"})
+        self.assertEqual(qualifiers_by_path["/orders/"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+
     def test_typescript_imported_default_axios_client_resolves_index_module(self) -> None:
         build = _extract_typescript_client_files(
             {
