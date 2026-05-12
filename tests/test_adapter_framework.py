@@ -248,6 +248,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}
 
         self.assertIn("python-boto3-transport", names)
+        self.assertIn("config-apache-vhost", names)
         self.assertIn("config-domain-env", names)
         self.assertIn("config-openapi", names)
         self.assertIn("config-deploy-events", names)
@@ -277,6 +278,16 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertNotIn("EventChannel", capability.produces_entity_kinds)
         self.assertNotIn("Domain", capability.produces_entity_kinds)
         self.assertNotIn("DeployTarget", capability.produces_entity_kinds)
+
+    def test_apache_vhost_adapter_claims_parser_backed_public_scope(self) -> None:
+        capability = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}["config-apache-vhost"]
+
+        self.assertIn("apache", capability.framework_tags)
+        self.assertIn("wsgi", capability.framework_tags)
+        self.assertIn("REFERENCES_DOMAIN", capability.produces_predicates)
+        self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
+        self.assertIn("Domain", capability.produces_entity_kinds)
+        self.assertIn("DeployTarget", capability.produces_entity_kinds)
 
     def test_serverless_yaml_adapter_claims_parser_backed_public_scope(self) -> None:
         capability = CONFIG_SERVERLESS_YAML_ADAPTER.capability

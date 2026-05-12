@@ -1,0 +1,4 @@
+{
+  "reason": "config-apache-vhost has no deterministic coverage branch yet",
+  "unsupported": true
+}

@@ -29,50 +29,10 @@ def extract_deploy_events(
 ) -> None:
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     for scanned in files:
-        _add_apache_vhost_coverage_if_present(scanned, build, resolved_tenant_id, repo)
         if include_event_channel_references and scanned.path.name != "zappa_settings.json":
             _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
         if scanned.path.name == "zappa_settings.json":
             _add_zappa_event_source_coverage_if_present(scanned, build, resolved_tenant_id, repo)
-
-
-def _add_apache_vhost_coverage_if_present(
-    scanned: ScannedFile,
-    build: ConfigKgBuild,
-    tenant_id: str,
-    repo: RepoSnapshot,
-) -> None:
-    if not _looks_like_apache_vhost(scanned):
-        return
-    build.coverage.append(
-        Coverage(
-            tenant_id=tenant_id,
-            predicate="ROUTES_DOMAIN_TO_DEPLOY",
-            scope_ref={
-                "repo": repo.name,
-                "file_path": scanned.relative_path,
-                "reason": "no_oss_adapter_for_apache_vhosts",
-            },
-            state="uninstrumented",
-            source_system=CONFIG_SOURCE_SYSTEM,
-        )
-    )
-
-
-def _looks_like_apache_vhost(scanned: ScannedFile) -> bool:
-    has_vhost_block = False
-    has_vhost_directive = False
-    for line in scanned.lines:
-        stripped = line.strip().lower()
-        if stripped.startswith("<virtualhost") or stripped.startswith("</virtualhost"):
-            has_vhost_block = True
-            continue
-        if not stripped:
-            continue
-        directive = stripped.split(maxsplit=1)[0]
-        if directive in {"servername", "serveralias", "wsgiscriptalias"}:
-            has_vhost_directive = True
-    return has_vhost_block and has_vhost_directive
 
 
 def _add_zappa_event_source_coverage_if_present(

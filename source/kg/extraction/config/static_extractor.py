@@ -14,6 +14,7 @@ from source.kg.extraction.config.common import (
     ScannedFile,
 )
 from source.kg.core.tenant import resolve_tenant_id
+from source.kg.extraction.config.apache_vhost import extract_apache_vhost_routes
 from source.kg.extraction.config.deploy_events import extract_deploy_events
 from source.kg.extraction.config.domain_env import extract_domain_env
 from source.kg.extraction.config.dotenv import extract_dotenv
@@ -62,6 +63,8 @@ class StaticConfigExtractor:
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
         extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)
         if self.include_deploy_events:
+            for scanned in files:
+                extract_apache_vhost_routes(repo, scanned, service_entity, build, resolved_tenant_id)
             extract_deploy_events(
                 repo,
                 files,

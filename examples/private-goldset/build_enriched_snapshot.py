@@ -35,12 +35,10 @@ def _load_private_extractor(module_name: str, function_name: str) -> PrivateExtr
     return function
 
 
-extract_apache_vhost_routes = _load_private_extractor("apache_vhost", "extract_apache_vhost_routes")
 extract_zappa_event_sources = _load_private_extractor("zappa", "extract_zappa_event_sources")
 
 
 PRIVATE_EXTENSION_SOURCE = "private_goldset_extensions_v0"
-APACHE_GAP_REASON = "no_oss_adapter_for_apache_vhosts"
 ZAPPA_GAP_REASON = "no_oss_adapter_for_zappa_event_sources"
 CONFIG_SERVICE_SOURCE_SYSTEMS = {
     "static_config_v0",
@@ -61,7 +59,7 @@ class PrivateExtensionSummary:
     def to_json(self) -> JsonObject:
         return {
             "source_system": PRIVATE_EXTENSION_SOURCE,
-            "extractors": ["apache_vhost", "zappa"],
+            "extractors": ["zappa"],
             "entities": self.entities,
             "facts": self.facts,
             "evidence": self.evidence,
@@ -153,14 +151,11 @@ def apply_private_goldset_extensions(
         service_entity = _service_entity_for_repo(public_entities, public_evidence, providers, repo, tenant_id)
         for scanned in scan_config_files(repo, tenant_id).files:
             file_build = ConfigKgBuild()
-            extract_apache_vhost_routes(repo, scanned, service_entity, file_build, tenant_id)
             if scanned.path.name == "zappa_settings.json":
                 extract_zappa_event_sources(repo, scanned, service_entity, file_build, tenant_id)
             private_build.entities.extend(file_build.entities)
             private_build.facts.extend(file_build.facts)
             private_build.evidence.extend(file_build.evidence)
-            if any(fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY" for fact in file_build.facts):
-                cleared_gap_coverage.add((repo.name, scanned.relative_path, APACHE_GAP_REASON))
             if any(
                 fact.predicate == "CONSUMES_EVENT"
                 and _fact_has_evidence_from_file(fact.fact_id, file_build, scanned)

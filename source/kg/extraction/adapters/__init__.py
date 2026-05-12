@@ -1,3 +1,4 @@
+from source.kg.extraction.adapters.config_apache_vhost import CONFIG_APACHE_VHOST_ADAPTER
 from source.kg.extraction.adapters.config_deploy_events import CONFIG_DEPLOY_EVENTS_ADAPTER
 from source.kg.extraction.adapters.config_dotenv import CONFIG_DOTENV_ADAPTER
 from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
@@ -21,6 +22,7 @@ REGISTERED_ADAPTERS = validate_adapters(
         CONFIG_DOMAIN_ENV_ADAPTER,
         CONFIG_OPENAPI_ADAPTER,
         EVENT_CHANNEL_NORMALIZER_ADAPTER,
+        CONFIG_APACHE_VHOST_ADAPTER,
         CONFIG_DEPLOY_EVENTS_ADAPTER,
         CONFIG_SERVERLESS_YAML_ADAPTER,
         LEGACY_PYTHON_AST_ADAPTER,
