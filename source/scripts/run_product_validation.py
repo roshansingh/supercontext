@@ -8,6 +8,7 @@ from source.kg.product.validation_report import (
     DEFAULT_NEXT_FEATURE_RECOMMENDATION,
     ValidationConfig,
     default_generated_at,
+    render_product_query_matrix_markdown,
     render_validation_markdown,
     run_canonical_validation,
 )
@@ -43,7 +44,12 @@ def main() -> None:
     parser.add_argument("--generated-at", default=default_generated_at())
     parser.add_argument("--json-out", help="Optional path to write the machine-readable report JSON.")
     parser.add_argument("--md-out", default=DEFAULT_MD_OUT, help="Markdown report output path.")
-    parser.add_argument("--no-md", action="store_true", help="Do not write Markdown; print JSON unless --json-out is set.")
+    parser.add_argument("--query-matrix-md-out", help="Optional path to write the product-query-set matrix Markdown.")
+    parser.add_argument(
+        "--no-md",
+        action="store_true",
+        help="Skip the main validation Markdown report; print JSON only when no file outputs are requested.",
+    )
     parser.add_argument(
         "--no-strict-smoke-checks",
         action="store_true",
@@ -74,7 +80,9 @@ def main() -> None:
         _write_text(Path(args.json_out), payload + "\n")
     if not args.no_md:
         _write_text(Path(args.md_out), render_validation_markdown(report))
-    if args.no_md and not args.json_out:
+    if args.query_matrix_md_out:
+        _write_text(Path(args.query_matrix_md_out), render_product_query_matrix_markdown(report))
+    if args.no_md and not args.json_out and not args.query_matrix_md_out:
         print(payload)
 
 

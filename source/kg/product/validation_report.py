@@ -15,6 +15,15 @@ from source.kg.query.snapshot import KgSnapshot
 ValidationResult = Literal["pass", "partial", "fail"]
 CheckFn = Callable[[KgSnapshot], tuple[ValidationResult, str, JsonObject]]
 READOUT_UNRUN_DISPLAY_CAP = 8
+CANONICAL_FAILURE_OWNERS = (
+    "missing KG fact",
+    "bad retrieval plan",
+    "bad synthesis",
+    "bad ground truth",
+    "coverage gap",
+)
+NO_FAILURE_OWNER = "none"
+PRODUCT_QUERY_UNMEASURED_REASON = "No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet."
 DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
     "Use the current judgement rows as the source of truth: if any scenario is Partial or Fail, prioritize the "
     "classified failure owners before expanding scope; if all judged scenarios pass, expand judged goldset coverage "
@@ -56,6 +65,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         strict=config.strict_smoke_checks,
     )
     goldset = _goldset_summary(config)
+    product_query_matrix = _product_query_matrix(config.product_query_set, smoke_checks, goldset)
     return {
         "generated_at": config.generated_at,
         "status": _overall_status(smoke_checks, goldset),
@@ -72,6 +82,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
             "checks": smoke_checks,
         },
         "goldset": goldset,
+        "product_query_matrix": product_query_matrix,
         "supersedes": _superseded_artifacts(config.evaluation_dir),
         "next_feature_recommendation": config.next_feature_recommendation,
     }
@@ -224,6 +235,61 @@ def render_validation_markdown(report: JsonObject) -> str:
     )
     for artifact in report["supersedes"]:
         lines.append(f"| {_code_md_table_cell(artifact)} | Superseded by this canonical report |")
+    return "\n".join(lines) + "\n"
+
+
+def render_product_query_matrix_markdown(report: JsonObject) -> str:
+    matrix = report["product_query_matrix"]
+    lines = [
+        "# Product Query Set Run",
+        "",
+        f"Generated: {report['generated_at']}",
+        "",
+        f"Product query set: `{matrix['product_query_set'] or 'disabled'}`",
+        "",
+        "This report is the Debate 12 Step 1 measurement matrix. It records every product query as measured or "
+        "`unmeasured` without pretending unsupported surfaces have an executable harness.",
+        "",
+        "## Summary",
+        "",
+        f"- Unique queries: {matrix['query_count']}",
+        f"- Query/corpus tuples: {matrix['tuple_count']}",
+        f"- Measured queries: {matrix['measured_query_count']} / {matrix['query_count']}",
+        f"- Unmeasured queries: {matrix['unmeasured_query_count']} / {matrix['query_count']}",
+        f"- Measured query coverage: {matrix['measured_query_coverage_pct']}%",
+        f"- Current harness sources: {', '.join(matrix['harness_sources']) if matrix['harness_sources'] else 'none'}",
+        "",
+        _counts_sentence(matrix["status_summary"], label="Status counts"),
+        "",
+        _counts_sentence(matrix["difficulty_summary"], label="Difficulty counts"),
+        "",
+        "## Failure Owners",
+        "",
+        _counts_sentence(matrix["failure_owner_summary"], label="Failure-owner counts"),
+        "",
+        "| Failure owner | Query/corpus tuples |",
+        "|---|---:|",
+    ]
+    for owner, count in matrix["failure_owner_summary"].items():
+        lines.append(f"| {_md_table_cell(owner)} | {count} |")
+
+    lines.extend(
+        [
+            "",
+            "## Matrix",
+            "",
+            "| ID | Difficulty | Corpus | Status | Failure Owner | Harness | Notes |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    )
+    for row in matrix["rows"]:
+        lines.append(
+            f"| {_md_table_cell(row['query_id'])} | {_md_table_cell(row['difficulty'])} | "
+            f"{_md_table_cell(row['corpus'])} | {_md_table_cell(row['status'])} | "
+            f"{_md_table_cell(', '.join(row['failure_owners']))} | {_md_table_cell(row['harness'])} | "
+            f"{_md_table_cell(row['notes'])} |"
+        )
+
     return "\n".join(lines) + "\n"
 
 
@@ -704,6 +770,321 @@ def _planned_goldset_scenarios(path: Path | None) -> list[JsonObject]:
     return planned
 
 
+def _product_query_matrix(path: Path | None, smoke_checks: list[JsonObject], goldset: JsonObject) -> JsonObject:
+    query_rows = _product_query_rows(path)
+    if path is None:
+        return {
+            "product_query_set": None,
+            "query_count": 0,
+            "tuple_count": 0,
+            "measured_query_count": 0,
+            "unmeasured_query_count": 0,
+            "measured_query_coverage_pct": 0.0,
+            "harness_sources": [],
+            "status_summary": {},
+            "difficulty_summary": {},
+            "failure_owner_summary": _matrix_failure_owner_summary([]),
+            "rows": [],
+        }
+    query_by_id = {str(row["query_id"]): row for row in query_rows}
+    measured_rows = _aggregate_product_query_rows(_measured_product_query_rows(smoke_checks, goldset))
+    unknown_measured_ids = sorted({str(row["query_id"]) for row in measured_rows} - set(query_by_id))
+    if unknown_measured_ids:
+        raise ValueError(
+            "Measured product-query rows are not present in the product query set: "
+            + ", ".join(unknown_measured_ids)
+        )
+    measured_tuples = {(str(row["query_id"]), str(row["corpus"])) for row in measured_rows}
+    rows = measured_rows
+    for query in query_rows:
+        for unmeasured_row in _unmeasured_product_query_rows(query):
+            key = (str(unmeasured_row["query_id"]), str(unmeasured_row["corpus"]))
+            if key not in measured_tuples:
+                rows.append(unmeasured_row)
+    rows = [_enrich_product_query_matrix_row(row, query_by_id.get(str(row["query_id"]))) for row in rows]
+    rows = sorted(rows, key=lambda row: (str(row["query_id"]), str(row["corpus"]), str(row["harness"])))
+    query_ids = {str(row["query_id"]) for row in query_rows}
+    measured_query_ids = {str(row["query_id"]) for row in rows if row["status"] != "unmeasured"}
+    unmeasured_query_ids = query_ids - measured_query_ids
+    return {
+        "product_query_set": _report_path(path) if path else None,
+        "query_count": len(query_rows),
+        "tuple_count": len(rows),
+        "measured_query_count": len(measured_query_ids),
+        "unmeasured_query_count": len(unmeasured_query_ids),
+        "measured_query_coverage_pct": _coverage_percentage(len(measured_query_ids), len(query_rows)),
+        "harness_sources": _matrix_harness_sources(rows),
+        "status_summary": _result_counts(rows, key="status"),
+        "difficulty_summary": _result_counts(query_rows, key="difficulty"),
+        "failure_owner_summary": _matrix_failure_owner_summary(rows),
+        "rows": rows,
+    }
+
+
+def _enrich_product_query_matrix_row(row: JsonObject, query: JsonObject | None) -> JsonObject:
+    if query is None:
+        return row
+    enriched = dict(row)
+    if not enriched.get("difficulty") or enriched.get("difficulty") not in {"Low", "Medium", "Hard"}:
+        enriched["difficulty"] = query.get("difficulty", "")
+    enriched["surface"] = query.get("surface", "")
+    enriched["persona"] = query.get("persona", "")
+    enriched["fixture"] = query.get("fixture", "")
+    enriched["user_query"] = query.get("user_query", "")
+    enriched["expected_answer_shape"] = query.get("expected_answer_shape", "")
+    enriched["capabilities"] = query.get("capabilities", "")
+    enriched["goldset"] = query.get("goldset", False)
+    return enriched
+
+
+def _matrix_harness_sources(rows: list[JsonObject]) -> list[str]:
+    sources = set()
+    for row in rows:
+        for source in str(row.get("harness", "")).split(","):
+            source = source.strip()
+            if source and source != "none":
+                sources.add(source)
+    return sorted(sources)
+
+
+def _product_query_rows(path: Path | None) -> list[JsonObject]:
+    if path is None:
+        return []
+    query_set_path = path.expanduser()
+    if not query_set_path.exists():
+        raise FileNotFoundError(f"Product query set not found: {query_set_path}")
+    rows: list[JsonObject] = []
+    seen: set[str] = set()
+    header: list[str] | None = None
+    matched_query_table = False
+    for raw_line in query_set_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or not line.endswith("|"):
+            header = None
+            continue
+        cells = _split_markdown_table_row(line)
+        if not cells:
+            header = None
+            continue
+        if _is_markdown_separator_row(cells):
+            continue
+        normalized_cells = [_normalize_table_header(cell) for cell in cells]
+        if "id" in normalized_cells and "difficulty" in normalized_cells:
+            header = normalized_cells
+            matched_query_table = True
+            continue
+        if header is None or len(cells) != len(header):
+            continue
+        row = dict(zip(header, cells, strict=True))
+        query_id = row.get("id", "").strip()
+        difficulty = row.get("difficulty", "").strip()
+        if not query_id.startswith("Q") or difficulty not in {"Low", "Medium", "Hard"}:
+            continue
+        if query_id in seen:
+            raise ValueError(f"{query_set_path} contains duplicate product query ID {query_id!r}")
+        seen.add(query_id)
+        rows.append(
+            {
+                "query_id": query_id,
+                "difficulty": difficulty,
+                "surface": row.get("tool / surface", row.get("surface", "")).strip(),
+                "persona": row.get("persona", "").strip(),
+                "fixture": row.get("fixture", row.get("scope", "")).strip(),
+                "user_query": row.get("user question", row.get("user query", "")).strip(),
+                "expected_answer_shape": row.get("expected answer shape", "").strip(),
+                "capabilities": row.get("main capabilities exercised", row.get("capability tested", "")).strip(),
+                "goldset": row.get("goldset?", "").strip().lower() == "yes",
+            }
+        )
+    if not matched_query_table:
+        raise ValueError(f"{query_set_path} does not contain a markdown table with ID and Difficulty columns")
+    if not rows:
+        raise ValueError(f"{query_set_path} does not contain any valid product query rows")
+    return rows
+
+
+def _measured_product_query_rows(smoke_checks: list[JsonObject], goldset: JsonObject) -> list[JsonObject]:
+    grouped_smoke: dict[tuple[str, str], list[JsonObject]] = {}
+    for row in smoke_checks:
+        key = (str(row["query_id"]), str(row["corpus"]))
+        grouped_smoke.setdefault(key, []).append(row)
+
+    measured = [
+        _product_query_row_from_smoke(query_id, corpus, rows)
+        for (query_id, corpus), rows in grouped_smoke.items()
+    ]
+    measured.extend(_product_query_row_from_judgement(row) for row in goldset.get("scenarios", []))
+    return measured
+
+
+def _aggregate_product_query_rows(rows: list[JsonObject]) -> list[JsonObject]:
+    grouped: dict[tuple[str, str], list[JsonObject]] = {}
+    for row in rows:
+        grouped.setdefault((str(row["query_id"]), str(row["corpus"])), []).append(row)
+    return [
+        _merge_product_query_matrix_rows(grouped_rows)
+        for grouped_rows in grouped.values()
+    ]
+
+
+def _merge_product_query_matrix_rows(rows: list[JsonObject]) -> JsonObject:
+    first = rows[0]
+    status = _aggregate_matrix_status([str(row["status"]) for row in rows])
+    failure_owners = sorted(
+        {
+            owner
+            for row in rows
+            for owner in row.get("failure_owners", [])
+            if owner != NO_FAILURE_OWNER
+        }
+    )
+    return {
+        **first,
+        "status": status,
+        "failure_owners": failure_owners or [NO_FAILURE_OWNER],
+        "harness": ", ".join(sorted({str(row["harness"]) for row in rows})),
+        "notes": "; ".join(str(row.get("notes", "")).strip() for row in rows if str(row.get("notes", "")).strip()),
+        "sources": [source for row in rows for source in row.get("sources", [])],
+    }
+
+
+def _product_query_row_from_smoke(query_id: str, corpus: str, rows: list[JsonObject]) -> JsonObject:
+    statuses = [str(row.get("result", "fail")) for row in rows]
+    status = _aggregate_matrix_status(statuses)
+    return {
+        "query_id": query_id,
+        "difficulty": _first_non_empty(row.get("difficulty") for row in rows),
+        "corpus": corpus,
+        "status": status,
+        "failure_owners": _failure_owners_for_status(status, "deterministic smoke"),
+        "harness": "deterministic smoke",
+        "notes": "; ".join(str(row.get("notes", "")).strip() for row in rows if str(row.get("notes", "")).strip()),
+        "sources": [_report_path(Path(str(row.get("snapshot", "")))) for row in rows if row.get("snapshot")],
+    }
+
+
+def _product_query_row_from_judgement(row: JsonObject) -> JsonObject:
+    answer_score = str(row.get("answer_score", "unknown"))
+    status = {
+        "Pass": "pass",
+        "Partial": "partial",
+        "Fail": "fail",
+    }.get(answer_score, "fail")
+    failure_owners = row.get("failure_owners", [])
+    if not _is_valid_failure_owner_list(failure_owners):
+        failure_owners = _failure_owners_for_status(status, "goldset judgement")
+    return {
+        "query_id": row["scenario_id"],
+        "difficulty": "",
+        "corpus": "Private Goldset",
+        "status": status,
+        "failure_owners": failure_owners,
+        "harness": "goldset judgement",
+        "notes": str(row.get("notes", "")).strip(),
+        "sources": [],
+    }
+
+
+def _unmeasured_product_query_rows(query: JsonObject) -> list[JsonObject]:
+    return [
+        {
+            "query_id": query["query_id"],
+            "difficulty": query["difficulty"],
+            "corpus": corpus,
+            "status": "unmeasured",
+            "failure_owners": ["coverage gap"],
+            "harness": "none",
+            "notes": PRODUCT_QUERY_UNMEASURED_REASON,
+            "sources": [],
+        }
+        for corpus in _corpus_labels_for_query(query)
+    ]
+
+
+def _corpus_labels_for_query(query: JsonObject) -> list[str]:
+    fixture = str(query.get("fixture", "")).lower()
+    if "both fixture orgs" in fixture:
+        return ["llm-app-stack", "otel-demo"]
+    if "llm-app-stack" in fixture:
+        return ["llm-app-stack"]
+    if "otel-demo" in fixture:
+        return ["otel-demo"]
+    if _query_id_number(query.get("query_id")) >= 81:
+        return ["Private Goldset"]
+    if "$py_repo" in fixture or "$broken_file" in fixture or "$entry_symbol" in fixture or "$caller_symbol" in fixture:
+        return ["Mercury ML"]
+    if "pr input" in fixture:
+        return ["PR fixture"]
+    return ["Unspecified fixture"]
+
+
+def _query_id_number(value: object) -> int:
+    text = str(value or "")
+    if not text.startswith("Q"):
+        return 0
+    suffix = text[1:]
+    if not suffix.isdigit():
+        return 0
+    return int(suffix)
+
+
+def _aggregate_matrix_status(statuses: list[str]) -> str:
+    if not statuses:
+        return "unmeasured"
+    if "fail" in statuses:
+        return "fail"
+    if "partial" in statuses:
+        return "partial"
+    if "refused correctly" in statuses:
+        return "refused correctly"
+    if all(status == "pass" for status in statuses):
+        return "pass"
+    return "fail"
+
+
+def _failure_owners_for_status(status: str, harness: str) -> list[str]:
+    if status in {"pass", "refused correctly"}:
+        return [NO_FAILURE_OWNER]
+    if status == "unmeasured":
+        return ["coverage gap"]
+    if harness == "deterministic smoke":
+        return ["missing KG fact"]
+    return ["coverage gap"]
+
+
+def _is_valid_failure_owner_list(value: object) -> bool:
+    valid_owners = set(CANONICAL_FAILURE_OWNERS) | {NO_FAILURE_OWNER}
+    return (
+        isinstance(value, list)
+        and all(isinstance(owner, str) for owner in value)
+        and all(owner in valid_owners for owner in value)
+    )
+
+
+def _matrix_failure_owner_summary(rows: list[JsonObject]) -> JsonObject:
+    counts = Counter(
+        owner
+        for row in rows
+        for owner in row["failure_owners"]
+        if owner != NO_FAILURE_OWNER
+    )
+    return {owner: counts.get(owner, 0) for owner in CANONICAL_FAILURE_OWNERS}
+
+
+def _first_non_empty(values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _coverage_percentage(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return round((numerator / denominator) * 100, 1)
+
+
 def _split_markdown_table_row(line: str) -> list[str]:
     cells = []
     current: list[str] = []
@@ -789,7 +1170,7 @@ def _compare_count_metadata(issues: list[str], label: str, answer_count: object,
 
 
 def _failure_owner_summary(rows: list[JsonObject]) -> str:
-    owners = Counter(owner for row in rows for owner in row.get("failure_owners", []) if owner != "none")
+    owners = Counter(owner for row in rows for owner in row.get("failure_owners", []) if owner != NO_FAILURE_OWNER)
     if not owners:
         return ""
     return ", ".join(f"{owner}={count}" for owner, count in sorted(owners.items()))
