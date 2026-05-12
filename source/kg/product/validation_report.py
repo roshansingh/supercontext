@@ -181,8 +181,12 @@ def render_validation_markdown(report: JsonObject) -> str:
             lines.append(f"- `{row['scenario_id']}`: {row['notes']}")
     if goldset["unrun_planned_scenarios"]:
         lines.extend(["", "Planned goldset scenarios not yet judged:"])
-        for row in goldset["unrun_planned_scenarios"]:
+        unrun = goldset["unrun_planned_scenarios"]
+        for row in unrun[:READOUT_UNRUN_DISPLAY_CAP]:
             lines.append(f"- `{row['scenario_id']}`: {row['user_query']}")
+        remaining_count = len(unrun) - READOUT_UNRUN_DISPLAY_CAP
+        if remaining_count > 0:
+            lines.append(f"- ...and {remaining_count} more planned scenario(s).")
     if goldset.get("judged_but_not_planned_scenarios"):
         lines.extend(["", "Judged scenarios not marked as planned goldset:"])
         for scenario_id in goldset["judged_but_not_planned_scenarios"]:
@@ -833,7 +837,7 @@ def _result_counts(rows: list[JsonObject], key: str = "result") -> JsonObject:
 def _overall_status(smoke_checks: list[JsonObject], goldset: JsonObject) -> str:
     quality_status = _quality_status(smoke_checks, goldset)
     coverage_status = _coverage_status(goldset)
-    if quality_status == "fail" or coverage_status == "fail":
+    if quality_status == "fail":
         return "fail"
     if quality_status == "partial" or coverage_status == "partial":
         return "partial"

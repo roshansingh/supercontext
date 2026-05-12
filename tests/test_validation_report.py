@@ -648,9 +648,12 @@ class ValidationReportTest(unittest.TestCase):
                 "answer_score_summary": {"Pass": 1},
                 "evidence_summary": {"complete": 1},
                 "artifact_summary": {"current": 1},
-                "planned_scenario_count": 2,
+                "planned_scenario_count": 10,
                 "planned_judged_count": 1,
-                "unrun_planned_scenarios": [{"scenario_id": "Q002", "user_query": "What is missing?"}],
+                "unrun_planned_scenarios": [
+                    {"scenario_id": f"Q00{index}", "user_query": f"Missing question {index}?"}
+                    for index in range(2, 11)
+                ],
                 "judged_but_not_planned_scenarios": ["Q999"],
                 "scenarios": [],
                 "answer_only_scenarios": [],
@@ -662,9 +665,12 @@ class ValidationReportTest(unittest.TestCase):
 
         markdown = render_validation_markdown(report)
 
-        self.assertIn("Goldset plan coverage: 1 judged / 2 planned.", markdown)
+        self.assertIn("Goldset plan coverage: 1 judged / 10 planned.", markdown)
         self.assertIn("Planned goldset scenarios not yet judged:", markdown)
-        self.assertIn("`Q002`: What is missing?", markdown)
+        self.assertIn("`Q002`: Missing question 2?", markdown)
+        self.assertIn("`Q009`: Missing question 9?", markdown)
+        self.assertNotIn("`Q0010`: Missing question 10?", markdown)
+        self.assertIn("...and 1 more planned scenario(s).", markdown)
         self.assertIn("Judged scenarios not marked as planned goldset:", markdown)
         self.assertIn("`Q999`", markdown)
 
