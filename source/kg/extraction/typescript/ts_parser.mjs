@@ -634,6 +634,11 @@ function collectModuleClients(sourceFile, axiosLocals, bindings) {
       if (clientInfo) moduleClients.default = clientInfo;
       continue;
     }
+    if (ts.isExportAssignment(statement)) {
+      const clientInfo = axiosCreateClientInfo("default", statement.expression, sourceFile, axiosLocals, bindings);
+      if (clientInfo) moduleClients.default = clientInfo;
+      continue;
+    }
 
     if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
       for (const element of statement.exportClause.elements) {
