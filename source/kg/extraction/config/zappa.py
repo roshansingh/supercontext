@@ -1,3 +1,5 @@
+"""Zappa event-source extraction for SQS-backed Lambda consumers."""
+
 from __future__ import annotations
 
 import json
@@ -30,14 +32,19 @@ def extract_zappa_event_sources(
     for stage_name, stage_config in data.items():
         if not isinstance(stage_config, dict):
             continue
-        for event_source in stage_config.get("events", []):
+        events = stage_config.get("events")
+        if not isinstance(events, list):
+            continue
+        for event_source in events:
             if not isinstance(event_source, dict):
                 continue
             source = event_source.get("event_source")
             if not isinstance(source, dict):
                 continue
-            arn = str(source.get("arn") or "")
-            function = str(event_source.get("function") or "")
+            arn = source.get("arn")
+            if not isinstance(arn, str):
+                continue
+            function = event_source.get("function")
             channel_ref = normalize_sqs_arn(arn)
             if channel_ref is None:
                 continue
@@ -60,8 +67,8 @@ def extract_zappa_event_sources(
                 line_number,
                 qualifier={
                     "source_kind": "zappa_event_source",
-                    "stage": stage_name,
-                    "function": function,
+                    "stage": str(stage_name),
+                    "function": function if isinstance(function, str) else "",
                     "path": scanned.relative_path,
                     "raw_literal": channel_ref.properties["raw_literal"],
                     "broker_kind": channel_ref.broker_kind,

@@ -21,7 +21,7 @@ def _load_builder_module():
 
 
 class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
-    def test_private_builder_adds_extension_facts_and_clears_oss_gap_coverage(self) -> None:
+    def test_private_builder_uses_public_facts_without_private_extensions(self) -> None:
         module = _load_builder_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -38,11 +38,11 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
 
         self.assertEqual(manifest["build_type"], "private_goldset_multi_repo")
         self.assertEqual(manifest["private_extensions"]["source_system"], "private_goldset_extensions_v0")
-        self.assertEqual(manifest["private_extensions"]["extractors"], ["zappa"])
-        self.assertGreaterEqual(manifest["private_extensions"]["facts"], 1)
-        self.assertGreaterEqual(manifest["private_extensions"]["entities"], 1)
-        self.assertGreaterEqual(manifest["private_extensions"]["evidence"], 2)
-        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 1)
+        self.assertEqual(manifest["private_extensions"]["extractors"], [])
+        self.assertEqual(manifest["private_extensions"]["facts"], 0)
+        self.assertEqual(manifest["private_extensions"]["entities"], 0)
+        self.assertEqual(manifest["private_extensions"]["evidence"], 0)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 0)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
         self.assertTrue([row for row in evidence if row["bytes_ref"] and row["bytes_ref"]["path"] == "site.conf"])
@@ -61,7 +61,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             (repo / "settings.json").write_text('{"debug": false}', encoding="utf-8")
             (repo / "events.json").write_text(
                 '{"events": [{"function": "handlers.consume", "event_source": {"arn": "'
-                'arn:aws:sqs:eu-west-1:015424956416:orders-created"}}]}',
+                'arn:aws:sqs:eu-west-1:123456789012:orders-created"}}]}',
                 encoding="utf-8",
             )
             out = root / "kg"
@@ -93,7 +93,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
         self.assertEqual(apache_manifest["private_extensions"]["cleared_coverage"], 0)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in apache_facts})
         self.assertNotIn("CONSUMES_EVENT", {fact["predicate"] for fact in apache_facts})
-        self.assertEqual(zappa_manifest["private_extensions"]["cleared_coverage"], 1)
+        self.assertEqual(zappa_manifest["private_extensions"]["cleared_coverage"], 0)
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in zappa_facts})
         self.assertNotIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in zappa_facts})
 
@@ -111,7 +111,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             facts = read_jsonl(out / "facts.jsonl")
 
         self.assertEqual(manifest["repo_count"], 2)
-        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 1)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 0)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
 
@@ -129,7 +129,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             facts = read_jsonl(out / "facts.jsonl")
 
         self.assertEqual(manifest["repo_count"], 2)
-        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 1)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 0)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
 
@@ -156,7 +156,7 @@ def _write_apache_vhost(repo: Path) -> None:
 def _write_zappa_settings(repo: Path) -> None:
     (repo / "zappa_settings.json").write_text(
         '{"prod": {"events": [{"function": "handlers.consume", "event_source": {"arn": "'
-        'arn:aws:sqs:eu-west-1:015424956416:orders-created"}}]}}',
+        'arn:aws:sqs:eu-west-1:123456789012:orders-created"}}]}}',
         encoding="utf-8",
     )
 

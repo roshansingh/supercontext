@@ -6,7 +6,6 @@ from pathlib import Path
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.adapters.config_deploy_events import CONFIG_DEPLOY_EVENTS_ADAPTER
 from source.kg.extraction.adapters.event_channel_normalizer import EVENT_CHANNEL_NORMALIZER_ADAPTER
 from source.kg.extraction.config.channel_normalization import (
     normalize_sns_arn,
@@ -24,7 +23,7 @@ from source.kg.extraction.framework.runner import run_adapters
 
 class EventChannelNormalizationTest(unittest.TestCase):
     def test_sqs_arn_preserves_raw_metadata(self) -> None:
-        arn = "arn:aws:sqs:eu-west-1:015424956416:orders-created"
+        arn = "arn:aws:sqs:eu-west-1:123456789012:orders-created"
 
         channel = normalize_sqs_arn(arn)
 
@@ -35,7 +34,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertEqual(channel.properties["raw_literal"], arn)
         self.assertEqual(channel.properties["arn"], arn)
         self.assertEqual(channel.properties["region"], "eu-west-1")
-        self.assertEqual(channel.properties["account_id"], "015424956416")
+        self.assertEqual(channel.properties["account_id"], "123456789012")
         self.assertEqual(channel.properties["queue_name"], "orders-created")
 
     def test_sqs_url_normalizes_to_queue_name(self) -> None:
@@ -104,11 +103,11 @@ class EventChannelNormalizationTest(unittest.TestCase):
         self.assertNotIn("name", channel.identity)
         self.assertEqual(channel.properties["raw_literal"], "orders-created")
 
-    def test_zappa_event_source_emits_uninstrumented_oss_coverage(self) -> None:
+    def test_deploy_events_no_longer_emits_zappa_gap_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             zappa_path = repo_root / "zappa_settings.json"
-            arn = "arn:aws:sqs:eu-west-1:015424956416:orders-created"
+            arn = "arn:aws:sqs:eu-west-1:123456789012:orders-created"
             zappa_path.write_text(
                 '{"prod": {"events": [{"function": "handlers.consume", "event_source": {"arn": "'
                 + arn
@@ -129,15 +128,14 @@ class EventChannelNormalizationTest(unittest.TestCase):
 
             self.assertFalse([entity for entity in build.entities if entity.kind == "EventChannel"])
             self.assertFalse([fact for fact in build.facts if fact.predicate == "CONSUMES_EVENT"])
-            zappa_coverage = [
-                row
-                for row in build.coverage
-                if row.predicate == "CONSUMES_EVENT"
-                and row.scope_ref.get("reason") == "no_oss_adapter_for_zappa_event_sources"
-            ]
-            self.assertEqual(len(zappa_coverage), 1)
-            self.assertEqual(zappa_coverage[0].state, "uninstrumented")
-            self.assertEqual(zappa_coverage[0].scope_ref["file_path"], "zappa_settings.json")
+            self.assertFalse(
+                [
+                    row
+                    for row in build.coverage
+                    if row.predicate == "CONSUMES_EVENT"
+                    and row.scope_ref.get("reason") == "no_oss_adapter_for_zappa_event_sources"
+                ]
+            )
 
     def test_zappa_settings_without_events_does_not_emit_zappa_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -391,30 +389,20 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 "default",
                 include_event_channel_references=True,
             )
-            _, normalizer_first_facts, _, _, normalizer_first_errors = run_adapters(
+            _, adapter_facts, _, _, adapter_errors = run_adapters(
                 repo,
-                [EVENT_CHANNEL_NORMALIZER_ADAPTER, CONFIG_DEPLOY_EVENTS_ADAPTER],
-                ctx=ExtractionContext(tenant_id="default"),
-            )
-            _, deploy_first_facts, _, _, deploy_first_errors = run_adapters(
-                repo,
-                [CONFIG_DEPLOY_EVENTS_ADAPTER, EVENT_CHANNEL_NORMALIZER_ADAPTER],
+                [EVENT_CHANNEL_NORMALIZER_ADAPTER],
                 ctx=ExtractionContext(tenant_id="default"),
             )
 
-        self.assertEqual(normalizer_first_errors, [])
-        self.assertEqual(deploy_first_errors, [])
+        self.assertEqual(adapter_errors, [])
         legacy_fact_ids = {
             fact.fact_id for fact in legacy_build.facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
         }
-        normalizer_first_fact_ids = {
-            fact.fact_id for fact in normalizer_first_facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
+        adapter_fact_ids = {
+            fact.fact_id for fact in adapter_facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
         }
-        deploy_first_fact_ids = {
-            fact.fact_id for fact in deploy_first_facts if fact.predicate == "REFERENCES_EVENT_CHANNEL"
-        }
-        self.assertEqual(legacy_fact_ids, normalizer_first_fact_ids)
-        self.assertEqual(legacy_fact_ids, deploy_first_fact_ids)
+        self.assertEqual(legacy_fact_ids, adapter_fact_ids)
 
 
 def _repo_snapshot(root: Path) -> RepoSnapshot:

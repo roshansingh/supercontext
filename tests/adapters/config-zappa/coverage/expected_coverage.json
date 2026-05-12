@@ -1,0 +1,4 @@
+{
+  "reason": "config-zappa has no deterministic coverage branch yet",
+  "unsupported": true
+}

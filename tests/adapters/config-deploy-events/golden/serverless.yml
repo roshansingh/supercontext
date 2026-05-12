@@ -1,6 +1,0 @@
-functions:
-  websocket:
-    handler: app.handler
-    events:
-      - websocket:
-          route: $connect

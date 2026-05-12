@@ -38,8 +38,7 @@ class EventChannelNormalizerAdapter:
         build = ConfigKgBuild()
         service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
         for scanned in scannable_config_files(repo, ctx):
-            # Zappa event sources are private-extension scope; the public
-            # deploy-events adapter emits explicit uninstrumented coverage.
+            # Zappa event-source consumers are owned by the config-zappa adapter.
             if scanned.path.name == "zappa_settings.json":
                 continue
             _extract_event_channel_references(repo, scanned, service_entity, build, ctx.tenant_id)

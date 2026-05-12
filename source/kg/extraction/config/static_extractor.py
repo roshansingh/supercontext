@@ -20,6 +20,7 @@ from source.kg.extraction.config.domain_env import extract_domain_env
 from source.kg.extraction.config.dotenv import extract_dotenv
 from source.kg.extraction.config.endpoints import extract_endpoints
 from source.kg.extraction.config.serverless_yaml import extract_serverless_yaml_routes, is_serverless_yaml_filename
+from source.kg.extraction.config.zappa import extract_zappa_event_sources
 from source.kg.core.models import Coverage, Entity, Evidence
 from source.kg.core.repo_source import RepoSnapshot
 
@@ -65,6 +66,8 @@ class StaticConfigExtractor:
         if self.include_deploy_events:
             for scanned in files:
                 extract_apache_vhost_routes(repo, scanned, service_entity, build, resolved_tenant_id)
+                if scanned.path.name == "zappa_settings.json":
+                    extract_zappa_event_sources(repo, scanned, service_entity, build, resolved_tenant_id)
             extract_deploy_events(
                 repo,
                 files,

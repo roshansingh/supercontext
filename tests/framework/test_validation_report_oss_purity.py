@@ -16,6 +16,7 @@ PRIVATE_TOKENS = (
     "api.shopagain.io",  # private production domain
     "latticeai",  # private org/corpus namespace
     "LatticeAI",  # private org/corpus display name
+    "015424956416",  # private AWS account id observed in historical fixtures
 )
 
 
