@@ -1,9 +1,9 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-12T15:31:50Z
+Generated: 2026-05-12T17:52:42Z
 
 Overall status: **partial**
-Quality status: **pass**
+Quality status: **partial**
 Coverage status: **partial**
 
 This is the current canonical validation report for low/medium deterministic surfaces and the private goldset. Older dated artifacts are preserved for audit history only.
@@ -58,39 +58,39 @@ Result counts: pass=19.
 
 ## Private Goldset
 
-Answer scores: Pass=6.
+Answer scores: Partial=1, Pass=8.
 
-Evidence completeness: complete=6.
+Evidence completeness: complete=7, partial=2.
 
-Artifact consistency: current=6.
+Artifact consistency: current=9.
 
-Goldset plan coverage: 6 judged / 14 planned.
+Goldset plan coverage: 9 judged / 14 planned.
 
 | Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |
 |---|---|---|---|---|---|
+| Q081 | current | partial | Pass | none | The generated answer accurately reconstructs the ShopAgain runtime topology, citing api.shopagain.io→mercury_api via Apache/WSGI, app.shopagain.io for mercury_ui from Terraform, mercury_webhooks Zappa domain, mercury_tracking shopagainmail.net, campaign-message SQS producer/consumer pair, websocket route, and mercury_ml_api→mercury_ml dependency. It properly flags missing deploy evidence for prod_ml_api as required by the expected shape. |
 | Q082 | current | complete | Pass | none | Evidence packet contains the Apache vhost mapping to mercury_api's prod_shopagain_wsgi.py and ServerName api.shopagain.io, the three backend service prod.ini references, and both client env-var entrypoints (REACT_APP_API_ROOT in mercury_ui/src/services/api.js:10 and VITE_API_ROOT in ShopAgainMobile/src/api/axiosConfig.tsx:8). The generated answer correctly identifies mercury_api as the backend with the WSGI entrypoint and enumerates the env-driven clients plus sibling services, matching the ground truth. |
 | Q083 | current | complete | Pass | none | The EvidencePacket contains all facts in the Ground Truth: companies/urls.py lines 60-64 for auth/token routes, mercury_ui/src/services/auth.js auth callers, and ShopAgainMobile login.api.tsx:6 and axiosConfig.tsx:37 mobile callers. The generated answer correctly identifies the backend JWT token routes, the affected mobile callers with precise file/line citations, and provides the adjacent /auth/* surface (web callers in mercury_ui/src/services/auth.js) for completeness. |
+| Q084 | current | complete | Pass | none | The EvidencePacket contains all key ground-truth facts: UI cancel subscription service at src/services/billing.tsx:20, PlansAndBenifits screen, mercury_api billing/urls.py Stripe routes (52-79 range), billing/views/stripe.py handlers, mercury_webhooks /v1/stripe route, views/Stripe.py with producer edge to la-prod-stripe queue from prod.ini:10, and backend consumer (process_stripe_queue.Command and stripe_event_processor). The generated answer covers all these elements with accurate citations and adds a sensible validation checklist. |
 | Q088 | current | complete | Pass | none | The EvidencePacket contains all key facts required by the ground truth: CAMPAIGN_SQS producer/consumer, CAMPAIGN_MESSAGE_SQS producer and Zappa-bound consumer, and la-prod-email producer with config reference. The generated answer faithfully cites these and adds a downstream email-activity hop without distorting the core lineage. |
+| Q092 | current | partial | Partial | missing KG fact, bad retrieval plan | The packet covers four of the five repo roles (storefront script in mercury_ui, mercury_websocket routes/handlers, mercury_api LiveChatViewset, mercury_ui operator routes, and ShopAgainMobile mobile UI), and the generated answer faithfully enumerates them. However, several ground-truth specifics are missing: the non-minified `shopagain_script.js`, the `shopagain-chat-widget` config repo, the websocket `$connect` route, the `mercury_websocket/handler.py` forwarding of connect/message/history events to `/campaigns/live_chat/`, the `campaigns/urls.py:77` registration, and the `WhatsApp/Conversations.js` operator UI path. The answer reflects these gaps as caveats/unknowns but cannot cover ground-truth details. |
 | Q095 | current | complete | Pass | none | The EvidencePacket contains the Apache vhost routing api.shopagain.io to prod_shopagain_wsgi.py (target repo mercury_api), and references to api.shopagain.io across mercury_ui (REACT_APP_API_ROOT), ShopAgainMobile (VITE_API_ROOT), mercury_campaign_messages, mercury_tracking, and mercury_webhooks prod.ini files at the exact lines named in the ground truth. The generated answer covers all ground-truth elements and adds supplementary references that are also evidenced. |
 | Q100 | current | complete | Pass | none | The evidence packet contains all the facts needed: documented endpoints in shopagain_api_docs (company, contacts, products, collections, carts, checkouts, orders, store_data), backend implementations in mercury_api/urls.py (with /v1/product_collections, /v1/elementor, /v1/chatbot as right_only), the matched /v1/store_data in mercury_webhooks/app.py:101, and the fuzzy /v1/collections vs /v1/product_collections drift. The answer correctly identifies /v1/collections as the documented-but-not-obviously-implemented case, notes the /v1/store_data placement drift to mercury_webhooks, and lists all documented endpoints lacking client callers, with citations. |
 | Q106 | current | complete | Pass | none | The EvidencePacket contains the producer send-site (user_messaging.py:469), Zappa-bound consumer handler with the full queue ARN, and the downstream la-prod-email producer/consumer edges. The generated answer accurately reflects the producer, consumer, queue ARN, and downstream lineage with correct citations. |
 
 Planned goldset scenarios not yet judged:
-- `Q081`: What are the runtime building blocks of ShopAgain across these repos, and which domains route to each backend?
-- `Q084`: If Stripe billing behavior changes, which UI flows, backend handlers, and webhook processors need validation?
 - `Q086`: Which repo depends on the packaged ML library, and what needs rebuild or retest if `mercury_ml` changes?
 - `Q087`: If model feature-generation code changes in `mercury_ml`, which API service and deployment scripts must be checked before release?
-- `Q092`: What repos participate in live chat, from customer widget to websocket to backend API and operator UI?
 - `Q093`: If websocket route `postChatMessage` changes, which clients and backend callbacks are affected?
 - `Q099`: If `hipo-drf-exceptions` changes API error response shape, which services and clients should be validated?
 - `Q101`: Which client API calls are missing from public API docs?
 
 ## Product Readout
 
-- KG-first answers pass independent judgement when indexed facts exist: Q082, Q083, Q088, Q095, Q100, Q106.
-- No current judged scenario failed or partially passed in this run.
-- Product-validation breadth is incomplete: 6/14 planned goldset scenarios have judgement rows; next run should cover Q081, Q084, Q086, Q087, Q092, Q093, Q099, Q101.
-- Recommended next feature: No immediate extractor gap is proven by the current judged goldset: all current judged scenarios pass with complete evidence. Next validation step should expand judged goldset coverage or add harder scenarios; implement parked extractor breadth only when a new failing scenario proves the need.
+- KG-first answers pass independent judgement when indexed facts exist: Q082, Q083, Q084, Q088, Q095, Q100, Q106.
+- Remaining judged failures are concentrated in: bad retrieval plan=1, missing KG fact=1.
+- Product-validation breadth is incomplete: 9/14 planned goldset scenarios have judgement rows; next run should cover Q086, Q087, Q093, Q099, Q101.
+- Recommended next feature: Use the current judgement rows as the source of truth: if any scenario is Partial or Fail, prioritize the classified failure owners before expanding scope; if all judged scenarios pass, expand judged goldset coverage or add harder scenarios.
 
 ## Superseded Artifacts
 
@@ -121,4 +121,8 @@ The files below are historical run artifacts. Use this report for current produc
 | `docs/evaluation/NEXT-GAP-EVALUATION-2026-05-10.md` | Superseded by this canonical report |
 | `docs/evaluation/PRIVATE-GOLDSET-ANSWERS-2026-05-11.md` | Superseded by this canonical report |
 | `docs/evaluation/PRIVATE-GOLDSET-JUDGEMENT-2026-05-11.md` | Superseded by this canonical report |
+| `docs/evaluation/Q081-GOLDSET-ANSWERS-2026-05-12.md` | Superseded by this canonical report |
+| `docs/evaluation/Q081-GOLDSET-JUDGEMENT-2026-05-12.md` | Superseded by this canonical report |
+| `docs/evaluation/Q084-Q092-GOLDSET-ANSWERS-2026-05-12.md` | Superseded by this canonical report |
+| `docs/evaluation/Q084-Q092-GOLDSET-JUDGEMENT-2026-05-12.md` | Superseded by this canonical report |
 | `docs/evaluation/SYMBOL-QUERY-SURFACES-SMOKE-2026-05-08.md` | Superseded by this canonical report |

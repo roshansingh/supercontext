@@ -16,9 +16,9 @@ ValidationResult = Literal["pass", "partial", "fail"]
 CheckFn = Callable[[KgSnapshot], tuple[ValidationResult, str, JsonObject]]
 READOUT_UNRUN_DISPLAY_CAP = 8
 DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
-    "No immediate extractor gap is proven by the current judged goldset: all current judged scenarios pass with "
-    "complete evidence. Next validation step should expand judged goldset coverage or add harder scenarios; "
-    "implement parked extractor breadth only when a new failing scenario proves the need."
+    "Use the current judgement rows as the source of truth: if any scenario is Partial or Fail, prioritize the "
+    "classified failure owners before expanding scope; if all judged scenarios pass, expand judged goldset coverage "
+    "or add harder scenarios."
 )
 
 
@@ -1000,6 +1000,8 @@ def _has_iso_date_stamp(value: str) -> bool:
 
 
 def _has_legacy_historical_marker(name: str) -> bool:
+    if name.endswith("-SCENARIO-AUDIT.md"):
+        return False
     return (
         "-RUN-" in name
         or "-RERUN-" in name

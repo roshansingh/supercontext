@@ -51,9 +51,40 @@ class EvidencePacketBuilder:
         for key in ("references", "endpoints", "event_channels", "mappings", "dependencies", "links"):
             for row in result.get(key, []):
                 rows.extend(self._items_from_fact_row(step_result, row))
+        for row in result.get("candidates", []):
+            rows.extend(self._items_from_symbol_row(step_result, row))
         for section in ("matched", "left_only", "right_only", "possible_matches"):
             rows.extend(self._items_from_reconciliation_section(step_result, section, result.get(section, [])))
         return rows
+
+    def _items_from_symbol_row(self, step_result: JsonObject, row: JsonObject) -> list[JsonObject]:
+        evidence_rows = row.get("evidence", [])
+        if not evidence_rows:
+            return [
+                {
+                    **_symbol_item_base(step_result, row),
+                    "source_system": None,
+                    "derivation_class": None,
+                    "confidence": None,
+                    "repo": None,
+                    "repo_name": None,
+                    "repo_identity": None,
+                    "commit_sha": None,
+                    "path": None,
+                    "line_start": None,
+                    "line_end": None,
+                }
+            ]
+        return [
+            {
+                **_symbol_item_base(step_result, row),
+                "source_system": evidence.get("source_system"),
+                "derivation_class": evidence.get("derivation_class"),
+                "confidence": evidence.get("confidence"),
+                **_bytes_coordinates(evidence),
+            }
+            for evidence in evidence_rows
+        ]
 
     def _items_from_reconciliation_section(
         self,
@@ -167,6 +198,26 @@ def _claim_for_row(row: JsonObject) -> str:
     if predicate == "RESOLVES_TO_SERVICE":
         return f"{prefix}{subject} resolves to service {object_}."
     return f"{prefix}{subject} {predicate} {object_}."
+
+
+def _symbol_item_base(step_result: JsonObject, row: JsonObject) -> JsonObject:
+    return {
+        "claim": f"Symbol {row.get('display_name')} is defined in {row.get('repo')}.",
+        "fact_id": row.get("symbol_id"),
+        "fact_type": "SYMBOL",
+        "subject": row.get("display_name"),
+        "object": row.get("repo"),
+        "qualifier": {
+            "qualified_name": row.get("qualified_name"),
+            "symbol_kind": row.get("symbol_kind"),
+            "module": row.get("module"),
+        },
+        "source_refs": [],
+        "reconciliation_group": None,
+        "possible_match": None,
+        "similarity": None,
+        "step": step_result["step"],
+    }
 
 
 def _bytes_coordinates(evidence: JsonObject) -> JsonObject:
