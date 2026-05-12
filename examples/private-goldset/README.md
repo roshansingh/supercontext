@@ -34,6 +34,6 @@ Synthesize answers from those packets using the public answer harness:
 python -m source.scripts.run_goldset_answers --packets-in data/kg_runs/latticeai_23/product_packets.json --snapshot data/kg_runs/latticeai_23 --md-out docs/evaluation/LATTICEAI-GOLDSET-ANSWERS.md
 ```
 
-The private scenario IDs currently implemented are `Q082`, `Q083`, `Q088`, `Q095`, `Q100`, and `Q106`.
+The private scenario IDs currently implemented are `Q081`, `Q082`, `Q083`, `Q088`, `Q095`, `Q100`, and `Q106`.
 
 There are currently no private extractor extensions. If a future private-only extractor is added, keep it out of `source/`, document why it is not OSS-generic, and add focused fixture coverage.
