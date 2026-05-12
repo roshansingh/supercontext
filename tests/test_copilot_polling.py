@@ -161,7 +161,7 @@ class CopilotPollingTest(unittest.TestCase):
         self.assertIn("gh pr edit", result["message"])
         self.assertEqual(
             run.call_args.args[0],
-            ["gh", "pr", "edit", "42", "--add-reviewer", "@copilot"],
+            ["gh", "pr", "edit", "42", "--repo", "owner/repo", "--add-reviewer", "@copilot"],
         )
 
     def test_request_copilot_review_posts_comment_fallback_when_reviewer_request_fails(self) -> None:

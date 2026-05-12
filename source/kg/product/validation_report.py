@@ -61,15 +61,7 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "status": _overall_status(smoke_checks, goldset),
         "quality_status": _quality_status(smoke_checks, goldset),
         "coverage_status": _coverage_status(goldset),
-        "inputs": {
-            "mercury_snapshot": _report_path(config.mercury_snapshot),
-            "true_loop_snapshot": _report_path(config.true_loop_snapshot),
-            "private_snapshot": _report_path(config.private_snapshot),
-            "goldset_packets": _report_path(config.goldset_packets),
-            "goldset_answers": _report_path(config.goldset_answers),
-            "goldset_judgement": _report_path(config.goldset_judgement),
-            "product_query_set": _report_path(config.product_query_set) if config.product_query_set else None,
-        },
+        "inputs": _validation_inputs(config),
         "snapshot_inventory": [
             _snapshot_inventory("Mercury ML", config.mercury_snapshot, mercury),
             _snapshot_inventory("True Loop", config.true_loop_snapshot, true_loop),
@@ -83,6 +75,20 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         "supersedes": _superseded_artifacts(config.evaluation_dir),
         "next_feature_recommendation": config.next_feature_recommendation,
     }
+
+
+def _validation_inputs(config: ValidationConfig) -> JsonObject:
+    inputs = {
+        "mercury_snapshot": _report_path(config.mercury_snapshot),
+        "true_loop_snapshot": _report_path(config.true_loop_snapshot),
+        "private_snapshot": _report_path(config.private_snapshot),
+        "goldset_packets": _report_path(config.goldset_packets),
+        "goldset_answers": _report_path(config.goldset_answers),
+        "goldset_judgement": _report_path(config.goldset_judgement),
+    }
+    if config.product_query_set is not None:
+        inputs["product_query_set"] = _report_path(config.product_query_set)
+    return inputs
 
 
 def render_validation_markdown(report: JsonObject) -> str:

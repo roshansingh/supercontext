@@ -540,6 +540,7 @@ class ValidationReportTest(unittest.TestCase):
                 goldset_answers=config.goldset_answers,
                 goldset_judgement=config.goldset_judgement,
                 generated_at=config.generated_at,
+                product_query_set=Path("~/PRODUCT-QUERY-SET.md"),
                 evaluation_dir=config.evaluation_dir,
                 next_feature_recommendation="Operator-authored next step.",
             )
@@ -563,7 +564,41 @@ class ValidationReportTest(unittest.TestCase):
 
         self.assertEqual(report["inputs"]["mercury_snapshot"], (home / "mercury").resolve().as_posix())
         self.assertEqual(report["inputs"]["goldset_packets"], (home / "packets.json").resolve().as_posix())
+        self.assertEqual(report["inputs"]["product_query_set"], (home / "PRODUCT-QUERY-SET.md").resolve().as_posix())
         self.assertEqual(report["next_feature_recommendation"], "Operator-authored next step.")
+
+    def test_run_canonical_validation_omits_disabled_product_query_set_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            config = ValidationConfig(
+                mercury_snapshot=home / "mercury",
+                true_loop_snapshot=home / "true_loop",
+                private_snapshot=home / "private",
+                goldset_packets=home / "packets.json",
+                goldset_answers=home / "answers.json",
+                goldset_judgement=home / "judgement.json",
+                generated_at="2026-05-10T00:00:00Z",
+                product_query_set=None,
+                evaluation_dir=home / "docs" / "evaluation",
+            )
+
+            with (
+                patch("source.kg.product.validation_report.KgSnapshot", return_value=object()),
+                patch("source.kg.product.validation_report._run_smoke_checks", return_value=[]),
+                patch(
+                    "source.kg.product.validation_report._goldset_summary",
+                    return_value={
+                        "scenarios": [],
+                        "answer_only_scenarios": [],
+                        "packet_only_scenarios": [],
+                    },
+                ),
+                patch("source.kg.product.validation_report._snapshot_inventory", return_value={}),
+                patch("source.kg.product.validation_report._superseded_artifacts", return_value=[]),
+            ):
+                report = run_canonical_validation(config)
+
+        self.assertNotIn("product_query_set", report["inputs"])
 
     def test_private_smoke_fixture_absence_skips_private_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

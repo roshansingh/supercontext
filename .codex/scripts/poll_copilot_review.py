@@ -203,7 +203,7 @@ def _request_copilot_review(
     *,
     comment_fallback: bool,
 ) -> dict[str, Any]:
-    reviewer_result = _request_copilot_review_via_gh_pr_edit(pr_number)
+    reviewer_result = _request_copilot_review_via_gh_pr_edit(repo, pr_number)
     if reviewer_result["requested"]:
         return reviewer_result
     if not comment_fallback:
@@ -223,10 +223,10 @@ def _request_copilot_review(
     }
 
 
-def _request_copilot_review_via_gh_pr_edit(pr_number: int) -> dict[str, Any]:
+def _request_copilot_review_via_gh_pr_edit(repo: str, pr_number: int) -> dict[str, Any]:
     try:
         result = subprocess.run(
-            ["gh", "pr", "edit", str(pr_number), "--add-reviewer", "@copilot"],
+            ["gh", "pr", "edit", str(pr_number), "--repo", repo, "--add-reviewer", "@copilot"],
             capture_output=True,
             text=True,
             timeout=30,
