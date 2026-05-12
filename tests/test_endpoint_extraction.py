@@ -789,6 +789,31 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
 
+    def test_typescript_path_alias_target_with_multiple_wildcards_fails_closed(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "paths": {\n'
+                    '      "@/*": ["src/*/*"]\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/api/api.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from '@/api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+
     def test_typescript_malformed_path_alias_config_fails_closed(self) -> None:
         build = _extract_typescript_client_files(
             {

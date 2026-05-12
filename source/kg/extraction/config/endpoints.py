@@ -512,6 +512,8 @@ def _resolve_path_alias_import(
             continue
         pattern_has_wildcard = "*" in pattern
         for target in targets:
+            if pattern_has_wildcard and target.count("*") > 1:
+                continue
             candidate = target.replace("*", capture) if pattern_has_wildcard and "*" in target else target
             normalized = posixpath.normpath(candidate)
             if not normalized or normalized == "." or normalized.startswith("/") or normalized.startswith("../") or normalized == "..":
