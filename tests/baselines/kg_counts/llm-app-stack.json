@@ -1,0 +1,45 @@
+{
+  "baseline_version": 1,
+  "coverage_reason_counts": {
+    "exceeds_max_scan_bytes": 1,
+    "external_endpoint_suppressed": 8,
+    "no_recognized_web_framework": 3,
+    "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 3,
+    "parser_backed_js_ts_route_extraction_partial_express_only": 3,
+    "unknown": 12,
+    "unresolved_target": 936
+  },
+  "entity_kind_counts": {
+    "CodeModule": 8492,
+    "CodeSymbol": 60637,
+    "Domain": 35503,
+    "Endpoint": 192,
+    "EnvVar": 3933,
+    "EventChannel": 1,
+    "ExternalPackage": 3674,
+    "Repo": 5,
+    "Service": 6
+  },
+  "extractor_errors_count": 0,
+  "fact_predicate_counts": {
+    "CALLS": 43332,
+    "CALLS_ENDPOINT": 21,
+    "DEFINED_IN": 68939,
+    "DOCUMENTS_ENDPOINT": 180,
+    "EXPOSES_ENDPOINT": 6,
+    "IMPLEMENTS": 8296,
+    "IMPORTS": 56725,
+    "REFERENCES_DOMAIN": 115977,
+    "REFERENCES_ENV_VAR": 5504,
+    "REFERENCES_EVENT_CHANNEL": 2,
+    "RESOLVES_TO_REPO": 262,
+    "RESOLVES_TO_SERVICE": 261
+  },
+  "manifest_counts": {
+    "coverage": 966,
+    "entities": 112443,
+    "evidence": 685030,
+    "facts": 299505
+  },
+  "name": "llm-app-stack"
+}
