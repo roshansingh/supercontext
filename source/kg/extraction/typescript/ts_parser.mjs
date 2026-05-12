@@ -715,7 +715,6 @@ function importedBindingsByLocal(sourceFile) {
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     if (statement.moduleSpecifier.text === "axios") continue;
-    if (!statement.moduleSpecifier.text.startsWith(".")) continue;
     const clause = statement.importClause;
     if (!clause || clause.isTypeOnly) continue;
 

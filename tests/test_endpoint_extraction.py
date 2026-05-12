@@ -671,6 +671,38 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/users/": {"GET"}})
         self.assertEqual(_hosts_by_path(calls)["/users/"], {"localhost"})
 
+    def test_typescript_imported_default_axios_client_resolves_tsconfig_path_alias(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    "  // jsonc comments are valid in tsconfig files\n"
+                    '  "compilerOptions": {\n'
+                    '    "baseUrl": ".",\n'
+                    '    "paths": {\n'
+                    '      "@/*": ["src/*"],\n'
+                    "    }\n"
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000/api' });\n"
+                    "export default client;\n"
+                ),
+                "src/users.js": (
+                    "import api from '@/api';\n"
+                    "api.get('users/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/users/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/users/"], {"localhost"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/users/"], {"imported_axios_call"})
+
     def test_typescript_imported_client_calls_fail_closed_for_aliases_missing_exports_and_shadowing(self) -> None:
         build = _extract_typescript_client_files(
             {
@@ -683,12 +715,12 @@ class EndpointExtractionTest(unittest.TestCase):
                 "src/auth.ts": (
                     "import api from './api';\n"
                     "import missing from './notClient';\n"
-                    "import aliasApi from '@/api';\n"
+                    "import externalApi from 'external-api';\n"
                     "function shadowed(api) { return api.get('/shadowed'); }\n"
                     "api.get('/safe');\n"
                     "api.get(makeTarget());\n"
                     "missing.get('/missing');\n"
-                    "aliasApi.get('/alias');\n"
+                    "externalApi.get('/external');\n"
                 ),
             }
         )
@@ -901,7 +933,8 @@ def _extract_typescript_client_files(files: dict[str, str]):
             source_path = root / relative_path
             source_path.parent.mkdir(parents=True, exist_ok=True)
             source_path.write_text(source, encoding="utf-8")
-            source_paths.append(source_path)
+            if source_path.suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+                source_paths.append(source_path)
         repo = RepoSnapshot(
             root=root,
             name="web-client",
