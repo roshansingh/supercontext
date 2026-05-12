@@ -43,10 +43,70 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(build.entities, [])
         self.assertEqual(build.facts, [])
 
-    def test_list_value_is_skipped(self) -> None:
+    def test_scalar_with_trailing_tokens_is_skipped(self) -> None:
         build = _extract(
             'variable "domains" {\n'
-            '  default = ["api.example.com"]\n'
+            '  default = "api.example.com" "cdn.example.com"\n'
+            "}\n"
+        )
+
+        self.assertEqual(build.entities, [])
+        self.assertEqual(build.facts, [])
+
+    def test_empty_scalar_emits_nothing(self) -> None:
+        build = _extract(
+            'variable "domain" {\n'
+            '  default = ""\n'
+            "}\n"
+        )
+
+        self.assertEqual(build.entities, [])
+        self.assertEqual(build.facts, [])
+
+    def test_list_literal_emits_each_domain(self) -> None:
+        build = _extract(
+            'variable "domains" {\n'
+            '  default = ["api.example.com", "cdn.example.com"]\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["api.example.com", "cdn.example.com"])
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 2)
+
+    def test_empty_list_emits_nothing(self) -> None:
+        build = _extract(
+            'variable "domains" {\n'
+            "  default = []\n"
+            "}\n"
+        )
+
+        self.assertEqual(build.entities, [])
+        self.assertEqual(build.facts, [])
+
+    def test_list_with_unquoted_value_is_skipped(self) -> None:
+        build = _extract(
+            'variable "domains" {\n'
+            '  default = ["api.example.com", var.other]\n'
+            "}\n"
+        )
+
+        self.assertEqual(build.entities, [])
+        self.assertEqual(build.facts, [])
+
+    def test_malformed_list_is_skipped(self) -> None:
+        build = _extract(
+            'variable "domains" {\n'
+            '  default = ["api.example.com",, "cdn.example.com"]\n'
+            "}\n"
+        )
+
+        self.assertEqual(build.entities, [])
+        self.assertEqual(build.facts, [])
+
+    def test_list_with_trailing_comma_is_skipped(self) -> None:
+        build = _extract(
+            'variable "domains" {\n'
+            '  default = ["api.example.com",]\n'
             "}\n"
         )
 
@@ -93,7 +153,30 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(build.entities, [])
         self.assertEqual(build.facts, [])
 
-    def test_module_block_is_ignored(self) -> None:
+    def test_module_source_https_emits_domain(self) -> None:
+        build = _extract(
+            'module "api" {\n'
+            '  source = "git::https://github.com/example/api-module.git"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["github.com"])
+        fact = next(fact for fact in build.facts if fact.predicate == "REFERENCES_DOMAIN")
+        self.assertEqual(fact.qualifier["source_kind"], "terraform_module_source")
+        self.assertEqual(fact.qualifier["literal"], "github.com")
+
+    def test_module_source_ssh_emits_domain(self) -> None:
+        build = _extract(
+            'module "api" {\n'
+            '  source = "git@github.com:example/api-module.git"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["github.com"])
+        fact = next(fact for fact in build.facts if fact.predicate == "REFERENCES_DOMAIN")
+        self.assertEqual(fact.qualifier["source_kind"], "terraform_module_source")
+
+    def test_module_block_without_source_skips(self) -> None:
         build = _extract(
             'module "api" {\n'
             '  domain = "api.example.com"\n'
@@ -150,6 +233,32 @@ class TerraformExtractionTest(unittest.TestCase):
         build = _extract(
             'resource "aws_route53_record" "api" {\n'
             '  /* name = "commented.example.com" */\n'
+            '  name = "active.example.com"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["active.example.com"])
+
+    def test_heredoc_body_assignment_is_skipped(self) -> None:
+        build = _extract(
+            'resource "aws_instance" "api" {\n'
+            "  user_data = <<EOF\n"
+            '  export API_URL="heredoc.example.com"\n'
+            '  name = "also-heredoc.example.com"\n'
+            "  EOF\n"
+            '  name = "active.example.com"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["active.example.com"])
+
+    def test_heredoc_body_comment_tokens_do_not_affect_parser_state(self) -> None:
+        build = _extract(
+            'resource "aws_instance" "api" {\n'
+            "  user_data = <<-EOF\n"
+            "  /* shell comment token, not HCL comment\n"
+            '  name = "heredoc.example.com"\n'
+            "  EOF\n"
             '  name = "active.example.com"\n'
             "}\n"
         )

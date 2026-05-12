@@ -1,14 +1,16 @@
 """Fail-closed Terraform literal domain extraction.
 
 V1 scope is top-level `variable` and `resource` blocks with double-quoted
-scalar assignments. It intentionally skips module, provider, data, locals,
-output, terraform, provisioner, nested blocks, interpolation, lists, objects,
+scalar assignments or single-line lists of quoted literals, plus `module.source`
+git host literals. It intentionally skips provider, data, locals, output,
+terraform, provisioner, nested blocks, interpolation, objects, multi-line lists,
 and heredoc values.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
@@ -24,10 +26,11 @@ from source.kg.extraction.config.domain_literals import domain_from_value, safe_
 
 @dataclass
 class _BlockState:
+    kind: str
     depth: int
 
 
-SUPPORTED_BLOCK_KINDS = {"variable", "resource"}
+SUPPORTED_BLOCK_KINDS = {"module", "variable", "resource"}
 
 
 def extract_terraform(
@@ -41,7 +44,12 @@ def extract_terraform(
         return
     block: _BlockState | None = None
     in_block_comment = False
+    heredoc_marker: str | None = None
     for line_number, raw_line in enumerate(scanned.lines, start=1):
+        if heredoc_marker is not None:
+            if raw_line.strip() == heredoc_marker:
+                heredoc_marker = None
+            continue
         uncommented_line, in_block_comment = _strip_comments(raw_line, in_block_comment=in_block_comment)
         line = uncommented_line.strip()
         if not line:
@@ -49,10 +57,32 @@ def extract_terraform(
         if block is None:
             block = _start_block(line)
             continue
+        heredoc_marker = _heredoc_start_marker(line)
+        if heredoc_marker is not None:
+            block.depth += _brace_delta(line)
+            if block.depth <= 0:
+                block = None
+                heredoc_marker = None
+            continue
         if block.depth == 1 and not _has_brace_outside_quote(line):
-            literal = _quoted_assignment_value(line)
-            if literal is not None:
-                _add_terraform_domain(repo, scanned, service_entity, build, line_number, literal, tenant_id)
+            if block.kind == "module":
+                literal = _quoted_assignment_value_for_key(line, "source")
+                domain_ref = _module_source_domain(literal) if literal is not None else None
+                if domain_ref is not None:
+                    _add_terraform_domain(
+                        repo,
+                        scanned,
+                        service_entity,
+                        build,
+                        line_number,
+                        literal or domain_ref,
+                        tenant_id,
+                        domain_ref=domain_ref,
+                        source_kind="terraform_module_source",
+                    )
+            else:
+                for literal in _assignment_literals(line) or ():
+                    _add_terraform_domain(repo, scanned, service_entity, build, line_number, literal, tenant_id)
         block.depth += _brace_delta(line)
         if block.depth <= 0:
             block = None
@@ -67,25 +97,94 @@ def _start_block(line: str) -> _BlockState | None:
     depth = _brace_delta(line)
     if depth <= 0:
         return None
-    return _BlockState(depth=depth)
+    return _BlockState(kind=token, depth=depth)
 
 
 def _quoted_assignment_value(line: str) -> str | None:
+    literals = _assignment_literals(line)
+    if literals is None or len(literals) != 1:
+        return None
+    return literals[0]
+
+
+def _quoted_assignment_value_for_key(line: str, expected_key: str) -> str | None:
+    key, separator, raw_value = line.partition("=")
+    if not separator or not key.strip():
+        return None
+    if key.strip() != expected_key:
+        return None
+    return _quoted_assignment_value(line)
+
+
+def _assignment_literals(line: str) -> tuple[str, ...] | None:
     key, separator, raw_value = line.partition("=")
     if not separator or not key.strip():
         return None
     value = raw_value.strip()
-    if not value or value[0] != '"':
+    if not value:
         return None
     if "${" in value:
         return None
-    return _quoted_value(value, value[0])
+    if value[0] == '"':
+        literal, next_index = _quoted_value_at(value, 0)
+        if not literal or value[next_index:].strip():
+            return None
+        return (literal,)
+    if value[0] == "[":
+        return _quoted_list_values(value)
+    return None
 
 
-def _quoted_value(value: str, quote: str) -> str | None:
+def _quoted_list_values(value: str) -> tuple[str, ...] | None:
+    if not value.endswith("]"):
+        return None
+    literals: list[str] = []
+    index = 1
+    while index < len(value) - 1:
+        while index < len(value) - 1 and value[index].isspace():
+            index += 1
+        if index >= len(value) - 1:
+            break
+        if value[index] != '"':
+            return None
+        literal, next_index = _quoted_value_at(value, index)
+        if literal is None:
+            return None
+        literals.append(literal)
+        index = next_index
+        while index < len(value) - 1 and value[index].isspace():
+            index += 1
+        if index >= len(value) - 1:
+            break
+        if value[index] != ",":
+            return None
+        index += 1
+        while index < len(value) - 1 and value[index].isspace():
+            index += 1
+        if index >= len(value) - 1:
+            return None
+    return tuple(literals)
+
+
+def _heredoc_start_marker(line: str) -> str | None:
+    _, separator, raw_value = line.partition("=")
+    if not separator:
+        return None
+    value = raw_value.strip()
+    if value.startswith("<<-"):
+        marker = value[3:].strip()
+    elif value.startswith("<<"):
+        marker = value[2:].strip()
+    else:
+        return None
+    return marker or None
+
+
+def _quoted_value_at(value: str, start_index: int) -> tuple[str | None, int]:
+    quote = value[start_index]
     chars: list[str] = []
     escaped = False
-    for char in value[1:]:
+    for index, char in enumerate(value[start_index + 1 :], start=start_index + 1):
         if escaped:
             chars.append(char)
             escaped = False
@@ -94,9 +193,33 @@ def _quoted_value(value: str, quote: str) -> str | None:
             escaped = True
             continue
         if char == quote:
-            return "".join(chars).strip()
+            return "".join(chars).strip(), index + 1
         chars.append(char)
+    return None, len(value)
+
+
+def _module_source_domain(value: str) -> str | None:
+    if value.startswith("git::"):
+        return _url_host(value.removeprefix("git::"))
+    if value.startswith("git@"):
+        _, separator, path = value.partition("@")
+        if not separator:
+            return None
+        host, host_separator, _ = path.partition(":")
+        if not host_separator:
+            return None
+        return domain_from_value(host)
     return None
+
+
+def _url_host(value: str) -> str | None:
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return domain_from_value(parsed.hostname)
 
 
 def _strip_comments(line: str, *, in_block_comment: bool) -> tuple[str, bool]:
@@ -185,8 +308,11 @@ def _add_terraform_domain(
     line_number: int,
     literal: str,
     tenant_id: str,
+    *,
+    domain_ref: str | None = None,
+    source_kind: str = "terraform_literal",
 ) -> None:
-    domain_ref = domain_from_value(literal)
+    domain_ref = domain_ref or domain_from_value(literal)
     if domain_ref is None:
         return
     domain_ref_entity = domain_entity(repo, domain_ref, tenant_id)
@@ -200,7 +326,7 @@ def _add_terraform_domain(
         scanned.path,
         line_number,
         qualifier={
-            "source_kind": "terraform_literal",
+            "source_kind": source_kind,
             "path": scanned.relative_path,
             "literal": safe_config_literal(literal) or domain_ref,
         },
