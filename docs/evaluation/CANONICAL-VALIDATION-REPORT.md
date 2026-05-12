@@ -1,8 +1,10 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-12T08:27:29Z
+Generated: 2026-05-12T08:42:42Z
 
 Overall status: **partial**
+Quality status: **pass**
+Coverage status: **partial**
 
 This is the current canonical validation report for low/medium deterministic surfaces and the private goldset. Older dated artifacts are preserved for audit history only.
 
