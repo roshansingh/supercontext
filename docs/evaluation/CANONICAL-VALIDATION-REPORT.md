@@ -1,8 +1,8 @@
 # Canonical Product Validation Report
 
-Generated: 2026-05-11T22:24:58Z
+Generated: 2026-05-11T23:47:45Z
 
-Overall status: **partial**
+Overall status: **pass**
 
 This is the current canonical validation report for low/medium deterministic surfaces and the private goldset. Older dated artifacts are preserved for audit history only.
 
@@ -23,7 +23,7 @@ This is the current canonical validation report for low/medium deterministic sur
 |---|---|---:|---:|---:|---:|
 | Mercury ML | `data/kg_runs/mercury_ml_eval_2026_05_11` | 6613 | 24836 | 103651 | 6 |
 | True Loop | `data/kg_runs/true_loop_eval_2026_05_11` | 1810 | 3659 | 7702 | 13 |
-| Private Goldset | `data/kg_runs/private_goldset_eval_2026_05_11` | 16576 | 45275 | 91024 | 135 |
+| Private Goldset | `data/kg_runs/private_goldset_eval_2026_05_11` | 16983 | 45724 | 91934 | 613 |
 
 ## Low/Medium And Goldset Retrieval Smoke
 
@@ -49,32 +49,32 @@ Result counts: pass=19.
 | Q032 | Medium | True Loop | `endpoints` | pass | endpoint_fact_count=25, expected >= 1 |
 | Q082 | Medium | Private Goldset | `domain-references` | pass | reference_count=40, expected >= 1 |
 | Q082 | Medium | Private Goldset | `domain-references` | pass | REFERENCES_ENV_VAR: 2 rows |
-| Q083 | Medium | Private Goldset | `endpoints` | pass | endpoint_fact_count=3, expected >= 1 |
+| Q083 | Medium | Private Goldset | `endpoints` | pass | endpoint_fact_count=4, expected >= 1 |
 | Q088 | Goldset | Private Goldset | `event-channels` | pass | event_fact_count=2, expected >= 1 |
 | Q088 | Goldset | Private Goldset | `event-channels` | pass | source_refs: 3 rows |
 
 ## Private Goldset
 
-Answer scores: Partial=1, Pass=5.
+Answer scores: Pass=6.
 
-Evidence completeness: complete=5, partial=1.
+Evidence completeness: complete=6.
 
 Artifact consistency: current=6.
 
 | Scenario | Artifact | Evidence | Judged Answer | Failure Owner | Notes |
 |---|---|---|---|---|---|
-| Q082 | current | complete | Pass | none | The evidence packet contains all ground truth facts: the Apache vhost mapping to mercury_api's prod_shopagain_wsgi.py, the configmanager prod.ini references in mercury_campaign_messages/mercury_tracking/mercury_webhooks, mercury_ui's REACT_APP_API_ROOT in src/services/api.js:10, and ShopAgainMobile's VITE_API_ROOT in src/api/axiosConfig.tsx:8. The answer accurately reports each of these with line-level citations and correctly identifies mercury_api as the backend. |
-| Q083 | current | partial | Partial | missing KG fact, bad retrieval plan | Backend auth/token routes are well-covered in the evidence packet and reproduced in the answer with correct file/line citations. However, the packet contains no web caller facts (mercury_ui/src/services/auth.js) and only one mobile caller (axiosConfig.tsx:37 for /api/token/refresh/), missing ShopAgainMobile/src/api/login.api.tsx:6 for /api/token/. The answer correctly acknowledges these gaps but cannot fully reconstruct the ground truth. |
-| Q088 | current | complete | Pass | none | The EvidencePacket contains the key facts to reconstruct the ground truth: producer/consumer pairs for la-prod-campaign, la-prod-campaign-messages (with Zappa event source), and la-prod-email (delivery status). The generated answer covers all three required queues with producers, consumers, and Zappa citation, and adds an extra email-activity edge as caveated lineage. |
-| Q095 | current | complete | Pass | none | Evidence packet contains the domain-to-WSGI mapping, the mercury_api backend binding, and all client/config references named in the ground truth. The generated answer covers each ground-truth element with precise citations. |
-| Q100 | current | complete | Pass | none | The EvidencePacket contains the documented endpoints (openapi.yaml lines 67-88 and dist.json variants), the mercury_api routes (urls.py 50-58), the /v1/store_data implementation in mercury_webhooks/app.py:101, the possible_match for /v1/collections↔/v1/product_collections, and the right_only client_vs_docs rows. The answer reconstructs the ground-truth diff: it lists the documented public paths, flags /v1/collections→/v1/product_collections drift, calls out /v1/store_data placement in mercury_webhooks rather than mercury_api, and notes /v1/elementor and /v1/chatbot as code-only/undocumented. |
-| Q106 | current | complete | Pass | none | The EvidencePacket contains the producer (user_messaging.py:469), the Zappa-bound consumer handler (process_campaign_message_delivery) with the full SQS ARN, and the downstream la-prod-email production/consumption. The generated answer correctly identifies producer, consumer, queue ARN, and edge proof matching the ground truth. |
+| Q082 | current | complete | Pass | none | Evidence packet contains the Apache vhost mapping to mercury_api's prod_shopagain_wsgi.py and ServerName api.shopagain.io, the three backend service prod.ini references, and both client env-var entrypoints (REACT_APP_API_ROOT in mercury_ui/src/services/api.js:10 and VITE_API_ROOT in ShopAgainMobile/src/api/axiosConfig.tsx:8). The generated answer correctly identifies mercury_api as the backend with the WSGI entrypoint and enumerates the env-driven clients plus sibling services, matching the ground truth. |
+| Q083 | current | complete | Pass | none | The EvidencePacket contains all facts in the Ground Truth: companies/urls.py lines 60-64 for auth/token routes, mercury_ui/src/services/auth.js auth callers, and ShopAgainMobile login.api.tsx:6 and axiosConfig.tsx:37 mobile callers. The generated answer correctly identifies the backend JWT token routes, the affected mobile callers with precise file/line citations, and provides the adjacent /auth/* surface (web callers in mercury_ui/src/services/auth.js) for completeness. |
+| Q088 | current | complete | Pass | none | The EvidencePacket contains all key facts required by the ground truth: CAMPAIGN_SQS producer/consumer, CAMPAIGN_MESSAGE_SQS producer and Zappa-bound consumer, and la-prod-email producer with config reference. The generated answer faithfully cites these and adds a downstream email-activity hop without distorting the core lineage. |
+| Q095 | current | complete | Pass | none | The EvidencePacket contains the Apache vhost routing api.shopagain.io to prod_shopagain_wsgi.py (target repo mercury_api), and references to api.shopagain.io across mercury_ui (REACT_APP_API_ROOT), ShopAgainMobile (VITE_API_ROOT), mercury_campaign_messages, mercury_tracking, and mercury_webhooks prod.ini files at the exact lines named in the ground truth. The generated answer covers all ground-truth elements and adds supplementary references that are also evidenced. |
+| Q100 | current | complete | Pass | none | The evidence packet contains all the facts needed: documented endpoints in shopagain_api_docs (company, contacts, products, collections, carts, checkouts, orders, store_data), backend implementations in mercury_api/urls.py (with /v1/product_collections, /v1/elementor, /v1/chatbot as right_only), the matched /v1/store_data in mercury_webhooks/app.py:101, and the fuzzy /v1/collections vs /v1/product_collections drift. The answer correctly identifies /v1/collections as the documented-but-not-obviously-implemented case, notes the /v1/store_data placement drift to mercury_webhooks, and lists all documented endpoints lacking client callers, with citations. |
+| Q106 | current | complete | Pass | none | The EvidencePacket contains the producer send-site (user_messaging.py:469), Zappa-bound consumer handler with the full queue ARN, and the downstream la-prod-email producer/consumer edges. The generated answer accurately reflects the producer, consumer, queue ARN, and downstream lineage with correct citations. |
 
 ## Product Readout
 
-- KG-first answers pass independent judgement when indexed facts exist: Q082, Q088, Q095, Q100, Q106.
-- Remaining judged failures are concentrated in: bad retrieval plan=1, missing KG fact=1.
-- Recommended next feature: Close Q083 by adding generic JS/TS imported HTTP-client provenance and wrapper-call retrieval for axios instances such as shopagainAxios/api, then rerun the private goldset to verify /api/token/ and auth/* web/mobile caller coverage without repo-specific keywords.
+- KG-first answers pass independent judgement when indexed facts exist: Q082, Q083, Q088, Q095, Q100, Q106.
+- No current judged scenario failed or partially passed in this run.
+- Recommended next feature: No immediate extractor gap is proven by the current judged goldset: all six scenarios pass with complete evidence. Next validation step should expand the goldset or add harder scenarios; conditional JS/TS targets, path aliases, and re-export chains should be implemented only when a new failing scenario proves the need.
 
 ## Superseded Artifacts
 

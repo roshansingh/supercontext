@@ -406,6 +406,11 @@ class EndpointExtractionTest(unittest.TestCase):
             "axios.request({ method: 'delete', url: '/api/request' });\n"
             "api('/api/client-shorthand');\n"
             "api.patch('/api/profile');\n"
+            "const wrapper = (() => {\n"
+            "  const nested = axios.create({ baseURL: 'http://localhost:3000' });\n"
+            "  nested.get('/api/nested');\n"
+            "  return nested;\n"
+            "})();\n"
         )
 
         calls = _endpoint_rows(build, "CALLS_ENDPOINT")
@@ -421,6 +426,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 "/api/request": {"DELETE"},
                 "/api/client-shorthand": {"GET"},
                 "/api/profile": {"PATCH"},
+                "/api/nested": {"GET"},
             },
         )
         self.assertEqual(_hosts_by_path(calls)["/api/profile"], {"localhost"})
@@ -441,6 +447,7 @@ class EndpointExtractionTest(unittest.TestCase):
             "fetch(`${process.env.API_HOST}/api/users`);\n"
             "fetch(import.meta.env['VITE_API_HOST'] + '/api/config');\n"
             "fetch(process.env['ALT_API_HOST'] + '/api/alt');\n"
+            "fetch(process.env.PORTED_API_HOST + ':8080/api/ported');\n"
         )
 
         calls = _endpoint_rows(build, "CALLS_ENDPOINT")
@@ -464,6 +471,7 @@ class EndpointExtractionTest(unittest.TestCase):
             },
         )
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 4)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
 
     def test_typescript_client_calls_emit_coverage_for_unresolved_external_and_shadowed_targets(self) -> None:
         build = _extract_typescript_client(
@@ -484,6 +492,212 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 6)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
+    def test_typescript_imported_default_axios_client_calls_are_resolved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api/axiosConfig.tsx": (
+                    "import axios from 'axios';\n"
+                    "const shopagainAxios = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "export default shopagainAxios;\n"
+                ),
+                "src/api/login.api.tsx": (
+                    "import shopagainAxios from './axiosConfig';\n"
+                    "export function login() {\n"
+                    "  return shopagainAxios.post('/api/token/', {});\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/token/": {"POST"}})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/token/"], {"imported_axios_call"})
+        self.assertEqual(_hosts_by_path(calls)["/api/token/"], {"${env:VITE_API_ROOT}"})
+        self.assertEqual(qualifiers_by_path["/api/token/"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+        self.assertEqual(_fact_lines_by_path(build, "CALLS_ENDPOINT", "/api/token/"), [3])
+
+    def test_typescript_imported_named_axios_client_uses_export_alias_and_base_path(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/http.ts": (
+                    "import axios from 'axios';\n"
+                    "const baseClient = axios.create({ baseURL: 'http://localhost:3000/api' });\n"
+                    "export { baseClient as http };\n"
+                ),
+                "src/orders.ts": (
+                    "import { http } from './http';\n"
+                    "export function loadOrders() {\n"
+                    "  return http.get('orders/');\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders/"], {"localhost"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders/"], {"imported_axios_call"})
+        self.assertFalse(_call_site_coverage(build))
+
+    def test_typescript_imported_env_base_url_composes_relative_path_without_leading_slash(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/services/api.js": (
+                    "import axios from 'axios';\n"
+                    "const httpClient = axios.create({ baseURL: process.env.REACT_APP_API_ROOT });\n"
+                    "export default httpClient;\n"
+                ),
+                "src/services/auth.js": (
+                    "import api from './api';\n"
+                    "export function logout() {\n"
+                    "  return api.post('auth/logout/', {});\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/auth/logout/": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/auth/logout/"], {"${env:REACT_APP_API_ROOT}"})
+        self.assertEqual(qualifiers_by_path["/auth/logout/"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+
+    def test_typescript_imported_direct_config_call_without_literal_method_uses_any(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                    "export default client;\n"
+                ),
+                "src/orders.js": (
+                    "import api from './api';\n"
+                    "api({ url: '/orders/', method: methodName });\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/orders/": {"ANY"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders/"], {"localhost"})
+
+    def test_typescript_imported_config_call_uses_per_call_base_url_override(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000/api' });\n"
+                    "export default client;\n"
+                ),
+                "src/orders.js": (
+                    "import api from './api';\n"
+                    "api.request({ baseURL: process.env.ALT_API_ROOT, url: 'orders/', method: 'post' });\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/orders/": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders/"], {"${env:ALT_API_ROOT}"})
+        self.assertEqual(qualifiers_by_path["/orders/"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+
+    def test_typescript_imported_default_axios_client_resolves_index_module(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api/index.js": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                    "export default client;\n"
+                ),
+                "src/profile.js": (
+                    "import api from './api';\n"
+                    "api.patch('/profile/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/profile/": {"PATCH"}})
+        self.assertEqual(_hosts_by_path(calls)["/profile/"], {"localhost"})
+
+    def test_typescript_imported_default_axios_client_resolves_mjs_module(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.mjs": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                    "export default client;\n"
+                ),
+                "src/orders.js": (
+                    "import api from './api';\n"
+                    "api.get('/orders/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/orders/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders/"], {"localhost"})
+
+    def test_typescript_imported_default_axios_client_resolves_anonymous_default_create(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.js": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/users.js": (
+                    "import api from './api';\n"
+                    "api.get('/users/');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/users/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/users/"], {"localhost"})
+
+    def test_typescript_imported_client_calls_fail_closed_for_aliases_missing_exports_and_shadowing(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.ts": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                    "export default client;\n"
+                ),
+                "src/notClient.ts": "export const value = 1;\n",
+                "src/auth.ts": (
+                    "import api from './api';\n"
+                    "import missing from './notClient';\n"
+                    "import aliasApi from '@/api';\n"
+                    "function shadowed(api) { return api.get('/shadowed'); }\n"
+                    "api.get('/safe');\n"
+                    "api.get(makeTarget());\n"
+                    "missing.get('/missing');\n"
+                    "aliasApi.get('/alias');\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/safe": {"GET"}})
+        self.assertNotIn("/shadowed", _methods_by_path(calls))
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
 
     def test_non_express_javascript_routes_are_not_extracted_by_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -675,6 +889,26 @@ def _extract_typescript_client(source: str):
             commit_sha="test-sha",
             python_files=(),
             typescript_files=(source_path,),
+        )
+        return extract_repo(repo)
+
+
+def _extract_typescript_client_files(files: dict[str, str]):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        source_paths = []
+        for relative_path, source in files.items():
+            source_path = root / relative_path
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text(source, encoding="utf-8")
+            source_paths.append(source_path)
+        repo = RepoSnapshot(
+            root=root,
+            name="web-client",
+            owner="test",
+            commit_sha="test-sha",
+            python_files=(),
+            typescript_files=tuple(source_paths),
         )
         return extract_repo(repo)
 

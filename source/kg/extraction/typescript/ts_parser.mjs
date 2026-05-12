@@ -238,8 +238,7 @@ function blockDeclaresNameBeforeUse(block, targetName, useNode, sourceFile) {
   return false;
 }
 
-function identifierIsShadowed(useNode, targetName, sourceFile) {
-  if (sourceFileImportDeclaresName(sourceFile, targetName)) return true;
+function identifierIsLocallyShadowed(useNode, targetName, sourceFile) {
   let current = useNode.parent;
   while (current && current !== sourceFile) {
     if (
@@ -260,6 +259,10 @@ function identifierIsShadowed(useNode, targetName, sourceFile) {
     current = current.parent;
   }
   return false;
+}
+
+function identifierIsShadowed(useNode, targetName, sourceFile) {
+  return sourceFileImportDeclaresName(sourceFile, targetName) || identifierIsLocallyShadowed(useNode, targetName, sourceFile);
 }
 
 function envPlaceholderFromAccess(node) {
@@ -351,10 +354,7 @@ function splitResolvedEndpointTarget(value) {
     const hostEnd = trimmed.indexOf("}");
     if (hostEnd >= 0) {
       const pathStart = trimmed.indexOf("/", hostEnd + 1);
-      if (
-        pathStart === hostEnd + 1 &&
-        !trimmed.slice(pathStart).includes("${env:")
-      ) {
+      if (pathStart === hostEnd + 1 && !trimmed.slice(pathStart).includes("${env:")) {
         return {
           kind: "host_unresolved",
           path: trimmed.slice(pathStart) || "/",
@@ -558,30 +558,104 @@ function objectLiteralProperty(objectNode, propertyName) {
   return null;
 }
 
+function axiosCreateClientInfo(name, initializer, sourceFile, axiosLocals, bindings) {
+  if (
+    !initializer ||
+    !ts.isCallExpression(initializer) ||
+    !ts.isPropertyAccessExpression(initializer.expression) ||
+    initializer.expression.name.text !== "create" ||
+    !ts.isIdentifier(initializer.expression.expression) ||
+    !axiosLocals.has(initializer.expression.expression.text)
+  ) {
+    return null;
+  }
+  let baseUrl = null;
+  if (initializer.arguments.length >= 1 && ts.isObjectLiteralExpression(initializer.arguments[0])) {
+    const baseUrlNode = objectLiteralProperty(initializer.arguments[0], "baseURL");
+    if (baseUrlNode) baseUrl = resolveEndpointExpression(baseUrlNode, sourceFile, bindings);
+  }
+  return {
+    local_name: name,
+    base_url: baseUrl,
+    defining_line: lineOf(sourceFile, initializer.getStart(sourceFile)),
+  };
+}
+
 function collectAxiosClients(sourceFile, axiosLocals, bindings) {
   const clients = new Set();
   const baseUrls = new Map();
   function visit(node) {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      ts.isCallExpression(node.initializer) &&
-      ts.isPropertyAccessExpression(node.initializer.expression) &&
-      node.initializer.expression.name.text === "create" &&
-      ts.isIdentifier(node.initializer.expression.expression) &&
-      axiosLocals.has(node.initializer.expression.expression.text)
-    ) {
-      clients.add(node.name.text);
-      if (node.initializer.arguments.length >= 1 && ts.isObjectLiteralExpression(node.initializer.arguments[0])) {
-        const baseUrlNode = objectLiteralProperty(node.initializer.arguments[0], "baseURL");
-        if (baseUrlNode) baseUrls.set(node.name.text, resolveEndpointExpression(baseUrlNode, sourceFile, bindings));
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const clientInfo = axiosCreateClientInfo(node.name.text, node.initializer, sourceFile, axiosLocals, bindings);
+      if (clientInfo) {
+        clients.add(node.name.text);
+        if (clientInfo.base_url) baseUrls.set(node.name.text, clientInfo.base_url);
       }
     }
     ts.forEachChild(node, visit);
   }
   visit(sourceFile);
   return { clients, baseUrls };
+}
+
+function statementHasExportModifier(statement) {
+  return statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+
+function collectTopLevelAxiosClientInfos(sourceFile, axiosLocals, bindings) {
+  const clients = new Map();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name)) continue;
+      const clientInfo = axiosCreateClientInfo(declaration.name.text, declaration.initializer, sourceFile, axiosLocals, bindings);
+      if (clientInfo) clients.set(declaration.name.text, clientInfo);
+    }
+  }
+  return clients;
+}
+
+function collectModuleClients(sourceFile, axiosLocals, bindings) {
+  const localClients = collectTopLevelAxiosClientInfos(sourceFile, axiosLocals, bindings);
+  const moduleClients = { default: null, named: {} };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement) && statementHasExportModifier(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name)) continue;
+        const clientInfo = localClients.get(declaration.name.text);
+        if (clientInfo) moduleClients.named[declaration.name.text] = clientInfo;
+      }
+      continue;
+    }
+
+    if (ts.isExportAssignment(statement) && ts.isIdentifier(statement.expression)) {
+      const clientInfo = localClients.get(statement.expression.text);
+      if (clientInfo) moduleClients.default = clientInfo;
+      continue;
+    }
+    if (ts.isExportAssignment(statement)) {
+      const clientInfo = axiosCreateClientInfo("default", statement.expression, sourceFile, axiosLocals, bindings);
+      if (clientInfo) moduleClients.default = clientInfo;
+      continue;
+    }
+
+    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        const localName = (element.propertyName ?? element.name).text;
+        const exportName = element.name.text;
+        const clientInfo = localClients.get(localName);
+        if (!clientInfo) continue;
+        if (exportName === "default") {
+          moduleClients.default = clientInfo;
+        } else {
+          moduleClients.named[exportName] = clientInfo;
+        }
+      }
+    }
+  }
+
+  return moduleClients;
 }
 
 function methodFromOptionsLike(node) {
@@ -594,9 +668,13 @@ function methodFromOptionsLike(node) {
 function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpression) {
   const target = resolveEndpointExpression(targetNode, sourceFile, bindings);
   if (!baseUrlExpression || target.kind === "unresolved" || target.value == null) return resolveEndpointTarget(targetNode, sourceFile, bindings);
-  if (!target.value.trim().startsWith("/")) return resolveEndpointTarget(targetNode, sourceFile, bindings);
+  const targetValue = target.value.trim();
+  if (targetValue.startsWith("http://") || targetValue.startsWith("https://") || targetValue.startsWith("${env:")) {
+    return resolveEndpointTarget(targetNode, sourceFile, bindings);
+  }
   if (baseUrlExpression.kind !== "resolved" && baseUrlExpression.kind !== "env") return { kind: "unresolved", path: null, host: null, raw_target: target.raw };
-  const combined = `${baseUrlExpression.value}${target.value}`;
+  const baseValue = String(baseUrlExpression.value).trim();
+  const combined = `${baseValue.replace(/\/+$/, "")}/${targetValue.replace(/^\/+/, "")}`;
   const resolved = splitResolvedEndpointTarget(combined);
   return resolved.kind === "unresolved" ? { kind: "unresolved", path: null, host: null, raw_target: target.raw } : resolved;
 }
@@ -628,6 +706,108 @@ function axiosConfigTarget(configNode, sourceFile, bindings, baseUrlExpression) 
   return {
     target: composedTargetWithBaseUrl(urlNode, sourceFile, bindings, effectiveBaseUrl),
     method: methodFromOptionsLike(configNode),
+  };
+}
+
+function importedBindingsByLocal(sourceFile) {
+  const bindings = new Map();
+  const duplicateLocals = new Set();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (statement.moduleSpecifier.text === "axios") continue;
+    if (!statement.moduleSpecifier.text.startsWith(".")) continue;
+    const clause = statement.importClause;
+    if (!clause || clause.isTypeOnly) continue;
+
+    function addBinding(localName, importedName) {
+      if (bindings.has(localName)) duplicateLocals.add(localName);
+      bindings.set(localName, { import_source: statement.moduleSpecifier.text, imported_name: importedName });
+    }
+
+    if (clause.name) addBinding(clause.name.text, "default");
+    if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const element of clause.namedBindings.elements) {
+        addBinding(element.name.text, (element.propertyName ?? element.name).text);
+      }
+    }
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+      addBinding(clause.namedBindings.name.text, clause.namedBindings.name.text);
+    }
+  }
+  for (const localName of duplicateLocals) bindings.delete(localName);
+  return bindings;
+}
+
+function targetExpressionFromConfig(configNode, sourceFile, bindings) {
+  if (!ts.isObjectLiteralExpression(configNode)) return { target: { kind: "unresolved", value: null, raw: rawNodeText(configNode, sourceFile) }, method: null };
+  const urlNode = objectLiteralProperty(configNode, "url");
+  if (!urlNode) return { target: { kind: "unresolved", value: null, raw: rawNodeText(configNode, sourceFile) }, method: null };
+  const baseUrlNode = objectLiteralProperty(configNode, "baseURL");
+  return {
+    target: resolveEndpointExpression(urlNode, sourceFile, bindings),
+    method: methodFromOptionsLike(configNode),
+    base_url: baseUrlNode ? resolveEndpointExpression(baseUrlNode, sourceFile, bindings) : null,
+  };
+}
+
+function importedClientCallFromNode(node, sourceFile, importedBindings, bindings) {
+  if (!ts.isCallExpression(node)) return null;
+
+  if (ts.isIdentifier(node.expression) && importedBindings.has(node.expression.text)) {
+    const receiver = node.expression.text;
+    if (identifierIsLocallyShadowed(node.expression, receiver, sourceFile) || node.arguments.length < 1) return null;
+    const binding = importedBindings.get(receiver);
+    const firstArg = node.arguments[0];
+    const target = ts.isObjectLiteralExpression(firstArg)
+      ? targetExpressionFromConfig(firstArg, sourceFile, bindings)
+      : { target: resolveEndpointExpression(firstArg, sourceFile, bindings), method: "GET" };
+    return {
+      source_kind: "imported_axios_call",
+      receiver_local: receiver,
+      imported_name: binding.imported_name,
+      import_source: binding.import_source,
+      method: target.method ?? (ts.isObjectLiteralExpression(firstArg) ? "ANY" : "GET"),
+      target: target.target,
+      base_url: target.base_url ?? null,
+      raw_target: target.target.raw,
+      line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
+    };
+  }
+
+  if (!ts.isPropertyAccessExpression(node.expression) || !ts.isIdentifier(node.expression.expression)) return null;
+  const receiver = node.expression.expression.text;
+  if (!importedBindings.has(receiver) || identifierIsLocallyShadowed(node.expression.expression, receiver, sourceFile)) return null;
+
+  const property = node.expression.name.text;
+  if (property === "request") {
+    if (node.arguments.length < 1) return null;
+    const target = targetExpressionFromConfig(node.arguments[0], sourceFile, bindings);
+    const binding = importedBindings.get(receiver);
+    return {
+      source_kind: "imported_axios_call",
+      receiver_local: receiver,
+      imported_name: binding.imported_name,
+      import_source: binding.import_source,
+      method: target.method ?? "ANY",
+      target: target.target,
+      base_url: target.base_url ?? null,
+      raw_target: target.target.raw,
+      line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
+    };
+  }
+  if (!HTTP_METHODS.has(property) || node.arguments.length < 1) return null;
+
+  const binding = importedBindings.get(receiver);
+  const target = resolveEndpointExpression(node.arguments[0], sourceFile, bindings);
+  return {
+    source_kind: "imported_axios_call",
+    receiver_local: receiver,
+    imported_name: binding.imported_name,
+    import_source: binding.import_source,
+    method: property.toUpperCase(),
+    target,
+    raw_target: target.raw,
+    line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
   };
 }
 
@@ -683,10 +863,13 @@ function collectClientEndpointCalls(sourceFile) {
   const axiosLocals = collectAxiosLocals(sourceFile);
   const bindings = collectTopLevelLiteralBindings(sourceFile);
   const { clients: axiosClients, baseUrls: axiosClientBaseUrls } = collectAxiosClients(sourceFile, axiosLocals, bindings);
+  const importedBindings = importedBindingsByLocal(sourceFile);
   const calls = [];
   function visit(node) {
     const call = clientCallFromNode(node, sourceFile, axiosLocals, axiosClients, axiosClientBaseUrls, bindings);
     if (call) calls.push(call);
+    const importedCall = importedClientCallFromNode(node, sourceFile, importedBindings, bindings);
+    if (importedCall) calls.push(importedCall);
     ts.forEachChild(node, visit);
   }
   visit(sourceFile);
@@ -761,6 +944,8 @@ for (const relativePath of files) {
   const sourceText = fs.readFileSync(absolutePath, "utf8");
   const sourceFile = ts.createSourceFile(absolutePath, sourceText, ts.ScriptTarget.Latest, true, scriptKind(relativePath));
   const symbols = collectSymbols(sourceFile);
+  const axiosLocals = collectAxiosLocals(sourceFile);
+  const literalBindings = collectTopLevelLiteralBindings(sourceFile);
   output[relativePath] = {
     parse_diagnostics: sourceFile.parseDiagnostics.map((diagnostic) => ({
       message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
@@ -769,6 +954,7 @@ for (const relativePath of files) {
     imports: collectImports(sourceFile),
     express_routes: collectExpressRoutes(sourceFile),
     client_endpoint_calls: collectClientEndpointCalls(sourceFile),
+    module_clients: collectModuleClients(sourceFile, axiosLocals, literalBindings),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
     calls: symbols.flatMap((symbol) =>
       collectCallsForSymbol(sourceFile, symbol).map((call) => ({
