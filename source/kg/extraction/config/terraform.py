@@ -40,14 +40,16 @@ def extract_terraform(
     if scanned.path.suffix != ".tf":
         return
     block: _BlockState | None = None
+    in_block_comment = False
     for line_number, raw_line in enumerate(scanned.lines, start=1):
-        line = _strip_inline_comment(raw_line).strip()
+        uncommented_line, in_block_comment = _strip_comments(raw_line, in_block_comment=in_block_comment)
+        line = uncommented_line.strip()
         if not line:
             continue
         if block is None:
             block = _start_block(line)
             continue
-        if block.depth == 1:
+        if block.depth == 1 and not _has_brace_outside_quote(line):
             literal = _quoted_assignment_value(line)
             if literal is not None:
                 _add_terraform_domain(repo, scanned, service_entity, build, line_number, literal, tenant_id)
@@ -97,27 +99,43 @@ def _quoted_value(value: str, quote: str) -> str | None:
     return None
 
 
-def _strip_inline_comment(line: str) -> str:
+def _strip_comments(line: str, *, in_block_comment: bool) -> tuple[str, bool]:
+    chars: list[str] = []
     quote: str | None = None
     escaped = False
     index = 0
     while index < len(line):
         char = line[index]
-        if escaped:
+        next_char = line[index + 1] if index + 1 < len(line) else ""
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                in_block_comment = False
+                index += 2
+                continue
+        elif escaped:
+            chars.append(char)
             escaped = False
         elif quote is not None and char == "\\":
+            chars.append(char)
             escaped = True
         elif char in {"'", '"'}:
             if quote == char:
                 quote = None
             elif quote is None:
                 quote = char
+            chars.append(char)
         elif quote is None and char == "#":
-            return line[:index]
+            return "".join(chars), in_block_comment
         elif quote is None and char == "/" and index + 1 < len(line) and line[index + 1] == "/":
-            return line[:index]
+            return "".join(chars), in_block_comment
+        elif quote is None and char == "/" and next_char == "*":
+            in_block_comment = True
+            index += 2
+            continue
+        else:
+            chars.append(char)
         index += 1
-    return line
+    return "".join(chars), in_block_comment
 
 
 def _brace_delta(line: str) -> int:
@@ -139,6 +157,24 @@ def _brace_delta(line: str) -> int:
         elif quote is None and char == "}":
             delta -= 1
     return delta
+
+
+def _has_brace_outside_quote(line: str) -> bool:
+    quote: str | None = None
+    escaped = False
+    for char in line:
+        if escaped:
+            escaped = False
+        elif quote is not None and char == "\\":
+            escaped = True
+        elif char in {"'", '"'}:
+            if quote == char:
+                quote = None
+            elif quote is None:
+                quote = char
+        elif quote is None and char in {"{", "}"}:
+            return True
+    return False
 
 
 def _add_terraform_domain(

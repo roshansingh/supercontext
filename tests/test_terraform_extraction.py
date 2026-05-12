@@ -115,6 +115,16 @@ class TerraformExtractionTest(unittest.TestCase):
 
         self.assertEqual(_domains(build), ["root.example.com"])
 
+    def test_inline_nested_block_assignment_is_skipped(self) -> None:
+        build = _extract(
+            'resource "aws_cloudfront_distribution" "api" {\n'
+            '  origin { domain_name = "api.example.com" }\n'
+            '  comment = "root.example.com"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["root.example.com"])
+
     def test_single_line_closed_block_does_not_leak_context(self) -> None:
         build = _extract(
             'resource "aws_route53_record" "api" {}\n'
@@ -123,6 +133,28 @@ class TerraformExtractionTest(unittest.TestCase):
 
         self.assertEqual(build.entities, [])
         self.assertEqual(build.facts, [])
+
+    def test_block_comment_domain_is_skipped(self) -> None:
+        build = _extract(
+            'resource "aws_route53_record" "api" {\n'
+            "  /*\n"
+            '  name = "commented.example.com"\n'
+            "  */\n"
+            '  name = "active.example.com"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["active.example.com"])
+
+    def test_inline_block_comment_domain_is_skipped(self) -> None:
+        build = _extract(
+            'resource "aws_route53_record" "api" {\n'
+            '  /* name = "commented.example.com" */\n'
+            '  name = "active.example.com"\n'
+            "}\n"
+        )
+
+        self.assertEqual(_domains(build), ["active.example.com"])
 
     def test_non_tf_file_is_skipped(self) -> None:
         build = _extract(
