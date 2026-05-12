@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Legacy queue-line config extraction used by the static config monolith."""
+
+from __future__ import annotations
 
 from source.kg.extraction.config.channel_normalization import (
     add_event_channel_reference,
