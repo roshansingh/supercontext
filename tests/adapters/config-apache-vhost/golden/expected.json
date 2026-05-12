@@ -1,0 +1,10 @@
+{
+  "entities": {
+    "DeployTarget": 1,
+    "Domain": 1
+  },
+  "facts": {
+    "REFERENCES_DOMAIN": 1,
+    "ROUTES_DOMAIN_TO_DEPLOY": 1
+  }
+}

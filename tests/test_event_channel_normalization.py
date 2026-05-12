@@ -220,7 +220,7 @@ class EventChannelNormalizationTest(unittest.TestCase):
                 ]
             )
 
-    def test_apache_vhost_config_emits_uninstrumented_oss_coverage(self) -> None:
+    def test_deploy_events_no_longer_emits_apache_vhost_gap_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             apache_path = repo_root / "site.conf"
@@ -243,17 +243,14 @@ class EventChannelNormalizationTest(unittest.TestCase):
 
             extract_deploy_events(repo, [scanned], service, build, "default", include_event_channel_references=False)
 
-        self.assertFalse([entity for entity in build.entities if entity.kind == "DeployTarget"])
-        self.assertFalse([fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY"])
-        apache_coverage = [
-            row
-            for row in build.coverage
-            if row.predicate == "ROUTES_DOMAIN_TO_DEPLOY"
-            and row.scope_ref.get("reason") == "no_oss_adapter_for_apache_vhosts"
-        ]
-        self.assertEqual(len(apache_coverage), 1)
-        self.assertEqual(apache_coverage[0].state, "uninstrumented")
-        self.assertEqual(apache_coverage[0].scope_ref["file_path"], "site.conf")
+        self.assertFalse(
+            [
+                row
+                for row in build.coverage
+                if row.predicate == "ROUTES_DOMAIN_TO_DEPLOY"
+                and row.scope_ref.get("reason") == "no_oss_adapter_for_apache_vhosts"
+            ]
+        )
 
     def test_non_apache_conf_does_not_emit_apache_vhost_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

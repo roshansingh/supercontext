@@ -38,11 +38,11 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
 
         self.assertEqual(manifest["build_type"], "private_goldset_multi_repo")
         self.assertEqual(manifest["private_extensions"]["source_system"], "private_goldset_extensions_v0")
-        self.assertEqual(manifest["private_extensions"]["extractors"], ["apache_vhost", "zappa"])
-        self.assertGreaterEqual(manifest["private_extensions"]["facts"], 2)
-        self.assertGreaterEqual(manifest["private_extensions"]["entities"], 2)
-        self.assertGreaterEqual(manifest["private_extensions"]["evidence"], 4)
-        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 2)
+        self.assertEqual(manifest["private_extensions"]["extractors"], ["zappa"])
+        self.assertGreaterEqual(manifest["private_extensions"]["facts"], 1)
+        self.assertGreaterEqual(manifest["private_extensions"]["entities"], 1)
+        self.assertGreaterEqual(manifest["private_extensions"]["evidence"], 2)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 1)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
         self.assertTrue([row for row in evidence if row["bytes_ref"] and row["bytes_ref"]["path"] == "site.conf"])
@@ -90,7 +90,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             apache_facts = read_jsonl(root / "apache-kg" / "facts.jsonl")
             zappa_facts = read_jsonl(root / "zappa-kg" / "facts.jsonl")
 
-        self.assertEqual(apache_manifest["private_extensions"]["cleared_coverage"], 1)
+        self.assertEqual(apache_manifest["private_extensions"]["cleared_coverage"], 0)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in apache_facts})
         self.assertNotIn("CONSUMES_EVENT", {fact["predicate"] for fact in apache_facts})
         self.assertEqual(zappa_manifest["private_extensions"]["cleared_coverage"], 1)
@@ -111,7 +111,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             facts = read_jsonl(out / "facts.jsonl")
 
         self.assertEqual(manifest["repo_count"], 2)
-        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 2)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 1)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
 
@@ -129,7 +129,7 @@ class PrivateGoldsetEnrichedSnapshotTest(unittest.TestCase):
             facts = read_jsonl(out / "facts.jsonl")
 
         self.assertEqual(manifest["repo_count"], 2)
-        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 2)
+        self.assertEqual(manifest["private_extensions"]["cleared_coverage"], 1)
         self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", {fact["predicate"] for fact in facts})
         self.assertIn("CONSUMES_EVENT", {fact["predicate"] for fact in facts})
 
