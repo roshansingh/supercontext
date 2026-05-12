@@ -587,9 +587,10 @@ function collectAxiosClients(sourceFile, axiosLocals, bindings) {
   function visit(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const clientInfo = axiosCreateClientInfo(node.name.text, node.initializer, sourceFile, axiosLocals, bindings);
-      if (!clientInfo) return;
-      clients.add(node.name.text);
-      if (clientInfo.base_url) baseUrls.set(node.name.text, clientInfo.base_url);
+      if (clientInfo) {
+        clients.add(node.name.text);
+        if (clientInfo.base_url) baseUrls.set(node.name.text, clientInfo.base_url);
+      }
     }
     ts.forEachChild(node, visit);
   }

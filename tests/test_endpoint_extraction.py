@@ -406,6 +406,11 @@ class EndpointExtractionTest(unittest.TestCase):
             "axios.request({ method: 'delete', url: '/api/request' });\n"
             "api('/api/client-shorthand');\n"
             "api.patch('/api/profile');\n"
+            "const wrapper = (() => {\n"
+            "  const nested = axios.create({ baseURL: 'http://localhost:3000' });\n"
+            "  nested.get('/api/nested');\n"
+            "  return nested;\n"
+            "})();\n"
         )
 
         calls = _endpoint_rows(build, "CALLS_ENDPOINT")
@@ -421,6 +426,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 "/api/request": {"DELETE"},
                 "/api/client-shorthand": {"GET"},
                 "/api/profile": {"PATCH"},
+                "/api/nested": {"GET"},
             },
         )
         self.assertEqual(_hosts_by_path(calls)["/api/profile"], {"localhost"})
