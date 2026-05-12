@@ -24,6 +24,25 @@ CANONICAL_FAILURE_OWNERS = (
 )
 NO_FAILURE_OWNER = "none"
 PRODUCT_QUERY_UNMEASURED_REASON = "No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet."
+PRODUCT_QUERY_FIXTURE_BINDING_HARNESS = "fixture binding"
+IMPLEMENTED_FIXTURE_BINDING_VARIABLES = frozenset(
+    {
+        "$PACKAGE",
+        "$THIRD_PARTY_PACKAGE",
+        "$BROKEN_FILE",
+    }
+)
+DECLARED_FIXTURE_VARIABLES = frozenset(
+    {
+        "$PY_REPO",
+        "$ENTRY_SYMBOL",
+        "$CALLER_SYMBOL",
+        "$INTERNAL_MODULE",
+        "$SERVICE",
+        "$ENDPOINT",
+        "$EVENT",
+    }
+) | IMPLEMENTED_FIXTURE_BINDING_VARIABLES
 DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
     "Use the current judgement rows as the source of truth: if any scenario is Partial or Fail, prioritize the "
     "classified failure owners before expanding scope; if all judged scenarios pass, expand judged goldset coverage "
@@ -65,7 +84,16 @@ def run_canonical_validation(config: ValidationConfig) -> JsonObject:
         strict=config.strict_smoke_checks,
     )
     goldset = _goldset_summary(config)
-    product_query_matrix = _product_query_matrix(config.product_query_set, smoke_checks, goldset)
+    product_query_matrix = _product_query_matrix(
+        config.product_query_set,
+        smoke_checks,
+        goldset,
+        {
+            "Mercury ML": mercury,
+            "True Loop": true_loop,
+            "Private Goldset": private_kg,
+        },
+    )
     return {
         "generated_at": config.generated_at,
         "status": _overall_status(smoke_checks, goldset),
@@ -770,8 +798,12 @@ def _planned_goldset_scenarios(path: Path | None) -> list[JsonObject]:
     return planned
 
 
-def _product_query_matrix(path: Path | None, smoke_checks: list[JsonObject], goldset: JsonObject) -> JsonObject:
-    query_rows = _product_query_rows(path)
+def _product_query_matrix(
+    path: Path | None,
+    smoke_checks: list[JsonObject],
+    goldset: JsonObject,
+    kg_by_corpus: dict[str, KgSnapshot] | None = None,
+) -> JsonObject:
     if path is None:
         return {
             "product_query_set": None,
@@ -786,8 +818,15 @@ def _product_query_matrix(path: Path | None, smoke_checks: list[JsonObject], gol
             "failure_owner_summary": _matrix_failure_owner_summary([]),
             "rows": [],
         }
+    query_rows = _product_query_rows(path)
+    fixture_defaults = _product_query_fixture_defaults(path)
     query_by_id = {str(row["query_id"]): row for row in query_rows}
-    measured_rows = _aggregate_product_query_rows(_measured_product_query_rows(smoke_checks, goldset))
+    raw_measured_rows = _measured_product_query_rows(smoke_checks, goldset)
+    raw_measured_tuples = {(str(row["query_id"]), str(row["corpus"])) for row in raw_measured_rows}
+    raw_measured_rows.extend(
+        _fixture_bound_product_query_rows(query_rows, kg_by_corpus or {}, raw_measured_tuples, fixture_defaults)
+    )
+    measured_rows = _aggregate_product_query_rows(raw_measured_rows)
     unknown_measured_ids = sorted({str(row["query_id"]) for row in measured_rows} - set(query_by_id))
     if unknown_measured_ids:
         raise ValueError(
@@ -797,7 +836,7 @@ def _product_query_matrix(path: Path | None, smoke_checks: list[JsonObject], gol
     measured_tuples = {(str(row["query_id"]), str(row["corpus"])) for row in measured_rows}
     rows = measured_rows
     for query in query_rows:
-        for unmeasured_row in _unmeasured_product_query_rows(query):
+        for unmeasured_row in _unmeasured_product_query_rows(query, fixture_defaults):
             key = (str(unmeasured_row["query_id"]), str(unmeasured_row["corpus"]))
             if key not in measured_tuples:
                 rows.append(unmeasured_row)
@@ -903,6 +942,45 @@ def _product_query_rows(path: Path | None) -> list[JsonObject]:
     return rows
 
 
+def _product_query_fixture_defaults(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    query_set_path = path.expanduser()
+    if not query_set_path.exists():
+        raise FileNotFoundError(f"Product query set not found: {query_set_path}")
+    defaults: dict[str, str] = {}
+    header: list[str] | None = None
+    for raw_line in query_set_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or not line.endswith("|"):
+            header = None
+            continue
+        cells = _split_markdown_table_row(line)
+        if not cells:
+            header = None
+            continue
+        if _is_markdown_separator_row(cells):
+            continue
+        normalized_cells = [_normalize_table_header(cell) for cell in cells]
+        if "variable" in normalized_cells and "mercury v0 value" in normalized_cells:
+            header = normalized_cells
+            continue
+        if header is None or len(cells) != len(header):
+            continue
+        row = dict(zip(header, cells, strict=True))
+        variable = _clean_fixture_token(row.get("variable", ""))
+        value = _clean_fixture_default(row.get("mercury v0 value", ""))
+        if variable in DECLARED_FIXTURE_VARIABLES and value:
+            defaults[variable] = value
+    return defaults
+
+
+def _fixture_defaults_for_corpus(corpus: str, fixture_defaults: dict[str, str]) -> dict[str, str]:
+    if corpus == "Mercury ML":
+        return fixture_defaults
+    return {}
+
+
 def _measured_product_query_rows(smoke_checks: list[JsonObject], goldset: JsonObject) -> list[JsonObject]:
     grouped_smoke: dict[tuple[str, str], list[JsonObject]] = {}
     for row in smoke_checks:
@@ -985,7 +1063,206 @@ def _product_query_row_from_judgement(row: JsonObject) -> JsonObject:
     }
 
 
-def _unmeasured_product_query_rows(query: JsonObject) -> list[JsonObject]:
+def _fixture_bound_product_query_rows(
+    query_rows: list[JsonObject],
+    kg_by_corpus: dict[str, KgSnapshot],
+    measured_tuples: set[tuple[str, str]],
+    fixture_defaults: dict[str, str],
+) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for query in query_rows:
+        for corpus in _corpus_labels_for_query(query):
+            if (str(query["query_id"]), corpus) in measured_tuples:
+                continue
+            kg = kg_by_corpus.get(corpus)
+            if kg is None:
+                continue
+            bound_row = _fixture_bound_product_query_row(
+                query,
+                corpus,
+                kg,
+                _fixture_defaults_for_corpus(corpus, fixture_defaults),
+            )
+            if bound_row is not None:
+                rows.append(bound_row)
+    return rows
+
+
+def _fixture_bound_product_query_row(
+    query: JsonObject,
+    corpus: str,
+    kg: KgSnapshot,
+    fixture_defaults: dict[str, str],
+) -> JsonObject | None:
+    query_id = str(query["query_id"])
+    bindings = _fixture_bindings(query, fixture_defaults)
+    if query_id == "Q002":
+        package_name = bindings.get("$THIRD_PARTY_PACKAGE") or bindings.get("$PACKAGE")
+        if not package_name:
+            return None
+        rows = kg.modules_importing(package_name, limit=100)
+        third_party_rows = [
+            row
+            for row in rows
+            if isinstance(row, dict) and _matrix_row_qualifier(row).get("category") == "third_party"
+        ]
+        status = "pass" if third_party_rows else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{package_name} direct third-party importers: {len(third_party_rows)} rows",
+            actual={"row_count": len(third_party_rows), "sample": third_party_rows[:2]},
+        )
+    if query_id == "Q006":
+        file_path = bindings.get("$BROKEN_FILE")
+        if not file_path:
+            return None
+        rows = _coverage_rows_for_path(kg, file_path)
+        status = "pass" if rows else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"coverage rows for {file_path}: {len(rows)} rows",
+            actual={"row_count": len(rows), "sample": rows[:2]},
+        )
+    if query_id == "Q012":
+        package_name = _fixture_literal(query, fallback=bindings.get("$PACKAGE"))
+        if not package_name:
+            return None
+        rows = kg.modules_importing(package_name, limit=100)
+        dependency_info = kg.dependency_info(package_name)
+        has_distribution_mapping = any(
+            isinstance(row, dict) and row.get("distribution_name") == "scikit-learn"
+            for row in dependency_info
+        )
+        if rows and has_distribution_mapping:
+            status = "pass"
+            mapping_note = "distribution mapping present"
+        elif rows:
+            status = "partial"
+            mapping_note = "distribution mapping missing"
+        else:
+            status = "fail"
+            mapping_note = "no importers found"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{package_name} importers: {len(rows)} rows; {mapping_note}",
+            actual={"row_count": len(rows), "dependency_info": dependency_info, "sample": rows[:2]},
+        )
+    return None
+
+
+def _fixture_binding_matrix_row(
+    query: JsonObject,
+    corpus: str,
+    status: str,
+    notes: str,
+    actual: JsonObject,
+) -> JsonObject:
+    return {
+        "query_id": query["query_id"],
+        "difficulty": query["difficulty"],
+        "corpus": corpus,
+        "status": status,
+        "failure_owners": _failure_owners_for_status(status, PRODUCT_QUERY_FIXTURE_BINDING_HARNESS),
+        "harness": PRODUCT_QUERY_FIXTURE_BINDING_HARNESS,
+        "notes": notes,
+        "sources": [],
+        "actual": actual,
+    }
+
+
+def _matrix_row_qualifier(row: JsonObject) -> JsonObject:
+    qualifier = row.get("qualifier")
+    if isinstance(qualifier, dict):
+        return qualifier
+    return {}
+
+
+def _coverage_rows_for_path(kg: KgSnapshot, file_path: str) -> list[JsonObject]:
+    normalized = _normalize_fixture_path(file_path)
+    rows = []
+    for row in kg.coverage:
+        scope_ref = row.get("scope_ref", {})
+        if not isinstance(scope_ref, dict):
+            continue
+        candidates = [
+            str(scope_ref.get("file_path", "")),
+            str(scope_ref.get("path", "")),
+        ]
+        if any(_normalize_fixture_path(candidate) == normalized for candidate in candidates):
+            rows.append(row)
+    return rows
+
+
+def _fixture_bindings(query: JsonObject, fixture_defaults: dict[str, str]) -> dict[str, str]:
+    bindings = dict(fixture_defaults)
+    for token in _fixture_tokens(query):
+        if not token.startswith("$") or "=" not in token:
+            continue
+        name, value = token.split("=", 1)
+        name = _clean_fixture_token(name)
+        value = _clean_fixture_token(value)
+        if name in DECLARED_FIXTURE_VARIABLES and value:
+            bindings[name] = value
+    return bindings
+
+
+def _fixture_literal(query: JsonObject, fallback: str | None = None) -> str | None:
+    for token in _fixture_tokens(query, keys=("fixture",)):
+        token = _clean_fixture_token(token)
+        if not token or token.startswith("$"):
+            continue
+        return token
+    return fallback
+
+
+def _unresolved_fixture_variables(query: JsonObject, fixture_defaults: dict[str, str]) -> list[str]:
+    bindings = _fixture_bindings(query, fixture_defaults)
+    unresolved = []
+    for token in _fixture_tokens(query):
+        variable = _clean_fixture_token(token.split("=", 1)[0])
+        if variable.startswith("$") and variable not in bindings:
+            unresolved.append(variable)
+    return sorted(set(unresolved))
+
+
+def _fixture_tokens(
+    query: JsonObject,
+    keys: tuple[str, ...] = ("fixture", "user_query", "expected_answer_shape", "capabilities"),
+) -> list[str]:
+    text = " ".join(
+        str(query.get(key, ""))
+        for key in keys
+    )
+    for char in "`(),;:?":
+        text = text.replace(char, " ")
+    return [token.strip() for token in text.split() if token.strip()]
+
+
+def _clean_fixture_token(value: str) -> str:
+    return value.strip().strip("`'\"[]{}<>")
+
+
+def _clean_fixture_default(value: str) -> str:
+    parts = value.split("`")
+    code_spans = [part.strip() for index, part in enumerate(parts) if index % 2 == 1 and part.strip()]
+    if len(code_spans) == 1:
+        return _clean_fixture_token(code_spans[0])
+    if len(code_spans) > 1:
+        return ""
+    return _clean_fixture_token(value)
+
+
+def _normalize_fixture_path(value: str) -> str:
+    return value.replace("\\", "/").lstrip("./")
+
+
+def _unmeasured_product_query_rows(query: JsonObject, fixture_defaults: dict[str, str]) -> list[JsonObject]:
     return [
         {
             "query_id": query["query_id"],
@@ -994,11 +1271,20 @@ def _unmeasured_product_query_rows(query: JsonObject) -> list[JsonObject]:
             "status": "unmeasured",
             "failure_owners": ["coverage gap"],
             "harness": "none",
-            "notes": PRODUCT_QUERY_UNMEASURED_REASON,
+            "notes": _unmeasured_product_query_reason(query, corpus, _fixture_defaults_for_corpus(corpus, fixture_defaults)),
             "sources": [],
         }
         for corpus in _corpus_labels_for_query(query)
     ]
+
+
+def _unmeasured_product_query_reason(query: JsonObject, corpus: str, fixture_defaults: dict[str, str]) -> str:
+    unresolved = _unresolved_fixture_variables(query, fixture_defaults)
+    if unresolved:
+        if len(unresolved) == 1:
+            return f"Fixture variable {unresolved[0]} has no binding for corpus {corpus}."
+        return f"Fixture variables {', '.join(unresolved)} have no binding for corpus {corpus}."
+    return PRODUCT_QUERY_UNMEASURED_REASON
 
 
 def _corpus_labels_for_query(query: JsonObject) -> list[str]:
@@ -1011,7 +1297,18 @@ def _corpus_labels_for_query(query: JsonObject) -> list[str]:
         return ["otel-demo"]
     if _query_id_number(query.get("query_id")) >= 81:
         return ["Private Goldset"]
-    if "$py_repo" in fixture or "$broken_file" in fixture or "$entry_symbol" in fixture or "$caller_symbol" in fixture:
+    if any(
+        variable in fixture
+        for variable in (
+            "$py_repo",
+            "$broken_file",
+            "$entry_symbol",
+            "$caller_symbol",
+            "$internal_module",
+            "$package",
+            "$third_party_package",
+        )
+    ):
         return ["Mercury ML"]
     if "pr input" in fixture:
         return ["PR fixture"]
@@ -1048,6 +1345,8 @@ def _failure_owners_for_status(status: str, harness: str) -> list[str]:
     if status == "unmeasured":
         return ["coverage gap"]
     if harness == "deterministic smoke":
+        return ["missing KG fact"]
+    if harness == PRODUCT_QUERY_FIXTURE_BINDING_HARNESS:
         return ["missing KG fact"]
     return ["coverage gap"]
 
