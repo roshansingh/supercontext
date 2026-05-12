@@ -850,6 +850,7 @@ def _product_query_rows(path: Path | None) -> list[JsonObject]:
     rows: list[JsonObject] = []
     seen: set[str] = set()
     header: list[str] | None = None
+    matched_query_table = False
     for raw_line in query_set_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line.startswith("|") or not line.endswith("|"):
@@ -864,6 +865,7 @@ def _product_query_rows(path: Path | None) -> list[JsonObject]:
         normalized_cells = [_normalize_table_header(cell) for cell in cells]
         if "id" in normalized_cells and "difficulty" in normalized_cells:
             header = normalized_cells
+            matched_query_table = True
             continue
         if header is None or len(cells) != len(header):
             continue
@@ -888,6 +890,10 @@ def _product_query_rows(path: Path | None) -> list[JsonObject]:
                 "goldset": row.get("goldset?", "").strip().lower() == "yes",
             }
         )
+    if not matched_query_table:
+        raise ValueError(f"{query_set_path} does not contain a markdown table with ID and Difficulty columns")
+    if not rows:
+        raise ValueError(f"{query_set_path} does not contain any valid product query rows")
     return rows
 
 

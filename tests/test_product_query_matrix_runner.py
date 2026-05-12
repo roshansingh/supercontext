@@ -208,6 +208,40 @@ class ProductQueryMatrixRunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate product query ID 'Q001'"):
                 _product_query_rows(query_set)
 
+    def test_product_query_rows_reject_missing_query_table(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "PRODUCT-QUERY-SET.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| Name | Owner |",
+                        "|---|---|",
+                        "| Payments | Platform |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "ID and Difficulty columns"):
+                _product_query_rows(query_set)
+
+    def test_product_query_rows_reject_empty_query_table(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            query_set = Path(tmpdir) / "PRODUCT-QUERY-SET.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| ID | Difficulty | Tool / surface | Persona | Fixture | User question | Expected answer shape | Main capabilities exercised |",
+                        "|---|---|---|---|---|---|---|---|",
+                        "| TODO | Unknown | CLI | Engineer | repo | Placeholder? | Shape. | Capability. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "valid product query rows"):
+                _product_query_rows(query_set)
+
     def test_matrix_status_precedence_covers_fail_and_refusal(self) -> None:
         self.assertEqual(_aggregate_matrix_status(["pass", "fail"]), "fail")
         self.assertEqual(_aggregate_matrix_status(["pass", "refused correctly"]), "refused correctly")
