@@ -45,7 +45,11 @@ def main() -> None:
     parser.add_argument("--json-out", help="Optional path to write the machine-readable report JSON.")
     parser.add_argument("--md-out", default=DEFAULT_MD_OUT, help="Markdown report output path.")
     parser.add_argument("--query-matrix-md-out", help="Optional path to write the product-query-set matrix Markdown.")
-    parser.add_argument("--no-md", action="store_true", help="Do not write Markdown; print JSON unless --json-out is set.")
+    parser.add_argument(
+        "--no-md",
+        action="store_true",
+        help="Skip the main validation Markdown report; print JSON only when no file outputs are requested.",
+    )
     parser.add_argument(
         "--no-strict-smoke-checks",
         action="store_true",
