@@ -558,6 +558,7 @@ class ValidationReportTest(unittest.TestCase):
                     },
                 ),
                 patch("source.kg.product.validation_report._snapshot_inventory", return_value={}),
+                patch("source.kg.product.validation_report._product_query_matrix", return_value={}),
                 patch("source.kg.product.validation_report._superseded_artifacts", return_value=[]),
             ):
                 report = run_canonical_validation(config)
@@ -594,6 +595,7 @@ class ValidationReportTest(unittest.TestCase):
                     },
                 ),
                 patch("source.kg.product.validation_report._snapshot_inventory", return_value={}),
+                patch("source.kg.product.validation_report._product_query_matrix", return_value={}),
                 patch("source.kg.product.validation_report._superseded_artifacts", return_value=[]),
             ):
                 report = run_canonical_validation(config)
