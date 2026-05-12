@@ -62,6 +62,71 @@ class ScenarioPlan:
 
 
 SCENARIO_PLANS: dict[str, ScenarioPlan] = {
+    "Q081": ScenarioPlan(
+        scenario_id="Q081",
+        user_query="What are the runtime building blocks of ShopAgain across these repos, and which domains route to each backend?",
+        expected_answer_shape=(
+            "Runtime topology map covering web/mobile clients, API backend, webhooks, tracking, campaign workers, "
+            "websocket service, ML API dependency, and deploy/domain citations. Explicitly call out missing deploy "
+            "evidence when a component has no routed domain mapping."
+        ),
+        steps=(
+            RetrievalStep(
+                name="domain_api_shopagain",
+                command="domain_references",
+                args={"domain": "api.shopagain.io", "limit": 100},
+                purpose="Find production API domain references and the Apache/WSGI route to the backend service.",
+            ),
+            RetrievalStep(
+                name="deploy_prod_shopagain_wsgi",
+                command="deploy_mappings",
+                args={"target": "prod_shopagain_wsgi.py", "limit": 25},
+                purpose="Find the deployed backend target serving the production API domain.",
+            ),
+            RetrievalStep(
+                name="domain_app_shopagain",
+                command="domain_references",
+                args={"domain": "app.shopagain.io", "limit": 100},
+                purpose="Find web-app domain references, including Terraform environment configuration.",
+            ),
+            RetrievalStep(
+                name="domain_webhooks_shopagain",
+                command="domain_references",
+                args={"domain": "webhooks.shopagain.io", "limit": 100},
+                purpose="Find webhook service domain references from deployment/config files.",
+            ),
+            RetrievalStep(
+                name="domain_tracking_shopagainmail",
+                command="domain_references",
+                args={"domain": "shopagainmail.net", "limit": 100},
+                purpose="Find tracking service domain references from deployment/config files.",
+            ),
+            RetrievalStep(
+                name="campaign_messages_queue",
+                command="event_channels",
+                args={"channel": "la-prod-campaign-messages", "limit": 100},
+                purpose="Find campaign-message producer and consumer services.",
+            ),
+            RetrievalStep(
+                name="websocket_post_chat_message",
+                command="endpoints",
+                args={"path": "postChatMessage", "limit": 100},
+                purpose="Find websocket service routes used by live chat.",
+            ),
+            RetrievalStep(
+                name="ml_api_depends_on_ml_library",
+                command="repo_dependencies",
+                args={"repo": "mercury_ml_api", "limit": 25},
+                purpose="Find ML API dependency on the packaged ML library repo.",
+            ),
+            RetrievalStep(
+                name="deploy_prod_ml_api",
+                command="deploy_mappings",
+                args={"target": "prod_ml_api", "limit": 25},
+                purpose="Check whether the KG can prove the ML API deploy target from Apache/WSGI config.",
+            ),
+        ),
+    ),
     "Q082": ScenarioPlan(
         scenario_id="Q082",
         user_query="Which clients call api.shopagain.io, and which deployed backend serves that domain?",
