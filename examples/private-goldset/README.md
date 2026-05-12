@@ -12,14 +12,14 @@ python examples/private-goldset/build_enriched_snapshot.py \
   --out data/kg_runs/latticeai_23_private_enriched
 ```
 
-This first runs the public OSS extractors, then applies the remaining private Zappa extension extractor in this directory. Apache/WSGI extraction is now owned by OSS source. Use this when judging private goldset product value; use the public `source.scripts.build_multi_kg` path when judging OSS-only behavior.
+This now runs the public OSS extractors through the private-goldset snapshot entry point. Apache/WSGI and Zappa event-source extraction are owned by OSS source. Keep using this command when judging private goldset product value so existing artifact paths stay stable; use the public `source.scripts.build_multi_kg` path when judging OSS-only behavior.
 
-The output uses the same JSONL files as the public builder (`entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, `manifest.json`) and adds `manifest.private_extensions` with extension counts and cleared public gap-coverage count. To add another private extension, add a focused extractor under `extractors/`, wire it in `build_enriched_snapshot.py`, and add a fixture test.
+The output uses the same JSONL files as the public builder (`entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, `manifest.json`) and keeps `manifest.private_extensions` for compatibility. It is currently empty because no private extractors are active.
 
 Run the private-enrichment tests:
 
 ```bash
-python -m unittest tests.test_private_goldset_enriched_snapshot tests.test_private_goldset_zappa
+python -m unittest tests.test_private_goldset_enriched_snapshot
 ```
 
 Generate EvidencePacket JSON from a KG snapshot:
@@ -36,4 +36,4 @@ python -m source.scripts.run_goldset_answers --packets-in data/kg_runs/latticeai
 
 The private scenario IDs currently implemented are `Q082`, `Q083`, `Q088`, `Q095`, `Q100`, and `Q106`.
 
-Private extractor extensions live under `extractors/`. Because `private-goldset` contains a hyphen, do not use dotted imports that include that directory name. Load modules by file path with `importlib.util.spec_from_file_location`, or add `examples/private-goldset` to `sys.path` and import from the valid `extractors` package.
+There are currently no private extractor extensions. If a future private-only extractor is added, keep it out of `source/`, document why it is not OSS-generic, and add focused fixture coverage.

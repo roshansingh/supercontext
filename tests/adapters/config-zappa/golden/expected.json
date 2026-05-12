@@ -1,0 +1,8 @@
+{
+  "entities": {
+    "EventChannel": 1
+  },
+  "facts": {
+    "CONSUMES_EVENT": 1
+  }
+}

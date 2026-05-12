@@ -1,0 +1,12 @@
+{
+  "prod": {
+    "events": [
+      {
+        "function": "handlers.consume",
+        "event_source": {
+          "arn": "arn:aws:sqs:eu-west-1:123456789012:orders-created"
+        }
+      }
+    ]
+  }
+}

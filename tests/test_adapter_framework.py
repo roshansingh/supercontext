@@ -11,9 +11,9 @@ from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.adapters import config_shared
-from source.kg.extraction.adapters.config_deploy_events import CONFIG_DEPLOY_EVENTS_ADAPTER
 from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
 from source.kg.extraction.adapters.config_serverless_yaml import CONFIG_SERVERLESS_YAML_ADAPTER
+from source.kg.extraction.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
 from source.kg.extraction.adapters.legacy import LEGACY_STATIC_CONFIG_ADAPTER, LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
@@ -251,33 +251,21 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("config-apache-vhost", names)
         self.assertIn("config-domain-env", names)
         self.assertIn("config-openapi", names)
-        self.assertIn("config-deploy-events", names)
+        self.assertIn("config-zappa", names)
         self.assertIn("config-serverless-yaml", names)
 
     def test_split_config_capabilities_include_yml_file_kind(self) -> None:
         capabilities = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}
 
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
-        self.assertIn("yml", capabilities["config-deploy-events"].file_kinds)
         self.assertIn("yml", capabilities["config-serverless-yaml"].file_kinds)
 
-    def test_deploy_events_adapter_only_claims_private_gap_coverage_scope(self) -> None:
-        capability = CONFIG_DEPLOY_EVENTS_ADAPTER.capability
+    def test_zappa_adapter_claims_parser_backed_public_scope(self) -> None:
+        capability = CONFIG_ZAPPA_ADAPTER.capability
 
-        self.assertNotIn("apache", capability.framework_tags)
-        self.assertNotIn("zappa", capability.framework_tags)
-        self.assertNotIn("sqs", capability.framework_tags)
-        self.assertNotIn("sns", capability.framework_tags)
-        self.assertNotIn("serverless", capability.framework_tags)
-        self.assertEqual(capability.framework_tags, ())
-        self.assertNotIn("REFERENCES_DOMAIN", capability.produces_predicates)
-        self.assertNotIn("EXPOSES_ENDPOINT", capability.produces_predicates)
-        self.assertNotIn("CONSUMES_EVENT", capability.produces_predicates)
-        self.assertNotIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
-        self.assertNotIn("Endpoint", capability.produces_entity_kinds)
-        self.assertNotIn("EventChannel", capability.produces_entity_kinds)
-        self.assertNotIn("Domain", capability.produces_entity_kinds)
-        self.assertNotIn("DeployTarget", capability.produces_entity_kinds)
+        self.assertIn("zappa", capability.framework_tags)
+        self.assertIn("CONSUMES_EVENT", capability.produces_predicates)
+        self.assertIn("EventChannel", capability.produces_entity_kinds)
 
     def test_apache_vhost_adapter_claims_parser_backed_public_scope(self) -> None:
         capability = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}["config-apache-vhost"]
@@ -308,6 +296,11 @@ class AdapterFrameworkTest(unittest.TestCase):
             )
             (root / "serverless.yml").write_text(
                 "functions:\n  ws:\n    handler: app.handler\n    events:\n      - websocket:\n          route: $connect\n",
+                encoding="utf-8",
+            )
+            (root / "zappa_settings.json").write_text(
+                '{"prod": {"events": [{"function": "handlers.consume", "event_source": {"arn": "'
+                'arn:aws:sqs:eu-west-1:123456789012:orders-created"}}]}}',
                 encoding="utf-8",
             )
             repo = RepoSnapshot(

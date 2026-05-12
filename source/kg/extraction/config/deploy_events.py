@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import json
+"""Legacy queue-line config extraction used by the static config monolith."""
 
 from source.kg.extraction.config.channel_normalization import (
     add_event_channel_reference,
     normalized_channels_in_text,
     normalized_ini_queue_channels,
-    normalize_sqs_arn,
 )
 from source.kg.extraction.config.common import (
-    CONFIG_SOURCE_SYSTEM,
     ConfigKgBuild,
     ScannedFile,
 )
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.core.models import Coverage, Entity
+from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
 
 
@@ -31,56 +29,6 @@ def extract_deploy_events(
     for scanned in files:
         if include_event_channel_references and scanned.path.name != "zappa_settings.json":
             _extract_queue_lines(repo, scanned, service_entity, build, resolved_tenant_id)
-        if scanned.path.name == "zappa_settings.json":
-            _add_zappa_event_source_coverage_if_present(scanned, build, resolved_tenant_id, repo)
-
-
-def _add_zappa_event_source_coverage_if_present(
-    scanned: ScannedFile,
-    build: ConfigKgBuild,
-    tenant_id: str,
-    repo: RepoSnapshot,
-) -> None:
-    if not _looks_like_zappa_event_sources(scanned):
-        return
-    build.coverage.append(
-        Coverage(
-            tenant_id=tenant_id,
-            predicate="CONSUMES_EVENT",
-            scope_ref={
-                "repo": repo.name,
-                "file_path": scanned.relative_path,
-                "reason": "no_oss_adapter_for_zappa_event_sources",
-            },
-            state="uninstrumented",
-            source_system=CONFIG_SOURCE_SYSTEM,
-        )
-    )
-
-
-def _looks_like_zappa_event_sources(scanned: ScannedFile) -> bool:
-    try:
-        data = json.loads(scanned.text)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(data, dict):
-        return False
-    for stage_config in data.values():
-        if not isinstance(stage_config, dict):
-            continue
-        events = stage_config.get("events")
-        if not isinstance(events, list):
-            continue
-        for event_source in events:
-            if not isinstance(event_source, dict):
-                continue
-            source = event_source.get("event_source")
-            if not isinstance(source, dict):
-                continue
-            arn = source.get("arn")
-            if isinstance(arn, str) and normalize_sqs_arn(arn) is not None:
-                return True
-    return False
 
 
 def _extract_queue_lines(
