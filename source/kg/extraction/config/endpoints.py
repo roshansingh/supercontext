@@ -506,7 +506,7 @@ def _resolve_path_alias_import(
     module_clients: dict[str, dict[str, object]],
     path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> str | None:
-    for pattern, targets in sorted(path_aliases, key=_typescript_path_pattern_sort_key, reverse=True):
+    for pattern, targets in path_aliases:
         capture = _match_typescript_path_pattern(pattern, import_source)
         if capture is None:
             continue
@@ -580,7 +580,7 @@ def _load_typescript_path_aliases(repo_root: Path) -> tuple[tuple[str, tuple[str
             )
             if targets:
                 aliases.append((pattern, targets))
-    return tuple(aliases)
+    return tuple(sorted(aliases, key=_typescript_path_pattern_sort_key, reverse=True))
 
 
 def _normalize_repo_relative_path(value: str) -> str:

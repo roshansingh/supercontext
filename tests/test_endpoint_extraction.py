@@ -782,7 +782,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertFalse(_call_site_coverage(build))
 
-    def test_typescript_imported_client_calls_fail_closed_for_aliases_missing_exports_and_shadowing(self) -> None:
+    def test_typescript_imported_client_calls_fail_closed_for_bare_packages_missing_exports_and_shadowing(self) -> None:
         build = _extract_typescript_client_files(
             {
                 "src/api.ts": (
