@@ -72,7 +72,7 @@ The EvidencePacket contains all facts in the Ground Truth: companies/urls.py lin
 
 ### Missing Or Weak Evidence
 
-- Evidence does not include the auth.js lines 5-12 explicitly (login function); the earliest auth.js line shown is 14 (logout). Ground truth references 'auth.js:5-27' for login/logout/registration but only logout (14), user (23), and registration (27) lines appear in the packet.
+- No blocking missing facts. The remaining weakness is line-span granularity: the packet cites auth.js callers at lines 14, 23, and 27, while the ground truth spans auth.js:5-27 for login/logout/registration.
 
 ### Answer Issues
 
@@ -80,7 +80,7 @@ The EvidencePacket contains all facts in the Ground Truth: companies/urls.py lin
 
 ### Recommended Next Action
 
-Accept as Pass. Optionally enrich the retrieval to capture auth.js login (around line 5) to fully mirror the ground truth's 5-27 range.
+Accept as Pass. Optionally enrich line-span retrieval to mirror the full auth.js:5-27 ground-truth range.
 
 ## Q088 - Pass
 
