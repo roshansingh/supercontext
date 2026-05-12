@@ -16,7 +16,7 @@
     "CodeModule": 2556,
     "CodeSymbol": 8167,
     "DeployTarget": 6,
-    "Domain": 3998,
+    "Domain": 4015,
     "Endpoint": 642,
     "EnvVar": 558,
     "EventChannel": 73,
@@ -35,7 +35,7 @@
     "IMPLEMENTS": 2541,
     "IMPORTS": 16428,
     "PRODUCES_EVENT": 82,
-    "REFERENCES_DOMAIN": 10376,
+    "REFERENCES_DOMAIN": 10397,
     "REFERENCES_ENV_VAR": 804,
     "REFERENCES_EVENT_CHANNEL": 72,
     "RESOLVES_TO_REPO": 2,
@@ -44,9 +44,9 @@
   },
   "manifest_counts": {
     "coverage": 610,
-    "entities": 16983,
-    "evidence": 91934,
-    "facts": 45724
+    "entities": 17000,
+    "evidence": 91987,
+    "facts": 45745
   },
   "name": "latticeai_23"
 }

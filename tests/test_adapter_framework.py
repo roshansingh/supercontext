@@ -13,6 +13,7 @@ from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.adapters import config_shared
 from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
 from source.kg.extraction.adapters.config_serverless_yaml import CONFIG_SERVERLESS_YAML_ADAPTER
+from source.kg.extraction.adapters.config_terraform import CONFIG_TERRAFORM_ADAPTER
 from source.kg.extraction.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
 from source.kg.extraction.adapters.legacy import LEGACY_STATIC_CONFIG_ADAPTER, LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
@@ -251,6 +252,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("config-apache-vhost", names)
         self.assertIn("config-domain-env", names)
         self.assertIn("config-openapi", names)
+        self.assertIn("config-terraform", names)
         self.assertIn("config-zappa", names)
         self.assertIn("config-serverless-yaml", names)
 
@@ -266,6 +268,13 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("zappa", capability.framework_tags)
         self.assertIn("CONSUMES_EVENT", capability.produces_predicates)
         self.assertIn("EventChannel", capability.produces_entity_kinds)
+
+    def test_terraform_adapter_claims_parser_backed_public_scope(self) -> None:
+        capability = CONFIG_TERRAFORM_ADAPTER.capability
+
+        self.assertIn("terraform", capability.framework_tags)
+        self.assertIn("REFERENCES_DOMAIN", capability.produces_predicates)
+        self.assertIn("Domain", capability.produces_entity_kinds)
 
     def test_apache_vhost_adapter_claims_parser_backed_public_scope(self) -> None:
         capability = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}["config-apache-vhost"]
@@ -301,6 +310,12 @@ class AdapterFrameworkTest(unittest.TestCase):
             (root / "zappa_settings.json").write_text(
                 '{"prod": {"events": [{"function": "handlers.consume", "event_source": {"arn": "'
                 'arn:aws:sqs:eu-west-1:123456789012:orders-created"}}]}}',
+                encoding="utf-8",
+            )
+            (root / "main.tf").write_text(
+                'variable "api_domain" {\n'
+                '  default = "terraform.example.com"\n'
+                "}\n",
                 encoding="utf-8",
             )
             repo = RepoSnapshot(

@@ -20,6 +20,7 @@ from source.kg.extraction.config.domain_env import extract_domain_env
 from source.kg.extraction.config.dotenv import extract_dotenv
 from source.kg.extraction.config.endpoints import extract_endpoints
 from source.kg.extraction.config.serverless_yaml import extract_serverless_yaml_routes, is_serverless_yaml_filename
+from source.kg.extraction.config.terraform import extract_terraform
 from source.kg.extraction.config.zappa import extract_zappa_event_sources
 from source.kg.core.models import Coverage, Entity, Evidence
 from source.kg.core.repo_source import RepoSnapshot
@@ -62,6 +63,8 @@ class StaticConfigExtractor:
         if self.include_domain_env:
             extract_dotenv(repo, files, service_entity, build, resolved_tenant_id)
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
+            for scanned in files:
+                extract_terraform(repo, scanned, service_entity, build, resolved_tenant_id)
         extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)
         if self.include_deploy_events:
             for scanned in files:
