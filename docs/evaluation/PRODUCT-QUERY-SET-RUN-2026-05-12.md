@@ -1,6 +1,6 @@
 # Product Query Set Run
 
-Generated: 2026-05-12T21:21:15Z
+Generated: 2026-05-13T01:07:31Z
 
 Product query set: `docs/evaluation/PRODUCT-QUERY-SET.md`
 
@@ -15,17 +15,17 @@ This report is the Debate 12 Step 1 measurement matrix. It records every product
 - Measured query coverage: 21.8%
 - Current harness sources: deterministic smoke, fixture binding, goldset judgement
 
-Status counts: partial=2, pass=24, unmeasured=91.
+Status counts: partial=1, pass=25, unmeasured=91.
 
 Difficulty counts: Hard=55, Low=15, Medium=40.
 
 ## Failure Owners
 
-Failure-owner counts: missing KG fact=2, bad retrieval plan=1, bad synthesis=0, bad ground truth=0, coverage gap=91.
+Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, bad ground truth=0, coverage gap=91.
 
 | Failure owner | Query/corpus tuples |
 |---|---:|
-| missing KG fact | 2 |
+| missing KG fact | 1 |
 | bad retrieval plan | 1 |
 | bad synthesis | 0 |
 | bad ground truth | 0 |
@@ -48,7 +48,7 @@ Failure-owner counts: missing KG fact=2, bad retrieval plan=1, bad synthesis=0, 
 | Q010 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q010 | Low | True Loop | pass | none | deterministic smoke | status `resolved`, expected `resolved` |
 | Q011 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
-| Q012 | Low | Mercury ML | partial | missing KG fact | fixture binding | sklearn importers: 89 rows; distribution mapping missing |
+| Q012 | Low | Mercury ML | pass | none | fixture binding | sklearn importers: 89 rows; distribution mapping present |
 | Q013 | Low | Mercury ML | pass | none | deterministic smoke | caller_count=1, expected >= 1 |
 | Q014 | Low | Unspecified fixture | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q015 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
