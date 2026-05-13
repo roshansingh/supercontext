@@ -71,4 +71,4 @@ The current curated aliases are intentionally small and must stay covered by tes
 
 - `source/kg/normalization/python/imports.py`
 - `tests/test_import_normalization.py`
-- `docs/evaluation/PRODUCT-QUERY-SET-RUN-2026-05-12.md`
+- `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`

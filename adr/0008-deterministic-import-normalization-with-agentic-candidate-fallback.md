@@ -211,11 +211,7 @@ What is still pending:
 - Cross-repo package-to-repo linking.
 - Vulnerability/license/transitive dependency analysis.
 
-Evaluation evidence:
-
-- `docs/evaluation/LOW-QUERY-RERUN-IMPORT-NORMALIZATION-2026-05-06.md`
-- `docs/evaluation/LOW-QUERY-RERUN-TRUE-LOOP-PARSER-BACKED-2026-05-08.md`
-- `docs/evaluation/MEDIUM-QUERY-AGGREGATION-RUN-2026-05-08.md`
+Evaluation evidence is summarized in `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`.
 
 ## Relationship to Existing ADRs
 
@@ -262,7 +258,7 @@ Import normalization complements deterministic symbol lookup:
 
 ## References
 
-- `source/KG-QUERY-SMOKE-TESTS.md`
+- `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`
 - `source/kg/extraction/python/ast_extractor.py`
 - `source/kg/normalization/python/imports.py`
 - `source/kg/extraction/typescript/compiler_api_extractor.py`

@@ -89,7 +89,7 @@ npm ci
 python -m pip install -r requirements-dev.txt
 python -m unittest tests.test_baseline_drift tests.test_product_query_matrix_drift
 python -m source.scripts.compare_snapshot_baseline data/kg_runs/<snapshot_dir> --baseline tests/baselines/kg_counts/<corpus_name>.json
-python -m source.scripts.run_product_validation --query-matrix-md-out docs/evaluation/PRODUCT-QUERY-SET-RUN-2026-05-12.md
+python -m source.scripts.run_product_validation --query-matrix-md-out docs/evaluation/PRODUCT-QUERY-SET-RUN.md
 ```
 
 If drift is intentional, update the matching baseline JSON with `source.scripts.capture_snapshot_baseline`, update `docs/evaluation/PRODUCT-QUERY-SET-RUN-EXPECTED.json` when matrix counts change, and add a short note to `tests/baselines/kg_counts/README.md` or the PR description explaining the count movement.

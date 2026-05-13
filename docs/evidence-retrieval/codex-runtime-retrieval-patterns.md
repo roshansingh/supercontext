@@ -148,7 +148,7 @@ This is most visible in the architecture section and in the recommendation that 
 
 Reference:
 
-- [`docs/overall-architecture/claude-code-research.md`](/Users/maruti/work/bettercontext/docs/overall-architecture/claude-code-research.md)
+- [`docs/overall-architecture/claude-code-research.md`](../overall-architecture/claude-code-research.md)
 
 ### Codex architecture note
 
@@ -162,7 +162,7 @@ It treats:
 
 Reference:
 
-- [`docs/overall-architecture/codex-code-research.md`](/Users/maruti/work/bettercontext/docs/overall-architecture/codex-code-research.md)
+- [`docs/overall-architecture/codex-code-research.md`](../overall-architecture/codex-code-research.md)
 
 ### Synthesis
 

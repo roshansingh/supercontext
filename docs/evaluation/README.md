@@ -2,7 +2,7 @@
 
 Current canonical report: [`CANONICAL-VALIDATION-REPORT.md`](CANONICAL-VALIDATION-REPORT.md).
 
-Older evaluation run artifacts in this folder are historical snapshots. This includes dated run reports, goldset answer/judgement reports, contract-reconciliation runs, linking smokes, and symbol-query smokes. `source.scripts.run_product_validation` regenerates only the canonical report; older files are retained only for audit history and comparison.
+Older dated run reports, goldset answer/judgement reports, contract-reconciliation runs, linking smokes, and symbol-query smokes were removed after being superseded by the canonical report. `source.scripts.run_product_validation` regenerates only the canonical report.
 
 Regenerate the canonical report with:
 

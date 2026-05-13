@@ -119,7 +119,7 @@ A first implementation slice in `source/` runs the ontology shape locally agains
 - **Coverage row shape.** Spec §7 fields include `subject_id`, `last_seen_at`, `window_start`, `window_end`. v0 collapses to `tenant_id, predicate, scope_ref, state, source_system, checked_at`. Restore the full shape when Tool Query Contract ADR locks coverage semantics.
 - **Polyglot ingestion.** v0 handles Python and TypeScript/JavaScript only. Other languages emit no entities or facts; loud-refusal-at-ingestion (per `BACKLOG.md`) not yet wired.
 
-The v0 slice is sufficient to validate the ontology shape against real codebases (smoke tests in `source/KG-QUERY-SMOKE-TESTS.md` and evaluation runs under `docs/evaluation/`). Each gap above carries a revisit trigger in `BACKLOG.md`.
+The v0 slice is sufficient to validate the ontology shape against real codebases (summarized in `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`). Each gap above carries a revisit trigger in `BACKLOG.md`.
 
 ## References
 

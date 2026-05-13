@@ -188,7 +188,7 @@ What exists now:
 - Extractors emit source-code-backed evidence rows for entities and facts with `repo`, `commit_sha`, `path`, `line_start`, and `line_end` in `bytes_ref`.
 - The local CLI exposes `evidence-for-call`, which returns the indexed `CALLS` fact plus coordinate evidence for a caller/callee pair.
 - Symbol and path queries return evidence samples from the indexed facts, which is enough for local evaluation and smoke tests.
-- Evaluation evidence is recorded in `docs/evaluation/SYMBOL-QUERY-SURFACES-SMOKE-2026-05-08.md` and `docs/evaluation/MIXED-CALL-IMPORT-PATH-RUN-2026-05-08.md`.
+- Current evaluation evidence is summarized in `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`.
 
 What is still pending:
 

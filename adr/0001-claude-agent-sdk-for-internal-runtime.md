@@ -93,7 +93,5 @@ What is still pending:
 - `PRD.md` §3 (vision), §6.2 (MCP server surface), §6.3 (PR bot), §7 (UX principles — refusal, provenance), §8 (architecture, no-egress posture), §13 (risks: MCP fork mitigation)
 - `docs/overall-architecture/claude-code-research.md` §3 (OSS code-search landscape), §4 (Claude Agent SDK detail — hooks, subagents, MCP, permissions), §7 (Product 1 architecture diagram showing layers A/B/C), §8 (open questions)
 - `docs/overall-architecture/codex-code-research.md` §4 (Claude Agent SDK assessment — strong orchestration, weak as sole retrieval substrate), §7 Recommendation 3 (do not ship pure agent-over-local-files), §8 Layer 4 (agentic interface), §11 (final architectural posture)
-- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude vs OpenAI SDK side-by-side comparison), §4 (why V2 differs from v0.1), §5 (skills resolution), §6 (operational implications), §7 (swap clause)
-- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` v0.1 (Codex, 2026-04-27, superseded — preserved for attribution; alternatives weighing that V2 rebalances)
-- `docs/agentic-layer/AGENTIC-SKILLS-NOTE.md` v0.1 (2026-04-27, deferred question now resolved in V2 §5)
+- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md` §3 (Claude vs OpenAI SDK side-by-side comparison), §4 (why V2 differs from the earlier OpenAI Agents SDK draft), §5 (skills resolution), §6 (operational implications), §7 (swap clause)
 - `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
