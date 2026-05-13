@@ -32,6 +32,16 @@ class PackagingMetadataTest(unittest.TestCase):
             module = importlib.import_module(module_name)
             self.assertTrue(callable(getattr(module, function_name)))
 
+    def test_console_script_targets_are_in_discovered_packages(self) -> None:
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+        for target in data["project"]["scripts"].values():
+            module_name = target.split(":", maxsplit=1)[0]
+            package_name = module_name.rsplit(".", maxsplit=1)[0]
+            package_path = ROOT.joinpath(*package_name.split("."))
+            with self.subTest(package=package_name):
+                self.assertTrue((package_path / "__init__.py").exists())
+
     def test_script_modules_render_help(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
