@@ -198,7 +198,7 @@ def extract_typescript_express_routes(
             continue
         file_path = repo.root / str(relative_path)
         scanned = ScannedFile(path=file_path, relative_path=str(relative_path), text="", lines=())
-        for row in parsed_file.get("express_routes", []):
+        for row in parsed_file.get("server_routes", parsed_file.get("express_routes", [])):
             if not isinstance(row, dict):
                 continue
             path = row.get("path")

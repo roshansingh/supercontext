@@ -355,6 +355,8 @@ class EndpointExtractionTest(unittest.TestCase):
                 "app.post(computed, handler);\n"
                 "app.route({ method, url: '/skip-method', handler });\n"
                 "app.route({ method: ['GET', 'POST'], url: '/skip-array-method', handler });\n"
+                "app.route({ ...{ method: 'GET' }, url: '/skip-spread-method', handler });\n"
+                "app.route({ ['method']: method, url: '/skip-computed-method', handler });\n"
                 "router.get(`/skip/${id}`, handler);\n"
                 "function handler() { return undefined; }\n",
                 encoding="utf-8",
@@ -388,6 +390,8 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertNotIn("/skip", _methods_by_path(routes))
         self.assertNotIn("/skip-method", _methods_by_path(routes))
         self.assertNotIn("/skip-array-method", _methods_by_path(routes))
+        self.assertNotIn("/skip-spread-method", _methods_by_path(routes))
+        self.assertNotIn("/skip-computed-method", _methods_by_path(routes))
 
     def test_typescript_fastify_and_koa_require_receivers_are_parser_backed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

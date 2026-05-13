@@ -596,6 +596,7 @@ function fastifyRouteObject(node, sourceFile, receivers) {
   if (!ts.isIdentifier(node.expression.expression) || !receivers.has(node.expression.expression.text)) return null;
   if (node.arguments.length < 1 || !ts.isObjectLiteralExpression(node.arguments[0])) return null;
   const routeObject = node.arguments[0];
+  if (objectLiteralHasDynamicProperty(routeObject)) return null;
   const pathNode = objectLiteralProperty(routeObject, "url") ?? objectLiteralProperty(routeObject, "path");
   const hasMethodProperty = objectLiteralHasProperty(routeObject, "method");
   const methodNode = objectLiteralProperty(routeObject, "method");
@@ -755,6 +756,17 @@ function objectLiteralHasProperty(objectNode, propertyName) {
     }
   }
   return false;
+}
+
+function objectLiteralHasDynamicProperty(objectNode) {
+  if (!ts.isObjectLiteralExpression(objectNode)) return false;
+  return objectNode.properties.some(
+    (property) =>
+      ts.isSpreadAssignment(property) ||
+      ((ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property) || ts.isMethodDeclaration(property)) &&
+        property.name != null &&
+        ts.isComputedPropertyName(property.name))
+  );
 }
 
 function axiosCreateClientInfo(name, initializer, sourceFile, axiosLocals, bindings) {
@@ -1144,13 +1156,15 @@ for (const relativePath of files) {
   const symbols = collectSymbols(sourceFile);
   const axiosLocals = collectAxiosLocals(sourceFile);
   const literalBindings = collectTopLevelLiteralBindings(sourceFile);
+  const serverRoutes = collectServerRoutes(sourceFile);
   output[relativePath] = {
     parse_diagnostics: sourceFile.parseDiagnostics.map((diagnostic) => ({
       message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
       line: diagnostic.start == null ? 1 : lineOf(sourceFile, diagnostic.start),
     })),
     imports: collectImports(sourceFile),
-    express_routes: collectServerRoutes(sourceFile),
+    server_routes: serverRoutes,
+    express_routes: serverRoutes,
     client_endpoint_calls: collectClientEndpointCalls(sourceFile),
     module_clients: collectModuleClients(sourceFile, axiosLocals, literalBindings),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
