@@ -40,7 +40,7 @@ For Apache/WSGI domainless config, future implementation should emit:
 - `DeployTarget` entity with stable identity such as `{type: "wsgi", target: "/srv/app/wsgi.py"}`.
 - `DEPLOYS_VIA_CONFIG` fact from the `Service` entity to the deploy target.
 - Evidence coordinates for the config line that defines the deploy target.
-- Qualifier metadata such as `source_kind: "apache_wsgi"`, `config_path`, `entrypoint_kind: "wsgi"`, and optional `route_path: "/"`.
+- Qualifier metadata such as `source_kind: "apache_wsgi"`, repo-relative `path`, `entrypoint_kind: "wsgi"`, and optional `route_path: "/"`.
 
 It must not emit:
 
