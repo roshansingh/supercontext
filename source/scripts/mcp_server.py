@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import socket
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -26,7 +27,7 @@ def main() -> None:
         parser.error("v0 has no authentication; bind to loopback or pass --allow-public explicitly")
 
     kg = KgSnapshot(args.snapshot)
-    server = ThreadingHTTPServer((args.host, args.port), _handler_class(kg))
+    server = _server_class_for_host(args.host)((args.host, args.port), _handler_class(kg))
     print(f"Supercontext MCP v0 server listening on http://{_format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
     try:
         server.serve_forever()
@@ -116,6 +117,20 @@ def _format_host_for_url(host: str) -> str:
     return host
 
 
+def _server_class_for_host(host: str) -> type[ThreadingHTTPServer]:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return ThreadingHTTPServer
+    if address.version != 6:
+        return ThreadingHTTPServer
+
+    class IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+
+    return IPv6ThreadingHTTPServer
+
+
 class _JsonPayloadError(ValueError):
     pass
 
@@ -169,8 +184,8 @@ def _handle_json_rpc(kg: KgSnapshot, request: object) -> JsonObject | None:
             return None if is_notification else _json_rpc_result(request_id, {})
     except ValueError as exc:
         return None if is_notification else _json_rpc_error(request_id, -32602, str(exc))
-    except Exception as exc:
-        return None if is_notification else _json_rpc_error(request_id, -32000, str(exc))
+    except Exception:
+        return None if is_notification else _json_rpc_error(request_id, -32000, "Internal MCP server error")
     return None if is_notification else _json_rpc_error(request_id, -32601, f"Unsupported MCP method: {method}")
 
 
