@@ -349,6 +349,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 "app.route({ method: 'PATCH', path: '/orders/:id', handler });\n"
                 "app.route({ url: '/all-methods', handler });\n"
                 "router.put('/users/:id', handler);\n"
+                "router.del('/old-users/:id', handler);\n"
                 "legacyRouter.delete('/legacy-users/:id', handler);\n"
                 "const computed = '/skip';\n"
                 "const method = 'GET';\n"
@@ -379,6 +380,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 "/all-methods": {"ANY"},
                 "/health": {"GET"},
                 "/legacy-users/:id": {"DELETE"},
+                "/old-users/:id": {"DELETE"},
                 "/orders": {"POST"},
                 "/orders/:id": {"PATCH"},
                 "/users/:id": {"PUT"},
@@ -386,6 +388,7 @@ class EndpointExtractionTest(unittest.TestCase):
         )
         self.assertEqual(_source_kinds_by_path(routes)["/health"], {"fastify_get"})
         self.assertEqual(_source_kinds_by_path(routes)["/orders"], {"fastify_route"})
+        self.assertEqual(_source_kinds_by_path(routes)["/old-users/:id"], {"koa_delete"})
         self.assertEqual(_source_kinds_by_path(routes)["/users/:id"], {"koa_put"})
         self.assertNotIn("/skip", _methods_by_path(routes))
         self.assertNotIn("/skip-method", _methods_by_path(routes))

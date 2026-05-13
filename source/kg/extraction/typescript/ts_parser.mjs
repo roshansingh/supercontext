@@ -139,6 +139,7 @@ const ASSIGNMENT_OPERATORS = new Set([
   ts.SyntaxKind.QuestionQuestionEqualsToken,
 ]);
 const EXPRESS_ROUTE_METHODS = new Set([...HTTP_METHODS, "all"]);
+const KOA_ROUTE_METHODS = new Set([...EXPRESS_ROUTE_METHODS, "del"]);
 
 function stringLiteralValue(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
@@ -677,8 +678,9 @@ function collectKoaReceivers(sourceFile) {
 
 function directKoaRoute(node, sourceFile, receivers) {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
-  const method = node.expression.name.text;
-  if (!EXPRESS_ROUTE_METHODS.has(method)) return null;
+  const rawMethod = node.expression.name.text;
+  if (!KOA_ROUTE_METHODS.has(rawMethod)) return null;
+  const method = rawMethod === "del" ? "delete" : rawMethod;
   if (!ts.isIdentifier(node.expression.expression) || !receivers.has(node.expression.expression.text)) return null;
   if (node.arguments.length < 1) return null;
   const routePath = stringLiteralValue(node.arguments[0]);
