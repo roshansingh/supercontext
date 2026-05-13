@@ -22,8 +22,8 @@ PRIVATE_TOKENS = (
 )
 
 PRIVATE_PATH_TOKENS = (
-    "/Users/maruti/",
-    "/home/ubuntu/",
+    "/Users/",
+    "/home/",
 )
 
 PUBLIC_FILE_ROOTS = (
