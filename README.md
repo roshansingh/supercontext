@@ -18,9 +18,9 @@ License: TBD before public OSS release.
 python -m pip install -e ".[yaml]"
 npm ci
 
-bettercontext-build-kg --repo /path/to/repo --out data/kg_runs/example
-bettercontext-query-kg --snapshot data/kg_runs/example summary
-bettercontext-query-kg --snapshot data/kg_runs/example top-dependencies --limit 10
+bettercontext-build-kg --repo /path/to/repo --out ./data/kg_runs/example
+bettercontext-query-kg --snapshot ./data/kg_runs/example summary
+bettercontext-query-kg --snapshot ./data/kg_runs/example top-dependencies --limit 10
 ```
 
 Build a multi-repo snapshot when repos depend on each other through package manifests:
@@ -29,13 +29,13 @@ Build a multi-repo snapshot when repos depend on each other through package mani
 bettercontext-build-multi-kg \
   --repo /path/to/service-a \
   --repo /path/to/service-b \
-  --out data/kg_runs/example_org
+  --out ./data/kg_runs/example_org
 ```
 
 Run the local MCP v0 server over an existing snapshot:
 
 ```bash
-bettercontext-mcp-server --snapshot data/kg_runs/example --port 3845
+bettercontext-mcp-server --snapshot ./data/kg_runs/example --port 3845
 ```
 
 The server is read-only and local-development oriented. Keep the default loopback bind unless you intentionally pass `--allow-public` on a trusted network.
