@@ -12,6 +12,7 @@ from source.kg.product.mcp_tools import TOOL_NAMES, call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
     _JsonPayloadError,
+    MCP_PROTOCOL_VERSION,
     _content_length,
     _decode_json_payload,
     _format_host_for_url,
@@ -117,6 +118,10 @@ class McpToolsTest(unittest.TestCase):
     def test_json_rpc_lists_and_calls_tools(self) -> None:
         with _fixture_snapshot() as kg:
             initialized = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}})
+            initialized_with_client_version = _handle_json_rpc(
+                kg,
+                {"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {"protocolVersion": "2099-01-01"}},
+            )
             ping = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 9, "method": "ping"})
             listed = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
             batch = _handle_json_rpc_payload(
@@ -137,6 +142,8 @@ class McpToolsTest(unittest.TestCase):
             )
 
         self.assertEqual(initialized["result"]["serverInfo"]["name"], "supercontext-local")
+        self.assertEqual(initialized["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
+        self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(ping["result"], {})
         self.assertEqual(batch[0]["id"], 3)
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")

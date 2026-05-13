@@ -216,11 +216,8 @@ def _valid_request_id(value: object) -> bool:
 
 
 def _initialize_result(params: JsonObject) -> JsonObject:
-    protocol_version = params.get("protocolVersion")
-    if not isinstance(protocol_version, str) or not protocol_version.strip():
-        protocol_version = MCP_PROTOCOL_VERSION
     return {
-        "protocolVersion": protocol_version,
+        "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {}},
         "serverInfo": {"name": "supercontext-local", "version": "0.1.0"},
     }
