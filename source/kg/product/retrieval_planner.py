@@ -204,8 +204,14 @@ def _slug(value: str) -> str:
 def _bounded_limit(value: object) -> int:
     if isinstance(value, bool):
         raise ValueError("Retrieval limit must be an integer")
-    try:
-        raw_limit = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Retrieval limit must be an integer") from exc
+    if isinstance(value, int):
+        raw_limit = value
+    elif isinstance(value, str):
+        stripped = value.strip()
+        signless = stripped[1:] if stripped[:1] in {"+", "-"} else stripped
+        if not signless.isdecimal():
+            raise ValueError("Retrieval limit must be an integer")
+        raw_limit = int(stripped)
+    else:
+        raise ValueError("Retrieval limit must be an integer")
     return min(max(1, raw_limit), 100)
