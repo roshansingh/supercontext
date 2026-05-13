@@ -33,6 +33,8 @@ class RetrievalAnchor:
 
     @classmethod
     def from_mapping(cls, row: JsonObject) -> "RetrievalAnchor":
+        if not isinstance(row, dict):
+            raise ValueError("Retrieval anchor mapping must be a JSON object")
         raw_kind = row.get("kind")
         value = row.get("value")
         if not isinstance(raw_kind, str) or not raw_kind.strip():
@@ -63,11 +65,14 @@ class RetrievalStep:
         required_value = self.args.get(required_arg)
         if not isinstance(required_value, str) or not required_value.strip():
             raise ValueError(f"Retrieval step command {self.command} requires a non-empty string {required_arg} arg")
-        _bounded_limit(self.args.get("limit", 25))
+        normalized_args = dict(self.args)
+        normalized_args[required_arg] = required_value.strip()
+        normalized_args["limit"] = _bounded_limit(self.args.get("limit", 25))
+        object.__setattr__(self, "args", normalized_args)
         if not isinstance(self.purpose, str) or not self.purpose.strip():
             raise ValueError("Retrieval step requires a non-empty string purpose")
 
-    def run(self, kg: KgSnapshot) -> JsonObject:
+    def run(self, kg: KgSnapshot) -> JsonObject | list[JsonObject]:
         limit = _bounded_limit(self.args.get("limit", 25))
         if self.command == "deploy_mappings":
             return kg.deploy_mappings(target_query=str(self.args["target"]), limit=limit)
@@ -197,4 +202,8 @@ def _slug(value: str) -> str:
 
 
 def _bounded_limit(value: object) -> int:
-    return min(max(1, int(value)), 100)
+    try:
+        raw_limit = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Retrieval limit must be an integer") from exc
+    return min(max(1, raw_limit), 100)

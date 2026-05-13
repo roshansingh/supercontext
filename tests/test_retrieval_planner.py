@@ -64,6 +64,10 @@ class RetrievalPlannerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-empty string value"):
             plan_retrieval_steps_from_mappings(({"kind": "Domain", "value": "  "},))
 
+    def test_non_mapping_anchor_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be a JSON object"):
+            plan_retrieval_steps_from_mappings((["Domain", "api.example.com"],))  # type: ignore[list-item]
+
     def test_retrieval_step_runs_mapped_snapshot_method(self) -> None:
         cases = (
             (
@@ -88,7 +92,7 @@ class RetrievalPlannerTest(unittest.TestCase):
             ),
             (
                 RetrievalStep("package_shared_client", "modules_importing", {"package": "shared_client", "limit": 5}, "Find imports."),
-                {"method": "modules_importing", "package": "shared_client", "limit": 5},
+                [{"method": "modules_importing", "package": "shared_client", "limit": 5}],
                 ("modules_importing", "shared_client", 5),
             ),
             (
@@ -129,8 +133,20 @@ class RetrievalPlannerTest(unittest.TestCase):
             RetrievalStep("domain", "domain_references", {"domain": "  "}, "Find domain.")
         with self.assertRaises(ValueError):
             RetrievalStep("domain", "domain_references", {"domain": "api.example.com", "limit": "many"}, "Find domain.")
+        with self.assertRaises(ValueError):
+            RetrievalStep("domain", "domain_references", {"domain": "api.example.com", "limit": None}, "Find domain.")
         with self.assertRaisesRegex(ValueError, "non-empty string purpose"):
             RetrievalStep("domain", "domain_references", {"domain": "api.example.com"}, "")
+
+    def test_step_args_are_normalized_at_construction(self) -> None:
+        step = RetrievalStep(
+            "domain",
+            "domain_references",
+            {"domain": " api.example.com ", "limit": 200},
+            "Find domain.",
+        )
+
+        self.assertEqual(step.args, {"domain": "api.example.com", "limit": 100})
 
     def test_limit_boundaries_are_clamped(self) -> None:
         cases = ((-5, 1), (0, 1), (1, 1), (100, 100), (101, 100))
@@ -163,9 +179,9 @@ class _FakeSnapshot:
         self.calls.append(("event_channels", channel_query, limit))
         return {"method": "event_channels", "channel": channel_query, "limit": limit}
 
-    def modules_importing(self, package: str, limit: int = 25) -> JsonObject:
+    def modules_importing(self, package: str, limit: int = 25) -> list[JsonObject]:
         self.calls.append(("modules_importing", package, limit))
-        return {"method": "modules_importing", "package": package, "limit": limit}
+        return [{"method": "modules_importing", "package": package, "limit": limit}]
 
     def repo_dependencies(self, repo: str, limit: int = 25) -> JsonObject:
         self.calls.append(("repo_dependencies", repo, limit))
