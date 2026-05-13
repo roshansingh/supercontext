@@ -291,7 +291,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(
             coverage_reasons,
             {
-                ("EXPOSES_ENDPOINT", "parser_backed_js_ts_route_extraction_partial_express_only"),
+                ("EXPOSES_ENDPOINT", "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only"),
                 ("CALLS_ENDPOINT", "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only"),
             },
         )
@@ -332,6 +332,97 @@ class EndpointExtractionTest(unittest.TestCase):
         )
         self.assertEqual(_source_kinds_by_path(routes)["/123"], {"express_post"})
         self.assertNotIn("/mounted", _methods_by_path(routes))
+
+    def test_typescript_fastify_and_koa_routes_are_parser_backed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "server.ts"
+            source_path.write_text(
+                "import { fastify as makeFastify } from 'fastify';\n"
+                "import { Router } from '@koa/router';\n"
+                "import * as LegacyRouter from 'koa-router';\n"
+                "const app = makeFastify();\n"
+                "const router = new Router();\n"
+                "const legacyRouter = new LegacyRouter();\n"
+                "app.get('/health', handler);\n"
+                "app.route({ method: 'POST', url: '/orders', handler });\n"
+                "app.route({ method: 'PATCH', path: '/orders/:id', handler });\n"
+                "app.route({ url: '/all-methods', handler });\n"
+                "router.put('/users/:id', handler);\n"
+                "router.del('/old-users/:id', handler);\n"
+                "legacyRouter.delete('/legacy-users/:id', handler);\n"
+                "const computed = '/skip';\n"
+                "const method = 'GET';\n"
+                "app.post(computed, handler);\n"
+                "app.route({ method, url: '/skip-method', handler });\n"
+                "app.route({ method: ['GET', 'POST'], url: '/skip-array-method', handler });\n"
+                "app.route({ ...{ method: 'GET' }, url: '/skip-spread-method', handler });\n"
+                "app.route({ ['method']: method, url: '/skip-computed-method', handler });\n"
+                "router.get(`/skip/${id}`, handler);\n"
+                "function handler() { return undefined; }\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="node-api",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = extract_repo(repo)
+
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(routes),
+            {
+                "/all-methods": {"ANY"},
+                "/health": {"GET"},
+                "/legacy-users/:id": {"DELETE"},
+                "/old-users/:id": {"DELETE"},
+                "/orders": {"POST"},
+                "/orders/:id": {"PATCH"},
+                "/users/:id": {"PUT"},
+            },
+        )
+        self.assertEqual(_source_kinds_by_path(routes)["/health"], {"fastify_get"})
+        self.assertEqual(_source_kinds_by_path(routes)["/orders"], {"fastify_route"})
+        self.assertEqual(_source_kinds_by_path(routes)["/old-users/:id"], {"koa_delete"})
+        self.assertEqual(_source_kinds_by_path(routes)["/users/:id"], {"koa_put"})
+        self.assertNotIn("/skip", _methods_by_path(routes))
+        self.assertNotIn("/skip-method", _methods_by_path(routes))
+        self.assertNotIn("/skip-array-method", _methods_by_path(routes))
+        self.assertNotIn("/skip-spread-method", _methods_by_path(routes))
+        self.assertNotIn("/skip-computed-method", _methods_by_path(routes))
+
+    def test_typescript_fastify_and_koa_require_receivers_are_parser_backed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "server.cjs"
+            source_path.write_text(
+                "const fastify = require('fastify');\n"
+                "const Router = require('koa-router');\n"
+                "const app = fastify();\n"
+                "const router = Router();\n"
+                "app.delete('/sessions', handler);\n"
+                "router.patch('/profiles/:id', handler);\n"
+                "function handler() { return undefined; }\n",
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="node-cjs-api",
+                owner="test",
+                commit_sha="test-sha",
+                python_files=(),
+                typescript_files=(source_path,),
+            )
+            build = extract_repo(repo)
+
+        routes = _endpoint_rows(build, "EXPOSES_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(routes), {"/sessions": {"DELETE"}, "/profiles/:id": {"PATCH"}})
 
     def test_typescript_client_calls_are_parser_backed_for_fetch_and_axios(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

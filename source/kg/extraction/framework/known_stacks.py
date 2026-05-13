@@ -15,6 +15,9 @@ KNOWN_STACK_IMPORTS: dict[str, dict[str, str]] = {
         "flask": "web_framework",
     },
     "javascript": {
+        "@koa/router": "web_framework",
         "express": "web_framework",
+        "fastify": "web_framework",
+        "koa-router": "web_framework",
     },
 }

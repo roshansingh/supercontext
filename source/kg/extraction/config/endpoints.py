@@ -81,7 +81,7 @@ def extract_endpoints(
                 scope_ref={
                     "repo": repo.name,
                     "language": "javascript/typescript",
-                    "reason": "parser_backed_js_ts_route_extraction_partial_express_only",
+                    "reason": "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only",
                 },
                 state="partially_instrumented",
                 source_system=CONFIG_SOURCE_SYSTEM,
@@ -198,7 +198,7 @@ def extract_typescript_express_routes(
             continue
         file_path = repo.root / str(relative_path)
         scanned = ScannedFile(path=file_path, relative_path=str(relative_path), text="", lines=())
-        for row in parsed_file.get("express_routes", []):
+        for row in parsed_file.get("server_routes", parsed_file.get("express_routes", [])):
             if not isinstance(row, dict):
                 continue
             path = row.get("path")

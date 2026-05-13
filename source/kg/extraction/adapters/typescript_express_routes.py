@@ -19,7 +19,7 @@ class TypeScriptExpressRoutesAdapter:
         name="typescript-express-routes",
         languages=("javascript", "typescript"),
         file_kinds=("javascript", "typescript"),
-        framework_tags=("express",),
+        framework_tags=("express", "fastify", "koa", "@koa/router", "koa-router"),
         produces_predicates=("EXPOSES_ENDPOINT", "CALLS_ENDPOINT"),
         produces_entity_kinds=("Endpoint",),
         ontology_scope="mixed",

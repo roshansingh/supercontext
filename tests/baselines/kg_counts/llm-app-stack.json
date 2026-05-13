@@ -5,7 +5,7 @@
     "external_endpoint_suppressed": 8,
     "no_recognized_web_framework": 3,
     "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 3,
-    "parser_backed_js_ts_route_extraction_partial_express_only": 3,
+    "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 3,
     "unknown": 12,
     "unresolved_target": 936
   },

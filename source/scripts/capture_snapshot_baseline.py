@@ -11,6 +11,11 @@ from source.kg.core.models import JsonObject
 
 
 BASELINE_VERSION = 1
+NORMALIZED_COVERAGE_REASONS = {
+    "parser_backed_js_ts_route_extraction_partial_express_only": (
+        "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only"
+    ),
+}
 
 
 def main() -> None:
@@ -82,7 +87,7 @@ def _coverage_reason(row: JsonObject) -> str:
     if isinstance(scope_ref, dict):
         reason = scope_ref.get("reason")
         if isinstance(reason, str) and reason:
-            return reason
+            return NORMALIZED_COVERAGE_REASONS.get(reason, reason)
     return "unknown"
 
 
