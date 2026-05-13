@@ -47,23 +47,28 @@ Concretely:
 - Schema discipline imposed by MCP (small tool count, structured JSON) constrains the engine's expressiveness, which is desirable rather than limiting for the wedge use case.
 - Streamable HTTP transport requires customer egress rules to permit our endpoint; not unique to MCP.
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (v0, 2026-05-13)
 
-This ADR is not implemented as an MCP server yet.
+This ADR has a local-development MCP v0 skeleton.
 
 What exists now:
 
 - `source/scripts/query_kg.py` provides a local CLI prototype over the same KG facts that future MCP tools will query.
 - Implemented local query surfaces include `find-callers`, `find-callees`, `blast-radius`, `lookup-symbol`, `symbols-in-file`, `evidence-for-call`, `who-imports`, and `dependency-path`.
-- These CLI surfaces validate tool semantics and evidence shape, but they are not final MCP schemas.
+- `source/kg/product/mcp_tools.py` defines the eight ADR-0002 tool names with v0 JSON schemas and read-only handlers.
+- `source/scripts/mcp_server.py` exposes a dependency-free local JSON-RPC HTTP endpoint at `/mcp` with `initialize`, `tools/list`, `tools/call`, and `ping`.
+- v0 is single-request/single-response over plain HTTP. The ADR's streamable transport target remains a follow-up for real host compatibility work.
+- `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, and `blast_radius` return current KG-backed results.
+- `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
 
 What is still pending:
 
-- MCP server implementation.
 - OAuth/static-token auth modes.
-- Final JSON schemas for the eight PRD tools.
+- Host compatibility testing against real MCP clients.
+- Streamable HTTP transport beyond the current request/response v0 endpoint.
+- Cursor pagination and summary-then-drill-down behavior beyond v0 limits.
 - `supercontext://service/{name}/brief` resource.
-- Cursor pagination, resource auto-attach behavior, and host compatibility testing.
+- Resource auto-attach behavior.
 
 ## Alternatives considered
 

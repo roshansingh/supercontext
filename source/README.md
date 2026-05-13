@@ -12,13 +12,14 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - Links imported external packages to another indexed repo/service when a unique manifest package-name match exists.
 - Writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - Provides small query scripts for summary, callers, blast radius, and imports.
+- Provides a local read-only MCP v0 server skeleton over existing JSONL snapshots.
 - Provides a product-validation runner that converts goldset scenario plans into normalized evidence packets.
 - Provides a canonical validation runner for low/medium smoke checks plus goldset answer judgement.
 
 ## What It Does Not Do Yet
 
 - No Postgres or Apache AGE persistence.
-- No MCP server.
+- No production MCP auth, resource auto-attach, or hosted MCP deployment yet.
 - No PR bot.
 - No broad language coverage.
 - Multi-repo linking is manifest/package-name based only; it does not infer aliases with an LLM.
@@ -108,6 +109,33 @@ The app discovers org directories from `SUPERCONTEXT_ORGS_ROOT` and complete sna
 - Direct query: six direct `KgSnapshot` query surfaces remain available for debugging: `summary`, `find_callers`, `modules_importing`, `top_dependencies`, `blast_radius`, and `lookup_symbol`.
 
 Optional ground-truth JSON can be loaded from the sidebar for local evaluation. The OSS UI never imports private-goldset modules directly.
+
+## Local MCP Server
+
+The local MCP v0 server exposes the ADR-0002 tool names over a dependency-free JSON-RPC HTTP endpoint. It is read-only and does not build snapshots. v0 is single-request/single-response over plain HTTP; ADR-0002 streamable transport remains a follow-up.
+
+```bash
+python -m source.scripts.mcp_server --snapshot data/kg_runs/mercury_ml --port 3845
+```
+
+Supported JSON-RPC methods:
+
+- `initialize`
+- `tools/list`
+- `tools/call`
+- `ping`
+
+Current v0 tools are `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, and `deploy_blockers_for`. `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
+
+Security note: v0 has no authentication. Keep the default loopback bind (`127.0.0.1`). Do not expose it with `--host 0.0.0.0` unless you are on a trusted network and intentionally pass `--allow-public`.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:3845/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_services","arguments":{"query":"payments"}}}'
+```
 
 ## Run
 

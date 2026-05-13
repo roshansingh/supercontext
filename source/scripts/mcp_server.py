@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+from source.kg.core.models import JsonObject
+from source.kg.product.mcp_tools import call_tool, tool_definitions
+from source.kg.query.snapshot import KgSnapshot
+
+
+MCP_PROTOCOL_VERSION = "2025-03-26"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a local read-only Supercontext MCP v0 server.")
+    parser.add_argument("--snapshot", required=True, help="Directory containing JSONL KG snapshot files")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind. Defaults to 127.0.0.1.")
+    parser.add_argument("--port", type=int, default=3845, help="Port to bind. Defaults to 3845.")
+    parser.add_argument("--allow-public", action="store_true", help="Allow binding to non-loopback hosts. Unsafe without auth.")
+    args = parser.parse_args()
+    if not args.allow_public and args.host not in {"127.0.0.1", "localhost", "::1"}:
+        parser.error("v0 has no authentication; bind to loopback or pass --allow-public explicitly")
+
+    kg = KgSnapshot(args.snapshot)
+    server = ThreadingHTTPServer((args.host, args.port), _handler_class(kg))
+    print(f"Supercontext MCP v0 server listening on http://{args.host}:{args.port}/mcp", file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
+    class McpHandler(BaseHTTPRequestHandler):
+        server_version = "supercontext-local/0.1.0"
+
+        def do_GET(self) -> None:
+            if self.path == "/health":
+                self._write_json(200, {"status": "ok"})
+                return
+            self._write_json(404, {"error": "not_found"})
+
+        def do_POST(self) -> None:
+            if self.path != "/mcp":
+                self._write_json(404, {"error": "not_found"})
+                return
+            try:
+                payload = json.loads(self.rfile.read(_content_length(self)).decode("utf-8"))
+                if isinstance(payload, list):
+                    response = [row for row in (_handle_json_rpc(kg, item) for item in payload) if row is not None]
+                    if not response:
+                        self.send_response(204)
+                        self.end_headers()
+                        return
+                else:
+                    response = _handle_json_rpc(kg, payload)
+                    if response is None:
+                        self.send_response(204)
+                        self.end_headers()
+                        return
+            except Exception as exc:
+                response = _json_rpc_error(None, -32700, f"Invalid JSON-RPC request: {exc}")
+            self._write_json(200, response)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+        def _write_json(self, status: int, payload: object) -> None:
+            body = json.dumps(payload, sort_keys=True).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    # The captured KgSnapshot is shared across request threads. Server handlers
+    # must treat it as read-only; mutation belongs in snapshot rebuild commands.
+    return McpHandler
+
+
+def _content_length(handler: BaseHTTPRequestHandler) -> int:
+    raw_value = handler.headers.get("Content-Length")
+    if raw_value is None:
+        raise ValueError("Missing Content-Length header")
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("Content-Length must be an integer") from exc
+    if value < 0 or value > 1_000_000:
+        raise ValueError("Content-Length is outside the accepted range")
+    return value
+
+
+def _handle_json_rpc(kg: KgSnapshot, request: object) -> JsonObject | None:
+    if not isinstance(request, dict):
+        return _json_rpc_error(None, -32600, "JSON-RPC request must be an object")
+    is_notification = "id" not in request
+    request_id = request.get("id")
+    if request.get("jsonrpc") != "2.0":
+        return None if is_notification else _json_rpc_error(request_id, -32600, "JSON-RPC version must be 2.0")
+    method = request.get("method")
+    if not isinstance(method, str) or not method:
+        return None if is_notification else _json_rpc_error(request_id, -32600, "JSON-RPC method must be a non-empty string")
+    params = request.get("params", {})
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        return None if is_notification else _json_rpc_error(request_id, -32602, "JSON-RPC params must be an object")
+
+    try:
+        if method == "initialize":
+            return None if is_notification else _json_rpc_result(request_id, _initialize_result(params))
+        if method == "tools/list":
+            return None if is_notification else _json_rpc_result(request_id, {"tools": tool_definitions()})
+        if method == "tools/call":
+            return None if is_notification else _json_rpc_result(request_id, _tools_call_result(kg, params))
+        if method == "ping":
+            return None if is_notification else _json_rpc_result(request_id, {})
+    except ValueError as exc:
+        return None if is_notification else _json_rpc_error(request_id, -32602, str(exc))
+    except Exception as exc:
+        return None if is_notification else _json_rpc_error(request_id, -32000, str(exc))
+    return None if is_notification else _json_rpc_error(request_id, -32601, f"Unsupported MCP method: {method}")
+
+
+def _initialize_result(params: JsonObject) -> JsonObject:
+    protocol_version = params.get("protocolVersion")
+    if not isinstance(protocol_version, str) or not protocol_version.strip():
+        protocol_version = MCP_PROTOCOL_VERSION
+    return {
+        "protocolVersion": protocol_version,
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": "supercontext-local", "version": "0.1.0"},
+    }
+
+
+def _tools_call_result(kg: KgSnapshot, params: JsonObject) -> JsonObject:
+    name = params.get("name")
+    arguments = params.get("arguments", {})
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("tools/call requires a non-empty string name")
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise ValueError("tools/call arguments must be an object")
+    result = call_tool(kg, name.strip(), arguments)
+    is_error = result.get("status") == "unsupported_by_current_kg"
+    return {
+        "content": [{"type": "text", "text": json.dumps(result, indent=2, sort_keys=True)}],
+        "structuredContent": result,
+        "isError": is_error,
+    }
+
+
+def _json_rpc_result(request_id: object, result: JsonObject) -> JsonObject:
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _json_rpc_error(request_id: object, code: int, message: str) -> JsonObject:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+if __name__ == "__main__":
+    main()
