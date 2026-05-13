@@ -90,6 +90,17 @@ class StreamlitAppImportsTest(unittest.TestCase):
     def test_jsonable_stringifies_non_json_values(self) -> None:
         self.assertEqual(streamlit_app._jsonable({"path": Path("a/b")}), {"path": "a/b"})
 
+    def test_ground_truth_loader_requires_json_object(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ground_truth.json"
+            path.write_text('{"Q001": {"answer": "ok"}}', encoding="utf-8")
+
+            self.assertEqual(streamlit_app._load_ground_truth(str(path)), {"Q001": {"answer": "ok"}})
+
+            path.write_text('["not", "an", "object"]', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Ground truth JSON must be an object"):
+                streamlit_app._load_ground_truth(str(path))
+
 
 if __name__ == "__main__":
     unittest.main()
