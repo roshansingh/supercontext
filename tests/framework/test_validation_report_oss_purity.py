@@ -36,6 +36,7 @@ PUBLIC_FILES = (
     Path("README.md"),
     Path("pyproject.toml"),
     Path("package.json"),
+    Path("package-lock.json"),
     Path("requirements-dev.txt"),
 )
 
