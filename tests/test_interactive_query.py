@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from source.kg.agent.interactive import _compact_kg_state
 from source.kg.product.interactive_query import execute_interactive_plan, validate_interactive_plan
 
 
@@ -63,6 +64,19 @@ class InteractiveQueryTest(unittest.TestCase):
 
         for token in ("examples/private-goldset", "private-goldset"):
             self.assertNotIn(token, text.lower())
+
+    def test_compact_kg_state_matches_snapshot_summary_shape(self) -> None:
+        compact = _compact_kg_state(
+            {
+                "entity_kinds": {"ExternalPackage": 2},
+                "predicates": {"IMPORTS": 3},
+                "coverage": [{"source": "repo-a"}, {"source": "repo-b"}],
+            }
+        )
+
+        self.assertEqual(compact["entity_counts"], {"ExternalPackage": 2})
+        self.assertEqual(compact["predicate_counts"], {"IMPORTS": 3})
+        self.assertEqual(compact["coverage_count"], 2)
 
 
 class _FakeKg:

@@ -174,10 +174,12 @@ EvidencePacket:
 
 
 def _compact_kg_state(kg_state: JsonObject) -> JsonObject:
+    coverage = kg_state.get("coverage")
+    coverage_count = len(coverage) if isinstance(coverage, list) else kg_state.get("coverage_count")
     return {
-        "entity_counts": kg_state.get("entity_counts") or kg_state.get("entities_by_kind") or {},
-        "predicate_counts": kg_state.get("predicate_counts") or kg_state.get("facts_by_predicate") or {},
-        "coverage_count": kg_state.get("coverage_count"),
+        "entity_counts": kg_state.get("entity_counts") or kg_state.get("entity_kinds") or {},
+        "predicate_counts": kg_state.get("predicate_counts") or kg_state.get("predicates") or {},
+        "coverage_count": coverage_count,
     }
 
 
