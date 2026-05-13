@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install JavaScript parser dependencies
+        run: npm ci
+
       - name: Compile source
         run: python -m compileall -q source
 
