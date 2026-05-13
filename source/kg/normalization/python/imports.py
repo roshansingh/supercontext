@@ -17,6 +17,18 @@ class _DistributionResolution(Enum):
     AMBIGUOUS = "ambiguous"
 
 
+_KNOWN_IMPORT_ROOT_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
+    "attr": ("attrs",),
+    "bs4": ("beautifulsoup4",),
+    "cv2": ("opencv-python", "opencv-python-headless", "opencv-contrib-python"),
+    "dateutil": ("python-dateutil",),
+    "pil": ("Pillow",),
+    "pkg_resources": ("setuptools",),
+    "sklearn": ("scikit-learn",),
+    "yaml": ("PyYAML",),
+}
+
+
 @dataclass(frozen=True)
 class ImportRef:
     raw_target: str
@@ -172,7 +184,27 @@ class PythonImportNormalizer:
                 return self.declared_dependencies[normalized_distribution]
         if len(distributions) == 1:
             return distributions[0]
+        known_distribution = self._known_distribution_name(import_root)
+        if known_distribution:
+            return known_distribution
         return None
+
+    def _known_distribution_name(self, import_root: str) -> str | _DistributionResolution | None:
+        candidates = _KNOWN_IMPORT_ROOT_DISTRIBUTIONS.get(import_root.lower(), ())
+        if not candidates:
+            return None
+        declared_matches = [
+            self.declared_dependencies[candidate.replace("_", "-").lower()]
+            for candidate in candidates
+            if candidate.replace("_", "-").lower() in self.declared_dependencies
+        ]
+        if len(declared_matches) == 1:
+            return declared_matches[0]
+        if len(declared_matches) > 1:
+            return _DistributionResolution.AMBIGUOUS
+        if len(candidates) == 1:
+            return candidates[0]
+        return _DistributionResolution.AMBIGUOUS
 
     def _declared_dependencies(self) -> dict[str, str]:
         pyproject = self.repo.root / "pyproject.toml"

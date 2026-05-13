@@ -14,3 +14,4 @@ This directory contains accepted architecture decisions for BetterContext. ADRs 
 | [0008](0008-deterministic-import-normalization-with-agentic-candidate-fallback.md) | Accepted | Start import normalization deterministically, with agentic candidate fallback later. |
 | [0009](0009-deterministic-reverse-dependency-queries-with-agentic-candidate-enrichment.md) | Accepted | Use deterministic reverse dependency queries with agentic candidate enrichment later. |
 | [0010](0010-deploy-target-without-domain.md) | Accepted | Represent deploy targets without domains as deploy-only facts. |
+| [0011](0011-python-import-distribution-aliases.md) | Accepted | Use declared- and metadata-backed Python import distribution aliases. |

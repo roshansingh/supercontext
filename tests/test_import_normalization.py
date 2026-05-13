@@ -90,6 +90,156 @@ class PythonImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.category, "third_party")
             self.assertEqual(normalized.distribution_name, "beautifulsoup4")
 
+    def test_known_import_root_fallback_maps_declared_dependency_when_metadata_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[project]\ndependencies = [\"scikit-learn\", \"Pillow\", \"PyYAML\"]\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={},
+            ):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            cases = {
+                "sklearn": "scikit-learn",
+                "PIL": "Pillow",
+                "yaml": "PyYAML",
+            }
+            for raw_import, expected_distribution in cases.items():
+                with self.subTest(raw_import=raw_import):
+                    normalized = normalizer.normalize(
+                        ImportRef(
+                            raw_target=raw_import,
+                            line=1,
+                            import_root=raw_import.split(".", 1)[0],
+                            imported_names=(),
+                            alias=None,
+                        ),
+                        current_module="app",
+                    )
+
+                    self.assertEqual(normalized.category, "third_party")
+                    self.assertEqual(normalized.distribution_name, expected_distribution)
+                    self.assertEqual(normalized.target_name, expected_distribution)
+
+    def test_known_import_root_fallback_prefers_declared_distribution_for_ambiguous_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[project]\ndependencies = [\"opencv-python-headless\"]\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={},
+            ):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            normalized = normalizer.normalize(
+                ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
+                current_module="app",
+            )
+
+            self.assertEqual(normalized.category, "third_party")
+            self.assertEqual(normalized.distribution_name, "opencv-python-headless")
+
+    def test_known_import_root_fallback_maps_all_single_candidate_aliases_without_metadata_or_declarations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={},
+            ):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            cases = {
+                "attr": "attrs",
+                "bs4": "beautifulsoup4",
+                "dateutil": "python-dateutil",
+                "PIL": "Pillow",
+                "pkg_resources": "setuptools",
+                "sklearn": "scikit-learn",
+                "yaml": "PyYAML",
+            }
+            for raw_import, expected_distribution in cases.items():
+                with self.subTest(raw_import=raw_import):
+                    normalized = normalizer.normalize(
+                        ImportRef(
+                            raw_target=raw_import,
+                            line=1,
+                            import_root=raw_import.split(".", 1)[0],
+                            imported_names=(),
+                            alias=None,
+                        ),
+                        current_module="app",
+                    )
+
+                    self.assertEqual(normalized.category, "third_party")
+                    self.assertEqual(normalized.distribution_name, expected_distribution)
+
+    def test_ambiguous_known_import_root_without_declared_dependency_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={},
+            ), patch("source.kg.normalization.python.imports.util.find_spec", return_value=object()):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            normalized = normalizer.normalize(
+                ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
+                current_module="app",
+            )
+
+            self.assertEqual(normalized.category, "unknown")
+            self.assertIsNone(normalized.distribution_name)
+
+    def test_ambiguous_known_import_root_with_multiple_declared_variants_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[project]\ndependencies = [\"opencv-python\", \"opencv-python-headless\"]\n",
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+
+            with patch(
+                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                return_value={},
+            ), patch("source.kg.normalization.python.imports.util.find_spec", return_value=object()):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            normalized = normalizer.normalize(
+                ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
+                current_module="app",
+            )
+
+            self.assertEqual(normalized.category, "unknown")
+            self.assertIsNone(normalized.distribution_name)
+
     def test_namespace_package_with_multiple_declared_matches_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
