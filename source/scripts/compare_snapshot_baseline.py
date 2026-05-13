@@ -40,7 +40,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    baseline = _load_baseline(Path(args.baseline))
+    baseline = load_baseline(Path(args.baseline))
     actual = capture_snapshot_baseline(Path(args.snapshot), name=str(baseline.get("name") or "actual"))
     differences = compare_snapshot_baseline(actual, baseline, allow_additions=args.allow_additions)
     print(render_differences(differences))
@@ -57,8 +57,8 @@ def compare_snapshot_baseline(actual: JsonObject, expected: JsonObject, allow_ad
                 differences.append(Difference(section, "<section>", None, None))
                 continue
             differences.extend(_compare_mapping(section, actual_value, expected_value, allow_additions))
-        elif isinstance(expected_value, int):
-            if not isinstance(actual_value, int):
+        elif _is_int_count(expected_value):
+            if not _is_int_count(actual_value):
                 differences.append(Difference(section, "<value>", expected_value, None))
             elif _is_drift(actual_value, expected_value, _allow_additions_for_section(section, allow_additions)):
                 differences.append(Difference(section, "<value>", expected_value, actual_value))
@@ -115,7 +115,7 @@ def _is_drift(actual: int, expected: int, allow_additions: bool) -> bool:
     return actual != expected
 
 
-def _load_baseline(path: Path) -> JsonObject:
+def load_baseline(path: Path) -> JsonObject:
     baseline = json.loads(path.expanduser().read_text(encoding="utf-8"))
     if not isinstance(baseline, dict):
         raise ValueError(f"{path} must contain a JSON object")
@@ -132,7 +132,7 @@ def _validate_baseline(baseline: JsonObject, label: str) -> None:
             raise ValueError(f"{label} is missing required section {section!r}")
         value = baseline[section]
         if section == "extractor_errors_count":
-            if not isinstance(value, int):
+            if not _is_int_count(value):
                 raise ValueError(f"{label}.{section} must be an integer")
             continue
         if not isinstance(value, dict):
@@ -140,12 +140,16 @@ def _validate_baseline(baseline: JsonObject, label: str) -> None:
         for key, count in value.items():
             if not isinstance(key, str):
                 raise ValueError(f"{label}.{section} keys must be strings")
-            if not isinstance(count, int):
+            if not _is_int_count(count):
                 raise ValueError(f"{label}.{section}.{key} must be an integer")
 
 
 def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if _is_int_count(value) else None
+
+
+def _is_int_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _display_count(value: int | None) -> str:

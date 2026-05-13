@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from source.scripts.capture_snapshot_baseline import capture_snapshot_baseline
-from source.scripts.compare_snapshot_baseline import _load_baseline, compare_snapshot_baseline, render_differences
+from source.scripts.compare_snapshot_baseline import load_baseline, compare_snapshot_baseline, render_differences
 
 
 class SnapshotBaselineTest(unittest.TestCase):
@@ -118,7 +118,28 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_json(path, baseline)
 
             with self.assertRaisesRegex(ValueError, "fact_predicate_counts.CALLS"):
-                _load_baseline(path)
+                load_baseline(path)
+
+    def test_load_baseline_rejects_boolean_distribution_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "baseline.json"
+            baseline = _baseline(fact_counts={"CALLS": 2})
+            baseline["fact_predicate_counts"] = {"CALLS": True}
+            _write_json(path, baseline)
+
+            with self.assertRaisesRegex(ValueError, "fact_predicate_counts.CALLS"):
+                load_baseline(path)
+
+    def test_compare_snapshot_baseline_treats_boolean_actual_counts_as_invalid(self) -> None:
+        expected = _baseline(fact_counts={"CALLS": 1})
+        actual = _baseline(fact_counts={"CALLS": 1})
+        actual["fact_predicate_counts"] = {"CALLS": True}
+
+        differences = compare_snapshot_baseline(actual, expected)
+
+        self.assertEqual(len(differences), 1)
+        self.assertEqual(differences[0].section, "fact_predicate_counts")
+        self.assertEqual(differences[0].key, "CALLS")
 
 
 def _baseline(

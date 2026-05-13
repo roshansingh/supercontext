@@ -38,6 +38,12 @@ class ProductQueryMatrixDriftTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             _assert_expected_summary_shape(self, expected)
 
+    def test_expected_summary_shape_rejects_fractional_counts(self) -> None:
+        expected = _load_expected_summary()
+        expected["query_count"] = 110.5
+        with self.assertRaises(AssertionError):
+            _assert_expected_summary_shape(self, expected)
+
     def test_available_product_query_matrix_matches_expected_summary(self) -> None:
         required_paths = [
             Path(DEFAULT_MERCURY_SNAPSHOT),
@@ -95,13 +101,9 @@ def _load_expected_summary() -> dict[str, object]:
 
 def _assert_expected_summary_shape(test_case: unittest.TestCase, expected: dict[str, object]) -> None:
     test_case.assertEqual(set(expected), set(_EXPECTED_SUMMARY_KEYS))
-    for key in (
-        "query_count",
-        "tuple_count",
-        "measured_query_count",
-        "unmeasured_query_count",
-        "measured_query_coverage_pct",
-    ):
+    for key in ("query_count", "tuple_count", "measured_query_count", "unmeasured_query_count"):
+        test_case.assertTrue(_is_json_int(expected[key]), f"{key} must be a JSON integer, not bool")
+    for key in ("measured_query_coverage_pct",):
         test_case.assertTrue(_is_json_number(expected[key]), f"{key} must be a JSON number, not bool")
     test_case.assertIsInstance(expected["harness_sources"], list)
     test_case.assertTrue(all(isinstance(value, str) for value in expected["harness_sources"]))

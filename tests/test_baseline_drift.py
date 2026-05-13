@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import unittest
 from pathlib import Path
 
 from source.scripts.capture_snapshot_baseline import capture_snapshot_baseline
-from source.scripts.compare_snapshot_baseline import compare_snapshot_baseline, render_differences
+from source.scripts.compare_snapshot_baseline import load_baseline, compare_snapshot_baseline, render_differences
 
 
 BASELINE_SNAPSHOTS = {
@@ -27,7 +26,7 @@ class BaselineDriftTest(unittest.TestCase):
                 continue
             checked += 1
             with self.subTest(name=name):
-                baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+                baseline = load_baseline(baseline_path)
                 actual = capture_snapshot_baseline(snapshot, name=name)
                 differences = compare_snapshot_baseline(actual, baseline)
                 if differences:
