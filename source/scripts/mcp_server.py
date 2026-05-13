@@ -28,7 +28,7 @@ def main() -> None:
         parser.error("v0 has no authentication; bind to loopback or pass --allow-public explicitly")
 
     kg = KgSnapshot(args.snapshot)
-    server = _server_class_for_host(args.host)((args.host, args.port), _handler_class(kg))
+    server = _server_class_for_host(args.host)(_server_address_for_host(args.host, args.port), _handler_class(kg))
     print(f"Supercontext MCP v0 server listening on http://{_format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
     try:
         server.serve_forever()
@@ -134,6 +134,16 @@ def _server_class_for_host(host: str) -> type[ThreadingHTTPServer]:
         address_family = socket.AF_INET6
 
     return IPv6ThreadingHTTPServer
+
+
+def _server_address_for_host(host: str, port: int) -> tuple[str, int] | tuple[str, int, int, int]:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return (host, port)
+    if address.version == 6:
+        return (host, port, 0, 0)
+    return (host, port)
 
 
 class _JsonPayloadError(ValueError):

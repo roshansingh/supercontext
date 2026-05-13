@@ -19,6 +19,7 @@ from source.scripts.mcp_server import (
     _handle_json_rpc,
     _handle_json_rpc_payload,
     _is_loopback_host,
+    _server_address_for_host,
     _server_class_for_host,
 )
 
@@ -211,6 +212,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(_format_host_for_url("127.0.0.1"), "127.0.0.1")
         self.assertEqual(_format_host_for_url("::1"), "[::1]")
         self.assertEqual(_format_host_for_url("localhost"), "localhost")
+        self.assertEqual(_server_address_for_host("127.0.0.1", 3845), ("127.0.0.1", 3845))
+        self.assertEqual(_server_address_for_host("::1", 3845), ("::1", 3845, 0, 0))
         self.assertNotEqual(_server_class_for_host("::1").address_family, _server_class_for_host("127.0.0.1").address_family)
 
     def test_http_server_header_does_not_expose_python_version(self) -> None:
