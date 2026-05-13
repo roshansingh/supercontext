@@ -5,6 +5,7 @@ import ipaddress
 import json
 import socket
 import sys
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -185,6 +186,8 @@ def _handle_json_rpc(kg: KgSnapshot, request: object) -> JsonObject | None:
     except ValueError as exc:
         return None if is_notification else _json_rpc_error(request_id, -32602, str(exc))
     except Exception:
+        print("Unhandled MCP JSON-RPC error", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return None if is_notification else _json_rpc_error(request_id, -32000, "Internal MCP server error")
     return None if is_notification else _json_rpc_error(request_id, -32601, f"Unsupported MCP method: {method}")
 

@@ -316,7 +316,9 @@ def _bounded_int(value: object, *, field: str, minimum: int, maximum: int) -> in
         raw = value
     else:
         raise ValueError(f"MCP tool argument {field!r} must be an integer")
-    return min(max(minimum, raw), maximum)
+    if raw < minimum or raw > maximum:
+        raise ValueError(f"MCP tool argument {field!r} must be between {minimum} and {maximum}")
+    return raw
 
 
 def _object_schema(properties: JsonObject, required: list[str] | None = None) -> JsonObject:

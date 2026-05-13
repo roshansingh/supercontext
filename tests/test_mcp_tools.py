@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +98,10 @@ class McpToolsTest(unittest.TestCase):
                 call_tool(kg, "find_callers", {"symbol": "x", "limit": True})
             with self.assertRaisesRegex(ValueError, "limit"):
                 call_tool(kg, "find_callers", {"symbol": "x", "limit": "10"})
+            with self.assertRaisesRegex(ValueError, "between 1 and 100"):
+                call_tool(kg, "find_callers", {"symbol": "x", "limit": 0})
+            with self.assertRaisesRegex(ValueError, "between 1 and 6"):
+                call_tool(kg, "blast_radius", {"symbol": "x", "depth": 999})
             with self.assertRaisesRegex(ValueError, "does not accept"):
                 call_tool(kg, "find_callers", {"symbol": "x", "extra": "ignored"})
             with self.assertRaisesRegex(ValueError, "Unsupported MCP tool"):
@@ -148,18 +154,22 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(invalid_id["error"]["code"], -32600)
 
     def test_json_rpc_internal_errors_do_not_leak_exception_details(self) -> None:
-        result = _handle_json_rpc(
-            object(),
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "search_services", "arguments": {}},
-            },
-        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = _handle_json_rpc(
+                object(),
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "search_services", "arguments": {}},
+                },
+            )
 
         self.assertEqual(result["error"]["code"], -32000)
         self.assertEqual(result["error"]["message"], "Internal MCP server error")
+        self.assertIn("Unhandled MCP JSON-RPC error", stderr.getvalue())
+        self.assertIn("AttributeError", stderr.getvalue())
 
     def test_content_length_validation_rejects_transport_level_errors(self) -> None:
         with self.assertRaisesRegex(ValueError, "Missing Content-Length"):
