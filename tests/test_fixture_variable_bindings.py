@@ -17,6 +17,8 @@ class FakeKg:
             }
         ]
         self.module_import_calls: list[str] = []
+        self.find_callees_calls: list[tuple[str, str | None, int | None]] = []
+        self.dependency_path_calls: list[tuple[str, str, str | None, int | None]] = []
 
     def modules_importing(self, package_name: str, limit: int = 25) -> list[dict[str, object]]:
         self.module_import_calls.append(package_name)
@@ -44,9 +46,67 @@ class FakeKg:
         return []
 
     def dependency_info(self, package_name: str) -> list[dict[str, object]]:
+        if package_name == "os":
+            return [{"name": "os", "category": "stdlib", "distribution_name": None}]
         if package_name == "sklearn":
             return [{"name": "sklearn", "distribution_name": None}]
         return [{"name": package_name, "distribution_name": package_name}]
+
+    def find_callers(self, symbol: str, limit: int = 25) -> dict[str, object]:
+        if symbol == "load_model":
+            return {
+                "status": "ambiguous",
+                "target": {
+                    "candidates": [
+                        {"qualified_name": "HumanHandoverAgentDspy.load_model"},
+                        {"qualified_name": "FrustrationPredictor.load_model"},
+                    ]
+                },
+                "callers": [],
+            }
+        if symbol == "write_result_on_disk":
+            return {"status": "found", "caller_count": 1, "callers": [{"subject": "predict_on_session"}]}
+        return {"status": "not_found", "caller_count": 0, "callers": []}
+
+    def find_callees(
+        self,
+        symbol: str,
+        limit: int = 25,
+        path: str | None = None,
+        line: int | None = None,
+    ) -> dict[str, object]:
+        self.find_callees_calls.append((symbol, path, line))
+        if symbol == "predict_on_session" and path == "mercury_ml/intent_based_predictions/batch_predict.py" and line == 70:
+            return {"status": "found", "callee_count": 2, "callees": [{"object": "build_features"}]}
+        return {"status": "ambiguous", "callee_count": 0, "callees": []}
+
+    def who_imports(self, target: str, limit: int = 25) -> dict[str, object]:
+        if target == "mercury_ml.chatbot.apis.openai_instructor":
+            return {"status": "resolved", "importer_count": 2, "importers": [{"module": "duplicate_agent"}]}
+        return {"status": "not_found", "importer_count": 0, "importers": []}
+
+    def modules_importing_both(self, left: str, right: str, limit: int = 25) -> dict[str, object]:
+        if (left, right) == ("pandas", "sklearn"):
+            return {"status": "resolved", "module_count": 1, "modules": [{"module": "train"}]}
+        return {"status": "not_found", "module_count": 0, "modules": []}
+
+    def dependency_path(
+        self,
+        source_query: str,
+        target_query: str,
+        path: str | None = None,
+        line: int | None = None,
+        limit: int = 5,
+    ) -> dict[str, object]:
+        self.dependency_path_calls.append((source_query, target_query, path, line))
+        if (
+            source_query == "predict_on_session"
+            and target_query == "sklearn"
+            and path == "mercury_ml/intent_based_predictions/batch_predict.py"
+            and line == 70
+        ):
+            return {"status": "resolved", "path_count": 1, "paths": [{"nodes": ["predict_on_session", "sklearn"]}]}
+        return {"status": "ambiguous", "path_count": 0, "paths": []}
 
 
 class FixtureVariableBindingsTest(unittest.TestCase):
@@ -122,6 +182,187 @@ class FixtureVariableBindingsTest(unittest.TestCase):
         self.assertEqual(row["status"], "partial")
         self.assertEqual(row["failure_owners"], ["missing KG fact"])
         self.assertIn("sklearn importers: 1 rows; distribution mapping missing", row["notes"])
+
+    def test_q003_caller_symbol_binding_preserves_default_ambiguity_contract(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q003 | Low | CLI | Engineer | `$PY_REPO`, `$CALLER_SYMBOL` | "
+                    "Who calls `$CALLER_SYMBOL`? | Ambiguity response. | Symbol lookup. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": FakeKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("load_model default caller lookup status: ambiguous", row["notes"])
+
+    def test_q004_entry_symbol_binding_disambiguates_with_fixture_coordinate(self) -> None:
+        kg = FakeKg()
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q004 | Low | CLI | Engineer | `$PY_REPO`, `$ENTRY_SYMBOL` | "
+                    "What does `$ENTRY_SYMBOL` call directly? | Direct callees. | Calls. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": kg},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(
+            kg.find_callees_calls,
+            [("predict_on_session", "mercury_ml/intent_based_predictions/batch_predict.py", 70)],
+        )
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("predict_on_session direct callees: 2 rows", row["notes"])
+
+    def test_q004_entry_symbol_binding_fails_closed_without_resolved_callee_rows(self) -> None:
+        class NoCalleesKg(FakeKg):
+            def find_callees(
+                self,
+                symbol: str,
+                limit: int = 25,
+                path: str | None = None,
+                line: int | None = None,
+            ) -> dict[str, object]:
+                self.find_callees_calls.append((symbol, path, line))
+                return {"status": "ambiguous", "callee_count": 0, "callees": []}
+
+        kg = NoCalleesKg()
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q004 | Low | CLI | Engineer | `$PY_REPO`, `$ENTRY_SYMBOL` | "
+                    "What does `$ENTRY_SYMBOL` call directly? | Direct callees. | Calls. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": kg},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "fail")
+        self.assertEqual(row["failure_owners"], ["missing KG fact"])
+
+    def test_q008_stdlib_binding_checks_dependency_classification(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q008 | Low | CLI | Engineer | `$PY_REPO`, `os` | "
+                    "Is `os` third-party or standard library usage? | Stdlib classification. | Import normalization. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": FakeKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("os stdlib dependency rows: 1 rows", row["notes"])
+
+    def test_q008_stdlib_binding_fails_closed_without_stdlib_classification(self) -> None:
+        class MissingStdlibKg(FakeKg):
+            def dependency_info(self, package_name: str) -> list[dict[str, object]]:
+                if package_name == "os":
+                    return [{"name": "os", "category": "third_party", "distribution_name": "os"}]
+                return super().dependency_info(package_name)
+
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q008 | Low | CLI | Engineer | `$PY_REPO`, `os` | "
+                    "Is `os` third-party or standard library usage? | Stdlib classification. | Import normalization. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": MissingStdlibKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "fail")
+        self.assertEqual(row["failure_owners"], ["missing KG fact"])
+
+    def test_q013_write_result_binding_uses_reverse_call_lookup(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q013 | Low | CLI | Engineer | `$PY_REPO`, `write_result_on_disk` | "
+                    "What are the direct callers of this symbol? | Caller symbols. | Reverse calls. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": FakeKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("write_result_on_disk direct callers: 1 rows", row["notes"])
+
+    def test_q017_internal_module_binding_uses_who_imports(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q017 | Medium | CLI | Engineer | `$INTERNAL_MODULE` | "
+                    "If I change this internal module, which modules import it? | Importers. | who-imports. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": FakeKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("mercury_ml.chatbot.apis.openai_instructor importers: 2 rows", row["notes"])
+
+    def test_q023_dependency_intersection_binding_uses_existing_query_surface(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q023 | Medium | CLI | Engineer | `$PY_REPO` | "
+                    "Which modules combine `pandas` and `sklearn` usage? | Modules importing both. | Import intersections. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": FakeKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("modules importing pandas and sklearn: 1 rows", row["notes"])
+
+    def test_q026_dependency_path_binding_disambiguates_with_fixture_coordinate(self) -> None:
+        kg = FakeKg()
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q026 | Medium | CLI | Engineer | `$ENTRY_SYMBOL`, `sklearn` | "
+                    "What dependency path connects this symbol to `sklearn`, if any? | Path. | Path search. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": kg},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(
+            kg.dependency_path_calls,
+            [("predict_on_session", "sklearn", "mercury_ml/intent_based_predictions/batch_predict.py", 70)],
+        )
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("predict_on_session to sklearn dependency paths: 1 rows", row["notes"])
 
     def test_fixture_literal_comes_from_fixture_cell_without_package_allowlist(self) -> None:
         kg = FakeKg()
@@ -289,6 +530,9 @@ def _query_set(tmpdir: str, row: str) -> Path:
                 "| `$PY_REPO` | `mercury_ml` | A Python repo fixture. |",
                 "| `$PACKAGE` | `pandas` | External package dependency. |",
                 "| `$THIRD_PARTY_PACKAGE` | `openai` | External package dependency. |",
+                "| `$ENTRY_SYMBOL` | `predict_on_session` | Function/method with outgoing calls. |",
+                "| `$CALLER_SYMBOL` | `load_model` | Ambiguous symbol fixture. |",
+                "| `$INTERNAL_MODULE` | `mercury_ml.chatbot.apis.openai_instructor` | Internal module fixture. |",
                 "| `$BROKEN_FILE` | `mercury_ml/tests/intent_based_predictions/feature_builder_test.py` | File with parse coverage. |",
                 "| `$SERVICE` | `payments` | Service fixture in multi-repo tests. |",
                 "",

@@ -30,6 +30,9 @@ IMPLEMENTED_FIXTURE_BINDING_VARIABLES = frozenset(
         "$PACKAGE",
         "$THIRD_PARTY_PACKAGE",
         "$BROKEN_FILE",
+        "$ENTRY_SYMBOL",
+        "$CALLER_SYMBOL",
+        "$INTERNAL_MODULE",
     }
 )
 DECLARED_FIXTURE_VARIABLES = frozenset(
@@ -48,6 +51,8 @@ DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
     "classified failure owners before expanding scope; if all judged scenarios pass, expand judged goldset coverage "
     "or add harder scenarios."
 )
+MERCURY_ENTRY_SYMBOL_PATH = "mercury_ml/intent_based_predictions/batch_predict.py"
+MERCURY_ENTRY_SYMBOL_LINE = 70
 
 
 @dataclass(frozen=True)
@@ -1127,6 +1132,54 @@ def _fixture_bound_product_query_row(
             notes=f"coverage rows for {file_path}: {len(rows)} rows",
             actual={"row_count": len(rows), "sample": rows[:2]},
         )
+    if query_id == "Q003":
+        symbol = bindings.get("$CALLER_SYMBOL")
+        if not symbol:
+            return None
+        result = kg.find_callers(symbol, limit=25)
+        target = result.get("target")
+        candidates = target.get("candidates") if isinstance(target, dict) else []
+        status = "pass" if result.get("status") == "ambiguous" and candidates else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} default caller lookup status: {result.get('status')}",
+            actual=result,
+        )
+    if query_id == "Q004":
+        symbol = bindings.get("$ENTRY_SYMBOL")
+        if not symbol:
+            return None
+        result = kg.find_callees(
+            symbol,
+            path=MERCURY_ENTRY_SYMBOL_PATH,
+            line=MERCURY_ENTRY_SYMBOL_LINE,
+            limit=25,
+        )
+        status = "pass" if result.get("status") == "found" and int(result.get("callee_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} direct callees: {result.get('callee_count', 0)} rows",
+            actual=result,
+        )
+    if query_id == "Q008":
+        rows = kg.dependency_info("os")
+        stdlib_rows = [
+            row
+            for row in rows
+            if isinstance(row, dict) and row.get("category") == "stdlib"
+        ]
+        status = "pass" if stdlib_rows else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"os stdlib dependency rows: {len(stdlib_rows)} rows",
+            actual={"row_count": len(stdlib_rows), "dependency_info": rows},
+        )
     if query_id == "Q012":
         package_name = _fixture_literal(query, fallback=bindings.get("$PACKAGE"))
         if not package_name:
@@ -1152,6 +1205,58 @@ def _fixture_bound_product_query_row(
             status=status,
             notes=f"{package_name} importers: {len(rows)} rows; {mapping_note}",
             actual={"row_count": len(rows), "dependency_info": dependency_info, "sample": rows[:2]},
+        )
+    if query_id == "Q013":
+        result = kg.find_callers("write_result_on_disk", limit=25)
+        status = "pass" if result.get("status") == "found" and int(result.get("caller_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"write_result_on_disk direct callers: {result.get('caller_count', 0)} rows",
+            actual=result,
+        )
+    if query_id == "Q017":
+        target = bindings.get("$INTERNAL_MODULE")
+        if not target:
+            return None
+        result = kg.who_imports(target, limit=25)
+        status = "pass" if result.get("status") == "resolved" and int(result.get("importer_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{target} importers: {result.get('importer_count', 0)} rows",
+            actual=result,
+        )
+    if query_id == "Q023":
+        result = kg.modules_importing_both("pandas", "sklearn", limit=25)
+        status = "pass" if result.get("status") == "resolved" and int(result.get("module_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"modules importing pandas and sklearn: {result.get('module_count', 0)} rows",
+            actual=result,
+        )
+    if query_id == "Q026":
+        symbol = bindings.get("$ENTRY_SYMBOL")
+        if not symbol:
+            return None
+        result = kg.dependency_path(
+            symbol,
+            "sklearn",
+            path=MERCURY_ENTRY_SYMBOL_PATH,
+            line=MERCURY_ENTRY_SYMBOL_LINE,
+            limit=25,
+        )
+        status = "pass" if result.get("status") == "resolved" and int(result.get("path_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} to sklearn dependency paths: {result.get('path_count', 0)} rows",
+            actual=result,
         )
     return None
 
