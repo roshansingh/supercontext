@@ -283,6 +283,10 @@ def render_product_query_matrix_markdown(report: JsonObject) -> str:
         "This report is the Debate 12 Step 1 measurement matrix. It records every product query as measured or "
         "`unmeasured` without pretending unsupported surfaces have an executable harness.",
         "",
+        "When a query has both deterministic-smoke and fixture-binding coverage, the matrix shows the deterministic "
+        "smoke row. Fixture-binding handlers can therefore act as fallback coverage without increasing the visible "
+        "measured-query count until they cover a previously unmeasured query.",
+        "",
         "## Summary",
         "",
         f"- Unique queries: {matrix['query_count']}",
@@ -1132,6 +1136,8 @@ def _fixture_bound_product_query_row(
             notes=f"coverage rows for {file_path}: {len(rows)} rows",
             actual={"row_count": len(rows), "sample": rows[:2]},
         )
+    # Some fixture-binding rows are intentionally shadowed by deterministic smoke rows.
+    # They remain executable fallback coverage if smoke checks are narrowed or removed.
     if query_id == "Q003":
         symbol = bindings.get("$CALLER_SYMBOL")
         if not symbol:
@@ -1162,7 +1168,7 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"{symbol} direct callees: {result.get('callee_count', 0)} rows",
+            notes=f"{symbol} direct callees: {_count_phrase(result.get('callee_count', 0), 'row')}",
             actual=result,
         )
     if query_id == "Q008":
@@ -1177,7 +1183,7 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"os stdlib dependency rows: {len(stdlib_rows)} rows",
+            notes=f"os stdlib dependency rows: {_count_phrase(len(stdlib_rows), 'row')}",
             actual={"row_count": len(stdlib_rows), "dependency_info": rows},
         )
     if query_id == "Q012":
@@ -1213,7 +1219,7 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"write_result_on_disk direct callers: {result.get('caller_count', 0)} rows",
+            notes=f"write_result_on_disk direct callers: {_count_phrase(result.get('caller_count', 0), 'row')}",
             actual=result,
         )
     if query_id == "Q017":
@@ -1226,7 +1232,7 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"{target} importers: {result.get('importer_count', 0)} rows",
+            notes=f"{target} importers: {_count_phrase(result.get('importer_count', 0), 'row')}",
             actual=result,
         )
     if query_id == "Q023":
@@ -1236,7 +1242,7 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"modules importing pandas and sklearn: {result.get('module_count', 0)} rows",
+            notes=f"modules importing pandas and sklearn: {_count_phrase(result.get('module_count', 0), 'row')}",
             actual=result,
         )
     if query_id == "Q026":
@@ -1255,10 +1261,16 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"{symbol} to sklearn dependency paths: {result.get('path_count', 0)} rows",
+            notes=f"{symbol} to sklearn dependency paths: {_count_phrase(result.get('path_count', 0), 'row')}",
             actual=result,
         )
     return None
+
+
+def _count_phrase(value: object, singular: str, plural: str | None = None) -> str:
+    count = int(value or 0)
+    unit = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {unit}"
 
 
 def _fixture_binding_matrix_row(

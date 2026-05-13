@@ -266,7 +266,7 @@ class FixtureVariableBindingsTest(unittest.TestCase):
 
         row = matrix["rows"][0]
         self.assertEqual(row["status"], "pass")
-        self.assertIn("os stdlib dependency rows: 1 rows", row["notes"])
+        self.assertIn("os stdlib dependency rows: 1 row", row["notes"])
 
     def test_q008_stdlib_binding_fails_closed_without_stdlib_classification(self) -> None:
         class MissingStdlibKg(FakeKg):
@@ -306,14 +306,14 @@ class FixtureVariableBindingsTest(unittest.TestCase):
 
         row = matrix["rows"][0]
         self.assertEqual(row["status"], "pass")
-        self.assertIn("write_result_on_disk direct callers: 1 rows", row["notes"])
+        self.assertIn("write_result_on_disk direct callers: 1 row", row["notes"])
 
     def test_q017_internal_module_binding_uses_who_imports(self) -> None:
         with TemporaryDirectory() as tmpdir:
             matrix = _product_query_matrix(
                 _query_set(
                     tmpdir,
-                    "| Q017 | Medium | CLI | Engineer | `$INTERNAL_MODULE` | "
+                    "| Q017 | Medium | Support / IDE | Engineer | `$INTERNAL_MODULE` | "
                     "If I change this internal module, which modules import it? | Importers. | who-imports. |",
                 ),
                 [],
@@ -340,7 +340,7 @@ class FixtureVariableBindingsTest(unittest.TestCase):
 
         row = matrix["rows"][0]
         self.assertEqual(row["status"], "pass")
-        self.assertIn("modules importing pandas and sklearn: 1 rows", row["notes"])
+        self.assertIn("modules importing pandas and sklearn: 1 row", row["notes"])
 
     def test_q026_dependency_path_binding_disambiguates_with_fixture_coordinate(self) -> None:
         kg = FakeKg()
@@ -362,7 +362,7 @@ class FixtureVariableBindingsTest(unittest.TestCase):
             [("predict_on_session", "sklearn", "mercury_ml/intent_based_predictions/batch_predict.py", 70)],
         )
         self.assertEqual(row["status"], "pass")
-        self.assertIn("predict_on_session to sklearn dependency paths: 1 rows", row["notes"])
+        self.assertIn("predict_on_session to sklearn dependency paths: 1 row", row["notes"])
 
     def test_fixture_literal_comes_from_fixture_cell_without_package_allowlist(self) -> None:
         kg = FakeKg()
