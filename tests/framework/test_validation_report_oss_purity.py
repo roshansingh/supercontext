@@ -28,6 +28,7 @@ PRIVATE_PATH_TOKENS = (
 
 PUBLIC_FILE_ROOTS = (
     Path("source"),
+    Path("adr"),
     Path(".github"),
 )
 
@@ -51,7 +52,7 @@ class ValidationReportOssPurityTest(unittest.TestCase):
                 if token.lower() in lowered:
                     hits.append(f"{path.relative_to(ROOT)}:{token}")
             for token in PRIVATE_PATH_TOKENS:
-                if token in text:
+                if token.lower() in lowered:
                     hits.append(f"{path.relative_to(ROOT)}:{token}")
 
         self.assertEqual(hits, [])

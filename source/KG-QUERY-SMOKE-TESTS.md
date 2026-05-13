@@ -3,8 +3,9 @@
 Status: historical v0 smoke-test notes.
 
 This file intentionally keeps the result shape generic. Do not add local machine paths,
-private repository names, private domains, or customer-specific commit hashes here. For
-current evaluation results, use the canonical validation report under `docs/evaluation/`.
+private repository names, private domains, customer-specific commit hashes, or corpus-specific
+function and symbol names here. For current evaluation results, use the canonical validation
+report under `docs/evaluation/`.
 
 | Query | Output observed | Comments |
 |---|---|---|

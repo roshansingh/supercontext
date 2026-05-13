@@ -10,7 +10,7 @@
 
 ## Context
 
-The first KG implementation slice extracts raw Python import facts from `/Users/maruti/work/mercury_ml`.
+The first KG implementation slice extracts raw Python import facts from a representative Python repository.
 
 Smoke testing showed the raw import facts are useful but too literal:
 

@@ -10,7 +10,7 @@
 
 ## Context
 
-The first KG implementation slice in `source/` builds a local code-symbol graph from `/Users/maruti/work/mercury_ml` and records the smoke-test results in `source/KG-QUERY-SMOKE-TESTS.md`.
+The first KG implementation slice in `source/` builds a local code-symbol graph from a representative Python repository and records the smoke-test result shape in `source/KG-QUERY-SMOKE-TESTS.md`.
 
 That test showed useful evidence-backed answers for imports, local callers, and outgoing call expansion, but it also exposed a required query-resolution layer:
 
