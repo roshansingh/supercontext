@@ -13,9 +13,9 @@ RetrievalCommand = Literal[
     "domain_references",
     "endpoints",
     "event_channels",
+    "lookup_symbol",
     "modules_importing",
     "repo_dependencies",
-    "symbols",
 ]
 
 
@@ -86,7 +86,7 @@ class RetrievalStep:
             return kg.modules_importing(str(self.args["package"]), limit=limit)
         if self.command == "repo_dependencies":
             return kg.repo_dependencies(str(self.args["repo"]), limit=limit)
-        if self.command == "symbols":
+        if self.command == "lookup_symbol":
             return kg.lookup_symbol(str(self.args["query"]), limit=limit)
         raise ValueError(f"Unsupported retrieval command: {self.command}")
 
@@ -98,7 +98,7 @@ _ANCHOR_COMMANDS: dict[str, RetrievalCommand] = {
     "EventChannel": "event_channels",
     "Package": "modules_importing",
     "Repo": "repo_dependencies",
-    "Symbol": "symbols",
+    "Symbol": "lookup_symbol",
 }
 _VALID_COMMANDS = set(_ANCHOR_COMMANDS.values())
 _COMMAND_ARG_KEYS: dict[RetrievalCommand, str] = {
@@ -108,7 +108,7 @@ _COMMAND_ARG_KEYS: dict[RetrievalCommand, str] = {
     "event_channels": "channel",
     "modules_importing": "package",
     "repo_dependencies": "repo",
-    "symbols": "query",
+    "lookup_symbol": "query",
 }
 
 

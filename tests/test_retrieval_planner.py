@@ -35,7 +35,7 @@ class RetrievalPlannerTest(unittest.TestCase):
                 ("eventchannel_orders", "event_channels", {"channel": "orders", "limit": 100}),
                 ("package_shared_client", "modules_importing", {"package": "shared_client", "limit": 100}),
                 ("repo_web", "repo_dependencies", {"repo": "web", "limit": 100}),
-                ("symbol_billingview", "symbols", {"query": "BillingView", "limit": 100}),
+                ("symbol_billingview", "lookup_symbol", {"query": "BillingView", "limit": 100}),
             ],
         )
 
@@ -101,7 +101,7 @@ class RetrievalPlannerTest(unittest.TestCase):
                 ("repo_dependencies", "web", 5),
             ),
             (
-                RetrievalStep("symbol_billingview", "symbols", {"query": "BillingView", "limit": 5}, "Find symbol."),
+                RetrievalStep("symbol_billingview", "lookup_symbol", {"query": "BillingView", "limit": 5}, "Find symbol."),
                 {"method": "lookup_symbol", "query": "BillingView", "limit": 5},
                 ("lookup_symbol", "BillingView", 5),
             ),
