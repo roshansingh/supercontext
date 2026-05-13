@@ -21,6 +21,9 @@ jobs:
       - name: Install JavaScript parser dependencies
         run: npm ci
 
+      - name: Install Python test dependencies
+        run: python -m pip install -r requirements-dev.txt
+
       - name: Compile source
         run: python -m compileall -q source
 

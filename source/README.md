@@ -84,6 +84,8 @@ CI runs `compileall` and the full unit suite. Drift checks are part of that suit
 Before changing extractors or validation harness behavior, maintainers should rebuild the affected snapshots locally, then run:
 
 ```bash
+npm ci
+python -m pip install -r requirements-dev.txt
 python -m unittest tests.test_baseline_drift tests.test_product_query_matrix_drift
 python -m source.scripts.compare_snapshot_baseline data/kg_runs/<snapshot_dir> --baseline tests/baselines/kg_counts/<corpus_name>.json
 python -m source.scripts.run_product_validation --query-matrix-md-out docs/evaluation/PRODUCT-QUERY-SET-RUN-2026-05-12.md
@@ -112,7 +114,7 @@ Optional ground-truth JSON can be loaded from the sidebar for local evaluation. 
 Install the local TypeScript parser dependency before indexing TypeScript/JavaScript repos:
 
 ```bash
-npm install
+npm ci
 ```
 
 ```bash
