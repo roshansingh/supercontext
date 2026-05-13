@@ -77,13 +77,20 @@ class FakeKg:
     ) -> dict[str, object]:
         self.find_callees_calls.append((symbol, path, line))
         if symbol == "predict_on_session" and path == "mercury_ml/intent_based_predictions/batch_predict.py" and line == 70:
-            return {"status": "found", "callee_count": 2, "callees": [{"object": "build_features"}]}
-        return {"status": "ambiguous", "callee_count": 0, "callees": []}
+            callees = [{"object": "build_features"}, {"object": "write_result_on_disk"}]
+            return {"status": "found", "callee_count": len(callees), "returned_count": len(callees), "callees": callees}
+        return {"status": "ambiguous", "callee_count": 0, "returned_count": 0, "callees": []}
 
     def who_imports(self, target: str, limit: int = 25) -> dict[str, object]:
         if target == "mercury_ml.chatbot.apis.openai_instructor":
-            return {"status": "resolved", "importer_count": 2, "importers": [{"module": "duplicate_agent"}]}
-        return {"status": "not_found", "importer_count": 0, "importers": []}
+            importers = [{"module": "duplicate_agent"}, {"module": "hallucination_detector"}]
+            return {
+                "status": "resolved",
+                "importer_count": len(importers),
+                "returned_count": len(importers),
+                "importers": importers,
+            }
+        return {"status": "not_found", "importer_count": 0, "returned_count": 0, "importers": []}
 
     def modules_importing_both(self, left: str, right: str, limit: int = 25) -> dict[str, object]:
         if (left, right) == ("pandas", "sklearn"):
