@@ -33,14 +33,14 @@ This relation means "configuration evidence shows this service is deployed throu
 
 It must only be emitted when the source evidence contains a concrete domain identity.
 
-## V1 Fact Shape
+## V0 Implementation Fact Shape
 
 For Apache/WSGI domainless config, future implementation should emit:
 
-- `DeployTarget` entity with stable identity such as `{type: "wsgi", target: "/srv/app/wsgi.py"}`.
+- `DeployTarget` entity using the current v0 identity convention: `{tenant_id, repo, type, target}`. For example, `{tenant_id: "default", repo: "api", type: "wsgi", target: "/srv/app/wsgi.py"}`.
 - `DEPLOYS_VIA_CONFIG` fact from the `Service` entity to the deploy target.
 - Evidence coordinates for the config line that defines the deploy target.
-- Qualifier metadata such as `source_kind: "apache_wsgi"`, repo-relative `path`, `entrypoint_kind: "wsgi"`, and optional `route_path: "/"`.
+- Qualifier metadata such as `source_kind: "apache_vhost"`, repo-relative `path`, `entrypoint_kind: "wsgi"`, and optional `route_path: "/"`.
 
 It must not emit:
 
@@ -49,7 +49,7 @@ It must not emit:
 
 The subject `Service` follows the existing v0 service-entity convention used by the config extractors: tenant-scoped service identity derived from the repo unless a more specific service identity has already been resolved.
 
-`DeployTarget` identity must be stable within a tenant and should use `{type, target}` as the minimum tuple. `type` names the config/deploy family, such as `wsgi`, `systemd_unit`, `procfile_process`, `container_image`, or `k8s_workload`. `target` is the stable family-specific identifier. Additional identity fields may be added by later family-specific extractor ADRs or implementation notes, but `{type, target}` is the minimum cross-family contract.
+`DeployTarget` identity must be stable within a tenant and repo. The minimum v0 tuple is `{tenant_id, repo, type, target}`. `type` names the config/deploy family, such as `wsgi`, `systemd_unit`, `procfile_process`, `container_image`, or `k8s_workload`. `target` is the stable family-specific identifier. Additional identity fields may be added by later family-specific extractor ADRs or implementation notes, but the current `{tenant_id, repo, type, target}` tuple remains the v0 compatibility contract.
 
 When both domain and deploy-target evidence exist, the extractor should emit both:
 
