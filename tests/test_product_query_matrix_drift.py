@@ -25,21 +25,18 @@ class ProductQueryMatrixDriftTest(unittest.TestCase):
     def test_expected_summary_file_shape_is_valid_without_local_snapshots(self) -> None:
         expected = _load_expected_summary()
 
-        self.assertEqual(set(expected), set(_EXPECTED_SUMMARY_KEYS))
-        for key in (
-            "query_count",
-            "tuple_count",
-            "measured_query_count",
-            "unmeasured_query_count",
-            "measured_query_coverage_pct",
-        ):
-            self.assertIsInstance(expected[key], int | float)
-        self.assertIsInstance(expected["harness_sources"], list)
-        self.assertTrue(all(isinstance(value, str) for value in expected["harness_sources"]))
-        self.assertIsInstance(expected["status_summary"], dict)
-        self.assertIsInstance(expected["failure_owner_summary"], dict)
-        self.assertTrue(all(isinstance(value, int) for value in expected["status_summary"].values()))
-        self.assertTrue(all(isinstance(value, int) for value in expected["failure_owner_summary"].values()))
+        _assert_expected_summary_shape(self, expected)
+
+    def test_expected_summary_shape_rejects_boolean_counts(self) -> None:
+        expected = _load_expected_summary()
+        expected["query_count"] = True
+        with self.assertRaises(AssertionError):
+            _assert_expected_summary_shape(self, expected)
+
+        expected = _load_expected_summary()
+        expected["status_summary"] = {"pass": False}
+        with self.assertRaises(AssertionError):
+            _assert_expected_summary_shape(self, expected)
 
     def test_available_product_query_matrix_matches_expected_summary(self) -> None:
         required_paths = [
@@ -94,6 +91,32 @@ def _load_expected_summary() -> dict[str, object]:
     if not isinstance(expected, dict):
         raise AssertionError(f"{EXPECTED_PATH} must contain a JSON object")
     return expected
+
+
+def _assert_expected_summary_shape(test_case: unittest.TestCase, expected: dict[str, object]) -> None:
+    test_case.assertEqual(set(expected), set(_EXPECTED_SUMMARY_KEYS))
+    for key in (
+        "query_count",
+        "tuple_count",
+        "measured_query_count",
+        "unmeasured_query_count",
+        "measured_query_coverage_pct",
+    ):
+        test_case.assertTrue(_is_json_number(expected[key]), f"{key} must be a JSON number, not bool")
+    test_case.assertIsInstance(expected["harness_sources"], list)
+    test_case.assertTrue(all(isinstance(value, str) for value in expected["harness_sources"]))
+    test_case.assertIsInstance(expected["status_summary"], dict)
+    test_case.assertIsInstance(expected["failure_owner_summary"], dict)
+    test_case.assertTrue(all(_is_json_int(value) for value in expected["status_summary"].values()))
+    test_case.assertTrue(all(_is_json_int(value) for value in expected["failure_owner_summary"].values()))
+
+
+def _is_json_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_json_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _matrix_expected_summary(matrix: dict[str, object]) -> dict[str, object]:
