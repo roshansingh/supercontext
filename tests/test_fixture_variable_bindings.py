@@ -290,6 +290,29 @@ class FixtureVariableBindingsTest(unittest.TestCase):
         self.assertEqual(row["status"], "pass")
         self.assertIn("os stdlib dependency rows: 1 row", row["notes"])
 
+    def test_q008_stdlib_binding_uses_fixture_literal(self) -> None:
+        class SysStdlibKg(FakeKg):
+            def dependency_info(self, package_name: str) -> list[dict[str, object]]:
+                if package_name != "sys":
+                    raise AssertionError(package_name)
+                return [{"name": "sys", "category": "stdlib", "distribution_name": None}]
+
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q008 | Low | CLI | Engineer | `$PY_REPO`, `sys` | "
+                    "Is `sys` third-party or standard library usage? | Stdlib classification. | Import normalization. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": SysStdlibKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("sys stdlib dependency rows: 1 row", row["notes"])
+
     def test_q008_stdlib_binding_fails_closed_without_stdlib_classification(self) -> None:
         class MissingStdlibKg(FakeKg):
             def dependency_info(self, package_name: str) -> list[dict[str, object]]:
@@ -386,6 +409,29 @@ class FixtureVariableBindingsTest(unittest.TestCase):
         row = matrix["rows"][0]
         self.assertEqual(row["status"], "pass")
         self.assertIn("modules importing pandas and sklearn: 1 row", row["notes"])
+
+    def test_q023_dependency_intersection_uses_query_literals(self) -> None:
+        class LiteralPackagesKg(FakeKg):
+            def modules_importing_both(self, left: str, right: str, limit: int = 25) -> dict[str, object]:
+                if (left, right) != ("numpy", "scipy"):
+                    raise AssertionError((left, right))
+                return {"status": "resolved", "module_count": 1, "modules": [{"module": "features"}]}
+
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q023 | Medium | CLI | Engineer | `$PY_REPO` | "
+                    "Which modules combine `numpy` and `scipy` usage? | Modules importing both. | Import intersections. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": LiteralPackagesKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("modules importing numpy and scipy: 1 row", row["notes"])
 
     def test_q026_dependency_path_binding_disambiguates_with_fixture_coordinate(self) -> None:
         kg = FakeKg()
@@ -591,6 +637,8 @@ def _query_set(tmpdir: str, row: str) -> Path:
                 "| `$PACKAGE` | `pandas` | External package dependency. |",
                 "| `$THIRD_PARTY_PACKAGE` | `openai` | External package dependency. |",
                 "| `$ENTRY_SYMBOL` | `predict_on_session` | Function/method with outgoing calls. |",
+                "| `$ENTRY_SYMBOL_PATH` | `mercury_ml/intent_based_predictions/batch_predict.py` | Entry symbol path. |",
+                "| `$ENTRY_SYMBOL_LINE` | `70` | Entry symbol line. |",
                 "| `$CALLER_SYMBOL` | `load_model` | Ambiguous symbol fixture. |",
                 "| `$INTERNAL_MODULE` | `mercury_ml.chatbot.apis.openai_instructor` | Internal module fixture. |",
                 "| `$BROKEN_FILE` | `mercury_ml/tests/intent_based_predictions/feature_builder_test.py` | File with parse coverage. |",

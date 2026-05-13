@@ -31,6 +31,8 @@ IMPLEMENTED_FIXTURE_BINDING_VARIABLES = frozenset(
         "$THIRD_PARTY_PACKAGE",
         "$BROKEN_FILE",
         "$ENTRY_SYMBOL",
+        "$ENTRY_SYMBOL_PATH",
+        "$ENTRY_SYMBOL_LINE",
         "$CALLER_SYMBOL",
         "$INTERNAL_MODULE",
     }
@@ -51,8 +53,6 @@ DEFAULT_NEXT_FEATURE_RECOMMENDATION = (
     "classified failure owners before expanding scope; if all judged scenarios pass, expand judged goldset coverage "
     "or add harder scenarios."
 )
-MERCURY_ENTRY_SYMBOL_PATH = "mercury_ml/intent_based_predictions/batch_predict.py"
-MERCURY_ENTRY_SYMBOL_LINE = 70
 
 
 @dataclass(frozen=True)
@@ -1154,15 +1154,17 @@ def _fixture_bound_product_query_row(
             actual=result,
         )
     if query_id == "Q004":
-        if not _is_mercury_fixture(corpus, bindings):
+        coordinate = _entry_symbol_coordinate(bindings)
+        if coordinate is None:
             return None
+        path, line = coordinate
         symbol = bindings.get("$ENTRY_SYMBOL")
         if not symbol:
             return None
         result = kg.find_callees(
             symbol,
-            path=MERCURY_ENTRY_SYMBOL_PATH,
-            line=MERCURY_ENTRY_SYMBOL_LINE,
+            path=path,
+            line=line,
             limit=25,
         )
         status = "pass" if result.get("status") == "found" and int(result.get("callee_count", 0) or 0) > 0 else "fail"
@@ -1174,7 +1176,10 @@ def _fixture_bound_product_query_row(
             actual=result,
         )
     if query_id == "Q008":
-        rows = kg.dependency_info("os")
+        package_name = _fixture_literal(query, fallback="os")
+        if not package_name:
+            return None
+        rows = kg.dependency_info(package_name)
         stdlib_rows = [
             row
             for row in rows
@@ -1185,7 +1190,7 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"os stdlib dependency rows: {_count_phrase(len(stdlib_rows), 'row')}",
+            notes=f"{package_name} stdlib dependency rows: {_count_phrase(len(stdlib_rows), 'row')}",
             actual={"row_count": len(stdlib_rows), "dependency_info": rows},
         )
     if query_id == "Q012":
@@ -1241,18 +1246,23 @@ def _fixture_bound_product_query_row(
             actual=result,
         )
     if query_id == "Q023":
-        result = kg.modules_importing_both("pandas", "sklearn", limit=25)
+        packages = _fixture_literals(query, keys=("fixture", "user_query"))
+        left = packages[0] if len(packages) >= 1 else "pandas"
+        right = packages[1] if len(packages) >= 2 else "sklearn"
+        result = kg.modules_importing_both(left, right, limit=25)
         status = "pass" if result.get("status") == "resolved" and int(result.get("module_count", 0) or 0) > 0 else "fail"
         return _fixture_binding_matrix_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"modules importing pandas and sklearn: {_count_phrase(result.get('module_count', 0), 'row')}",
+            notes=f"modules importing {left} and {right}: {_count_phrase(result.get('module_count', 0), 'row')}",
             actual=result,
         )
     if query_id == "Q026":
-        if not _is_mercury_fixture(corpus, bindings):
+        coordinate = _entry_symbol_coordinate(bindings)
+        if coordinate is None:
             return None
+        path, line = coordinate
         symbol = bindings.get("$ENTRY_SYMBOL")
         if not symbol:
             return None
@@ -1262,8 +1272,8 @@ def _fixture_bound_product_query_row(
         result = kg.dependency_path(
             symbol,
             target,
-            path=MERCURY_ENTRY_SYMBOL_PATH,
-            line=MERCURY_ENTRY_SYMBOL_LINE,
+            path=path,
+            line=line,
             limit=25,
         )
         status = "pass" if result.get("status") == "resolved" and int(result.get("path_count", 0) or 0) > 0 else "fail"
@@ -1277,8 +1287,18 @@ def _fixture_bound_product_query_row(
     return None
 
 
-def _is_mercury_fixture(corpus: str, bindings: dict[str, str]) -> bool:
-    return corpus == "Mercury ML" and bindings.get("$PY_REPO") == "mercury_ml"
+def _entry_symbol_coordinate(bindings: dict[str, str]) -> tuple[str, int] | None:
+    path = bindings.get("$ENTRY_SYMBOL_PATH")
+    line_text = bindings.get("$ENTRY_SYMBOL_LINE")
+    if not path or not line_text:
+        return None
+    try:
+        line = int(line_text)
+    except ValueError:
+        return None
+    if line < 1:
+        return None
+    return path, line
 
 
 def _count_phrase(value: object, singular: str, plural: str | None = None) -> str:
@@ -1344,12 +1364,23 @@ def _fixture_bindings(query: JsonObject, fixture_defaults: dict[str, str]) -> di
 
 
 def _fixture_literal(query: JsonObject, fallback: str | None = None) -> str | None:
-    for token in _fixture_tokens(query, keys=("fixture",)):
-        token = _clean_fixture_token(token)
-        if not token or token.startswith("$"):
-            continue
-        return token
+    literals = _fixture_literals(query, keys=("fixture",))
+    if literals:
+        return literals[0]
     return fallback
+
+
+def _fixture_literals(query: JsonObject, keys: tuple[str, ...]) -> list[str]:
+    literals: list[str] = []
+    for key in keys:
+        parts = str(query.get(key, "")).split("`")
+        for index, part in enumerate(parts):
+            if index % 2 == 0:
+                continue
+            token = _clean_fixture_token(part)
+            if token and not token.startswith("$") and "=" not in token:
+                literals.append(token)
+    return literals
 
 
 def _unresolved_fixture_variables(query: JsonObject, fixture_defaults: dict[str, str]) -> list[str]:

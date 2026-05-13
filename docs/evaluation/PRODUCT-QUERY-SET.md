@@ -42,6 +42,8 @@ Fixture variables should be used in tests so Mercury-specific names do not becom
 |---|---|---|
 | `$PY_REPO` | `mercury_ml` | A Python repo fixture. |
 | `$ENTRY_SYMBOL` | `predict_on_session` | A function/method with several outgoing calls. |
+| `$ENTRY_SYMBOL_PATH` | `mercury_ml/intent_based_predictions/batch_predict.py` | Source-file coordinate used to disambiguate `$ENTRY_SYMBOL` in Mercury v0. |
+| `$ENTRY_SYMBOL_LINE` | `70` | Source-line coordinate used to disambiguate `$ENTRY_SYMBOL` in Mercury v0. |
 | `$CALLER_SYMBOL` | `load_model` | An intentionally ambiguous symbol name. |
 | `$INTERNAL_MODULE` | `mercury_ml.chatbot.apis.openai_instructor` | Internal module imported by multiple modules. |
 | `$THIRD_PARTY_PACKAGE` | `openai` | External package dependency. |
