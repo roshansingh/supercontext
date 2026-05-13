@@ -30,6 +30,7 @@ def main() -> None:
 def capture_snapshot_baseline(snapshot: Path, name: str | None = None) -> JsonObject:
     snapshot_path = snapshot.expanduser().resolve()
     manifest = _load_json(snapshot_path / "manifest.json")
+    _require_file(snapshot_path / "evidence.jsonl")
     if not isinstance(manifest, dict):
         raise ValueError(f"{snapshot_path / 'manifest.json'} must contain a JSON object")
 
@@ -53,9 +54,13 @@ def capture_snapshot_baseline(snapshot: Path, name: str | None = None) -> JsonOb
 
 
 def _load_json(path: Path) -> object:
+    _require_file(path)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _require_file(path: Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"Missing required snapshot file: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _read_jsonl(path: Path) -> Iterable[JsonObject]:
@@ -109,10 +114,14 @@ def _string_int_map(value: object, label: str) -> JsonObject:
         raise ValueError(f"{label} must be an object")
     result: JsonObject = {}
     for key, count in value.items():
-        if not isinstance(count, int):
+        if not _is_int_count(count):
             raise ValueError(f"{label}.{key} must be an integer")
         result[str(key)] = count
     return dict(sorted(result.items()))
+
+
+def _is_int_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 if __name__ == "__main__":
