@@ -41,6 +41,10 @@ def main() -> None:
 def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
     class McpHandler(BaseHTTPRequestHandler):
         server_version = "supercontext-local/0.1.0"
+        sys_version = ""
+
+        def version_string(self) -> str:
+            return self.server_version
 
         def do_GET(self) -> None:
             if self.path == "/health":
@@ -159,21 +163,22 @@ def _handle_json_rpc_payload(kg: KgSnapshot, payload: object) -> object | None:
 def _handle_json_rpc(kg: KgSnapshot, request: object) -> JsonObject | None:
     if not isinstance(request, dict):
         return _json_rpc_error(None, -32600, "JSON-RPC request must be an object")
-    is_notification = "id" not in request
-    request_id = request.get("id")
-    if not _valid_request_id(request_id):
+    has_id = "id" in request
+    request_id = request.get("id") if has_id else None
+    if has_id and not _valid_request_id(request_id):
         return _json_rpc_error(None, -32600, "JSON-RPC id must be a string, number, or null")
     if request.get("jsonrpc") != "2.0":
-        return None if is_notification else _json_rpc_error(request_id, -32600, "JSON-RPC version must be 2.0")
+        return _json_rpc_error(request_id, -32600, "JSON-RPC version must be 2.0")
     method = request.get("method")
     if not isinstance(method, str) or not method:
-        return None if is_notification else _json_rpc_error(request_id, -32600, "JSON-RPC method must be a non-empty string")
+        return _json_rpc_error(request_id, -32600, "JSON-RPC method must be a non-empty string")
     params = request.get("params", {})
     if params is None:
         params = {}
     if not isinstance(params, dict):
-        return None if is_notification else _json_rpc_error(request_id, -32602, "JSON-RPC params must be an object")
+        return _json_rpc_error(request_id, -32602, "JSON-RPC params must be an object")
 
+    is_notification = not has_id
     try:
         if method == "initialize":
             return None if is_notification else _json_rpc_result(request_id, _initialize_result(params))

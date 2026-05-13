@@ -15,6 +15,7 @@ from source.scripts.mcp_server import (
     _content_length,
     _decode_json_payload,
     _format_host_for_url,
+    _handler_class,
     _handle_json_rpc,
     _handle_json_rpc_payload,
     _is_loopback_host,
@@ -24,7 +25,12 @@ from source.scripts.mcp_server import (
 
 class McpToolsTest(unittest.TestCase):
     def test_tool_definitions_match_adr_0002_names(self) -> None:
-        self.assertEqual([row["name"] for row in tool_definitions()], list(TOOL_NAMES))
+        definitions = tool_definitions()
+        self.assertEqual([row["name"] for row in definitions], list(TOOL_NAMES))
+        schemas = {row["name"]: row["inputSchema"] for row in definitions}
+        self.assertEqual(schemas["search_services"]["properties"]["query"]["type"], ["string", "null"])
+        self.assertEqual(schemas["find_callers"]["properties"]["path"]["type"], ["string", "null"])
+        self.assertEqual(schemas["find_callers"]["properties"]["line"]["type"], ["integer", "null"])
 
     def test_search_services_and_service_brief_return_json_shapes(self) -> None:
         with _fixture_snapshot() as kg:
@@ -141,6 +147,9 @@ class McpToolsTest(unittest.TestCase):
             result = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}})
             wrong_version = _handle_json_rpc(kg, {"jsonrpc": "1.0", "id": 2, "method": "ping"})
             notification = _handle_json_rpc(kg, {"jsonrpc": "2.0", "method": "ping"})
+            invalid_notification_version = _handle_json_rpc(kg, {"jsonrpc": "1.0", "method": "ping"})
+            invalid_notification_method = _handle_json_rpc(kg, {"jsonrpc": "2.0"})
+            invalid_notification_params = _handle_json_rpc(kg, {"jsonrpc": "2.0", "method": "ping", "params": []})
             empty_batch = _handle_json_rpc_payload(kg, [])
             notification_batch = _handle_json_rpc_payload(kg, [{"jsonrpc": "2.0", "method": "ping"}])
             invalid_id = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": {"bad": "id"}, "method": "ping"})
@@ -149,6 +158,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("name", result["error"]["message"])
         self.assertEqual(wrong_version["error"]["code"], -32600)
         self.assertIsNone(notification)
+        self.assertEqual(invalid_notification_version["error"]["code"], -32600)
+        self.assertEqual(invalid_notification_method["error"]["code"], -32600)
+        self.assertEqual(invalid_notification_params["error"]["code"], -32602)
         self.assertEqual(empty_batch["error"]["code"], -32600)
         self.assertIsNone(notification_batch)
         self.assertEqual(invalid_id["error"]["code"], -32600)
@@ -200,6 +212,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(_format_host_for_url("::1"), "[::1]")
         self.assertEqual(_format_host_for_url("localhost"), "localhost")
         self.assertNotEqual(_server_class_for_host("::1").address_family, _server_class_for_host("127.0.0.1").address_family)
+
+    def test_http_server_header_does_not_expose_python_version(self) -> None:
+        handler = _handler_class(object())
+        fake_handler = type("FakeHandler", (), {"server_version": handler.server_version})()
+
+        self.assertEqual(handler.sys_version, "")
+        self.assertEqual(handler.version_string(fake_handler), "supercontext-local/0.1.0")
 
 
 class _fixture_snapshot:

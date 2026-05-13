@@ -334,6 +334,14 @@ def _string_schema(description: str) -> JsonObject:
     return {"type": "string", "description": description}
 
 
+def _nullable_string_schema(description: str) -> JsonObject:
+    return {"type": ["string", "null"], "description": description}
+
+
+def _nullable_line_schema() -> JsonObject:
+    return {"type": ["integer", "null"], "minimum": 1, "description": "Optional source line for disambiguation."}
+
+
 def _limit_schema() -> JsonObject:
     return {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
 
@@ -341,8 +349,8 @@ def _limit_schema() -> JsonObject:
 def _symbol_properties() -> JsonObject:
     return {
         "symbol": _string_schema("Symbol name or qualified name."),
-        "path": _string_schema("Optional source-file path for disambiguation."),
-        "line": {"type": "integer", "minimum": 1, "description": "Optional source line for disambiguation."},
+        "path": _nullable_string_schema("Optional source-file path for disambiguation."),
+        "line": _nullable_line_schema(),
         "include_all": {"type": "boolean", "default": False},
         "limit": _limit_schema(),
     }
@@ -352,7 +360,7 @@ _TOOLS: dict[str, McpTool] = {
     "search_services": McpTool(
         name="search_services",
         description="Search indexed Service entities by name, slug, namespace, repo, or properties.",
-        input_schema=_object_schema({"query": _string_schema("Optional service search text."), "limit": _limit_schema()}),
+        input_schema=_object_schema({"query": _nullable_string_schema("Optional service search text."), "limit": _limit_schema()}),
         handler=_search_services,
     ),
     "get_service_brief": McpTool(
