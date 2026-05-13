@@ -135,6 +135,8 @@ class RetrievalPlannerTest(unittest.TestCase):
             RetrievalStep("domain", "domain_references", {"domain": "api.example.com", "limit": "many"}, "Find domain.")
         with self.assertRaises(ValueError):
             RetrievalStep("domain", "domain_references", {"domain": "api.example.com", "limit": None}, "Find domain.")
+        with self.assertRaises(ValueError):
+            RetrievalStep("domain", "domain_references", {"domain": "api.example.com", "limit": True}, "Find domain.")
         with self.assertRaisesRegex(ValueError, "non-empty string purpose"):
             RetrievalStep("domain", "domain_references", {"domain": "api.example.com"}, "")
 

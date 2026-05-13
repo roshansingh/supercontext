@@ -202,6 +202,8 @@ def _slug(value: str) -> str:
 
 
 def _bounded_limit(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("Retrieval limit must be an integer")
     try:
         raw_limit = int(value)
     except (TypeError, ValueError) as exc:
