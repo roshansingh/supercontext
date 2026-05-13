@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,7 +22,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=3845, help="Port to bind. Defaults to 3845.")
     parser.add_argument("--allow-public", action="store_true", help="Allow binding to non-loopback hosts. Unsafe without auth.")
     args = parser.parse_args()
-    if not args.allow_public and args.host not in {"127.0.0.1", "localhost", "::1"}:
+    if not args.allow_public and not _is_loopback_host(args.host):
         parser.error("v0 has no authentication; bind to loopback or pass --allow-public explicitly")
 
     kg = KgSnapshot(args.snapshot)
@@ -60,18 +61,11 @@ def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
                 response = _json_rpc_error(None, -32700, f"Invalid JSON-RPC request: {exc}")
                 self._write_json(200, response)
                 return
-            if isinstance(payload, list):
-                response = [row for row in (_handle_json_rpc(kg, item) for item in payload) if row is not None]
-                if not response:
-                    self.send_response(204)
-                    self.end_headers()
-                    return
-            else:
-                response = _handle_json_rpc(kg, payload)
-                if response is None:
-                    self.send_response(204)
-                    self.end_headers()
-                    return
+            response = _handle_json_rpc_payload(kg, payload)
+            if response is None:
+                self.send_response(204)
+                self.end_headers()
+                return
             self._write_json(200, response)
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -103,11 +97,31 @@ def _content_length(handler: BaseHTTPRequestHandler) -> int:
     return value
 
 
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _handle_json_rpc_payload(kg: KgSnapshot, payload: object) -> object | None:
+    if isinstance(payload, list):
+        if not payload:
+            return _json_rpc_error(None, -32600, "JSON-RPC batch must not be empty")
+        responses = [row for row in (_handle_json_rpc(kg, item) for item in payload) if row is not None]
+        return responses or None
+    return _handle_json_rpc(kg, payload)
+
+
 def _handle_json_rpc(kg: KgSnapshot, request: object) -> JsonObject | None:
     if not isinstance(request, dict):
         return _json_rpc_error(None, -32600, "JSON-RPC request must be an object")
     is_notification = "id" not in request
     request_id = request.get("id")
+    if not _valid_request_id(request_id):
+        return _json_rpc_error(None, -32600, "JSON-RPC id must be a string, number, or null")
     if request.get("jsonrpc") != "2.0":
         return None if is_notification else _json_rpc_error(request_id, -32600, "JSON-RPC version must be 2.0")
     method = request.get("method")
@@ -133,6 +147,14 @@ def _handle_json_rpc(kg: KgSnapshot, request: object) -> JsonObject | None:
     except Exception as exc:
         return None if is_notification else _json_rpc_error(request_id, -32000, str(exc))
     return None if is_notification else _json_rpc_error(request_id, -32601, f"Unsupported MCP method: {method}")
+
+
+def _valid_request_id(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (str, int, float))
 
 
 def _initialize_result(params: JsonObject) -> JsonObject:

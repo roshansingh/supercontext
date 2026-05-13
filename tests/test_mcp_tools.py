@@ -8,7 +8,7 @@ from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.mcp_tools import TOOL_NAMES, call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
-from source.scripts.mcp_server import _content_length, _handle_json_rpc
+from source.scripts.mcp_server import _content_length, _handle_json_rpc, _handle_json_rpc_payload, _is_loopback_host
 
 
 class McpToolsTest(unittest.TestCase):
@@ -62,6 +62,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(producers["producers"][0]["predicate"], "PRODUCES_EVENT")
         self.assertEqual(limited_producers["status"], "found")
 
+    def test_event_tools_scan_all_matching_facts_before_limiting(self) -> None:
+        with _fixture_snapshot(extra_consumers=125) as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "orders", "limit": 1})
+            producers = call_tool(kg, "get_event_producers", {"channel": "orders", "limit": 1})
+
+        self.assertEqual(consumers["event_fact_count"], 126)
+        self.assertEqual(consumers["returned_count"], 1)
+        self.assertEqual(producers["event_fact_count"], 1)
+        self.assertEqual(producers["returned_count"], 1)
+
     def test_deploy_blockers_refuses_when_current_kg_has_no_contract(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "deploy_blockers_for", {"service": "payments"})
@@ -87,10 +97,13 @@ class McpToolsTest(unittest.TestCase):
             initialized = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}})
             ping = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 9, "method": "ping"})
             listed = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-            batch = [
-                _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 3, "method": "ping"}),
-                _handle_json_rpc(kg, {"jsonrpc": "2.0", "method": "ping"}),
-            ]
+            batch = _handle_json_rpc_payload(
+                kg,
+                [
+                    {"jsonrpc": "2.0", "id": 3, "method": "ping"},
+                    {"jsonrpc": "2.0", "method": "ping"},
+                ],
+            )
             called = _handle_json_rpc(
                 kg,
                 {
@@ -103,8 +116,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(initialized["result"]["serverInfo"]["name"], "supercontext-local")
         self.assertEqual(ping["result"], {})
-        self.assertEqual([row for row in batch if row is not None][0]["id"], 3)
-        self.assertIsNone(batch[1])
+        self.assertEqual(batch[0]["id"], 3)
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
         self.assertEqual(called["result"]["structuredContent"]["status"], "found")
         self.assertFalse(called["result"]["isError"])
@@ -114,11 +126,17 @@ class McpToolsTest(unittest.TestCase):
             result = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}})
             wrong_version = _handle_json_rpc(kg, {"jsonrpc": "1.0", "id": 2, "method": "ping"})
             notification = _handle_json_rpc(kg, {"jsonrpc": "2.0", "method": "ping"})
+            empty_batch = _handle_json_rpc_payload(kg, [])
+            notification_batch = _handle_json_rpc_payload(kg, [{"jsonrpc": "2.0", "method": "ping"}])
+            invalid_id = _handle_json_rpc(kg, {"jsonrpc": "2.0", "id": {"bad": "id"}, "method": "ping"})
 
         self.assertEqual(result["error"]["code"], -32602)
         self.assertIn("name", result["error"]["message"])
         self.assertEqual(wrong_version["error"]["code"], -32600)
         self.assertIsNone(notification)
+        self.assertEqual(empty_batch["error"]["code"], -32600)
+        self.assertIsNone(notification_batch)
+        self.assertEqual(invalid_id["error"]["code"], -32600)
 
     def test_content_length_validation_rejects_transport_level_errors(self) -> None:
         with self.assertRaisesRegex(ValueError, "Missing Content-Length"):
@@ -130,8 +148,19 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(_content_length(_FakeHttpHandler({"Content-Length": "2"})), 2)
 
+    def test_loopback_host_detection_accepts_loopback_network(self) -> None:
+        self.assertTrue(_is_loopback_host("localhost"))
+        self.assertTrue(_is_loopback_host("127.0.0.1"))
+        self.assertTrue(_is_loopback_host("127.0.1.1"))
+        self.assertTrue(_is_loopback_host("::1"))
+        self.assertFalse(_is_loopback_host("0.0.0.0"))
+        self.assertFalse(_is_loopback_host("example.com"))
+
 
 class _fixture_snapshot:
+    def __init__(self, extra_consumers: int = 0) -> None:
+        self.extra_consumers = extra_consumers
+
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
         root = Path(self._tmpdir.name)
@@ -186,6 +215,19 @@ class _fixture_snapshot:
         endpoint_fact = Fact("EXPOSES_ENDPOINT", service.entity_id, endpoint.entity_id, {"method": "POST", "path": "/checkout"})
         consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
+        extra_services = [
+            Entity(
+                kind="Service",
+                identity={
+                    "tenant_id": "default",
+                    "namespace": "default",
+                    "slug": f"consumer-{index}",
+                    "repo": f"consumer-{index}",
+                },
+            )
+            for index in range(self.extra_consumers)
+        ]
+        extra_consume_facts = [Fact("CONSUMES_EVENT", extra_service.entity_id, channel.entity_id) for extra_service in extra_services]
         evidence = [
             Evidence(
                 target_type="entity",
@@ -206,8 +248,8 @@ class _fixture_snapshot:
             ),
         ]
         JsonlKgStore(root).write(
-            entities=[service, caller, callee, endpoint, channel],
-            facts=[call_fact, endpoint_fact, consume_fact, produce_fact],
+            entities=[service, caller, callee, endpoint, channel, *extra_services],
+            facts=[call_fact, endpoint_fact, consume_fact, produce_fact, *extra_consume_facts],
             evidence=evidence,
             coverage=[],
             manifest={"counts": {"entities": 5, "facts": 4}},

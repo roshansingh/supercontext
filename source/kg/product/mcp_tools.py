@@ -50,8 +50,8 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
     _validate_declared_arguments(tool, arguments)
     result = tool.handler(kg, arguments)
     return {
-        "tool": name,
         **result,
+        "tool": name,
     }
 
 
@@ -151,8 +151,17 @@ def _deploy_blockers_for(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
 
 
 def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, result_key: str) -> JsonObject:
-    result = kg.event_channels(channel_query=channel, limit=100)
-    rows = [row for row in result.get("event_channels", []) if row.get("predicate") == predicate]
+    rows = []
+    for fact in kg.facts:
+        if fact.get("predicate") != predicate:
+            continue
+        subject = kg.entities_by_id.get(fact["subject_id"])
+        object_ = kg.entities_by_id.get(fact["object_id"])
+        if not subject or not object_ or object_.get("kind") != "EventChannel":
+            continue
+        if channel.lower() not in _event_channel_search_text(object_).lower():
+            continue
+        rows.append(_fact_result(kg, fact, subject, object_))
     returned = rows[:limit]
     return {
         "status": "found" if rows else "not_found",
@@ -161,6 +170,20 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
         "returned_count": len(returned),
         result_key: returned,
     }
+
+
+def _event_channel_search_text(channel: JsonObject) -> str:
+    identity = channel.get("identity", {})
+    return " ".join(
+        str(value)
+        for value in [
+            display_entity(channel),
+            identity.get("channel_address"),
+            identity.get("name"),
+            identity.get("broker_kind"),
+        ]
+        if value is not None
+    )
 
 
 def _unsupported_by_current_kg(tool: str, reason: str) -> JsonObject:
