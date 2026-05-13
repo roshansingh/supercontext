@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import os
@@ -8,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from source.kg.agent import AgentRuntimeConfig, ClaudeInteractiveAgentSession
+from source.kg.product.interactive_query import execute_interactive_plan
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -127,7 +130,7 @@ def main() -> None:
 
     st.set_page_config(page_title="Supercontext KG Explorer", layout="wide")
     st.title("Supercontext KG Explorer")
-    st.caption("Thin local UI over existing JSONL KG snapshots. No LLM calls and no auto-build in v1.")
+    st.caption("Local UI over existing JSONL KG snapshots. Natural-language mode uses Agent SDK with tools disabled.")
 
     orgs_root = resolve_orgs_root(st.sidebar.text_input("Orgs root", str(resolve_orgs_root())))
     orgs = discover_orgs(orgs_root)
@@ -145,6 +148,56 @@ def main() -> None:
 
     snapshot_labels = [str(path) for path in snapshots]
     snapshot_path = Path(st.sidebar.selectbox("Snapshot", snapshot_labels))
+    ground_truth_path = st.sidebar.text_input("Optional ground truth JSON", "")
+
+    nl_tab, direct_tab = st.tabs(["Natural language", "Direct query"])
+    with nl_tab:
+        _render_natural_language_query(st, snapshot_path, ground_truth_path)
+    with direct_tab:
+        _render_direct_query(st, snapshot_path)
+
+
+def _render_natural_language_query(st: Any, snapshot_path: Path, ground_truth_path: str) -> None:
+    st.subheader("Ask the KG")
+    st.caption("Claude plans anchors and synthesizes from KG evidence only. Retrieval and evidence stay deterministic.")
+    user_query = st.text_area("Question", "", placeholder="What modules import sklearn?")
+    limit = int(st.number_input("Retrieval limit", min_value=1, max_value=100, value=25, step=1, key="nl_limit"))
+    model = st.text_input("Agent model", os.getenv("SUPERCONTEXT_INTERACTIVE_MODEL", "opus"))
+    if st.button("Ask", type="primary"):
+        if not user_query.strip():
+            st.warning("Enter a question before asking the KG.")
+            return
+        try:
+            kg = _load_snapshot(str(snapshot_path))
+            result = _run_interactive_query(
+                kg,
+                user_query=user_query,
+                limit=limit,
+                model=model.strip() or "opus",
+                ground_truth=_load_ground_truth(ground_truth_path),
+            )
+        except Exception as exc:
+            st.error(str(exc))
+            return
+
+        answer = result["answer"]
+        st.markdown(answer.get("answer") or "No answer returned.")
+        _render_answer_list(st, "Caveats", answer.get("caveats", []))
+        _render_answer_list(st, "Unknown Because Missing Evidence", answer.get("unknowns", []))
+        with st.expander("Debug", expanded=True):
+            st.subheader("Retrieval Plan")
+            st.json(_jsonable(result["plan"]))
+            st.subheader("Evidence Items")
+            st.json(_jsonable(result["packet"].get("evidence_items", [])))
+            st.subheader("KG State")
+            st.json(_jsonable(result["kg_state"]))
+            st.subheader("Unknowns")
+            st.json(_jsonable(result["packet"].get("unknowns", [])))
+            st.subheader("Ground Truth")
+            st.json(_jsonable(result.get("ground_truth") or {"status": "not_loaded"}))
+
+
+def _render_direct_query(st: Any, snapshot_path: Path) -> None:
     specs = query_specs()
     query_name = st.selectbox(
         "Query surface",
@@ -205,6 +258,69 @@ def _missing_required_arg(query_name: str, args: dict[str, Any]) -> str | None:
 
 def _jsonable(value: Any) -> Any:
     return json.loads(json.dumps(value, sort_keys=True, default=str))
+
+
+def _run_interactive_query(
+    kg: KgSnapshot,
+    *,
+    user_query: str,
+    limit: int,
+    model: str,
+    ground_truth: dict[str, Any],
+) -> dict[str, Any]:
+    return asyncio.run(
+        _run_interactive_query_async(
+            kg,
+            user_query=user_query,
+            limit=limit,
+            model=model,
+            ground_truth=ground_truth,
+        )
+    )
+
+
+async def _run_interactive_query_async(
+    kg: KgSnapshot,
+    *,
+    user_query: str,
+    limit: int,
+    model: str,
+    ground_truth: dict[str, Any],
+) -> dict[str, Any]:
+    kg_state = kg.summary()
+    async with ClaudeInteractiveAgentSession(AgentRuntimeConfig(model=model)) as agent:
+        raw_plan = await agent.plan_query(user_query, kg_state)
+        execution = execute_interactive_plan(
+            kg,
+            user_query=user_query,
+            plan=raw_plan,
+            limit=limit,
+            ground_truth=ground_truth,
+        )
+        answer = await agent.synthesize_answer(execution["packet"], execution["plan"], execution["kg_state"])
+    return {**execution, "answer": answer}
+
+
+def _load_ground_truth(path_value: str) -> dict[str, Any]:
+    if not path_value.strip():
+        return {}
+    path = Path(path_value).expanduser()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Ground truth JSON must be an object")
+    return data
+
+
+def _render_answer_list(st: Any, title: str, values: Any) -> None:
+    st.markdown(f"### {title}")
+    if not values:
+        st.markdown("- None.")
+        return
+    if not isinstance(values, list):
+        st.markdown(f"- {values}")
+        return
+    for value in values:
+        st.markdown(f"- {value}")
 
 
 if __name__ == "__main__":

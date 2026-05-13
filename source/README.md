@@ -79,14 +79,19 @@ Contract reconciliation is the generic primitive behind docs-vs-code, client-vs-
 
 ## Interactive UI
 
-The optional Streamlit app gives evaluators a local UI for existing JSONL snapshots. It does not build snapshots, call an LLM, or persist state.
+The optional Streamlit app gives evaluators a local UI for existing JSONL snapshots. It does not build snapshots or persist state.
 
 ```bash
 pip install streamlit
 SUPERCONTEXT_ORGS_ROOT=~/work/orgs streamlit run source/scripts/streamlit_app.py
 ```
 
-The app discovers org directories from `SUPERCONTEXT_ORGS_ROOT` and complete snapshots under `data/kg_runs/`. V1 exposes six direct `KgSnapshot` query surfaces: `summary`, `find_callers`, `modules_importing`, `top_dependencies`, `blast_radius`, and `lookup_symbol`.
+The app discovers org directories from `SUPERCONTEXT_ORGS_ROOT` and complete snapshots under `data/kg_runs/`. It has two modes:
+
+- Natural language: `source.kg.agent` uses Claude Agent SDK with tools disabled to plan anchors and synthesize from KG evidence. Retrieval still runs through deterministic `RetrievalStep` and `EvidencePacket` code.
+- Direct query: six direct `KgSnapshot` query surfaces remain available for debugging: `summary`, `find_callers`, `modules_importing`, `top_dependencies`, `blast_radius`, and `lookup_symbol`.
+
+Optional ground-truth JSON can be loaded from the sidebar for local evaluation. The OSS UI never imports private-goldset modules directly.
 
 ## Run
 
