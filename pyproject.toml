@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bettercontext"
+version = "0.1.0"
+description = "Typed cross-service knowledge graph for AI coding agents in microservice organizations."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "BetterContext contributors" }]
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+ui = ["streamlit>=1.30"]
+llm = ["openai>=1.0"]
+agent = ["claude-agent-sdk"]
+dev = ["PyYAML>=6.0"]
+
+[project.scripts]
+bettercontext-build-kg = "source.scripts.build_kg:main"
+bettercontext-build-multi-kg = "source.scripts.build_multi_kg:main"
+bettercontext-query-kg = "source.scripts.query_kg:main"
+bettercontext-mcp-server = "source.scripts.mcp_server:main"
+bettercontext-run-validation = "source.scripts.run_product_validation:main"
+
+[tool.setuptools.packages.find]
+include = ["source*"]
+
+[tool.setuptools.package-data]
+"source.kg.extraction.typescript" = ["ts_parser.mjs"]

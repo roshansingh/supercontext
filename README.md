@@ -1,0 +1,71 @@
+# BetterContext
+
+BetterContext builds a typed, evidence-backed knowledge graph from local source repositories. The current v0 focuses on change-safety questions for AI coding agents and engineering teams: callers/callees, import dependencies, endpoints, event channels, deploy/config facts, and multi-repo package links.
+
+Status: pre-1.0 local KG harness. The JSONL snapshot store, local MCP server, Streamlit evaluator UI, and validation harness are implemented. Production storage, hosted auth, PR-bot integration, and broad language coverage are still in progress.
+
+License: TBD before public OSS release.
+
+## Requirements
+
+- Python 3.11 or newer.
+- Node.js and `npm ci` for TypeScript/JavaScript indexing.
+- Optional Python extras for specific features: `yaml`, `ui`, `llm`, and `agent`.
+
+## Quickstart
+
+```bash
+python -m pip install -e ".[yaml]"
+npm ci
+
+bettercontext-build-kg --repo /path/to/repo --out data/kg_runs/example
+bettercontext-query-kg --snapshot data/kg_runs/example summary
+bettercontext-query-kg --snapshot data/kg_runs/example top-dependencies --limit 10
+```
+
+Build a multi-repo snapshot when repos depend on each other through package manifests:
+
+```bash
+bettercontext-build-multi-kg \
+  --repo /path/to/service-a \
+  --repo /path/to/service-b \
+  --out data/kg_runs/example_org
+```
+
+Run the local MCP v0 server over an existing snapshot:
+
+```bash
+bettercontext-mcp-server --snapshot data/kg_runs/example --port 3845
+```
+
+The server is read-only and local-development oriented. Keep the default loopback bind unless you intentionally pass `--allow-public` on a trusted network.
+
+## What It Extracts
+
+- Repositories, services, modules, code symbols, imports, and static call edges.
+- HTTP endpoints and client endpoint calls for supported Python and JS/TS frameworks.
+- Domains, environment references, deploy/config targets, and event channels.
+- Evidence rows with repo, commit, file, and line coordinates where available.
+- Coverage rows for unsupported or uninstrumented known stacks.
+
+## Repository Layout
+
+- `source/kg/` contains the KG core, extraction, normalization, query, product-validation, and agent modules.
+- `source/scripts/` contains command-line entry points.
+- `tests/` contains unit, regression, drift, and packaging checks.
+- `adr/` records accepted architecture decisions.
+- `docs/` contains product, evaluation, review, and implementation planning docs.
+- `examples/private-goldset/` contains private validation fixtures and is not part of the public product contract.
+
+See `source/README.md` for lower-level KG module details and command examples.
+
+## Development
+
+```bash
+python -m pip install -e ".[dev]"
+npm ci
+python -m compileall -q source
+python -m unittest discover -s tests
+```
+
+Before changing extractors or validation behavior, rebuild the affected snapshots locally and update the relevant baseline or product-query drift artifacts only when the movement is intentional.
