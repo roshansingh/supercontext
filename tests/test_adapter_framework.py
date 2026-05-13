@@ -17,6 +17,7 @@ from source.kg.extraction.adapters.config_terraform import CONFIG_TERRAFORM_ADAP
 from source.kg.extraction.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
 from source.kg.extraction.adapters.legacy import LEGACY_STATIC_CONFIG_ADAPTER, LegacyAdapter
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
+from source.kg.extraction.adapters.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
@@ -294,6 +295,15 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("CONSUMES_EVENT", capability.produces_predicates)
         self.assertIn("Endpoint", capability.produces_entity_kinds)
         self.assertIn("EventChannel", capability.produces_entity_kinds)
+
+    def test_typescript_route_adapter_claims_supported_web_frameworks(self) -> None:
+        capability = TYPESCRIPT_EXPRESS_ROUTES_ADAPTER.capability
+
+        self.assertIn("express", capability.framework_tags)
+        self.assertIn("fastify", capability.framework_tags)
+        self.assertIn("koa", capability.framework_tags)
+        self.assertIn("EXPOSES_ENDPOINT", capability.produces_predicates)
+        self.assertIn("Endpoint", capability.produces_entity_kinds)
 
     def test_config_split_pipeline_matches_static_config_monolith(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

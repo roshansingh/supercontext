@@ -81,7 +81,7 @@ def extract_endpoints(
                 scope_ref={
                     "repo": repo.name,
                     "language": "javascript/typescript",
-                    "reason": "parser_backed_js_ts_route_extraction_partial_express_only",
+                    "reason": "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only",
                 },
                 state="partially_instrumented",
                 source_system=CONFIG_SOURCE_SYSTEM,

@@ -427,6 +427,19 @@ function isRequireCall(node, moduleName) {
   );
 }
 
+function requireCallModule(node) {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "require" &&
+    node.arguments.length === 1 &&
+    ts.isStringLiteral(node.arguments[0])
+  ) {
+    return node.arguments[0].text;
+  }
+  return null;
+}
+
 function isExpressFactoryCall(node, expressFactories) {
   return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && expressFactories.has(node.expression.text);
 }
@@ -513,6 +526,182 @@ function collectExpressRoutes(sourceFile) {
   return routes;
 }
 
+function collectFastifyFactories(sourceFile) {
+  const factories = new Set();
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "fastify") {
+      const clause = statement.importClause;
+      if (clause?.name) factories.add(clause.name.text);
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const element of clause.namedBindings.elements) {
+          if ((element.propertyName ?? element.name).text === "fastify") factories.add(element.name.text);
+        }
+      }
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer && isRequireCall(declaration.initializer, "fastify")) {
+          factories.add(declaration.name.text);
+        }
+      }
+    }
+  }
+  return factories;
+}
+
+function collectFastifyReceivers(sourceFile) {
+  const factories = collectFastifyFactories(sourceFile);
+  const receivers = new Set();
+  function visit(node) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      factories.has(node.initializer.expression.text)
+    ) {
+      receivers.add(node.name.text);
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      isRequireCall(node.initializer.expression, "fastify")
+    ) {
+      receivers.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return receivers;
+}
+
+function directFastifyRoute(node, sourceFile, receivers) {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
+  const method = node.expression.name.text;
+  if (!EXPRESS_ROUTE_METHODS.has(method)) return null;
+  if (!ts.isIdentifier(node.expression.expression) || !receivers.has(node.expression.expression.text)) return null;
+  if (node.arguments.length < 1) return null;
+  const routePath = stringLiteralValue(node.arguments[0]);
+  if (routePath == null) return null;
+  return { method, path: routePath, line: lineOf(sourceFile, node.expression.getStart(sourceFile)), source_kind: `fastify_${method}` };
+}
+
+function fastifyRouteObject(node, sourceFile, receivers) {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
+  if (node.expression.name.text !== "route") return null;
+  if (!ts.isIdentifier(node.expression.expression) || !receivers.has(node.expression.expression.text)) return null;
+  if (node.arguments.length < 1 || !ts.isObjectLiteralExpression(node.arguments[0])) return null;
+  const routeObject = node.arguments[0];
+  const pathNode = objectLiteralProperty(routeObject, "url") ?? objectLiteralProperty(routeObject, "path");
+  const hasMethodProperty = objectLiteralHasProperty(routeObject, "method");
+  const methodNode = objectLiteralProperty(routeObject, "method");
+  const routePath = pathNode ? stringLiteralValue(pathNode) : null;
+  if (routePath == null) return null;
+  const method = methodNode ? stringLiteralValue(methodNode) : null;
+  if (hasMethodProperty && method == null) return null;
+  return {
+    method: method ? method.toLowerCase() : "all",
+    path: routePath,
+    line: lineOf(sourceFile, node.expression.getStart(sourceFile)),
+    source_kind: "fastify_route",
+  };
+}
+
+function collectFastifyRoutes(sourceFile) {
+  const receivers = collectFastifyReceivers(sourceFile);
+  if (receivers.size === 0) return [];
+  const routes = [];
+  function visit(node) {
+    const route = directFastifyRoute(node, sourceFile, receivers) ?? fastifyRouteObject(node, sourceFile, receivers);
+    if (route) routes.push(route);
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return routes;
+}
+
+function collectKoaRouterFactories(sourceFile) {
+  const factories = new Set();
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      (statement.moduleSpecifier.text === "@koa/router" || statement.moduleSpecifier.text === "koa-router")
+    ) {
+      const clause = statement.importClause;
+      if (clause?.name) factories.add(clause.name.text);
+      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) factories.add(clause.namedBindings.name.text);
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const element of clause.namedBindings.elements) {
+          const importedName = (element.propertyName ?? element.name).text;
+          if (importedName === "Router" || importedName === "default") factories.add(element.name.text);
+        }
+      }
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+        const moduleName = requireCallModule(declaration.initializer);
+        if (moduleName === "@koa/router" || moduleName === "koa-router") factories.add(declaration.name.text);
+      }
+    }
+  }
+  return factories;
+}
+
+function isKoaRouterInstance(node, factories) {
+  if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && factories.has(node.expression.text)) return true;
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && factories.has(node.expression.text)) return true;
+  if (ts.isCallExpression(node) && (isRequireCall(node.expression, "@koa/router") || isRequireCall(node.expression, "koa-router"))) return true;
+  return false;
+}
+
+function collectKoaReceivers(sourceFile) {
+  const factories = collectKoaRouterFactories(sourceFile);
+  const receivers = new Set();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isKoaRouterInstance(node.initializer, factories)) {
+      receivers.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return receivers;
+}
+
+function directKoaRoute(node, sourceFile, receivers) {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
+  const method = node.expression.name.text;
+  if (!EXPRESS_ROUTE_METHODS.has(method)) return null;
+  if (!ts.isIdentifier(node.expression.expression) || !receivers.has(node.expression.expression.text)) return null;
+  if (node.arguments.length < 1) return null;
+  const routePath = stringLiteralValue(node.arguments[0]);
+  if (routePath == null) return null;
+  return { method, path: routePath, line: lineOf(sourceFile, node.expression.getStart(sourceFile)), source_kind: `koa_${method}` };
+}
+
+function collectKoaRoutes(sourceFile) {
+  const receivers = collectKoaReceivers(sourceFile);
+  if (receivers.size === 0) return [];
+  const routes = [];
+  function visit(node) {
+    const route = directKoaRoute(node, sourceFile, receivers);
+    if (route) routes.push(route);
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return routes;
+}
+
+function collectServerRoutes(sourceFile) {
+  return [...collectExpressRoutes(sourceFile), ...collectFastifyRoutes(sourceFile), ...collectKoaRoutes(sourceFile)];
+}
+
 function collectAxiosLocals(sourceFile) {
   const locals = new Set();
   for (const statement of sourceFile.statements) {
@@ -556,6 +745,16 @@ function objectLiteralProperty(objectNode, propertyName) {
     if (propertyNameText(property.name) === propertyName) return property.initializer;
   }
   return null;
+}
+
+function objectLiteralHasProperty(objectNode, propertyName) {
+  if (!ts.isObjectLiteralExpression(objectNode)) return false;
+  for (const property of objectNode.properties) {
+    if (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property) || ts.isMethodDeclaration(property)) {
+      if (propertyNameText(property.name) === propertyName) return true;
+    }
+  }
+  return false;
 }
 
 function axiosCreateClientInfo(name, initializer, sourceFile, axiosLocals, bindings) {
@@ -951,7 +1150,7 @@ for (const relativePath of files) {
       line: diagnostic.start == null ? 1 : lineOf(sourceFile, diagnostic.start),
     })),
     imports: collectImports(sourceFile),
-    express_routes: collectExpressRoutes(sourceFile),
+    express_routes: collectServerRoutes(sourceFile),
     client_endpoint_calls: collectClientEndpointCalls(sourceFile),
     module_clients: collectModuleClients(sourceFile, axiosLocals, literalBindings),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
