@@ -13,6 +13,7 @@ from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
     _JsonPayloadError,
     MCP_PROTOCOL_VERSION,
+    REQUEST_READ_TIMEOUT_SECONDS,
     _content_length,
     _decode_json_payload,
     _format_host_for_url,
@@ -20,6 +21,8 @@ from source.scripts.mcp_server import (
     _handle_json_rpc,
     _handle_json_rpc_payload,
     _is_loopback_host,
+    _read_request_body,
+    _RequestBodyTimeout,
     _server_address_for_host,
     _server_class_for_host,
 )
@@ -201,6 +204,18 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(_content_length(_FakeHttpHandler({"Content-Length": "2"})), 2)
 
+    def test_request_body_read_sets_timeout_and_rejects_incomplete_body(self) -> None:
+        complete = _FakeHttpHandler({"Content-Length": "2"}, body=b"{}")
+        short = _FakeHttpHandler({"Content-Length": "4"}, body=b"{}")
+        stalled = _FakeHttpHandler({"Content-Length": "2"}, rfile=_TimeoutReader())
+
+        self.assertEqual(_read_request_body(complete, 2), b"{}")
+        self.assertEqual(complete.connection.timeout, REQUEST_READ_TIMEOUT_SECONDS)
+        with self.assertRaisesRegex(ValueError, "before Content-Length"):
+            _read_request_body(short, 4)
+        with self.assertRaisesRegex(_RequestBodyTimeout, "Timed out"):
+            _read_request_body(stalled, 2)
+
     def test_json_body_decoding_reports_invalid_utf8_as_parse_error(self) -> None:
         with self.assertRaisesRegex(_JsonPayloadError, "invalid UTF-8"):
             _decode_json_payload(b"\xff")
@@ -338,8 +353,23 @@ class _fixture_snapshot:
 
 
 class _FakeHttpHandler:
-    def __init__(self, headers: dict[str, str]) -> None:
+    def __init__(self, headers: dict[str, str], *, body: bytes = b"", rfile: object | None = None) -> None:
         self.headers = headers
+        self.connection = _FakeConnection()
+        self.rfile = rfile or io.BytesIO(body)
+
+
+class _FakeConnection:
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+
+
+class _TimeoutReader:
+    def read(self, size: int) -> bytes:
+        raise TimeoutError("stalled")
 
 
 if __name__ == "__main__":

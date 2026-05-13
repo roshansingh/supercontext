@@ -15,6 +15,7 @@ from source.kg.query.snapshot import KgSnapshot
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
+REQUEST_READ_TIMEOUT_SECONDS = 5.0
 
 
 def main() -> None:
@@ -57,7 +58,10 @@ def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
                 self._write_json(404, {"error": "not_found"})
                 return
             try:
-                body = self.rfile.read(_content_length(self))
+                body = _read_request_body(self, _content_length(self))
+            except _RequestBodyTimeout as exc:
+                self._write_json(408, {"error": "request_timeout", "message": str(exc)})
+                return
             except ValueError as exc:
                 self._write_json(400, {"error": "invalid_request", "message": str(exc)})
                 return
@@ -101,6 +105,21 @@ def _content_length(handler: BaseHTTPRequestHandler) -> int:
     if value < 0 or value > 1_000_000:
         raise ValueError("Content-Length is outside the accepted range")
     return value
+
+
+class _RequestBodyTimeout(TimeoutError):
+    pass
+
+
+def _read_request_body(handler: BaseHTTPRequestHandler, content_length: int) -> bytes:
+    handler.connection.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
+    try:
+        body = handler.rfile.read(content_length)
+    except TimeoutError as exc:
+        raise _RequestBodyTimeout("Timed out reading request body") from exc
+    if len(body) != content_length:
+        raise ValueError("Request body ended before Content-Length bytes were received")
+    return body
 
 
 def _is_loopback_host(host: str) -> bool:
