@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from source.scripts.capture_snapshot_baseline import capture_snapshot_baseline
-from source.scripts.compare_snapshot_baseline import _load_baseline, compare_snapshot_baseline, render_differences
+from source.scripts.compare_snapshot_baseline import load_baseline, compare_snapshot_baseline, render_differences
 
 
 class SnapshotBaselineTest(unittest.TestCase):
@@ -18,6 +18,7 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_json(snapshot / "manifest.json", {"counts": {"entities": 2, "facts": 2}, "extractor_errors": ["boom"]})
             _write_jsonl(snapshot / "entities.jsonl", [{"kind": "Repo"}, {"kind": "Service"}])
             _write_jsonl(snapshot / "facts.jsonl", [{"predicate": "CALLS"}, {"predicate": "CALLS"}])
+            _write_jsonl(snapshot / "evidence.jsonl", [{"id": "ev-1"}])
             _write_jsonl(
                 snapshot / "coverage.jsonl",
                 [
@@ -42,6 +43,7 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_json(snapshot / "manifest.json", {"counts": {}, "extractor_errors": []})
             _write_jsonl(snapshot / "entities.jsonl", [{"kind": "Repo"}])
             _write_jsonl(snapshot / "facts.jsonl", [{"predicate": ""}])
+            _write_jsonl(snapshot / "evidence.jsonl", [])
             _write_jsonl(snapshot / "coverage.jsonl", [])
 
             with self.assertRaisesRegex(ValueError, "facts.jsonl field 'predicate'"):
@@ -89,6 +91,7 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_json(snapshot / "manifest.json", {"counts": {"facts": 1}, "extractor_errors": []})
             _write_jsonl(snapshot / "entities.jsonl", [{"kind": "Repo"}])
             _write_jsonl(snapshot / "facts.jsonl", [{"predicate": "CALLS"}])
+            _write_jsonl(snapshot / "evidence.jsonl", [{"id": "ev-1"}])
             _write_jsonl(snapshot / "coverage.jsonl", [])
             _write_json(baseline_path, capture_snapshot_baseline(snapshot, name="fixture"))
 
@@ -110,6 +113,29 @@ class SnapshotBaselineTest(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "Snapshot matches baseline.")
         self.assertEqual(result.stderr, "")
 
+    def test_capture_snapshot_baseline_requires_evidence_file_for_complete_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot = Path(tmpdir)
+            _write_json(snapshot / "manifest.json", {"counts": {}, "extractor_errors": []})
+            _write_jsonl(snapshot / "entities.jsonl", [])
+            _write_jsonl(snapshot / "facts.jsonl", [])
+            _write_jsonl(snapshot / "coverage.jsonl", [])
+
+            with self.assertRaisesRegex(FileNotFoundError, "evidence.jsonl"):
+                capture_snapshot_baseline(snapshot, name="fixture")
+
+    def test_capture_snapshot_baseline_rejects_boolean_manifest_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot = Path(tmpdir)
+            _write_json(snapshot / "manifest.json", {"counts": {"facts": True}, "extractor_errors": []})
+            _write_jsonl(snapshot / "entities.jsonl", [])
+            _write_jsonl(snapshot / "facts.jsonl", [])
+            _write_jsonl(snapshot / "evidence.jsonl", [])
+            _write_jsonl(snapshot / "coverage.jsonl", [])
+
+            with self.assertRaisesRegex(ValueError, "manifest.counts.facts"):
+                capture_snapshot_baseline(snapshot, name="fixture")
+
     def test_load_baseline_rejects_malformed_distribution_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "baseline.json"
@@ -118,7 +144,28 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_json(path, baseline)
 
             with self.assertRaisesRegex(ValueError, "fact_predicate_counts.CALLS"):
-                _load_baseline(path)
+                load_baseline(path)
+
+    def test_load_baseline_rejects_boolean_distribution_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "baseline.json"
+            baseline = _baseline(fact_counts={"CALLS": 2})
+            baseline["fact_predicate_counts"] = {"CALLS": True}
+            _write_json(path, baseline)
+
+            with self.assertRaisesRegex(ValueError, "fact_predicate_counts.CALLS"):
+                load_baseline(path)
+
+    def test_compare_snapshot_baseline_treats_boolean_actual_counts_as_invalid(self) -> None:
+        expected = _baseline(fact_counts={"CALLS": 1})
+        actual = _baseline(fact_counts={"CALLS": 1})
+        actual["fact_predicate_counts"] = {"CALLS": True}
+
+        differences = compare_snapshot_baseline(actual, expected)
+
+        self.assertEqual(len(differences), 1)
+        self.assertEqual(differences[0].section, "fact_predicate_counts")
+        self.assertEqual(differences[0].key, "CALLS")
 
 
 def _baseline(

@@ -20,6 +20,20 @@ Use `--allow-additions` only when a feature is expected to add facts without rem
 
 Public multi-repo fixture commands for `llm-app-stack` and `otel-demo` live in `examples/public-orgs/README.md`.
 
+## Drift-Test Snapshot Mapping
+
+`tests/test_baseline_drift.py` compares committed baselines against these local snapshot directories when they are present:
+
+| Baseline | Local snapshot |
+|---|---|
+| `latticeai_23.json` | `data/kg_runs/latticeai_23` |
+| `llm-app-stack.json` | `data/kg_runs/llm-app-stack` |
+| `mercury_ml.json` | `data/kg_runs/mercury_ml_eval_2026_05_11` |
+| `otel-demo.json` | `data/kg_runs/otel-demo` |
+| `true_loop.json` | `data/kg_runs/true_loop_eval_2026_05_11` |
+
+The Mercury ML and True Loop snapshots currently use dated directories because those are the validation snapshots used by the canonical product report. If those snapshots are regenerated under new dated directories, update the mapping in the drift test in the same PR as the baseline update.
+
 ## Baseline Change Notes
 
 - `llm-app-stack` public-corpus baseline: initial capture from five local public repos (`langfuse`, `langfuse-python`, `litellm`, `open-webui`, `open-webui-pipelines`) with 0 extractor errors, 523 package-linker edges, 112443 entities, 299505 facts, 685030 evidence rows, and 966 coverage rows.

@@ -1,0 +1,24 @@
+{
+  "failure_owner_summary": {
+    "bad ground truth": 0,
+    "bad retrieval plan": 1,
+    "bad synthesis": 0,
+    "coverage gap": 90,
+    "missing KG fact": 1
+  },
+  "harness_sources": [
+    "deterministic smoke",
+    "fixture binding",
+    "goldset judgement"
+  ],
+  "measured_query_count": 25,
+  "measured_query_coverage_pct": 22.7,
+  "query_count": 110,
+  "status_summary": {
+    "partial": 1,
+    "pass": 26,
+    "unmeasured": 90
+  },
+  "tuple_count": 117,
+  "unmeasured_query_count": 85
+}
