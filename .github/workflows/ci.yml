@@ -22,4 +22,5 @@ jobs:
         run: python -m compileall -q source
 
       - name: Run unit tests
+        timeout-minutes: 30
         run: python -m unittest discover -s tests

@@ -40,7 +40,10 @@ class BaselineDriftTest(unittest.TestCase):
 
 
 def _snapshot_available(path: Path) -> bool:
-    return all((path / filename).exists() for filename in ("manifest.json", "entities.jsonl", "facts.jsonl", "coverage.jsonl"))
+    return all(
+        (path / filename).exists()
+        for filename in ("manifest.json", "entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl")
+    )
 
 
 if __name__ == "__main__":
