@@ -1,27 +1,29 @@
 # Product Query Set Run
 
-Generated: 2026-05-13T01:07:31Z
+Generated: 2026-05-13T09:20:00Z
 
 Product query set: `docs/evaluation/PRODUCT-QUERY-SET.md`
 
 This report is the Debate 12 Step 1 measurement matrix. It records every product query as measured or `unmeasured` without pretending unsupported surfaces have an executable harness.
 
+When a query has both deterministic-smoke and fixture-binding coverage, the matrix shows the deterministic smoke row. Fixture-binding handlers can therefore act as fallback coverage without increasing the visible measured-query count until they cover a previously unmeasured query.
+
 ## Summary
 
 - Unique queries: 110
 - Query/corpus tuples: 117
-- Measured queries: 24 / 110
-- Unmeasured queries: 86 / 110
-- Measured query coverage: 21.8%
+- Measured queries: 25 / 110
+- Unmeasured queries: 85 / 110
+- Measured query coverage: 22.7%
 - Current harness sources: deterministic smoke, fixture binding, goldset judgement
 
-Status counts: partial=1, pass=25, unmeasured=91.
+Status counts: partial=1, pass=26, unmeasured=90.
 
 Difficulty counts: Hard=55, Low=15, Medium=40.
 
 ## Failure Owners
 
-Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, bad ground truth=0, coverage gap=91.
+Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, bad ground truth=0, coverage gap=90.
 
 | Failure owner | Query/corpus tuples |
 |---|---:|
@@ -29,7 +31,7 @@ Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, 
 | bad retrieval plan | 1 |
 | bad synthesis | 0 |
 | bad ground truth | 0 |
-| coverage gap | 91 |
+| coverage gap | 90 |
 
 ## Matrix
 
@@ -43,7 +45,7 @@ Failure-owner counts: missing KG fact=1, bad retrieval plan=1, bad synthesis=0, 
 | Q005 | Low | True Loop | pass | none | deterministic smoke | symbol_count=29, expected >= 1 |
 | Q006 | Low | Mercury ML | pass | none | fixture binding | coverage rows for mercury_ml/tests/intent_based_predictions/feature_builder_test.py: 2 rows |
 | Q007 | Low | Mercury ML | pass | none | deterministic smoke | match_count=1, expected >= 1 |
-| Q008 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
+| Q008 | Low | Mercury ML | pass | none | fixture binding | os stdlib dependency rows: 1 row |
 | Q009 | Low | Mercury ML | pass | none | deterministic smoke | top dependencies: 5 rows |
 | Q010 | Low | Mercury ML | unmeasured | coverage gap | none | No executable smoke, packet, answer, or judgement harness exists for this query/corpus tuple yet. |
 | Q010 | Low | True Loop | pass | none | deterministic smoke | status `resolved`, expected `resolved` |

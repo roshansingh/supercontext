@@ -30,6 +30,11 @@ IMPLEMENTED_FIXTURE_BINDING_VARIABLES = frozenset(
         "$PACKAGE",
         "$THIRD_PARTY_PACKAGE",
         "$BROKEN_FILE",
+        "$ENTRY_SYMBOL",
+        "$ENTRY_SYMBOL_PATH",
+        "$ENTRY_SYMBOL_LINE",
+        "$CALLER_SYMBOL",
+        "$INTERNAL_MODULE",
     }
 )
 DECLARED_FIXTURE_VARIABLES = frozenset(
@@ -277,6 +282,10 @@ def render_product_query_matrix_markdown(report: JsonObject) -> str:
         "",
         "This report is the Debate 12 Step 1 measurement matrix. It records every product query as measured or "
         "`unmeasured` without pretending unsupported surfaces have an executable harness.",
+        "",
+        "When a query has both deterministic-smoke and fixture-binding coverage, the matrix shows the deterministic "
+        "smoke row. Fixture-binding handlers can therefore act as fallback coverage without increasing the visible "
+        "measured-query count until they cover a previously unmeasured query.",
         "",
         "## Summary",
         "",
@@ -1127,6 +1136,63 @@ def _fixture_bound_product_query_row(
             notes=f"coverage rows for {file_path}: {len(rows)} rows",
             actual={"row_count": len(rows), "sample": rows[:2]},
         )
+    # Some fixture-binding rows are intentionally shadowed by deterministic smoke rows.
+    # They remain executable fallback coverage if smoke checks are narrowed or removed.
+    if query_id == "Q003":
+        symbol = bindings.get("$CALLER_SYMBOL")
+        if not symbol:
+            return None
+        result = kg.find_callers(symbol, limit=25)
+        target = result.get("target")
+        candidates = target.get("candidates") if isinstance(target, dict) else []
+        status = "pass" if result.get("status") == "ambiguous" and candidates else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} default caller lookup status: {result.get('status')}",
+            actual=result,
+        )
+    if query_id == "Q004":
+        coordinate = _entry_symbol_coordinate(bindings)
+        if coordinate is None:
+            return None
+        path, line = coordinate
+        symbol = bindings.get("$ENTRY_SYMBOL")
+        if not symbol:
+            return None
+        result = kg.find_callees(
+            symbol,
+            path=path,
+            line=line,
+            limit=25,
+        )
+        status = "pass" if result.get("status") == "found" and int(result.get("callee_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} direct callees: {_count_phrase(result.get('callee_count', 0), 'row')}",
+            actual=result,
+        )
+    if query_id == "Q008":
+        package_name = _fixture_literal(query, fallback="os")
+        if not package_name:
+            return None
+        rows = kg.dependency_info(package_name)
+        stdlib_rows = [
+            row
+            for row in rows
+            if isinstance(row, dict) and row.get("category") == "stdlib"
+        ]
+        status = "pass" if stdlib_rows else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{package_name} stdlib dependency rows: {_count_phrase(len(stdlib_rows), 'row')}",
+            actual={"row_count": len(stdlib_rows), "dependency_info": rows},
+        )
     if query_id == "Q012":
         package_name = _fixture_literal(query, fallback=bindings.get("$PACKAGE"))
         if not package_name:
@@ -1153,7 +1219,92 @@ def _fixture_bound_product_query_row(
             notes=f"{package_name} importers: {len(rows)} rows; {mapping_note}",
             actual={"row_count": len(rows), "dependency_info": dependency_info, "sample": rows[:2]},
         )
+    if query_id == "Q013":
+        symbol = _fixture_literal(query, fallback="write_result_on_disk")
+        if not symbol:
+            return None
+        result = kg.find_callers(symbol, limit=25)
+        status = "pass" if result.get("status") == "found" and int(result.get("caller_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} direct callers: {_count_phrase(result.get('caller_count', 0), 'row')}",
+            actual=result,
+        )
+    if query_id == "Q017":
+        target = bindings.get("$INTERNAL_MODULE")
+        if not target:
+            return None
+        result = kg.who_imports(target, limit=25)
+        status = "pass" if result.get("status") == "resolved" and int(result.get("importer_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{target} importers: {_count_phrase(result.get('importer_count', 0), 'row')}",
+            actual=result,
+        )
+    if query_id == "Q023":
+        packages = _fixture_literals(query, keys=("fixture", "user_query"))
+        left = packages[0] if len(packages) >= 1 else "pandas"
+        right = packages[1] if len(packages) >= 2 else "sklearn"
+        result = kg.modules_importing_both(left, right, limit=25)
+        status = "pass" if result.get("status") == "resolved" and int(result.get("module_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"modules importing {left} and {right}: {_count_phrase(result.get('module_count', 0), 'row')}",
+            actual=result,
+        )
+    if query_id == "Q026":
+        coordinate = _entry_symbol_coordinate(bindings)
+        if coordinate is None:
+            return None
+        path, line = coordinate
+        symbol = bindings.get("$ENTRY_SYMBOL")
+        if not symbol:
+            return None
+        target = _fixture_literal(query, fallback="sklearn")
+        if not target:
+            return None
+        result = kg.dependency_path(
+            symbol,
+            target,
+            path=path,
+            line=line,
+            limit=25,
+        )
+        status = "pass" if result.get("status") == "resolved" and int(result.get("path_count", 0) or 0) > 0 else "fail"
+        return _fixture_binding_matrix_row(
+            query=query,
+            corpus=corpus,
+            status=status,
+            notes=f"{symbol} to {target} dependency paths: {_count_phrase(result.get('path_count', 0), 'row')}",
+            actual=result,
+        )
     return None
+
+
+def _entry_symbol_coordinate(bindings: dict[str, str]) -> tuple[str, int] | None:
+    path = bindings.get("$ENTRY_SYMBOL_PATH")
+    line_text = bindings.get("$ENTRY_SYMBOL_LINE")
+    if not path or not line_text:
+        return None
+    try:
+        line = int(line_text)
+    except ValueError:
+        return None
+    if line < 1:
+        return None
+    return path, line
+
+
+def _count_phrase(value: object, singular: str, plural: str | None = None) -> str:
+    count = int(value or 0)
+    unit = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {unit}"
 
 
 def _fixture_binding_matrix_row(
@@ -1213,12 +1364,23 @@ def _fixture_bindings(query: JsonObject, fixture_defaults: dict[str, str]) -> di
 
 
 def _fixture_literal(query: JsonObject, fallback: str | None = None) -> str | None:
-    for token in _fixture_tokens(query, keys=("fixture",)):
-        token = _clean_fixture_token(token)
-        if not token or token.startswith("$"):
-            continue
-        return token
+    literals = _fixture_literals(query, keys=("fixture",))
+    if literals:
+        return literals[0]
     return fallback
+
+
+def _fixture_literals(query: JsonObject, keys: tuple[str, ...]) -> list[str]:
+    literals: list[str] = []
+    for key in keys:
+        parts = str(query.get(key, "")).split("`")
+        for index, part in enumerate(parts):
+            if index % 2 == 0:
+                continue
+            token = _clean_fixture_token(part)
+            if token and not token.startswith("$") and "=" not in token:
+                literals.append(token)
+    return literals
 
 
 def _unresolved_fixture_variables(query: JsonObject, fixture_defaults: dict[str, str]) -> list[str]:
