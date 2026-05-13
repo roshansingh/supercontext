@@ -49,6 +49,25 @@ class SnapshotBaselineTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "facts.jsonl field 'predicate'"):
                 capture_snapshot_baseline(snapshot, name="fixture")
 
+    def test_capture_snapshot_baseline_normalizes_legacy_coverage_reason_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot = Path(tmpdir)
+            _write_json(snapshot / "manifest.json", {"counts": {}, "extractor_errors": []})
+            _write_jsonl(snapshot / "entities.jsonl", [])
+            _write_jsonl(snapshot / "facts.jsonl", [])
+            _write_jsonl(snapshot / "evidence.jsonl", [])
+            _write_jsonl(
+                snapshot / "coverage.jsonl",
+                [{"scope_ref": {"reason": "parser_backed_js_ts_route_extraction_partial_express_only"}}],
+            )
+
+            baseline = capture_snapshot_baseline(snapshot, name="fixture")
+
+        self.assertEqual(
+            baseline["coverage_reason_counts"],
+            {"parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 1},
+        )
+
     def test_compare_snapshot_baseline_reports_distribution_drift(self) -> None:
         expected = _baseline(fact_counts={"CALLS": 2}, coverage_counts={"old": 1})
         actual = _baseline(fact_counts={"CALLS": 1, "IMPORTS": 1}, coverage_counts={"new": 1})

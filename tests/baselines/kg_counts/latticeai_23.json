@@ -5,7 +5,7 @@
     "external_endpoint_suppressed": 1,
     "no_recognized_web_framework": 3,
     "parser_backed_js_ts_client_endpoint_extraction_partial_fetch_axios_only": 11,
-    "parser_backed_js_ts_route_extraction_partial_express_only": 11,
+    "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 11,
     "python_syntax_error": 1,
     "unknown": 61,
     "unknown_attribute_root": 6,
