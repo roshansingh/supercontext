@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from source.kg.product.validation_report import _product_query_matrix
+from source.kg.product.validation_report import _fixture_bound_product_query_row, _product_query_matrix
 
 
 class FakeKg:
@@ -258,6 +258,21 @@ class FixtureVariableBindingsTest(unittest.TestCase):
         self.assertEqual(row["status"], "fail")
         self.assertEqual(row["failure_owners"], ["missing KG fact"])
 
+    def test_q004_entry_symbol_coordinate_binding_is_mercury_only(self) -> None:
+        row = _fixture_bound_product_query_row(
+            _query(
+                "Q004",
+                "Low",
+                "`$PY_REPO`, `$ENTRY_SYMBOL`",
+                "What does `$ENTRY_SYMBOL` call directly?",
+            ),
+            "True Loop",
+            FakeKg(),  # type: ignore[arg-type]
+            {"$PY_REPO": "true_loop", "$ENTRY_SYMBOL": "generateResponseStream"},
+        )
+
+        self.assertIsNone(row)
+
     def test_q008_stdlib_binding_checks_dependency_classification(self) -> None:
         with TemporaryDirectory() as tmpdir:
             matrix = _product_query_matrix(
@@ -315,6 +330,29 @@ class FixtureVariableBindingsTest(unittest.TestCase):
         self.assertEqual(row["status"], "pass")
         self.assertIn("write_result_on_disk direct callers: 1 row", row["notes"])
 
+    def test_q013_uses_fixture_literal_for_reverse_call_lookup(self) -> None:
+        class LiteralSymbolKg(FakeKg):
+            def find_callers(self, symbol: str, limit: int = 25) -> dict[str, object]:
+                if symbol != "persist_prediction":
+                    raise AssertionError(symbol)
+                return {"status": "found", "caller_count": 1, "callers": [{"subject": "predict_on_session"}]}
+
+        with TemporaryDirectory() as tmpdir:
+            matrix = _product_query_matrix(
+                _query_set(
+                    tmpdir,
+                    "| Q013 | Low | CLI | Engineer | `$PY_REPO`, `persist_prediction` | "
+                    "What are the direct callers of this symbol? | Caller symbols. | Reverse calls. |",
+                ),
+                [],
+                {"scenarios": []},
+                {"Mercury ML": LiteralSymbolKg()},  # type: ignore[dict-item]
+            )
+
+        row = matrix["rows"][0]
+        self.assertEqual(row["status"], "pass")
+        self.assertIn("persist_prediction direct callers: 1 row", row["notes"])
+
     def test_q017_internal_module_binding_uses_who_imports(self) -> None:
         with TemporaryDirectory() as tmpdir:
             matrix = _product_query_matrix(
@@ -370,6 +408,21 @@ class FixtureVariableBindingsTest(unittest.TestCase):
         )
         self.assertEqual(row["status"], "pass")
         self.assertIn("predict_on_session to sklearn dependency paths: 1 row", row["notes"])
+
+    def test_q026_entry_symbol_coordinate_binding_is_mercury_only(self) -> None:
+        row = _fixture_bound_product_query_row(
+            _query(
+                "Q026",
+                "Medium",
+                "`$ENTRY_SYMBOL`, `@prisma/client`",
+                "What dependency path connects this symbol to `@prisma/client`, if any?",
+            ),
+            "True Loop",
+            FakeKg(),  # type: ignore[arg-type]
+            {"$PY_REPO": "true_loop", "$ENTRY_SYMBOL": "generateResponseStream"},
+        )
+
+        self.assertIsNone(row)
 
     def test_fixture_literal_comes_from_fixture_cell_without_package_allowlist(self) -> None:
         kg = FakeKg()
@@ -551,6 +604,17 @@ def _query_set(tmpdir: str, row: str) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _query(query_id: str, difficulty: str, fixture: str, user_query: str) -> dict[str, object]:
+    return {
+        "query_id": query_id,
+        "difficulty": difficulty,
+        "fixture": fixture,
+        "user_query": user_query,
+        "expected_answer_shape": "",
+        "capabilities": "",
+    }
 
 
 if __name__ == "__main__":

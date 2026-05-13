@@ -1154,6 +1154,8 @@ def _fixture_bound_product_query_row(
             actual=result,
         )
     if query_id == "Q004":
+        if not _is_mercury_fixture(corpus, bindings):
+            return None
         symbol = bindings.get("$ENTRY_SYMBOL")
         if not symbol:
             return None
@@ -1213,13 +1215,16 @@ def _fixture_bound_product_query_row(
             actual={"row_count": len(rows), "dependency_info": dependency_info, "sample": rows[:2]},
         )
     if query_id == "Q013":
-        result = kg.find_callers("write_result_on_disk", limit=25)
+        symbol = _fixture_literal(query, fallback="write_result_on_disk")
+        if not symbol:
+            return None
+        result = kg.find_callers(symbol, limit=25)
         status = "pass" if result.get("status") == "found" and int(result.get("caller_count", 0) or 0) > 0 else "fail"
         return _fixture_binding_matrix_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"write_result_on_disk direct callers: {_count_phrase(result.get('caller_count', 0), 'row')}",
+            notes=f"{symbol} direct callers: {_count_phrase(result.get('caller_count', 0), 'row')}",
             actual=result,
         )
     if query_id == "Q017":
@@ -1246,12 +1251,17 @@ def _fixture_bound_product_query_row(
             actual=result,
         )
     if query_id == "Q026":
+        if not _is_mercury_fixture(corpus, bindings):
+            return None
         symbol = bindings.get("$ENTRY_SYMBOL")
         if not symbol:
             return None
+        target = _fixture_literal(query, fallback="sklearn")
+        if not target:
+            return None
         result = kg.dependency_path(
             symbol,
-            "sklearn",
+            target,
             path=MERCURY_ENTRY_SYMBOL_PATH,
             line=MERCURY_ENTRY_SYMBOL_LINE,
             limit=25,
@@ -1261,10 +1271,14 @@ def _fixture_bound_product_query_row(
             query=query,
             corpus=corpus,
             status=status,
-            notes=f"{symbol} to sklearn dependency paths: {_count_phrase(result.get('path_count', 0), 'row')}",
+            notes=f"{symbol} to {target} dependency paths: {_count_phrase(result.get('path_count', 0), 'row')}",
             actual=result,
         )
     return None
+
+
+def _is_mercury_fixture(corpus: str, bindings: dict[str, str]) -> bool:
+    return corpus == "Mercury ML" and bindings.get("$PY_REPO") == "mercury_ml"
 
 
 def _count_phrase(value: object, singular: str, plural: str | None = None) -> str:
