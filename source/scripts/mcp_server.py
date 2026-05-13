@@ -50,21 +50,28 @@ def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
                 self._write_json(404, {"error": "not_found"})
                 return
             try:
-                payload = json.loads(self.rfile.read(_content_length(self)).decode("utf-8"))
-                if isinstance(payload, list):
-                    response = [row for row in (_handle_json_rpc(kg, item) for item in payload) if row is not None]
-                    if not response:
-                        self.send_response(204)
-                        self.end_headers()
-                        return
-                else:
-                    response = _handle_json_rpc(kg, payload)
-                    if response is None:
-                        self.send_response(204)
-                        self.end_headers()
-                        return
-            except Exception as exc:
+                body = self.rfile.read(_content_length(self))
+            except ValueError as exc:
+                self._write_json(400, {"error": "invalid_request", "message": str(exc)})
+                return
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError as exc:
                 response = _json_rpc_error(None, -32700, f"Invalid JSON-RPC request: {exc}")
+                self._write_json(200, response)
+                return
+            if isinstance(payload, list):
+                response = [row for row in (_handle_json_rpc(kg, item) for item in payload) if row is not None]
+                if not response:
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+            else:
+                response = _handle_json_rpc(kg, payload)
+                if response is None:
+                    self.send_response(204)
+                    self.end_headers()
+                    return
             self._write_json(200, response)
 
         def log_message(self, format: str, *args: Any) -> None:

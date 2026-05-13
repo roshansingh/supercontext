@@ -83,7 +83,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
 
     service = matches[0]
     service_id = service["entity_id"]
-    related = _facts_touching_entity(kg, service_id, limit=limit)
+    related = _facts_touching_entity(kg, service_id)
     endpoints = [row for row in related if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}]
     events = [row for row in related if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}]
     deploy_mappings = [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
@@ -216,7 +216,7 @@ def _service_row(kg: KgSnapshot, service: JsonObject) -> JsonObject:
     }
 
 
-def _facts_touching_entity(kg: KgSnapshot, entity_id: str, *, limit: int) -> list[JsonObject]:
+def _facts_touching_entity(kg: KgSnapshot, entity_id: str) -> list[JsonObject]:
     rows = []
     for fact in kg.facts:
         if fact.get("subject_id") != entity_id and fact.get("object_id") != entity_id:
@@ -226,8 +226,6 @@ def _facts_touching_entity(kg: KgSnapshot, entity_id: str, *, limit: int) -> lis
         if not subject or not object_:
             continue
         rows.append(_fact_result(kg, fact, subject, object_))
-        if len(rows) >= limit:
-            break
     return rows
 
 

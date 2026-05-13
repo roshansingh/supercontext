@@ -8,7 +8,7 @@ from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.mcp_tools import TOOL_NAMES, call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
-from source.scripts.mcp_server import _handle_json_rpc
+from source.scripts.mcp_server import _content_length, _handle_json_rpc
 
 
 class McpToolsTest(unittest.TestCase):
@@ -20,6 +20,7 @@ class McpToolsTest(unittest.TestCase):
             all_services = call_tool(kg, "search_services", {})
             search = call_tool(kg, "search_services", {"query": "payments"})
             brief = call_tool(kg, "get_service_brief", {"service": "payments"})
+            limited_brief = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 1})
             missing = call_tool(kg, "get_service_brief", {"service": "missing"})
 
         self.assertEqual(all_services["status"], "found")
@@ -28,6 +29,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(brief["status"], "found")
         self.assertEqual(brief["service"]["slug"], "payments")
         self.assertEqual(brief["summary"]["endpoint_fact_count"], 1)
+        self.assertEqual(limited_brief["summary"]["endpoint_fact_count"], 1)
+        self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
+        self.assertEqual(len(limited_brief["endpoints"]), 1)
+        self.assertEqual(len(limited_brief["event_channels"]), 1)
         self.assertEqual(missing["status"], "not_found")
 
     def test_symbol_tools_wrap_snapshot_query_methods(self) -> None:
@@ -114,6 +119,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("name", result["error"]["message"])
         self.assertEqual(wrong_version["error"]["code"], -32600)
         self.assertIsNone(notification)
+
+    def test_content_length_validation_rejects_transport_level_errors(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Missing Content-Length"):
+            _content_length(_FakeHttpHandler({}))
+        with self.assertRaisesRegex(ValueError, "must be an integer"):
+            _content_length(_FakeHttpHandler({"Content-Length": "abc"}))
+        with self.assertRaisesRegex(ValueError, "outside the accepted range"):
+            _content_length(_FakeHttpHandler({"Content-Length": "1000001"}))
+
+        self.assertEqual(_content_length(_FakeHttpHandler({"Content-Length": "2"})), 2)
 
 
 class _fixture_snapshot:
@@ -202,6 +217,11 @@ class _fixture_snapshot:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self._tmpdir.cleanup()
+
+
+class _FakeHttpHandler:
+    def __init__(self, headers: dict[str, str]) -> None:
+        self.headers = headers
 
 
 if __name__ == "__main__":
