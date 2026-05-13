@@ -27,7 +27,7 @@ def main() -> None:
 
     kg = KgSnapshot(args.snapshot)
     server = ThreadingHTTPServer((args.host, args.port), _handler_class(kg))
-    print(f"Supercontext MCP v0 server listening on http://{args.host}:{args.port}/mcp", file=sys.stderr)
+    print(f"Supercontext MCP v0 server listening on http://{_format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -56,8 +56,8 @@ def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
                 self._write_json(400, {"error": "invalid_request", "message": str(exc)})
                 return
             try:
-                payload = json.loads(body.decode("utf-8"))
-            except json.JSONDecodeError as exc:
+                payload = _decode_json_payload(body)
+            except _JsonPayloadError as exc:
                 response = _json_rpc_error(None, -32700, f"Invalid JSON-RPC request: {exc}")
                 self._write_json(200, response)
                 return
@@ -104,6 +104,31 @@ def _is_loopback_host(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def _format_host_for_url(host: str) -> str:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if address.version == 6:
+        return f"[{host}]"
+    return host
+
+
+class _JsonPayloadError(ValueError):
+    pass
+
+
+def _decode_json_payload(body: bytes) -> object:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise _JsonPayloadError(f"invalid UTF-8: {exc}") from exc
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise _JsonPayloadError(str(exc)) from exc
 
 
 def _handle_json_rpc_payload(kg: KgSnapshot, payload: object) -> object | None:

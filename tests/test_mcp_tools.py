@@ -8,7 +8,15 @@ from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.mcp_tools import TOOL_NAMES, call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
-from source.scripts.mcp_server import _content_length, _handle_json_rpc, _handle_json_rpc_payload, _is_loopback_host
+from source.scripts.mcp_server import (
+    _JsonPayloadError,
+    _content_length,
+    _decode_json_payload,
+    _format_host_for_url,
+    _handle_json_rpc,
+    _handle_json_rpc_payload,
+    _is_loopback_host,
+)
 
 
 class McpToolsTest(unittest.TestCase):
@@ -148,6 +156,14 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(_content_length(_FakeHttpHandler({"Content-Length": "2"})), 2)
 
+    def test_json_body_decoding_reports_invalid_utf8_as_parse_error(self) -> None:
+        with self.assertRaisesRegex(_JsonPayloadError, "invalid UTF-8"):
+            _decode_json_payload(b"\xff")
+        with self.assertRaisesRegex(_JsonPayloadError, "Expecting value"):
+            _decode_json_payload(b"not-json")
+
+        self.assertEqual(_decode_json_payload(b'{"ok": true}'), {"ok": True})
+
     def test_loopback_host_detection_accepts_loopback_network(self) -> None:
         self.assertTrue(_is_loopback_host("localhost"))
         self.assertTrue(_is_loopback_host("127.0.0.1"))
@@ -155,6 +171,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(_is_loopback_host("::1"))
         self.assertFalse(_is_loopback_host("0.0.0.0"))
         self.assertFalse(_is_loopback_host("example.com"))
+        self.assertEqual(_format_host_for_url("127.0.0.1"), "127.0.0.1")
+        self.assertEqual(_format_host_for_url("::1"), "[::1]")
+        self.assertEqual(_format_host_for_url("localhost"), "localhost")
 
 
 class _fixture_snapshot:
@@ -247,12 +266,14 @@ class _fixture_snapshot:
                 confidence=1.0,
             ),
         ]
+        entities = [service, caller, callee, endpoint, channel, *extra_services]
+        facts = [call_fact, endpoint_fact, consume_fact, produce_fact, *extra_consume_facts]
         JsonlKgStore(root).write(
-            entities=[service, caller, callee, endpoint, channel, *extra_services],
-            facts=[call_fact, endpoint_fact, consume_fact, produce_fact, *extra_consume_facts],
+            entities=entities,
+            facts=facts,
             evidence=evidence,
             coverage=[],
-            manifest={"counts": {"entities": 5, "facts": 4}},
+            manifest={"counts": {"entities": len(entities), "facts": len(facts)}},
         )
         self._kg = KgSnapshot(root)
         return self._kg
