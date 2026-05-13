@@ -10,7 +10,7 @@
 
 ## Context
 
-The first KG implementation slice in `source/` builds a local code-symbol graph from a representative Python repository and records the smoke-test result shape in `source/KG-QUERY-SMOKE-TESTS.md`.
+The first KG implementation slice in `source/` builds a local code-symbol graph from representative repositories and records current validation status in `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`.
 
 That test showed useful evidence-backed answers for imports, local callers, and outgoing call expansion, but it also exposed a required query-resolution layer:
 
@@ -147,10 +147,7 @@ What is still pending:
 - Commit-aware coordinate lookup beyond the current snapshot commit.
 - SCIP/LSP-grade references and type-aware symbol resolution.
 
-Evaluation evidence:
-
-- `docs/evaluation/SYMBOL-QUERY-SURFACES-SMOKE-2026-05-08.md`
-- `docs/evaluation/MEDIUM-QUERY-RUN-2026-05-08.md`
+Evaluation evidence is summarized in `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`.
 
 ## V2 Agentic Expansion Criteria
 
@@ -210,7 +207,7 @@ Symbols are implementation-side evidence/query-resolution artifacts. They may be
 
 ## References
 
-- `source/KG-QUERY-SMOKE-TESTS.md`
+- `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`
 - `source/kg/extraction/python/ast_extractor.py`
 - `source/kg/extraction/typescript/compiler_api_extractor.py`
 - ADR-0001: `adr/0001-claude-agent-sdk-for-internal-runtime.md`

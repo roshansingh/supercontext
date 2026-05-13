@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-04-28
 - **Authors:** Roshan Singh, Maruti Agarwal
-- **Supersedes:** `AGENTIC-LAYER-RECOMMENDATION.md` (v0.1, Codex, 2026-04-27) and `AGENTIC-SKILLS-NOTE.md` (v0.1, 2026-04-27, deferred)
+- **Supersedes:** earlier v0.1 Codex recommendation (2026-04-27) for OpenAI Agents SDK and a 2026-04-27 skills-question note, both removed after this V2 became the binding record.
 - **Anchors:** `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 
 ---
@@ -68,7 +68,7 @@ The comparison driving the layers A+B decision. `✓` = ships built-in. `H` = sh
 - **Local-by-default execution.** No hosted container fees, no upload-to-vector-store step, no leaving customer infra. Required for `PRD.md` §8's "no code leaves the customer environment in self-hosted mode" promise and for fintech/health ICP qualification.
 - **Five-mode permission system** (`default` / `dontAsk` / `acceptEdits` / `bypassPermissions` / `plan`) plus per-tool allow/deny plus a `canUseTool` callback, evaluated in a documented order. Maps directly to `PRD.md` §7's "refuse when unsafe."
 - **Hooks are first-class.** `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop` — natural home for `last_indexed_at` checks, audit logs, refusal-on-uninstrumented.
-- **Filesystem-driven config.** `.claude/skills/`, `.claude/commands/`, `CLAUDE.md`, `.mcp.json` load automatically. Lets a customer ship a SuperContext skill pack without a code change. (Resolves the open question in `AGENTIC-SKILLS-NOTE.md`.)
+- **Filesystem-driven config.** `.claude/skills/`, `.claude/commands/`, `CLAUDE.md`, `.mcp.json` load automatically. Lets a customer ship a SuperContext skill pack without a code change. This resolved the earlier skills question.
 - **Subagents inherit ergonomically.** Per-agent `tools`, `model`, `permissionMode`, `mcpServers`, `effort`, `background`. Useful for spawning per-service exploration in parallel with isolated context.
 
 ### Where OpenAI Agents SDK wins
@@ -87,7 +87,7 @@ The comparison driving the layers A+B decision. `✓` = ships built-in. `H` = sh
 
 ## 4. Why this V2 differs from v0.1
 
-The v0.1 recommendation (`AGENTIC-LAYER-RECOMMENDATION.md`, Codex, 2026-04-27) picked OpenAI Agents SDK. The reasoning weighed *generic platform-orchestration primitives* (sessions, tracing, guardrails, handoffs) and read Claude Agent SDK as too workspace-centric for a "graph-backed engineering context platform."
+The earlier v0.1 recommendation picked OpenAI Agents SDK. The reasoning weighed *generic platform-orchestration primitives* (sessions, tracing, guardrails, handoffs) and read Claude Agent SDK as too workspace-centric for a "graph-backed engineering context platform."
 
 That weighting was reasonable but missed two product-shaped concerns:
 
@@ -96,11 +96,11 @@ That weighting was reasonable but missed two product-shaped concerns:
 
 Both v0.1 docs are honest research notes. The shift here is not a contradiction of the prior analysis but a reframing: separate A from B from C, and weigh code-search primitives + no-egress posture more heavily than generic platform primitives.
 
-The skills question (deferred in `AGENTIC-SKILLS-NOTE.md`) tilts the same direction — Claude's first-class skills load is the right native fit. That note's open question is now resolved: skills are central enough to matter, and Claude wins on this axis today.
+The skills question tilts the same direction — Claude's first-class skills load is the right native fit. The earlier open question is now resolved: skills are central enough to matter, and Claude wins on this axis today.
 
 ## 5. Skills resolution
 
-Per `AGENTIC-SKILLS-NOTE.md`, the open question was: *"Is the Product 1 agent layer primarily a graph-backed platform orchestrator, or is skills-based progressive disclosure important enough that we should optimize for it as a first-class runtime feature?"*
+The earlier open question was: *"Is the Product 1 agent layer primarily a graph-backed platform orchestrator, or is skills-based progressive disclosure important enough that we should optimize for it as a first-class runtime feature?"*
 
 **Answer:** skills-based progressive disclosure is important enough. Compact base prompt + lazy instruction bundles per workflow (PR-bot synthesis, blast-radius explanation, deprecation campaign, oncall diff) keeps the coordinator prompt clean and lets customer admins ship per-org skill packs as `.claude/skills/`. OpenAI's skills support is currently shell-and-sandbox-tied (per the GitHub issue tracked in the v0.1 skills note); not aligned with our coordinator-agent shape.
 
@@ -135,8 +135,6 @@ The MCP contract for Layer C (per ADR-0002) is unaffected by any future swap. Th
 - `docs/overall-architecture/codex-code-research.md` §4 (Claude Agent SDK assessment), §7 (recommendations), §8 (5-layer architecture), §11 (final posture)
 - `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 - `adr/0002-mcp-protocol-for-external-surface.md`
-- `docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION.md` (v0.1, superseded — preserved for attribution and audit trail)
-- `docs/agentic-layer/AGENTIC-SKILLS-NOTE.md` (v0.1, deferred decision now resolved here)
 
 ### External sources consulted
 

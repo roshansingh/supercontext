@@ -215,10 +215,7 @@ What is still pending:
 - Agent SDK candidate enrichment.
 - MCP/PR-bot schemas and refusal semantics.
 
-Evaluation evidence:
-
-- `docs/evaluation/MEDIUM-QUERY-AGGREGATION-RUN-2026-05-08.md`
-- `docs/evaluation/MIXED-CALL-IMPORT-PATH-RUN-2026-05-08.md`
+Evaluation evidence is summarized in `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`.
 
 ## Relationship to Existing ADRs
 
@@ -266,7 +263,7 @@ Reverse import queries depend on deterministic import normalization so that stdl
 
 ## References
 
-- `source/KG-QUERY-SMOKE-TESTS.md`
+- `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`
 - ADR-0001: `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
 - ADR-0006: `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

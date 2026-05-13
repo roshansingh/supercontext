@@ -31,7 +31,7 @@ python examples/private-goldset/run_scenario.py --snapshot data/kg_runs/latticea
 Synthesize answers from those packets using the public answer harness:
 
 ```bash
-python -m source.scripts.run_goldset_answers --packets-in data/kg_runs/latticeai_23/product_packets.json --snapshot data/kg_runs/latticeai_23 --md-out docs/evaluation/LATTICEAI-GOLDSET-ANSWERS.md
+python -m source.scripts.run_goldset_answers --packets-in data/kg_runs/latticeai_23/product_packets.json --snapshot data/kg_runs/latticeai_23 --md-out examples/private-goldset/LATTICEAI-GOLDSET-ANSWERS.md
 ```
 
 The private scenario IDs currently implemented are `Q081`, `Q082`, `Q083`, `Q084`, `Q088`, `Q092`, `Q095`, `Q100`, and `Q106`.

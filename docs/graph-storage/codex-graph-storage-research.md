@@ -35,7 +35,7 @@ The graph database is not the moat by itself. The moat is the graph model and in
 
 ### 2.1 Best fit for the current MCP tools
 
-The current Product 1 tools in [`PRD.md`](/Users/maruti/work/bettercontext/PRD.md:101) imply a graph workload that is mostly:
+The current Product 1 tools in [`PRD.md`](../PRD.md) imply a graph workload that is mostly:
 
 - neighborhood queries
 - inbound/outbound traversal
@@ -512,7 +512,7 @@ Neo4j is the clearest fit for that shape.
 ## 11. Sources
 
 - SuperContext Product 1 PRD  
-  [`PRD.md`](/Users/maruti/work/bettercontext/PRD.md)
+  [`PRD.md`](../PRD.md)
 - Neo4j Cypher Manual: Variable-length patterns  
   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-patterns/
 - Neo4j Cypher Manual: Shortest paths  
