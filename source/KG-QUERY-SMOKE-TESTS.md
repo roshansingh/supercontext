@@ -1,17 +1,18 @@
 # KG Query Smoke Tests
 
-Input repo: `/Users/maruti/work/mercury_ml`  
-Snapshot: `data/kg_runs/mercury_ml`  
-Commit: `c83cacf1df7fa37cc5dfc51916e02b8d8933eccc`
+Status: historical v0 smoke-test notes.
+
+This file intentionally keeps the result shape generic. Do not add local machine paths,
+private repository names, private domains, or customer-specific commit hashes here. For
+current evaluation results, use the canonical validation report under `docs/evaluation/`.
 
 | Query | Output observed | Comments |
 |---|---|---|
-| `summary` | 225 Python files, 1443 entities, 3604 facts, 6453 evidence rows, 2 coverage rows | Good first inventory. One syntax-error file correctly marked `uninstrumented`. |
-| `modules-importing openai --limit 10` | Returned OpenAI imports in chatbot specialist agents and internal `openai_instructor` imports | Useful, but needs internal-vs-external import classification. |
-| `modules-importing sklearn --limit 10` | Returned sklearn usage in training, imputers, feature builder, calibration, split modules | Good dependency evidence with file/line citations. |
-| `find-callers load_model --limit 10` | Found constructors calling `load_model` in handover and frustration predictor classes | Good local call graph signal. |
-| `blast-radius predict_on_session --depth 1 --limit 10` | Returned outgoing calls from `predict_on_session`: data load, impute, build features, prediction, write result | Useful, but this is outgoing call expansion, not full reverse impact/blast radius yet. |
-| Aggregate JSONL inspection | Top imports: `os`, `pandas`, `logging`, `numpy`, `openai`; top callees dominated by external packages | Shows KG is grounded, but query layer needs package normalization and noise control. |
+| `summary` | Returned repository file counts, entity counts, fact counts, evidence counts, and coverage rows. | Good first inventory. Syntax-error files should be marked `uninstrumented`. |
+| `modules-importing <package> --limit 10` | Returned importing modules with file/line evidence. | Useful dependency evidence; import normalization determines whether package names are precise. |
+| `find-callers <symbol> --limit 10` | Returned local callers for an exact symbol. | Good local call graph signal when symbol identity is unambiguous. |
+| `blast-radius <symbol> --depth 1 --limit 10` | Returned outgoing static call expansion from the selected symbol. | Useful, but outgoing expansion is not the same as full reverse impact analysis. |
+| Aggregate JSONL inspection | Top imports and top callees were inspectable from the JSONL snapshot. | Shows KG is grounded, but query output must control external-package noise. |
 
 ## Takeaway
 
