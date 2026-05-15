@@ -1,6 +1,6 @@
 ---
 name: pre-pr-semantic-review
-description: Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, loaders, endpoint/path reconciliation, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, and regression tests.
+description: "Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, loaders, endpoint/path reconciliation, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, and regression tests."
 ---
 
 # Pre-PR Semantic Review
