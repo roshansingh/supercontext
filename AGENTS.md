@@ -90,6 +90,9 @@ Always use the project-local `.codex/skills/product-evaluation` skill before int
 Copilot has repeatedly caught boundary-condition mistakes in review. Before opening or updating a PR, explicitly check these patterns:
 
 - Always run the project-local `.codex/skills/pre-pr-semantic-review` checklist before any `git push`, especially for extractor, normalization, query, loader, evaluation, or review-fix changes.
+- Extractor and evidence-collection changes must generalize across repositories. Do not hardcode repo names, service names, package names, product-domain terms, path fragments, or fixture variables to make a query pass.
+- Prefer parser, AST, compiler, structured config, or source-of-truth schema evidence over keyword or substring heuristics for semantic facts. Keyword matching is only acceptable for genuinely lexical tasks or explicit private fixture configuration.
+- Cover new extractor behavior with representative positive and negative fixtures that prove the rule is not tuned to one current repo or goldset case.
 - Validate external JSON/input shapes before use. If a CLI accepts either a list or an object wrapper, branch on `isinstance(data, dict)` before calling `.get(...)`.
 - Fail fast on malformed rows. Reject non-object rows, missing IDs, duplicate IDs, and padded IDs; normalize stored IDs after stripping whitespace.
 - Validate list-shaped fields before rendering or iterating. Do not assume model outputs or loaded JSON contain `list[str]`; reject missing, non-list, or non-string values with field-specific errors.
