@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Apache vhost extraction for the narrow v1 WSGI routing contract.
 
 This parser intentionally recognizes only VirtualHost blocks with ServerName or
 ServerAlias plus WSGIScriptAlias. Server-only vhosts, domainless WSGI aliases,
 ProxyPass, Location, Directory, and malformed/unclosed blocks are out of v1.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 
