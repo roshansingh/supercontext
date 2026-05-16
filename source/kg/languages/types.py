@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from source.kg.core.repo_source import RepoSnapshot
     from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
-
-
-KnownStackMap = Mapping[str, str]
 
 
 class LanguageFileMatcher(Protocol):
@@ -22,18 +17,8 @@ class LanguageFileMatcher(Protocol):
 
 
 class LanguageSupport(LanguageFileMatcher, Protocol):
-    def parse_repo(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, Any]: ...
-
-    def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, set[str]]: ...
+    def source_roots(self, repo, ctx: ExtractionContext) -> dict[str, set[str]]: ...
 
     def adapters(self) -> tuple[Adapter, ...]: ...
 
-    def opportunity_detectors(self) -> tuple[Any, ...]: ...
-
-    def package_resolver(self) -> Any | None: ...
-
-    def dimension_rules(self) -> Mapping[str, Any]: ...
-
-    def useful_edges(self) -> Mapping[str, Any]: ...
-
-    def known_stacks(self) -> Mapping[str, KnownStackMap]: ...
+    def known_stacks(self) -> dict[str, dict[str, str]]: ...

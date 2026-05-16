@@ -63,13 +63,8 @@ def _validate_language(language: LanguageSupport) -> None:
         raise ValueError(f"{language.name} manifest_files must be frozenset[str]")
     for method_name in (
         "matches_file",
-        "parse_repo",
         "source_roots",
         "adapters",
-        "opportunity_detectors",
-        "package_resolver",
-        "dimension_rules",
-        "useful_edges",
         "known_stacks",
     ):
         if not callable(getattr(language, method_name, None)):

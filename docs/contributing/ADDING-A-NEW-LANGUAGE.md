@@ -17,10 +17,10 @@ This split keeps repo discovery import-safe while still making each language own
    - `manifest_files`: package/build manifests.
    - `matches_file(path)`: exact source-file predicate. Put exclusions here, such as TypeScript `.d.ts` files.
 3. Update `language.py`:
-   - `parse_repo(repo, ctx)` for parser-backed batch parsing.
    - `source_roots(repo, ctx)` for known-stack coverage labels.
    - `adapters()` for language-owned adapters.
    - `known_stacks()` for unsupported known framework coverage.
+   - Keep parser-specific code behind adapters or helper modules until the build path needs a shared parser hook.
 4. Add tests under `tests/languages/`.
 5. Run:
 

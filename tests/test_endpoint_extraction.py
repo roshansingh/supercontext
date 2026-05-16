@@ -8,7 +8,8 @@ from unittest.mock import patch
 
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Coverage, Entity, Fact
-from source.kg.core.repo_source import RepoSnapshot, TYPESCRIPT_EXTENSIONS
+from source.kg.core.repo_source import RepoSnapshot
+from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
 from source.kg.core.store import JsonlKgStore
 from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.query.snapshot import KgSnapshot

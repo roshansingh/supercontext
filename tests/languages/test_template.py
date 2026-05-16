@@ -20,7 +20,6 @@ class LanguageTemplateTest(unittest.TestCase):
         ctx = ExtractionContext()
 
         self.assertFalse(LANGUAGE_FILES.matches_file(root / "example.template"))
-        self.assertEqual(LANGUAGE_SUPPORT.parse_repo(repo, ctx), {})
         self.assertEqual(LANGUAGE_SUPPORT.source_roots(repo, ctx), {})
         self.assertEqual(LANGUAGE_SUPPORT.adapters(), ())
         self.assertEqual(LANGUAGE_SUPPORT.known_stacks(), {})

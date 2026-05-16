@@ -247,7 +247,37 @@ class AdapterFrameworkTest(unittest.TestCase):
             build = extract_repo(repo)
 
         self.assertEqual(build.extractor_names, ["stateful_v0"])
-        self.assertEqual(adapter.capability_reads, 2)
+        self.assertEqual(adapter.capability_reads, 3)
+
+    def test_extraction_context_lazy_properties_do_not_change_equality(self) -> None:
+        left = ExtractionContext()
+        right = ExtractionContext()
+
+        self.assertFalse(left == right)
+        _ = left.python_parsed_files
+        _ = left.js_ts_import_roots
+
+        self.assertFalse(left == right)
+
+    def test_repo_snapshot_hash_and_equality_use_stable_identity(self) -> None:
+        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        left = RepoSnapshot(
+            root=root,
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (root / "app.py",)},
+        )
+        right = RepoSnapshot(
+            root=root,
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (), "typescript": (root / "app.ts",)},
+        )
+
+        self.assertEqual(left, right)
+        self.assertEqual(hash(left), hash(right))
 
     def test_pipeline_selects_language_discovered_adapters_without_central_registry(self) -> None:
         repo = _repo()

@@ -95,26 +95,11 @@ def _language_py() -> str:
             def matches_file(self, path: Path) -> bool:
                 return self.files.matches_file(path)
 
-            def parse_repo(self, repo, ctx):
-                return {}
-
             def source_roots(self, repo, ctx):
                 return {}
 
             def adapters(self):
                 return ()
-
-            def opportunity_detectors(self):
-                return ()
-
-            def package_resolver(self):
-                return None
-
-            def dimension_rules(self):
-                return {}
-
-            def useful_edges(self):
-                return {}
 
             def known_stacks(self):
                 return {}

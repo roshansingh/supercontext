@@ -6,7 +6,6 @@ import subprocess
 
 from source.kg.languages.file_matchers import REGISTERED_LANGUAGE_FILES
 from source.kg.languages.types import LanguageFileMatcher
-from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
 
 
 IGNORED_DIRS = {
@@ -27,7 +26,7 @@ IGNORED_DIRS = {
     "node_modules",
 }
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True, init=False, eq=False)
 class RepoSnapshot:
     root: Path
     name: str
@@ -71,6 +70,21 @@ class RepoSnapshot:
     def __hash__(self) -> int:
         return hash((self.root, self.name, self.owner, self.commit_sha))
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RepoSnapshot):
+            return NotImplemented
+        return (
+            self.root,
+            self.name,
+            self.owner,
+            self.commit_sha,
+        ) == (
+            other.root,
+            other.name,
+            other.owner,
+            other.commit_sha,
+        )
+
 
 def discover_repo(
     repo_path: str | Path,
@@ -111,13 +125,8 @@ def _files_by_language(
         for language in language_files:
             if language.matches_file(path):
                 buckets.setdefault(language.name, []).append(path)
+                break
     return {language: tuple(paths) for language, paths in buckets.items()}
-
-
-def _is_typescript_file(path: Path) -> bool:
-    if path.name.endswith(".d.ts"):
-        return False
-    return path.suffix in TYPESCRIPT_EXTENSIONS
 
 
 def _git_commit_sha(root: Path) -> str:

@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters.legacy import LEGACY_PYTHON_AST_ADAPTER
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.extraction.framework.known_stacks import KNOWN_STACK_IMPORTS
-from source.kg.extraction.python.ast_extractor import PythonAstExtractor
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
 
 
@@ -37,29 +34,14 @@ class PythonLanguageSupport:
     def matches_file(self, path: Path) -> bool:
         return self.files.matches_file(path)
 
-    def parse_repo(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, Any]:
-        return PythonAstExtractor(include_transport=False)._parsed_files(repo, ctx)
-
-    def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, set[str]]:
+    def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> dict[str, set[str]]:
         return {"python": ctx.python_import_roots}
 
     def adapters(self) -> tuple[Adapter, ...]:
         return (LEGACY_PYTHON_AST_ADAPTER, PYTHON_BOTO3_TRANSPORT_ADAPTER)
 
-    def opportunity_detectors(self) -> tuple[Any, ...]:
-        return ()
-
-    def package_resolver(self) -> Any | None:
-        return None
-
-    def dimension_rules(self) -> Mapping[str, Any]:
-        return {}
-
-    def useful_edges(self) -> Mapping[str, Any]:
-        return {}
-
-    def known_stacks(self) -> Mapping[str, Mapping[str, str]]:
-        return {"python": KNOWN_STACK_IMPORTS["python"]}
+    def known_stacks(self) -> dict[str, dict[str, str]]:
+        return {"python": dict(KNOWN_STACK_IMPORTS["python"])}
 
 
 LANGUAGE_SUPPORT = PythonLanguageSupport()

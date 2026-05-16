@@ -22,7 +22,7 @@ class AdapterCapability:
     source_system: str = ""
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True, init=False, eq=False)
 class ExtractionContext:
     """Shared state for one extraction run.
 

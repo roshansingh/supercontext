@@ -7,7 +7,7 @@ from source.kg.core.models import Coverage, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.extraction.framework import ExtractionContext
+from source.kg.extraction.framework import Adapter, ExtractionContext
 
 
 def build_kg(
@@ -95,13 +95,9 @@ def build_python_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject
     return build_kg(repo_path, output_dir)
 
 
-def _combined_adapters(*adapter_groups) -> tuple:
-    non_empty_groups = [tuple(group) for group in adapter_groups if group]
-    if len(non_empty_groups) == 1:
-        return non_empty_groups[0]
-
-    adapters_by_name = {}
-    for group in non_empty_groups:
+def _combined_adapters(*adapter_groups: tuple[Adapter, ...]) -> tuple[Adapter, ...]:
+    adapters_by_name: dict[str, Adapter] = {}
+    for group in adapter_groups:
         for adapter in group:
             adapters_by_name.setdefault(adapter.capability.name, adapter)
     return tuple(adapters_by_name.values())
