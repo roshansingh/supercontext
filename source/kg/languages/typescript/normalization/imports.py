@@ -110,7 +110,7 @@ class NormalizedJsImport:
 class JsImportNormalizer:
     def __init__(self, repo: RepoSnapshot) -> None:
         self.repo = repo
-        self.module_names = {self._module_name(path) for path in repo.typescript_files}
+        self.module_names = {self._module_name(path) for path in repo.files_by_language.get("typescript", ())}
         self.declared_dependencies = self._declared_dependencies()
         self.node_builtins = _node_builtin_modules()
 

@@ -350,7 +350,7 @@ class ValueResolver:
 
 def build_repo_literal_index(repo: RepoSnapshot) -> LiteralIndex:
     values: dict[LiteralRef, ast.AST] = {}
-    for file_path in repo.python_files:
+    for file_path in repo.files_by_language.get("python", ()):
         source = file_path.read_text(encoding="utf-8", errors="replace")
         try:
             tree = ast.parse(source, filename=str(file_path))
@@ -372,7 +372,7 @@ def config_object_value_assignments(
     source_assignments: dict[ConfigObjectRef, tuple[ConfigSourceRef, ...]] = {}
     if parsed_trees is None:
         parsed_trees = {}
-        for file_path in repo.python_files:
+        for file_path in repo.files_by_language.get("python", ()):
             source = file_path.read_text(encoding="utf-8", errors="replace")
             try:
                 parsed_trees[file_path] = ast.parse(source, filename=str(file_path))

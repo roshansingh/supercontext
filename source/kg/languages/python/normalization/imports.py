@@ -55,7 +55,7 @@ class NormalizedImport:
 class PythonImportNormalizer:
     def __init__(self, repo: RepoSnapshot) -> None:
         self.repo = repo
-        self.module_names = {self._module_name(path) for path in repo.python_files}
+        self.module_names = {self._module_name(path) for path in repo.files_by_language.get("python", ())}
         self.package_roots = self._package_roots()
         self.declared_dependencies = self._declared_dependencies()
         self.distributions_by_import_root = _distributions_by_import_root()

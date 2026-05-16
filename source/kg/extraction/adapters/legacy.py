@@ -23,9 +23,9 @@ class LegacyAdapter:
 
     def applies_to(self, repo: RepoSnapshot, ctx: ExtractionContext) -> bool:
         if self.language_gate == "python":
-            return bool(repo.python_files)
+            return bool(repo.files_by_language.get("python", ()))
         if self.language_gate == "typescript":
-            return bool(repo.typescript_files)
+            return bool(repo.files_by_language.get("typescript", ()))
         return True
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:

@@ -198,8 +198,8 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertIn("without bytes_ref", errors[0]["message"])
 
-    def test_runner_language_gating_skips_python_adapter_without_python_files(self) -> None:
-        repo = _repo(python_files=())
+    def test_runner_language_gating_skips_python_adapter_without_python_paths(self) -> None:
+        repo = _repo(python_paths=())
         adapter = _Adapter("python-only", "python_v0", languages=("python",))
 
         run_adapters(repo, (adapter,))
@@ -238,8 +238,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="config-only",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             build = extract_repo(repo)
@@ -260,13 +259,13 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(build.extractor_names, ["stateful_v0"])
         self.assertEqual(adapter.capability_reads, 3)
 
-    def test_extraction_context_lazy_properties_do_not_change_equality(self) -> None:
+    def test_extraction_context_mutable_caches_do_not_change_equality(self) -> None:
         left = ExtractionContext()
         right = ExtractionContext()
 
         self.assertFalse(left == right)
-        _ = left.python_parsed_files
-        _ = left.js_ts_import_roots
+        left.parsed_by_language.setdefault("python", {})["repo"] = object()
+        left.import_roots_by_language.setdefault("javascript", set()).add("express")
 
         self.assertFalse(left == right)
 
@@ -318,17 +317,15 @@ class AdapterFrameworkTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             repo.files_by_language["python"] = ()
 
-    def test_repo_snapshot_rejects_mixed_generic_and_legacy_file_args(self) -> None:
+    def test_repo_snapshot_requires_files_by_language(self) -> None:
         root = Path("/tmp/bettercontext-adapter-framework-repo")
 
-        with self.assertRaisesRegex(ValueError, "Pass either files_by_language or legacy"):
+        with self.assertRaises(TypeError):
             RepoSnapshot(
                 root=root,
                 name="repo",
                 owner="test",
                 commit_sha="sha",
-                files_by_language={"python": ()},
-                python_files=(root / "app.py",),
             )
 
     def test_pipeline_selects_language_discovered_adapters_without_central_registry(self) -> None:
@@ -346,7 +343,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(adapter.calls, 1)
 
     def test_pipeline_selects_file_format_adapters_without_central_registry(self) -> None:
-        repo = _repo(python_files=(), typescript_files=())
+        repo = _repo(python_paths=(), typescript_paths=())
         adapter = _Adapter("config-owned", "config_owned_v0", languages=("config",))
 
         with (
@@ -437,7 +434,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("yml", capabilities["config-serverless-yaml"].file_kinds)
 
     def test_domain_env_adapter_uses_config_language_bucket(self) -> None:
-        repo = _repo(python_files=(), typescript_files=())
+        repo = _repo(python_paths=(), typescript_paths=())
         capabilities = {adapter.capability.name: adapter.capability for adapter in file_format_adapters()}
 
         selected = select_applicable_adapters(repo, (CONFIG_DOMAIN_ENV_ADAPTER,))
@@ -614,8 +611,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="config-split",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             monolith = StaticConfigExtractor().extract(repo)
@@ -635,8 +631,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="config-scan",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             with patch(
@@ -656,8 +651,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="large-config",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             with patch("source.kg.extraction.config.common.MAX_SCAN_BYTES", 4):
@@ -685,8 +679,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="config-dedupe",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             with patch("source.kg.extraction.config.common.MAX_SCAN_BYTES", 4):
@@ -712,8 +705,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="python-split",
                 owner="test",
                 commit_sha="sha",
-                python_files=(app,),
-                typescript_files=(),
+                files_by_language={"python": (app,), "typescript": ()},
             )
 
             monolith = PythonAstExtractor().extract(repo)
@@ -741,8 +733,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="python-cache",
                 owner="test",
                 commit_sha="sha",
-                python_files=(app,),
-                typescript_files=(),
+                files_by_language={"python": (app,), "typescript": ()},
             )
             original_parse_file = PythonAstExtractor._parse_file
             parsed_paths: list[Path] = []
@@ -757,8 +748,8 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(parsed_paths, [app])
 
     def test_known_stack_without_adapter_tag_emits_uninstrumented_coverage(self) -> None:
-        repo = _repo(python_files=())
-        adapter = _ImportRootAdapter("js-imports", "js_imports_v0", js_ts_import_roots=("express",))
+        repo = _repo(python_paths=())
+        adapter = _ImportRootAdapter("js-imports", "js_imports_v0", javascript_roots=("express",))
 
         _, _, _, coverage, errors = run_adapters(repo, (adapter,))
 
@@ -774,11 +765,11 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(row.scope_ref["reason"], "no_adapter_for_known_stack")
 
     def test_known_stack_with_adapter_tag_does_not_emit_refusal_coverage(self) -> None:
-        repo = _repo(python_files=())
+        repo = _repo(python_paths=())
         adapter = _ImportRootAdapter(
             "express-routes",
             "express_routes_v0",
-            js_ts_import_roots=("express",),
+            javascript_roots=("express",),
             framework_tags=("express",),
         )
 
@@ -796,8 +787,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 name="python-known-stack",
                 owner="test",
                 commit_sha="sha",
-                python_files=(app,),
-                typescript_files=(),
+                files_by_language={"python": (app,), "typescript": ()},
             )
             adapter = LegacyAdapter(
                 capability=AdapterCapability(
@@ -822,7 +812,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(rows[0].scope_ref["import_root"], "flask")
 
     def test_unknown_known_stack_category_fails_closed(self) -> None:
-        repo = _repo(python_files=())
+        repo = _repo(python_paths=())
 
         with patch("source.kg.extraction.framework.runner._registered_languages", return_value=(_UnknownCategoryLanguage(),)):
             _, _, _, coverage, errors = run_adapters(repo, ())
@@ -871,13 +861,13 @@ class _Adapter:
 
 @dataclass
 class _ImportRootAdapter(_Adapter):
-    python_import_roots: tuple[str, ...] = ()
-    js_ts_import_roots: tuple[str, ...] = ()
+    python_roots: tuple[str, ...] = ()
+    javascript_roots: tuple[str, ...] = ()
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         self.calls += 1
-        ctx.python_import_roots.update(self.python_import_roots)
-        ctx.js_ts_import_roots.update(self.js_ts_import_roots)
+        ctx.import_roots_by_language.setdefault("python", set()).update(self.python_roots)
+        ctx.import_roots_by_language.setdefault("javascript", set()).update(self.javascript_roots)
         return self.result or AdapterResult()
 
 
@@ -917,15 +907,17 @@ def _discover_temp_file_formats(format_modules: dict[str, str]):
             importlib.invalidate_caches()
 
 
-def _repo(python_files: tuple[Path, ...] | None = None, typescript_files: tuple[Path, ...] = ()) -> RepoSnapshot:
+def _repo(python_paths: tuple[Path, ...] | None = None, typescript_paths: tuple[Path, ...] = ()) -> RepoSnapshot:
     root = Path("/tmp/bettercontext-adapter-framework-repo")
     return RepoSnapshot(
         root=root,
         name="repo",
         owner="test",
         commit_sha="sha",
-        python_files=python_files if python_files is not None else (root / "app.py",),
-        typescript_files=typescript_files,
+        files_by_language={
+            "python": python_paths if python_paths is not None else (root / "app.py",),
+            "typescript": typescript_paths,
+        },
     )
 
 

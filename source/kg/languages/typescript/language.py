@@ -38,7 +38,7 @@ class TypeScriptLanguageSupport:
         return self.files.matches_file(path)
 
     def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> dict[str, set[str]]:
-        return {"javascript": ctx.js_ts_import_roots}
+        return {"javascript": ctx.import_roots_by_language.setdefault("javascript", set())}
 
     def parse_repo(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, Any]:
         return {}

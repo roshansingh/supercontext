@@ -47,8 +47,7 @@ class DotenvExtractionTest(unittest.TestCase):
                 name="dotenv-app",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             result = scan_config_files(repo)
@@ -64,8 +63,7 @@ class DotenvExtractionTest(unittest.TestCase):
                 name="dotenv-app",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             build = StaticConfigExtractor().extract(repo)
@@ -89,8 +87,7 @@ class DotenvExtractionTest(unittest.TestCase):
                 name="dotenv-app",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             build = StaticConfigExtractor().extract(repo)
@@ -112,8 +109,7 @@ class DotenvExtractionTest(unittest.TestCase):
                 name="dotenv-app",
                 owner="test",
                 commit_sha="sha",
-                python_files=(),
-                typescript_files=(),
+                files_by_language={"python": (), "typescript": ()},
             )
 
             build = StaticConfigExtractor().extract(repo)

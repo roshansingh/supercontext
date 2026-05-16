@@ -46,7 +46,7 @@ class TypeScriptCompilerApiExtractor:
 
         normalizer = JsImportNormalizer(repo)
         parsed_files = parse_typescript_repo(repo, ctx)
-        for file_path in repo.typescript_files:
+        for file_path in repo.files_by_language.get("typescript", ()):
             parsed_file = parsed_files.get(str(file_path.relative_to(repo.root)), {})
             self._extract_file(repo, file_path, repo_entity, service_entity, normalizer, parsed_file, build, ctx, tenant_id)
             for diagnostic in parsed_file.get("parse_diagnostics", []):
@@ -104,7 +104,7 @@ class TypeScriptCompilerApiExtractor:
 
         imports = [normalizer.normalize(self._import_ref(row), module_name) for row in parsed_file.get("imports", [])]
         if ctx is not None:
-            ctx.js_ts_import_roots.update(import_ref.import_root for import_ref in imports)
+            ctx.import_roots_by_language.setdefault("javascript", set()).update(import_ref.import_root for import_ref in imports)
         imports_by_local = self._imports_by_local(imports)
         for import_ref in imports:
             dependency_entity = self._dependency_entity(repo, import_ref, tenant_id)

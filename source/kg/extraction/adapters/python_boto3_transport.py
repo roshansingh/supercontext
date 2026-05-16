@@ -21,7 +21,7 @@ class PythonBoto3TransportAdapter:
     )
 
     def applies_to(self, repo: RepoSnapshot, ctx: ExtractionContext) -> bool:
-        return bool(repo.python_files)
+        return bool(repo.files_by_language.get("python", ()))
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = PythonAstExtractor(include_transport=False).extract_transport_events_only(repo, ctx)

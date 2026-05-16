@@ -80,7 +80,7 @@ class PythonAstExtractor:
         parsed_files = self._parsed_files(repo, ctx)
         literal_index = self._literal_index_for_context(repo, parsed_files, ctx)
 
-        for file_path in repo.python_files:
+        for file_path in repo.files_by_language.get("python", ()):
             self._extract_file(
                 repo,
                 file_path,
@@ -111,7 +111,7 @@ class PythonAstExtractor:
         import_normalizer = PythonImportNormalizer(repo)
         parsed_files = self._parsed_files(repo, ctx)
         literal_index = self._literal_index_for_context(repo, parsed_files, ctx)
-        for file_path in repo.python_files:
+        for file_path in repo.files_by_language.get("python", ()):
             self._extract_transport_file(
                 repo,
                 file_path,
@@ -126,12 +126,13 @@ class PythonAstExtractor:
 
     def _parsed_files(self, repo: RepoSnapshot, ctx: ExtractionContext | None) -> dict[Path, ParsedPythonFile]:
         if ctx is None:
-            return {file_path: self._parse_file(file_path) for file_path in repo.python_files}
+            return {file_path: self._parse_file(file_path) for file_path in repo.files_by_language.get("python", ())}
         key = self._repo_cache_key(repo)
-        cached = ctx.python_parsed_files.get(key)
+        python_cache = ctx.parsed_by_language.setdefault("python", {})
+        cached = python_cache.get(key)
         if cached is None:
-            cached = {file_path: self._parse_file(file_path) for file_path in repo.python_files}
-            ctx.python_parsed_files[key] = cached
+            cached = {file_path: self._parse_file(file_path) for file_path in repo.files_by_language.get("python", ())}
+            python_cache[key] = cached
         return cached
 
     def _literal_index_for_context(
@@ -143,10 +144,11 @@ class PythonAstExtractor:
         if ctx is None:
             return self._literal_index(repo, parsed_files)
         key = self._repo_cache_key(repo)
-        cached = ctx.python_literal_indexes.get(key)
+        literal_cache = ctx.literal_indexes_by_language.setdefault("python", {})
+        cached = literal_cache.get(key)
         if cached is None:
             cached = self._literal_index(repo, parsed_files)
-            ctx.python_literal_indexes[key] = cached
+            literal_cache[key] = cached
         return cached
 
     def _repo_cache_key(self, repo: RepoSnapshot) -> str:
@@ -228,7 +230,8 @@ class PythonAstExtractor:
 
         imports = import_normalizer.collect(tree, module_name)
         if ctx is not None:
-            ctx.python_import_roots.update(import_ref.import_root for import_ref in imports)
+            import_roots = ctx.import_roots_by_language.setdefault("python", set())
+            import_roots.update(import_ref.import_root for import_ref in imports)
         imports_by_root: dict[str, NormalizedImport] = {}
         for import_ref in imports:
             dependency_entity = self._dependency_entity(repo, import_ref, tenant_id)
@@ -314,7 +317,8 @@ class PythonAstExtractor:
         module_name = self._module_name(repo, file_path)
         imports = import_normalizer.collect(tree, module_name)
         if ctx is not None:
-            ctx.python_import_roots.update(import_ref.import_root for import_ref in imports)
+            import_roots = ctx.import_roots_by_language.setdefault("python", set())
+            import_roots.update(import_ref.import_root for import_ref in imports)
         symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree, tenant_id)
         by_qualname = {symbol.qualname: symbol for symbol in symbols}
         function_defs_by_short_name = {

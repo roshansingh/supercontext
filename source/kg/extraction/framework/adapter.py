@@ -43,11 +43,6 @@ class ExtractionContext:
         parsed_by_language: dict[str, dict[str, Any]] | None = None,
         literal_indexes_by_language: dict[str, dict[str, Any]] | None = None,
         import_roots_by_language: dict[str, set[str]] | None = None,
-        python_parsed_files: dict[str, Any] | None = None,
-        python_literal_indexes: dict[str, Any] | None = None,
-        js_ts_parsed_files: dict[str, Any] | None = None,
-        python_import_roots: set[str] | None = None,
-        js_ts_import_roots: set[str] | None = None,
     ) -> None:
         parsed = {language: dict(values) for language, values in (parsed_by_language or {}).items()}
         literal_indexes = {
@@ -55,42 +50,11 @@ class ExtractionContext:
         }
         import_roots = {language: set(values) for language, values in (import_roots_by_language or {}).items()}
 
-        if python_parsed_files is not None:
-            parsed["python"] = python_parsed_files
-        if js_ts_parsed_files is not None:
-            parsed["typescript"] = js_ts_parsed_files
-        if python_literal_indexes is not None:
-            literal_indexes["python"] = python_literal_indexes
-        if python_import_roots is not None:
-            import_roots["python"] = python_import_roots
-        if js_ts_import_roots is not None:
-            import_roots["javascript"] = js_ts_import_roots
-
         object.__setattr__(self, "tenant_id", tenant_id or resolve_tenant_id())
         object.__setattr__(self, "config_scans", config_scans if config_scans is not None else {})
         object.__setattr__(self, "parsed_by_language", parsed)
         object.__setattr__(self, "literal_indexes_by_language", literal_indexes)
         object.__setattr__(self, "import_roots_by_language", import_roots)
-
-    @property
-    def python_parsed_files(self) -> dict[str, Any]:
-        return self.parsed_by_language.setdefault("python", {})
-
-    @property
-    def python_literal_indexes(self) -> dict[str, Any]:
-        return self.literal_indexes_by_language.setdefault("python", {})
-
-    @property
-    def js_ts_parsed_files(self) -> dict[str, Any]:
-        return self.parsed_by_language.setdefault("typescript", {})
-
-    @property
-    def python_import_roots(self) -> set[str]:
-        return self.import_roots_by_language.setdefault("python", set())
-
-    @property
-    def js_ts_import_roots(self) -> set[str]:
-        return self.import_roots_by_language.setdefault("javascript", set())
 
 
 @dataclass

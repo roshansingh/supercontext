@@ -19,7 +19,7 @@ class LanguageTemplateTest(unittest.TestCase):
 
     def test_template_is_noop_and_not_registered(self) -> None:
         root = Path("/tmp/bettercontext-template-language")
-        repo = RepoSnapshot(root=root, name="template", owner="test", commit_sha="sha")
+        repo = RepoSnapshot(root=root, name="template", owner="test", commit_sha="sha", files_by_language={})
         ctx = ExtractionContext()
 
         self.assertFalse(LANGUAGE_FILES.matches_file(root / "example.template"))

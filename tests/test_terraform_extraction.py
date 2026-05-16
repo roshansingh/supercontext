@@ -282,7 +282,13 @@ def _extract(text: str, *, relative_path: str = "main.tf") -> ConfigKgBuild:
         root = Path(tmpdir)
         terraform_path = root / relative_path
         terraform_path.write_text(text, encoding="utf-8")
-        repo = RepoSnapshot(root=root, name="terraform-service", owner="test", commit_sha="sha", python_files=(), typescript_files=())
+        repo = RepoSnapshot(
+            root=root,
+            name="terraform-service",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (), "typescript": ()},
+        )
         scanned = ScannedFile(
             path=terraform_path,
             relative_path=relative_path,

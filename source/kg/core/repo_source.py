@@ -42,18 +42,8 @@ class RepoSnapshot:
         name: str,
         owner: str,
         commit_sha: str,
-        files_by_language: Mapping[str, tuple[Path, ...]] | None = None,
-        python_files: tuple[Path, ...] | None = None,
-        typescript_files: tuple[Path, ...] | None = None,
+        files_by_language: Mapping[str, tuple[Path, ...]],
     ) -> None:
-        has_legacy_files = python_files is not None or typescript_files is not None
-        if files_by_language is not None and has_legacy_files:
-            raise ValueError("Pass either files_by_language or legacy python_files/typescript_files, not both")
-        if files_by_language is None:
-            files_by_language = {
-                "python": python_files or (),
-                "typescript": typescript_files or (),
-            }
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "owner", owner)
@@ -63,14 +53,6 @@ class RepoSnapshot:
             "files_by_language",
             MappingProxyType({language: tuple(paths) for language, paths in files_by_language.items()}),
         )
-
-    @property
-    def python_files(self) -> tuple[Path, ...]:
-        return self.files_by_language.get("python", ())
-
-    @property
-    def typescript_files(self) -> tuple[Path, ...]:
-        return self.files_by_language.get("typescript", ())
 
     def __hash__(self) -> int:
         return hash((self.root, self.name, self.owner, self.commit_sha))

@@ -1164,14 +1164,13 @@ def _extract_single_file(source: str):
         return PythonAstExtractor().extract(repo)
 
 
-def _repo_snapshot(root: Path, python_files: tuple[Path, ...]) -> RepoSnapshot:
+def _repo_snapshot(root: Path, python_paths: tuple[Path, ...]) -> RepoSnapshot:
     return RepoSnapshot(
         root=root,
         name=root.name,
         owner=root.parent.name,
         commit_sha="test-sha",
-        python_files=python_files,
-        typescript_files=(),
+        files_by_language={"python": python_paths, "typescript": ()},
     )
 
 

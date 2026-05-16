@@ -28,7 +28,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
                 "]\n",
                 encoding="utf-8",
             )
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -72,7 +72,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -97,7 +97,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
                 "[project]\ndependencies = [\"scikit-learn\", \"Pillow\", \"PyYAML\"]\n",
                 encoding="utf-8",
             )
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -136,7 +136,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
                 "[project]\ndependencies = [\"opencv-python-headless\"]\n",
                 encoding="utf-8",
             )
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -158,7 +158,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -197,7 +197,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -222,7 +222,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
                 "[project]\ndependencies = [\"opencv-python\", \"opencv-python-headless\"]\n",
                 encoding="utf-8",
             )
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -247,7 +247,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
                 "[project]\ndependencies = [\"google-api-core\", \"protobuf\"]\n",
                 encoding="utf-8",
             )
-            repo = _repo_snapshot(root, python_files=(root / "app.py",))
+            repo = _repo_snapshot(root, python_paths=(root / "app.py",))
 
             with patch(
                 "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
@@ -287,7 +287,7 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            repo = _repo_snapshot(root, typescript_files=(root / "src" / "index.ts",))
+            repo = _repo_snapshot(root, typescript_paths=(root / "src" / "index.ts",))
 
             with patch("source.kg.languages.typescript.normalization.imports._node_builtin_modules", return_value=builtin_modules):
                 normalizer = JsImportNormalizer(repo)
@@ -371,16 +371,15 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
 
 def _repo_snapshot(
     root: Path,
-    python_files: tuple[Path, ...] = (),
-    typescript_files: tuple[Path, ...] = (),
+    python_paths: tuple[Path, ...] = (),
+    typescript_paths: tuple[Path, ...] = (),
 ) -> RepoSnapshot:
     return RepoSnapshot(
         root=root,
         name=root.name,
         owner=root.parent.name,
         commit_sha="test-sha",
-        python_files=python_files,
-        typescript_files=typescript_files,
+        files_by_language={"python": python_paths, "typescript": typescript_paths},
     )
 
 
