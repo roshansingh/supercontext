@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from source.kg.build.pipeline import extract_repo
+from source.kg.build.pipeline import _combined_adapters, extract_repo
 from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
@@ -24,6 +25,7 @@ from source.kg.extraction.framework.adapter import AdapterCapability, AdapterRes
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
 from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
 from source.kg.extraction.python.ast_extractor import PythonAstExtractor
+from source.kg.file_formats import REGISTERED_FILE_FORMATS, discover_file_formats, file_format_adapters
 
 
 class AdapterFrameworkTest(unittest.TestCase):
@@ -32,6 +34,13 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Duplicate adapter name: dup"):
             register_for_tests((adapter, adapter))
+
+    def test_pipeline_adapter_combiner_rejects_duplicate_capability_names(self) -> None:
+        left = _Adapter("dup", "left_v0")
+        right = _Adapter("dup", "right_v0")
+
+        with self.assertRaisesRegex(ValueError, "Duplicate adapter name: dup"):
+            _combined_adapters((left,), (right,))
 
     def test_registry_rejects_missing_source_system(self) -> None:
         with self.assertRaisesRegex(ValueError, "must declare source_system"):
@@ -243,6 +252,7 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         with (
             patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)),
+            patch("source.kg.file_formats.file_format_adapters", return_value=()),
             patch("source.kg.languages.language_adapters", return_value=()),
         ):
             build = extract_repo(repo)
@@ -327,6 +337,7 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         with (
             patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", ()),
+            patch("source.kg.file_formats.file_format_adapters", return_value=()),
             patch("source.kg.languages.language_adapters", return_value=(adapter,)),
         ):
             build = extract_repo(repo)
@@ -334,10 +345,23 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(build.extractor_names, ["language_owned_v0"])
         self.assertEqual(adapter.calls, 1)
 
-    def test_registered_adapters_include_pr_fw_2_splits(self) -> None:
-        names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}
+    def test_pipeline_selects_file_format_adapters_without_central_registry(self) -> None:
+        repo = _repo(python_files=(), typescript_files=())
+        adapter = _Adapter("config-owned", "config_owned_v0", languages=("config",))
 
-        self.assertIn("python-boto3-transport", names)
+        with (
+            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", ()),
+            patch("source.kg.file_formats.file_format_adapters", return_value=(adapter,)),
+            patch("source.kg.languages.language_adapters", return_value=()),
+        ):
+            build = extract_repo(repo)
+
+        self.assertEqual(build.extractor_names, ["config_owned_v0"])
+        self.assertEqual(adapter.calls, 1)
+
+    def test_registered_adapters_include_pr_fw_2_splits(self) -> None:
+        names = {adapter.capability.name for adapter in file_format_adapters()}
+
         self.assertIn("config-apache-vhost", names)
         self.assertIn("config-domain-env", names)
         self.assertIn("config-openapi", names)
@@ -345,15 +369,76 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("config-zappa", names)
         self.assertIn("config-serverless-yaml", names)
 
+    def test_file_format_support_is_discovered_without_central_adapter_registry(self) -> None:
+        format_names = {file_format.name for file_format in REGISTERED_FILE_FORMATS}
+        adapter_names = {adapter.capability.name for adapter in file_format_adapters()}
+        central_names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}
+
+        self.assertGreaterEqual(
+            format_names,
+            {
+                "apache_vhost",
+                "domain_env",
+                "dotenv",
+                "event_channel_normalizer",
+                "openapi",
+                "serverless_yaml",
+                "terraform",
+                "zappa",
+            },
+        )
+        self.assertIn("config-openapi", adapter_names)
+        self.assertNotIn("config-openapi", central_names)
+        self.assertNotIn("config-serverless-yaml", central_names)
+        self.assertNotIn("_shared", format_names)
+        self.assertNotIn("_template", format_names)
+
+    def test_file_format_discovery_requires_format_support_export(self) -> None:
+        with self.assertRaisesRegex(ValueError, "format_missing.format must export FORMAT_SUPPORT"):
+            _discover_temp_file_formats({"format_missing": ""})
+
+    def test_file_format_discovery_requires_non_empty_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "File format support must declare a name"):
+            _discover_temp_file_formats(
+                {
+                    "format_empty_name": (
+                        "from source.kg.file_formats.types import StaticFileFormatSupport\n"
+                        'FORMAT_SUPPORT = StaticFileFormatSupport("", ())\n'
+                    )
+                }
+            )
+
+    def test_file_format_discovery_requires_callable_adapters_method(self) -> None:
+        with self.assertRaisesRegex(ValueError, "broken must implement adapters"):
+            _discover_temp_file_formats(
+                {
+                    "format_broken": (
+                        "class BrokenFormat:\n"
+                        '    name = "broken"\n'
+                        "    adapters = ()\n"
+                        "FORMAT_SUPPORT = BrokenFormat()\n"
+                    )
+                }
+            )
+
+    def test_file_format_discovery_rejects_duplicate_names(self) -> None:
+        module_body = (
+            "from source.kg.file_formats.types import StaticFileFormatSupport\n"
+            'FORMAT_SUPPORT = StaticFileFormatSupport("dup", ())\n'
+        )
+
+        with self.assertRaisesRegex(ValueError, "Duplicate file format support name: dup"):
+            _discover_temp_file_formats({"format_a": module_body, "format_b": module_body})
+
     def test_split_config_capabilities_include_yml_file_kind(self) -> None:
-        capabilities = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}
+        capabilities = {adapter.capability.name: adapter.capability for adapter in file_format_adapters()}
 
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
         self.assertIn("yml", capabilities["config-serverless-yaml"].file_kinds)
 
     def test_domain_env_adapter_uses_config_language_bucket(self) -> None:
         repo = _repo(python_files=(), typescript_files=())
-        capabilities = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}
+        capabilities = {adapter.capability.name: adapter.capability for adapter in file_format_adapters()}
 
         selected = select_applicable_adapters(repo, (CONFIG_DOMAIN_ENV_ADAPTER,))
 
@@ -374,47 +459,87 @@ class AdapterFrameworkTest(unittest.TestCase):
 
     def test_file_format_modules_are_canonical_with_compatibility_aliases(self) -> None:
         legacy_to_canonical = {
-            "source.kg.extraction.config.apache_vhost": "source.kg.extraction.file_formats.apache_vhost",
-            "source.kg.extraction.config.channel_normalization": "source.kg.extraction.file_formats.channel_normalization",
-            "source.kg.extraction.config.common": "source.kg.extraction.file_formats.common",
-            "source.kg.extraction.config.deploy_events": "source.kg.extraction.file_formats.deploy_events",
-            "source.kg.extraction.config.domain_env": "source.kg.extraction.file_formats.domain_env",
-            "source.kg.extraction.config.domain_literals": "source.kg.extraction.file_formats.domain_literals",
-            "source.kg.extraction.config.dotenv": "source.kg.extraction.file_formats.dotenv",
-            "source.kg.extraction.config.endpoints": "source.kg.extraction.file_formats.endpoints",
-            "source.kg.extraction.config.openapi_yaml": "source.kg.extraction.file_formats.openapi_yaml",
-            "source.kg.extraction.config.serverless_yaml": "source.kg.extraction.file_formats.serverless_yaml",
-            "source.kg.extraction.config.static_extractor": "source.kg.extraction.file_formats.static_extractor",
-            "source.kg.extraction.config.terraform": "source.kg.extraction.file_formats.terraform",
-            "source.kg.extraction.config.zappa": "source.kg.extraction.file_formats.zappa",
+            "source.kg.extraction.config.apache_vhost": "source.kg.file_formats.apache_vhost",
+            "source.kg.extraction.config.channel_normalization": "source.kg.file_formats._shared.channel_normalization",
+            "source.kg.extraction.config.common": "source.kg.file_formats._shared.common",
+            "source.kg.extraction.config.deploy_events": "source.kg.file_formats._shared.deploy_events",
+            "source.kg.extraction.config.domain_env": "source.kg.file_formats.domain_env",
+            "source.kg.extraction.config.domain_literals": "source.kg.file_formats._shared.domain_literals",
+            "source.kg.extraction.config.dotenv": "source.kg.file_formats.dotenv",
+            "source.kg.extraction.config.endpoints": "source.kg.file_formats._shared.endpoints",
+            "source.kg.extraction.config.openapi_yaml": "source.kg.file_formats.openapi_yaml",
+            "source.kg.extraction.config.serverless_yaml": "source.kg.file_formats.serverless_yaml",
+            "source.kg.extraction.config.static_extractor": "source.kg.file_formats._shared.static_config",
+            "source.kg.extraction.config.terraform": "source.kg.file_formats.terraform",
+            "source.kg.extraction.config.zappa": "source.kg.file_formats.zappa",
+            "source.kg.extraction.file_formats.apache_vhost": "source.kg.file_formats.apache_vhost",
+            "source.kg.extraction.file_formats.channel_normalization": "source.kg.file_formats._shared.channel_normalization",
+            "source.kg.extraction.file_formats.common": "source.kg.file_formats._shared.common",
+            "source.kg.extraction.file_formats.deploy_events": "source.kg.file_formats._shared.deploy_events",
+            "source.kg.extraction.file_formats.domain_env": "source.kg.file_formats.domain_env",
+            "source.kg.extraction.file_formats.domain_literals": "source.kg.file_formats._shared.domain_literals",
+            "source.kg.extraction.file_formats.dotenv": "source.kg.file_formats.dotenv",
+            "source.kg.extraction.file_formats.endpoints": "source.kg.file_formats._shared.endpoints",
+            "source.kg.extraction.file_formats.openapi_yaml": "source.kg.file_formats.openapi_yaml",
+            "source.kg.extraction.file_formats.serverless_yaml": "source.kg.file_formats.serverless_yaml",
+            "source.kg.extraction.file_formats.static_extractor": "source.kg.file_formats._shared.static_config",
+            "source.kg.extraction.file_formats.terraform": "source.kg.file_formats.terraform",
+            "source.kg.extraction.file_formats.zappa": "source.kg.file_formats.zappa",
             "source.kg.extraction.adapters.config_apache_vhost": (
-                "source.kg.extraction.file_formats.adapters.config_apache_vhost"
+                "source.kg.file_formats.adapters.config_apache_vhost"
             ),
             "source.kg.extraction.adapters.config_domain_env": (
-                "source.kg.extraction.file_formats.adapters.config_domain_env"
+                "source.kg.file_formats.adapters.config_domain_env"
             ),
-            "source.kg.extraction.adapters.config_dotenv": "source.kg.extraction.file_formats.adapters.config_dotenv",
-            "source.kg.extraction.adapters.config_openapi": "source.kg.extraction.file_formats.adapters.config_openapi",
+            "source.kg.extraction.adapters.config_dotenv": "source.kg.file_formats.adapters.config_dotenv",
+            "source.kg.extraction.adapters.config_openapi": "source.kg.file_formats.adapters.config_openapi",
             "source.kg.extraction.adapters.config_serverless_yaml": (
-                "source.kg.extraction.file_formats.adapters.config_serverless_yaml"
+                "source.kg.file_formats.adapters.config_serverless_yaml"
             ),
-            "source.kg.extraction.adapters.config_shared": "source.kg.extraction.file_formats.adapters.config_shared",
+            "source.kg.extraction.adapters.config_shared": "source.kg.file_formats.adapters.config_shared",
             "source.kg.extraction.adapters.config_terraform": (
-                "source.kg.extraction.file_formats.adapters.config_terraform"
+                "source.kg.file_formats.adapters.config_terraform"
             ),
-            "source.kg.extraction.adapters.config_zappa": "source.kg.extraction.file_formats.adapters.config_zappa",
+            "source.kg.extraction.adapters.config_zappa": "source.kg.file_formats.adapters.config_zappa",
             "source.kg.extraction.adapters.event_channel_normalizer": (
-                "source.kg.extraction.file_formats.adapters.event_channel_normalizer"
+                "source.kg.file_formats.adapters.event_channel_normalizer"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_apache_vhost": (
+                "source.kg.file_formats.adapters.config_apache_vhost"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_domain_env": (
+                "source.kg.file_formats.adapters.config_domain_env"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_dotenv": (
+                "source.kg.file_formats.adapters.config_dotenv"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_openapi": (
+                "source.kg.file_formats.adapters.config_openapi"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_serverless_yaml": (
+                "source.kg.file_formats.adapters.config_serverless_yaml"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_shared": (
+                "source.kg.file_formats.adapters.config_shared"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_terraform": (
+                "source.kg.file_formats.adapters.config_terraform"
+            ),
+            "source.kg.extraction.file_formats.adapters.config_zappa": (
+                "source.kg.file_formats.adapters.config_zappa"
+            ),
+            "source.kg.extraction.file_formats.adapters.event_channel_normalizer": (
+                "source.kg.file_formats.adapters.event_channel_normalizer"
             ),
         }
 
         for legacy_name, canonical_name in legacy_to_canonical.items():
             with self.subTest(legacy=legacy_name):
                 self.assertIs(importlib.import_module(legacy_name), importlib.import_module(canonical_name))
-        self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.__class__.__module__, "source.kg.extraction.file_formats.adapters.config_domain_env")
+        self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.__class__.__module__, "source.kg.file_formats.adapters.config_domain_env")
         self.assertIs(
-            importlib.import_module("source.kg.extraction.file_formats.adapters.config_openapi").CONFIG_OPENAPI_ADAPTER,
-            {adapter.capability.name: adapter for adapter in REGISTERED_ADAPTERS}["config-openapi"],
+            importlib.import_module("source.kg.file_formats.adapters.config_openapi").CONFIG_OPENAPI_ADAPTER,
+            {adapter.capability.name: adapter for adapter in file_format_adapters()}["config-openapi"],
         )
 
     def test_zappa_adapter_claims_parser_backed_public_scope(self) -> None:
@@ -432,7 +557,9 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("Domain", capability.produces_entity_kinds)
 
     def test_apache_vhost_adapter_claims_parser_backed_public_scope(self) -> None:
-        capability = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}["config-apache-vhost"]
+        capability = {adapter.capability.name: adapter.capability for adapter in file_format_adapters()}[
+            "config-apache-vhost"
+        ]
 
         self.assertIn("apache", capability.framework_tags)
         self.assertIn("wsgi", capability.framework_tags)
@@ -763,6 +890,31 @@ class _UnknownCategoryLanguage:
 
     def known_stacks(self) -> dict[str, dict[str, str]]:
         return {"python": {"custom_stack": "unknown_category"}}
+
+
+def _discover_temp_file_formats(format_modules: dict[str, str]):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        package_name = f"formats_{root.name.replace('-', '_')}"
+        package_root = root / package_name
+        package_root.mkdir()
+        (package_root / "__init__.py").write_text("", encoding="utf-8")
+        for module_name, module_body in format_modules.items():
+            module_root = package_root / module_name
+            module_root.mkdir()
+            (module_root / "__init__.py").write_text("", encoding="utf-8")
+            (module_root / "format.py").write_text(module_body, encoding="utf-8")
+
+        sys.path.insert(0, str(root))
+        importlib.invalidate_caches()
+        try:
+            return discover_file_formats(package_root=package_root, package_name=package_name)
+        finally:
+            sys.path.remove(str(root))
+            for module_name in list(sys.modules):
+                if module_name == package_name or module_name.startswith(f"{package_name}."):
+                    sys.modules.pop(module_name, None)
+            importlib.invalidate_caches()
 
 
 def _repo(python_files: tuple[Path, ...] | None = None, typescript_files: tuple[Path, ...] = ()) -> RepoSnapshot:

@@ -66,10 +66,11 @@ def extract_repo(
 ) -> RepoKgBuild:
     from source.kg.extraction.adapters import REGISTERED_ADAPTERS
     from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
+    from source.kg.file_formats import file_format_adapters
     from source.kg.languages import language_adapters
 
     ctx = ExtractionContext(tenant_id=resolve_tenant_id(tenant_id))
-    adapters = _combined_adapters(REGISTERED_ADAPTERS, language_adapters())
+    adapters = _combined_adapters(REGISTERED_ADAPTERS, language_adapters(), file_format_adapters())
     selected = select_applicable_adapter_specs(repo, adapters, ctx=ctx)
     selected_adapters = [selection.adapter for selection in selected]
     entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(
@@ -97,5 +98,10 @@ def _combined_adapters(*adapter_groups: tuple[Adapter, ...]) -> tuple[Adapter, .
     adapters_by_name: dict[str, Adapter] = {}
     for group in adapter_groups:
         for adapter in group:
-            adapters_by_name.setdefault(adapter.capability.name, adapter)
+            name = adapter.capability.name
+            if name in adapters_by_name:
+                if adapters_by_name[name] is adapter:
+                    continue
+                raise ValueError(f"Duplicate adapter name: {name}")
+            adapters_by_name[name] = adapter
     return tuple(adapters_by_name.values())
