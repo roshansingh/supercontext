@@ -9,7 +9,7 @@ This split keeps repo discovery import-safe while still making each language own
 
 ## Steps
 
-1. Copy `source/kg/languages/_template/` to `source/kg/languages/<language_name>/`.
+1. Copy `source/kg/languages/_template/` to `source/kg/languages/<language_name>/`, including `__init__.py`.
 2. Update `files.py`:
    - `name`: canonical language key, such as `java`.
    - `aliases`: emitted labels or ecosystem aliases, such as `("javascript",)` for TypeScript.
@@ -22,12 +22,14 @@ This split keeps repo discovery import-safe while still making each language own
    - `known_stacks()` for unsupported known framework coverage.
    - Keep parser-specific code behind adapters or helper modules until the build path needs a shared parser hook.
 4. Add tests under `tests/languages/`.
-5. Run:
+5. Run focused checks:
 
 ```bash
 python3 -m unittest discover -s tests/languages
-python3 -m unittest discover -s tests
+python3 -m unittest tests.test_adapter_framework tests.test_multi_repo_identity
 python3 -m source.scripts.run_product_validation
 ```
+
+Run `python3 -m unittest discover -s tests` as a wider regression check when the repository baseline is green. If the baseline has unrelated known failures, record those separately instead of treating them as new-language failures.
 
 Do not add a central adapter registry edit for a language-owned adapter unless it is still part of the legacy compatibility path. New languages should be discovered from their directory.
