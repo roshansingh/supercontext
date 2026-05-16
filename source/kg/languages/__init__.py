@@ -37,7 +37,7 @@ def discover_languages(
 
 def language_adapters(languages: tuple[LanguageSupport, ...] | None = None) -> tuple[Adapter, ...]:
     adapters: list[Adapter] = []
-    for language in languages or _registered_languages():
+    for language in _registered_languages() if languages is None else languages:
         adapters.extend(language.adapters())
     return tuple(adapters)
 

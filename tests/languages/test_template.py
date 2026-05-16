@@ -5,7 +5,7 @@ import unittest
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import ExtractionContext
-from source.kg.languages import REGISTERED_LANGUAGES
+from source.kg.languages import REGISTERED_LANGUAGES, language_adapters
 from source.kg.languages._template.files import LANGUAGE_FILES
 from source.kg.languages._template.language import LANGUAGE_SUPPORT
 
@@ -13,6 +13,9 @@ from source.kg.languages._template.language import LANGUAGE_SUPPORT
 class LanguageTemplateTest(unittest.TestCase):
     def test_registered_languages_include_python_and_typescript(self) -> None:
         self.assertGreaterEqual({language.name for language in REGISTERED_LANGUAGES}, {"python", "typescript"})
+
+    def test_language_adapters_respects_explicit_empty_language_tuple(self) -> None:
+        self.assertEqual(language_adapters(()), ())
 
     def test_template_is_noop_and_not_registered(self) -> None:
         root = Path("/tmp/bettercontext-template-language")
