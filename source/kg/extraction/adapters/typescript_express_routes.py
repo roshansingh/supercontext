@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.common import ConfigKgBuild
-from source.kg.extraction.config.endpoints import (
+from source.kg.extraction.file_formats.common import ConfigKgBuild
+from source.kg.extraction.file_formats.endpoints import (
     extract_typescript_client_endpoint_calls,
     extract_typescript_express_routes,
 )
-from source.kg.extraction.config.static_extractor import StaticConfigExtractor
+from source.kg.extraction.file_formats.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.typescript.parser_bridge import parse_typescript_repo
 

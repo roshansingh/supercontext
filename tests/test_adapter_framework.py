@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 import tempfile
 import unittest
@@ -349,6 +350,51 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
         self.assertIn("yml", capabilities["config-serverless-yaml"].file_kinds)
+
+    def test_file_format_modules_are_canonical_with_compatibility_aliases(self) -> None:
+        legacy_to_canonical = {
+            "source.kg.extraction.config.apache_vhost": "source.kg.extraction.file_formats.apache_vhost",
+            "source.kg.extraction.config.channel_normalization": "source.kg.extraction.file_formats.channel_normalization",
+            "source.kg.extraction.config.common": "source.kg.extraction.file_formats.common",
+            "source.kg.extraction.config.deploy_events": "source.kg.extraction.file_formats.deploy_events",
+            "source.kg.extraction.config.domain_env": "source.kg.extraction.file_formats.domain_env",
+            "source.kg.extraction.config.domain_literals": "source.kg.extraction.file_formats.domain_literals",
+            "source.kg.extraction.config.dotenv": "source.kg.extraction.file_formats.dotenv",
+            "source.kg.extraction.config.endpoints": "source.kg.extraction.file_formats.endpoints",
+            "source.kg.extraction.config.openapi_yaml": "source.kg.extraction.file_formats.openapi_yaml",
+            "source.kg.extraction.config.serverless_yaml": "source.kg.extraction.file_formats.serverless_yaml",
+            "source.kg.extraction.config.static_extractor": "source.kg.extraction.file_formats.static_extractor",
+            "source.kg.extraction.config.terraform": "source.kg.extraction.file_formats.terraform",
+            "source.kg.extraction.config.zappa": "source.kg.extraction.file_formats.zappa",
+            "source.kg.extraction.adapters.config_apache_vhost": (
+                "source.kg.extraction.file_formats.adapters.config_apache_vhost"
+            ),
+            "source.kg.extraction.adapters.config_domain_env": (
+                "source.kg.extraction.file_formats.adapters.config_domain_env"
+            ),
+            "source.kg.extraction.adapters.config_dotenv": "source.kg.extraction.file_formats.adapters.config_dotenv",
+            "source.kg.extraction.adapters.config_openapi": "source.kg.extraction.file_formats.adapters.config_openapi",
+            "source.kg.extraction.adapters.config_serverless_yaml": (
+                "source.kg.extraction.file_formats.adapters.config_serverless_yaml"
+            ),
+            "source.kg.extraction.adapters.config_shared": "source.kg.extraction.file_formats.adapters.config_shared",
+            "source.kg.extraction.adapters.config_terraform": (
+                "source.kg.extraction.file_formats.adapters.config_terraform"
+            ),
+            "source.kg.extraction.adapters.config_zappa": "source.kg.extraction.file_formats.adapters.config_zappa",
+            "source.kg.extraction.adapters.event_channel_normalizer": (
+                "source.kg.extraction.file_formats.adapters.event_channel_normalizer"
+            ),
+        }
+
+        for legacy_name, canonical_name in legacy_to_canonical.items():
+            with self.subTest(legacy=legacy_name):
+                self.assertIs(importlib.import_module(legacy_name), importlib.import_module(canonical_name))
+        self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.__class__.__module__, "source.kg.extraction.file_formats.adapters.config_domain_env")
+        self.assertIs(
+            importlib.import_module("source.kg.extraction.file_formats.adapters.config_openapi").CONFIG_OPENAPI_ADAPTER,
+            {adapter.capability.name: adapter for adapter in REGISTERED_ADAPTERS}["config-openapi"],
+        )
 
     def test_zappa_adapter_claims_parser_backed_public_scope(self) -> None:
         capability = CONFIG_ZAPPA_ADAPTER.capability
