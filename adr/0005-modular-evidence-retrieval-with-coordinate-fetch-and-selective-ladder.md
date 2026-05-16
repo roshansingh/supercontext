@@ -179,7 +179,7 @@ Runtime behavior:
 - Answer synthesis merges graph structure and evidence results.
 - Missing bytes, missing grounding, or exhausted budget must return explicit refusal metadata rather than a silent best guess.
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (as of 2026-05-16)
 
 This ADR is only partially implemented.
 
@@ -238,7 +238,5 @@ What is still pending:
 - `ADR-0003`
 - `ADR-0004`
 - `ADR-0006`
-- `docs/evidence-retrieval/claude-evidence-retrieval-research.md`
-- `docs/evidence-retrieval/codex-evidence-retrieval-research.md`
-- `docs/evidence-retrieval/codex-runtime-retrieval-patterns.md`
+- `docs/evidence-retrieval/EVIDENCE-RETRIEVAL-RECOMMENDATION.md`
 - `debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md`

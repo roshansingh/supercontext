@@ -47,17 +47,17 @@ Concretely:
 - Schema discipline imposed by MCP (small tool count, structured JSON) constrains the engine's expressiveness, which is desirable rather than limiting for the wedge use case.
 - Streamable HTTP transport requires customer egress rules to permit our endpoint; not unique to MCP.
 
-## Implementation Status (v0, 2026-05-13)
+## Implementation Status (as of 2026-05-16)
 
-This ADR has a local-development MCP v0 skeleton.
+This ADR has a local-development MCP server skeleton.
 
 What exists now:
 
 - `source/scripts/query_kg.py` provides a local CLI prototype over the same KG facts that future MCP tools will query.
 - Implemented local query surfaces include `find-callers`, `find-callees`, `blast-radius`, `lookup-symbol`, `symbols-in-file`, `evidence-for-call`, `who-imports`, and `dependency-path`.
-- `source/kg/product/mcp_tools.py` defines the eight ADR-0002 tool names with v0 JSON schemas and read-only handlers.
+- `source/kg/product/mcp_tools.py` defines the eight ADR-0002 tool names with local JSON schemas and read-only handlers.
 - `source/scripts/mcp_server.py` exposes a dependency-free local JSON-RPC HTTP endpoint at `/mcp` with `initialize`, `tools/list`, `tools/call`, and `ping`.
-- v0 is single-request/single-response over plain HTTP. The ADR's streamable transport target remains a follow-up for real host compatibility work.
+- The local server is single-request/single-response over plain HTTP. The ADR's streamable transport target remains a follow-up for real host compatibility work.
 - `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, and `blast_radius` return current KG-backed results.
 - `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
 
@@ -65,8 +65,8 @@ What is still pending:
 
 - OAuth/static-token auth modes.
 - Host compatibility testing against real MCP clients.
-- Streamable HTTP transport beyond the current request/response v0 endpoint.
-- Cursor pagination and summary-then-drill-down behavior beyond v0 limits.
+- Streamable HTTP transport beyond the current request/response endpoint.
+- Cursor pagination and summary-then-drill-down behavior beyond current local limits.
 - `supercontext://service/{name}/brief` resource.
 - Resource auto-attach behavior.
 

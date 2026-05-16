@@ -61,20 +61,22 @@ Broad cross-language structural indexing, broad Opengrep flow analysis, and ever
 ### Neutral
 - MCP consumption depth (stdio + streamable HTTP + SSE, runtime schema fetch, multi-server, lazy-load) is at parity with OpenAI Agents SDK. The MCP layer — the actual moat per ADR-0002 — works identically either way.
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (as of 2026-05-16)
 
-This ADR is not implemented in the current KG slice.
+This ADR is partially implemented outside the default KG build path.
 
 What exists now:
 
 - The local KG builder uses deterministic in-process extractors, not Claude Agent SDK orchestration.
-- `source.kg.llm.LightLlmClient` exists as an optional helper for later enrichment, but the v0 static KG builder does not call it.
-- The v0 implementation intentionally keeps LLM and agentic behavior out of the default path while extraction quality is being validated.
+- `source.kg.agent.ClaudeInteractiveAgentSession` provides a conversation-scoped Agent SDK runtime for natural-language KG questions.
+- `source.kg.product.ClaudeAnswerSynthesizer` and `ClaudeGoldsetJudge` use Claude Agent SDK with constrained policy for answer synthesis and evaluation over retrieved KG evidence.
+- `source.kg.integrations.llm.LightLlmClient` exists as an optional helper for later enrichment, but the default KG builder does not call it.
+- The current implementation keeps LLM and agentic behavior out of the default extraction/build path while allowing bounded query-time synthesis and evaluation.
 
 What is still pending:
 
 - Layer A ingestion-worker orchestration through Claude Agent SDK.
-- Layer B Explorer / PR-bot reasoning agent.
+- Layer B Explorer / PR-bot reasoning agent beyond the current bounded answer-synthesis and evaluation helpers.
 - SDK hook integration for audit logging, freshness checks, and refusal behavior.
 - Production allowlists, permission policy, and session-store adapter.
 

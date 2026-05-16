@@ -14,10 +14,7 @@
 
 `PLATFORM-PRD.md` extends the same system into a broader enterprise context graph covering docs, tickets, files, incidents, ownership, and operational knowledge. That broader direction increases the temptation to build a loose GraphRAG-style knowledge graph early.
 
-The graph-building research converged against that temptation:
-
-- `docs/graph-building/codex-graph-building-research.md` recommends a **strict canonical operational graph** with a **candidate / enrichment layer** for uncertain facts.
-- `docs/graph-building/claude-graph-building-research.md` recommends a **precise, typed knowledge graph** built from deterministic extractors first, with Claude Agent SDK used only as a gap-filler and candidate producer.
+The graph-building research converged against that temptation. `docs/graph-building/GRAPH-BUILDING-RECOMMENDATION.md` synthesizes the final posture: a **strict canonical operational graph** with a **candidate / enrichment layer** for uncertain facts, built from deterministic extractors first, with Claude Agent SDK used only as a gap-filler and candidate producer.
 
 This ADR closes the architectural posture for graph building.
 
@@ -180,7 +177,7 @@ ADR-0006 should be treated as the binding follow-up for these items.
 - The broader platform can host multiple graph-shaped knowledge layers without conflating their trust levels.
 - SuperContext's durable asset becomes the graph model, provenance contract, and promotion rules, not just ingestion code.
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (as of 2026-05-16)
 
 This ADR is partially reflected in the local KG harness.
 
@@ -196,7 +193,7 @@ What is still pending:
 - No separate sidecar table/store exists yet.
 - No promotion/demotion workflow is implemented.
 - No UI/MCP candidate-only path exists yet.
-- v0 deterministic extractors currently default entities/facts to canonical because no LLM or multi-source candidate input is wired.
+- Current deterministic extractors default entities/facts to canonical because no LLM or multi-source candidate input is wired.
 
 ## References
 
@@ -204,5 +201,4 @@ What is still pending:
 - `PLATFORM-PRD.md` §8 (generic graph model), §10 (architecture principles)
 - `adr/0003-postgres-age-as-initial-graph-storage.md`
 - `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
-- `docs/graph-building/codex-graph-building-research.md`
-- `docs/graph-building/claude-graph-building-research.md`
+- `docs/graph-building/GRAPH-BUILDING-RECOMMENDATION.md`

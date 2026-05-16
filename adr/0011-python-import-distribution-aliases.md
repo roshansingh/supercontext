@@ -30,7 +30,7 @@ The fallback map is a normalizer concern, not query-specific logic. It may inclu
 
 Ambiguous aliases must fail closed unless the repo's declared dependencies select exactly one candidate. For example, `cv2` may map to several OpenCV distributions; if `opencv-python-headless` is declared, use it. If no declared dependency disambiguates the candidate set, do not guess.
 
-The accepted v0 alias set is:
+The accepted alias set is:
 
 | Import root | Distribution candidates |
 |---|---|

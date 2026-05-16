@@ -183,7 +183,7 @@ Explicitly out of v1:
 - agent-first import classification
 - promoting Agent SDK classifications without deterministic corroboration
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (as of 2026-05-16)
 
 This ADR is partially implemented in the local KG harness.
 
