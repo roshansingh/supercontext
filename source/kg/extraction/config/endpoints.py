@@ -20,7 +20,8 @@ from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.config.openapi_yaml import extract_openapi_endpoints
 from source.kg.extraction.python.frameworks import extract_django_routes, extract_flask_routes
 from source.kg.extraction.python.frameworks.routes import EndpointRoute
-from source.kg.core.repo_source import RepoSnapshot, TYPESCRIPT_EXTENSIONS
+from source.kg.core.repo_source import RepoSnapshot
+from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
 
 
 JAVASCRIPT_TYPESCRIPT_SUFFIXES = TYPESCRIPT_EXTENSIONS

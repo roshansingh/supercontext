@@ -240,11 +240,98 @@ class AdapterFrameworkTest(unittest.TestCase):
         repo = _repo()
         adapter = _Adapter("stateful", "stateful_v0")
 
-        with patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)):
+        with (
+            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)),
+            patch("source.kg.languages.language_adapters", return_value=()),
+        ):
             build = extract_repo(repo)
 
         self.assertEqual(build.extractor_names, ["stateful_v0"])
-        self.assertEqual(adapter.capability_reads, 2)
+        self.assertEqual(adapter.capability_reads, 3)
+
+    def test_extraction_context_lazy_properties_do_not_change_equality(self) -> None:
+        left = ExtractionContext()
+        right = ExtractionContext()
+
+        self.assertFalse(left == right)
+        _ = left.python_parsed_files
+        _ = left.js_ts_import_roots
+
+        self.assertFalse(left == right)
+
+    def test_extraction_context_repr_excludes_large_mutable_caches(self) -> None:
+        ctx = ExtractionContext(
+            tenant_id="tenant",
+            config_scans={"large": "scan"},
+            parsed_by_language={"python": {"repo": "parsed"}},
+            literal_indexes_by_language={"python": {"repo": "literal"}},
+            import_roots_by_language={"python": {"flask"}},
+        )
+
+        rendered = repr(ctx)
+
+        self.assertEqual(rendered, "ExtractionContext(tenant_id='tenant')")
+        self.assertNotIn("parsed", rendered)
+        self.assertNotIn("flask", rendered)
+
+    def test_repo_snapshot_hash_and_equality_use_stable_identity(self) -> None:
+        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        left = RepoSnapshot(
+            root=root,
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (root / "app.py",)},
+        )
+        right = RepoSnapshot(
+            root=root,
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (), "typescript": (root / "app.ts",)},
+        )
+
+        self.assertEqual(left, right)
+        self.assertEqual(hash(left), hash(right))
+
+    def test_repo_snapshot_files_by_language_is_read_only(self) -> None:
+        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        repo = RepoSnapshot(
+            root=root,
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (root / "app.py",)},
+        )
+
+        with self.assertRaises(TypeError):
+            repo.files_by_language["python"] = ()
+
+    def test_repo_snapshot_rejects_mixed_generic_and_legacy_file_args(self) -> None:
+        root = Path("/tmp/bettercontext-adapter-framework-repo")
+
+        with self.assertRaisesRegex(ValueError, "Pass either files_by_language or legacy"):
+            RepoSnapshot(
+                root=root,
+                name="repo",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": ()},
+                python_files=(root / "app.py",),
+            )
+
+    def test_pipeline_selects_language_discovered_adapters_without_central_registry(self) -> None:
+        repo = _repo()
+        adapter = _Adapter("language-owned", "language_owned_v0", languages=("python",))
+
+        with (
+            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", ()),
+            patch("source.kg.languages.language_adapters", return_value=(adapter,)),
+        ):
+            build = extract_repo(repo)
+
+        self.assertEqual(build.extractor_names, ["language_owned_v0"])
+        self.assertEqual(adapter.calls, 1)
 
     def test_registered_adapters_include_pr_fw_2_splits(self) -> None:
         names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}
@@ -540,6 +627,15 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(rows[0].scope_ref["language"], "python")
         self.assertEqual(rows[0].scope_ref["import_root"], "flask")
 
+    def test_unknown_known_stack_category_fails_closed(self) -> None:
+        repo = _repo(python_files=())
+
+        with patch("source.kg.extraction.framework.runner._registered_languages", return_value=(_UnknownCategoryLanguage(),)):
+            _, _, _, coverage, errors = run_adapters(repo, ())
+
+        self.assertEqual(errors, [])
+        self.assertEqual(_known_stack_rows(coverage), [])
+
 
 @dataclass
 class _Adapter:
@@ -589,6 +685,17 @@ class _ImportRootAdapter(_Adapter):
         ctx.python_import_roots.update(self.python_import_roots)
         ctx.js_ts_import_roots.update(self.js_ts_import_roots)
         return self.result or AdapterResult()
+
+
+class _UnknownCategoryLanguage:
+    name = "python"
+    aliases: tuple[str, ...] = ()
+
+    def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> dict[str, set[str]]:
+        return {"python": {"custom_stack"}}
+
+    def known_stacks(self) -> dict[str, dict[str, str]]:
+        return {"python": {"custom_stack": "unknown_category"}}
 
 
 def _repo(python_files: tuple[Path, ...] | None = None, typescript_files: tuple[Path, ...] = ()) -> RepoSnapshot:

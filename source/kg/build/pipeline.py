@@ -7,7 +7,7 @@ from source.kg.core.models import Coverage, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.extraction.framework import ExtractionContext
+from source.kg.extraction.framework import Adapter, ExtractionContext
 
 
 def build_kg(
@@ -32,6 +32,9 @@ def build_kg(
         "counts": {
             "python_files": len(repo.python_files),
             "typescript_files": len(repo.typescript_files),
+            "files_by_language": {
+                language: len(paths) for language, paths in sorted(repo.files_by_language.items())
+            },
             "entities": len({entity.entity_id for entity in build.entities}),
             "facts": len({fact.fact_id for fact in build.facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
@@ -65,9 +68,11 @@ def extract_repo(
 ) -> RepoKgBuild:
     from source.kg.extraction.adapters import REGISTERED_ADAPTERS
     from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
+    from source.kg.languages import language_adapters
 
     ctx = ExtractionContext(tenant_id=resolve_tenant_id(tenant_id))
-    selected = select_applicable_adapter_specs(repo, REGISTERED_ADAPTERS, ctx=ctx)
+    adapters = _combined_adapters(REGISTERED_ADAPTERS, language_adapters())
+    selected = select_applicable_adapter_specs(repo, adapters, ctx=ctx)
     selected_adapters = [selection.adapter for selection in selected]
     entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(
         repo,
@@ -88,3 +93,11 @@ def extract_repo(
 
 def build_python_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject:
     return build_kg(repo_path, output_dir)
+
+
+def _combined_adapters(*adapter_groups: tuple[Adapter, ...]) -> tuple[Adapter, ...]:
+    adapters_by_name: dict[str, Adapter] = {}
+    for group in adapter_groups:
+        for adapter in group:
+            adapters_by_name.setdefault(adapter.capability.name, adapter)
+    return tuple(adapters_by_name.values())
