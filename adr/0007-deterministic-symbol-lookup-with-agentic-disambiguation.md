@@ -124,7 +124,7 @@ Explicitly out of v1:
 - agent-only symbol resolution as the default
 - promoting Agent SDK guesses to canonical facts without deterministic corroboration
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (as of 2026-05-16)
 
 This ADR is partially implemented in the local KG harness.
 

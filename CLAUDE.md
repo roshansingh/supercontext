@@ -8,16 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two layers exist concurrently:
 
-- **Architecture (`docs/`, `adr/`, `BACKLOG.md`)** — fully specified. Nine accepted ADRs, multiple research notes, an ontology recommendation, and a 55-query acceptance corpus.
-- **Implementation (`source/`)** — early v0 slice. JSONL local KG harness for Python and TypeScript repos. No Postgres/AGE, no MCP server, no PR bot yet.
+- **Architecture (`docs/`, `adr/`, `BACKLOG.md`)** — fully specified. Eleven accepted ADRs, multiple research notes, an ontology recommendation, and a 55-query acceptance corpus.
+- **Implementation (`source/`)** — early local slice. JSONL local KG harness for Python and TypeScript repos. No Postgres/AGE or PR bot yet; a local read-only MCP server exists for development.
 
 The architecture is ahead of the implementation by design. Work on either side, but treat ADRs as binding spec when implementing.
 
 ## Commands
 
-No `pyproject.toml`, `Makefile`, or test runner is configured at root. v0 ships as bare Python scripts.
+`pyproject.toml` defines package metadata, optional dependency groups, and console-script entry points. The default verification path is still direct Python module execution:
 
 ```bash
+# Verify syntax and tests
+python -m compileall -q source tests
+python -m unittest discover -s tests
+
 # Build a KG snapshot from a Python or TS/JS repo
 python -m source.scripts.build_kg --repo <path-to-repo> --out data/kg_runs/<name>
 
@@ -32,14 +36,14 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/<name> blast-radius <s
 
 Snapshots write `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` under the `--out` directory.
 
-LLM enrichment is not part of the default v0 path. If used: `source.kg.integrations.llm.LightLlmClient` reads `OPENAI_API_KEY`, defaults to `gpt-4.1-mini`, override with `SUPERCONTEXT_LLM_MODEL`.
+LLM enrichment is not part of the default KG build path. If used: `source.kg.integrations.llm.LightLlmClient` reads `OPENAI_API_KEY`, defaults to `gpt-4.1-mini`, override with `SUPERCONTEXT_LLM_MODEL`.
 
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
 | `docs/PRD.md`, `docs/PLATFORM-PRD.md` | Product vision (Product 1 wedge + broader platform) |
-| `adr/0001..0009` | Accepted architecture decisions; binding spec for implementation |
+| `adr/0001..0011` | Accepted architecture decisions; binding spec for implementation |
 | `docs/ontology/ONTOLOGY-RECOMMENDATION.md` | The v1 canonical ontology (10 nodes, 15 relations, Entity+Fact+Evidence+Coverage shape, identity tuples, derivation classes, promotion rules) — ADR-0006 binding |
 | `docs/evaluation/PRODUCT-QUERY-SET.md` | 55-query acceptance corpus mapped to MCP tools, with goldens for Low tier and contract checks |
 | `docs/overall-architecture/TECHNICAL-BUILDING-BLOCKS.md` | Implementation map, ADR coverage, next-ADR priority |
@@ -64,21 +68,21 @@ Read ADRs in order; each builds on the prior. Key shape:
 - **ADR-0006** — Ontology is **10 node types + 15 relation types**, all tenant-scoped. Storage shape: `entities` + `facts` (with optional `qualifier` for role-bearing relations) + `evidence` (PROV-O qualified pattern, polymorphic to entity or fact, carries `valid_from`/`valid_to`) + `coverage` sidecar. Five derivation classes form a tier: `authoritative_declared` > `manual_override` > `deterministic_static` > `runtime_observed` > `inferred_llm`. Per-edge promotion rules gate `candidate → canonical`.
 - **ADR-0007/0008/0009** — Deterministic-first symbol lookup, import normalization, and reverse-dependency queries with agentic disambiguation/candidate fallback.
 
-## v0 Implementation Status (read before editing `source/`)
+## Implementation Status (read before editing `source/`)
 
 `source/` ships ahead of full ADR-0006 conformance. Known divergences (full list in `adr/0006-canonical-ontology-and-fact-metadata-envelope.md` §"Implementation Status" and `BACKLOG.md`):
 
 - Storage = JSONL, not Postgres + AGE.
-- Single hardcoded `tenant_id="local-dev"`.
-- v0 introduces extra-canonical entity types (`CodeModule`, `CodeSymbol`, `ExternalPackage`) and the `IMPORTS` relation. Not yet in the canonical 10/15. Status pending.
-- `CALLS` grain in v0 is `CodeSymbol → CodeSymbol` (function-level, intra-repo), not `Service → Endpoint` (the binding spec).
+- Tenant IDs resolve from explicit CLI/config input, then `SUPERCONTEXT_TENANT_ID`, then default to `"default"`; full multi-tenant isolation is not implemented.
+- Current extractors introduce extra-canonical entity types (`CodeModule`, `CodeSymbol`, `ExternalPackage`) and the `IMPORTS` relation. Not yet in the canonical 10/15. Status pending.
+- `CALLS` grain in the current implementation is `CodeSymbol → CodeSymbol` (function-level, intra-repo), not `Service → Endpoint` (the binding spec).
 - URN scheme uses opaque hash for all kinds; ADR-0006 §3 specifies per-kind human-readable URNs for most kinds.
 - Evidence rows omit `valid_from`/`valid_to`.
 - Promotion rules not enforced (everything defaults `canonical_status='canonical'`).
 - Coverage row shape simplified.
 - Polyglot ingestion limited to Python + TS/JS; loud-refusal-at-ingestion not wired.
 
-When extending v0, prefer closing one of these gaps over adding new capability.
+When extending `source/`, prefer closing one of these gaps over adding new capability.
 
 ## Repo conventions
 
@@ -94,4 +98,4 @@ When extending v0, prefer closing one of these gaps over adding new capability.
 
 - Don't auto-create ADRs after a debate converges. Prior pattern: write `<TOPIC>-RECOMMENDATION.md` only when explicitly asked; user opens the ADR.
 - Multi-agent debates run via `~/.agent-debate/orchestrate.sh`. Host (Claude) writes its R1 turn directly in the debate file; orchestrator handles Codex rounds. See `~/.claude/agent-debate/agent-guardrails.md` for the editing conventions.
-- Edits to `source/` should match v0 minimalism — small Python modules, `from __future__ import annotations`, frozen dataclasses for the Entity/Fact/Evidence/Coverage models, JSONL via the existing `JsonlKgStore`. No new frameworks or test runners without explicit ask.
+- Edits to `source/` should match the current minimalism — small Python modules, `from __future__ import annotations`, frozen dataclasses for the Entity/Fact/Evidence/Coverage models, JSONL via the existing `JsonlKgStore`. No new frameworks or test runners without explicit ask.
