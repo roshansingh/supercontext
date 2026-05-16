@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._template.files import LANGUAGE_FILES, TemplateLanguageFiles
@@ -31,6 +33,21 @@ class TemplateLanguageSupport:
         return self.files.matches_file(path)
 
     def source_roots(self, repo, ctx: ExtractionContext) -> dict[str, set[str]]:
+        return {}
+
+    def parse_repo(self, repo, ctx: ExtractionContext) -> Mapping[str, Any]:
+        return {}
+
+    def opportunity_detectors(self) -> tuple[Any, ...]:
+        return ()
+
+    def package_resolver(self) -> Any | None:
+        return None
+
+    def dimension_rules(self) -> Mapping[str, Any]:
+        return {}
+
+    def useful_edges(self) -> Mapping[str, Any]:
         return {}
 
     def adapters(self) -> tuple[Adapter, ...]:

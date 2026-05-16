@@ -21,6 +21,11 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
             ["legacy-python-ast", "python-boto3-transport"],
         )
         self.assertEqual(PYTHON_SUPPORT.source_roots(_repo_snapshot(), ctx), {"python": {"flask"}})
+        self.assertEqual(PYTHON_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
+        self.assertEqual(PYTHON_SUPPORT.opportunity_detectors(), ())
+        self.assertIsNone(PYTHON_SUPPORT.package_resolver())
+        self.assertEqual(PYTHON_SUPPORT.dimension_rules(), {})
+        self.assertEqual(PYTHON_SUPPORT.useful_edges(), {})
 
     def test_typescript_wrapper_exposes_existing_adapter_names_and_javascript_roots(self) -> None:
         ctx = ExtractionContext()
@@ -31,6 +36,11 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
             ["typescript-express-routes", "legacy-typescript-compiler-api"],
         )
         self.assertEqual(TYPESCRIPT_SUPPORT.source_roots(_repo_snapshot(), ctx), {"javascript": {"express"}})
+        self.assertEqual(TYPESCRIPT_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
+        self.assertEqual(TYPESCRIPT_SUPPORT.opportunity_detectors(), ())
+        self.assertIsNone(TYPESCRIPT_SUPPORT.package_resolver())
+        self.assertEqual(TYPESCRIPT_SUPPORT.dimension_rules(), {})
+        self.assertEqual(TYPESCRIPT_SUPPORT.useful_edges(), {})
 
     def test_typescript_matcher_preserves_declaration_file_exclusion(self) -> None:
         self.assertFalse(TYPESCRIPT_SUPPORT.matches_file(Path("types/foo.d.ts")))

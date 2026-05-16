@@ -74,6 +74,31 @@ class StubLanguageAcceptanceTest(unittest.TestCase):
                 sys.path.remove(str(package_root.parent))
                 _clear_stub_modules()
 
+    def test_discovery_rejects_missing_language_plugpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            package_root = Path(tmpdir) / "stub_languages"
+            language_dir = package_root / "example_lang"
+            language_dir.mkdir(parents=True)
+            (package_root / "__init__.py").write_text("", encoding="utf-8")
+            (language_dir / "__init__.py").write_text("", encoding="utf-8")
+            (language_dir / "files.py").write_text(_files_py("example_lang"), encoding="utf-8")
+            (language_dir / "language.py").write_text(
+                _language_py("stub_languages.example_lang.files").replace(
+                    "    def useful_edges(self):\n        return {}\n\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            _clear_stub_modules()
+            sys.path.insert(0, str(package_root.parent))
+            try:
+                with self.assertRaisesRegex(ValueError, "example_lang must implement useful_edges"):
+                    discover_languages(package_root, "stub_languages")
+            finally:
+                sys.path.remove(str(package_root.parent))
+                _clear_stub_modules()
+
 
 def _write_stub_language(package_root: Path, directory_name: str, language_name: str) -> None:
     language_dir = package_root / directory_name
@@ -146,6 +171,21 @@ def _language_py(files_module: str) -> str:
                 return self.files.matches_file(path)
 
             def source_roots(self, repo, ctx):
+                return {{}}
+
+            def parse_repo(self, repo, ctx):
+                return {{}}
+
+            def opportunity_detectors(self):
+                return ()
+
+            def package_resolver(self):
+                return None
+
+            def dimension_rules(self):
+                return {{}}
+
+            def useful_edges(self):
                 return {{}}
 
             def adapters(self):

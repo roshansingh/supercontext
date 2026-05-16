@@ -24,6 +24,11 @@ class LanguageTemplateTest(unittest.TestCase):
 
         self.assertFalse(LANGUAGE_FILES.matches_file(root / "example.template"))
         self.assertEqual(LANGUAGE_SUPPORT.source_roots(repo, ctx), {})
+        self.assertEqual(LANGUAGE_SUPPORT.parse_repo(repo, ctx), {})
+        self.assertEqual(LANGUAGE_SUPPORT.opportunity_detectors(), ())
+        self.assertIsNone(LANGUAGE_SUPPORT.package_resolver())
+        self.assertEqual(LANGUAGE_SUPPORT.dimension_rules(), {})
+        self.assertEqual(LANGUAGE_SUPPORT.useful_edges(), {})
         self.assertEqual(LANGUAGE_SUPPORT.adapters(), ())
         self.assertEqual(LANGUAGE_SUPPORT.known_stacks(), {})
 
