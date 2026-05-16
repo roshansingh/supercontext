@@ -15,7 +15,7 @@ from source.kg.extraction.framework.adapter import AdapterCapability, AdapterRes
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
 from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
 from source.kg.file_formats import REGISTERED_FILE_FORMATS, discover_file_formats, file_format_adapters
-from source.kg.file_formats._shared.legacy_adapter import LEGACY_STATIC_CONFIG_ADAPTER
+from source.kg.file_formats._shared.extractor_adapter import STATIC_CONFIG_ADAPTER
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.file_formats.adapters import config_shared
 from source.kg.file_formats.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
@@ -23,7 +23,7 @@ from source.kg.file_formats.adapters.config_serverless_yaml import CONFIG_SERVER
 from source.kg.file_formats.adapters.config_terraform import CONFIG_TERRAFORM_ADAPTER
 from source.kg.file_formats.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
 from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
-from source.kg.languages.python.extractors.legacy_adapter import LegacyAdapter
+from source.kg.languages.python.extractors.extractor_adapter import ExtractorAdapter
 from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.typescript.extractors.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
 
@@ -387,7 +387,7 @@ class AdapterFrameworkTest(unittest.TestCase):
             },
         )
         self.assertIn("config-openapi", adapter_names)
-        self.assertEqual(LEGACY_STATIC_CONFIG_ADAPTER.capability.name, "legacy-static-config")
+        self.assertEqual(STATIC_CONFIG_ADAPTER.capability.name, "static-config")
         self.assertNotIn("_shared", format_names)
         self.assertNotIn("_template", format_names)
 
@@ -506,7 +506,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("EXPOSES_ENDPOINT", capability.produces_predicates)
         self.assertIn("Endpoint", capability.produces_entity_kinds)
 
-    def test_config_split_pipeline_matches_static_config_monolith(self) -> None:
+    def test_config_split_pipeline_matches_static_config_extractor(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / ".env").write_text('API_URL="https://api.example.com"\n', encoding="utf-8")
@@ -537,13 +537,13 @@ class AdapterFrameworkTest(unittest.TestCase):
                 files_by_language={"python": (), "typescript": ()},
             )
 
-            monolith = StaticConfigExtractor().extract(repo)
+            expected = StaticConfigExtractor().extract(repo)
             split = extract_repo(repo)
 
-        self.assertEqual(_entity_ids(split.entities), _entity_ids(monolith.entities))
-        self.assertEqual(_fact_ids(split.facts), _fact_ids(monolith.facts))
-        self.assertEqual(_evidence_ids(split.evidence), _evidence_ids(monolith.evidence))
-        self.assertEqual(_coverage_ids(split.coverage), _coverage_ids(monolith.coverage))
+        self.assertEqual(_entity_ids(split.entities), _entity_ids(expected.entities))
+        self.assertEqual(_fact_ids(split.facts), _fact_ids(expected.facts))
+        self.assertEqual(_evidence_ids(split.evidence), _evidence_ids(expected.evidence))
+        self.assertEqual(_coverage_ids(split.coverage), _coverage_ids(expected.coverage))
 
     def test_config_split_adapters_share_one_config_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -606,13 +606,13 @@ class AdapterFrameworkTest(unittest.TestCase):
             )
 
             with patch("source.kg.file_formats._shared.common.MAX_SCAN_BYTES", 4):
-                _, _, _, coverage, _ = run_adapters(repo, (LEGACY_STATIC_CONFIG_ADAPTER, CONFIG_DOMAIN_ENV_ADAPTER))
+                _, _, _, coverage, _ = run_adapters(repo, (STATIC_CONFIG_ADAPTER, CONFIG_DOMAIN_ENV_ADAPTER))
 
         rows = [row for row in coverage if row.scope_ref.get("reason") == "exceeds_max_scan_bytes"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].scope_ref["file_path"], ".env")
 
-    def test_python_transport_split_matches_python_ast_monolith(self) -> None:
+    def test_python_transport_split_matches_python_ast_extractor(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             app = root / "app.py"
@@ -631,14 +631,14 @@ class AdapterFrameworkTest(unittest.TestCase):
                 files_by_language={"python": (app,), "typescript": ()},
             )
 
-            monolith = PythonAstExtractor().extract(repo)
+            expected = PythonAstExtractor().extract(repo)
             reduced = PythonAstExtractor(include_transport=False).extract(repo)
             split = PYTHON_BOTO3_TRANSPORT_ADAPTER.extract(repo, ExtractionContext())
 
-        self.assertEqual(_entity_ids(reduced.entities + split.entities), _entity_ids(monolith.entities))
-        self.assertEqual(_fact_ids(reduced.facts + split.facts), _fact_ids(monolith.facts))
-        self.assertEqual(_evidence_ids(reduced.evidence + split.evidence), _evidence_ids(monolith.evidence))
-        self.assertEqual(_coverage_ids(reduced.coverage + split.coverage), _coverage_ids(monolith.coverage))
+        self.assertEqual(_entity_ids(reduced.entities + split.entities), _entity_ids(expected.entities))
+        self.assertEqual(_fact_ids(reduced.facts + split.facts), _fact_ids(expected.facts))
+        self.assertEqual(_evidence_ids(reduced.evidence + split.evidence), _evidence_ids(expected.evidence))
+        self.assertEqual(_coverage_ids(reduced.coverage + split.coverage), _coverage_ids(expected.coverage))
 
     def test_python_split_adapters_share_parsed_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -712,7 +712,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 commit_sha="sha",
                 files_by_language={"python": (app,), "typescript": ()},
             )
-            adapter = LegacyAdapter(
+            adapter = ExtractorAdapter(
                 capability=AdapterCapability(
                     name="python-import-root-test",
                     languages=("python",),

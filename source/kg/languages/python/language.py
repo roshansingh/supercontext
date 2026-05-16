@@ -9,7 +9,7 @@ from typing import Any
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages.known_stacks import load_known_stacks
-from source.kg.languages.python.extractors.legacy_adapter import LEGACY_PYTHON_AST_ADAPTER
+from source.kg.languages.python.extractors.extractor_adapter import PYTHON_AST_ADAPTER
 from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
 
@@ -56,7 +56,7 @@ class PythonLanguageSupport:
         return {}
 
     def adapters(self) -> tuple[Adapter, ...]:
-        return (LEGACY_PYTHON_AST_ADAPTER, PYTHON_BOTO3_TRANSPORT_ADAPTER)
+        return (PYTHON_AST_ADAPTER, PYTHON_BOTO3_TRANSPORT_ADAPTER)
 
     def known_stacks(self) -> dict[str, dict[str, str]]:
         return {"python": dict(_known_stack_imports())}

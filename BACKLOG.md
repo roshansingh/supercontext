@@ -67,12 +67,12 @@ Format: `Item | Source | Trigger to revisit`.
 | Code-level entity types (`CodeModule`, `CodeSymbol`, `ExternalPackage`) status — promote to canonical (10 → 13 nodes), keep candidate-only enrichment, or model as a sub-layer below the canonical 10 | When multi-language extraction beyond Python AST forces a consistent decision |
 | `IMPORTS` relation status — add to canonical 15, keep code-layer-only, or treat as candidate enrichment | Same trigger as code-level entity types |
 | `CALLS` grain roll-up rule — function-level (`CodeSymbol → CodeSymbol`) vs operation-level (`Service → Endpoint`); how to aggregate for multi-service blast_radius | When ingestion crosses repo boundaries and cross-service `find_callers` is needed |
-| URN human-readable scheme (ADR-0006 §3) not yet honored — v0 uses `supercontext://{kind}/{stable_hash}` for all kinds | Before MCP / UI surfaces ship |
-| Evidence-level `valid_from` / `valid_to` columns missing in v0 | When bitemporal or freshness-window queries land |
-| Promotion rules not enforced in v0 (all entities/facts default canonical) | When multi-source or `inferred_llm` evidence enters the pipeline |
-| Coverage row shape simplified in v0 (missing `subject_id`, `last_seen_at`, `window_start`, `window_end`) | When Tool Query Contract ADR locks coverage semantics |
-| v0 storage is JSONL, not Postgres + AGE (ADR-0003) | When multi-tenant or query-volume requirements force the migration |
-| v0 ingestion is Python-only; loud-refusal-at-ingestion not wired | When second language enters the extractor catalog |
+| URN human-readable scheme (ADR-0006 §3) not yet honored — current URNs use `supercontext://{kind}/{stable_hash}` for all kinds | Before MCP / UI surfaces ship |
+| Evidence-level `valid_from` / `valid_to` columns missing in the current evidence envelope | When bitemporal or freshness-window queries land |
+| Promotion rules not enforced in the current ingestion path (all entities/facts default canonical) | When multi-source or `inferred_llm` evidence enters the pipeline |
+| Coverage row shape is currently simplified (missing `subject_id`, `last_seen_at`, `window_start`, `window_end`) | When Tool Query Contract ADR locks coverage semantics |
+| Current storage is JSONL, not Postgres + AGE (ADR-0003) | When multi-tenant or query-volume requirements force the migration |
+| Loud refusal at ingestion is not fully wired for unsupported languages/frameworks | When unsupported-language or unsupported-framework coverage becomes a product gate |
 
 ## Phase 2 / 3 candidates
 

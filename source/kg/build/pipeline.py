@@ -66,11 +66,11 @@ def extract_repo(
     tenant_id: str | None = None,
 ) -> RepoKgBuild:
     from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
-    from source.kg.file_formats import LEGACY_STATIC_CONFIG_ADAPTER, file_format_adapters
+    from source.kg.file_formats import STATIC_CONFIG_ADAPTER, file_format_adapters
     from source.kg.languages import language_adapters
 
     ctx = ExtractionContext(tenant_id=resolve_tenant_id(tenant_id))
-    adapters = _combined_adapters((LEGACY_STATIC_CONFIG_ADAPTER,), language_adapters(), file_format_adapters())
+    adapters = _combined_adapters((STATIC_CONFIG_ADAPTER,), language_adapters(), file_format_adapters())
     selected = select_applicable_adapter_specs(repo, adapters, ctx=ctx)
     selected_adapters = [selection.adapter for selection in selected]
     entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(

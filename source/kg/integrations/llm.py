@@ -8,7 +8,7 @@ DEFAULT_LIGHT_MODEL = "gpt-4.1-mini"
 
 
 class LightLlmClient:
-    """Optional helper for later enrichment; the v0 static KG builder does not call it."""
+    """Optional helper for later enrichment; the default KG builder does not call it."""
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model or os.getenv("SUPERCONTEXT_LLM_MODEL") or DEFAULT_LIGHT_MODEL
@@ -26,4 +26,3 @@ class LightLlmClient:
         client = OpenAI(api_key=api_key)
         response: Any = client.responses.create(model=self.model, input=prompt)
         return str(response.output_text)
-

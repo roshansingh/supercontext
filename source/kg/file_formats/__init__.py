@@ -11,7 +11,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from source.kg.file_formats._shared.legacy_adapter import LEGACY_STATIC_CONFIG_ADAPTER
+from source.kg.file_formats._shared.extractor_adapter import STATIC_CONFIG_ADAPTER
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.file_formats.types import FileFormatSupport
 
@@ -90,7 +90,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
-    "LEGACY_STATIC_CONFIG_ADAPTER",
+    "STATIC_CONFIG_ADAPTER",
     "REGISTERED_FILE_FORMATS",
     "StaticConfigExtractor",
     "discover_file_formats",
