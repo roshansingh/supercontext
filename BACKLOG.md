@@ -1,7 +1,7 @@
 # SuperContext Backlog
 
 Status: living index of deferred work and open follow-ups across the project.
-Last updated: 2026-05-01.
+Last updated: 2026-05-16.
 
 This file is the single place to scan "what's deferred and why." Per-ADR open-follow-up sections are the authoritative source; this is the index. Refresh when ADRs change.
 
@@ -34,7 +34,7 @@ Format: `Item | Source | Trigger to revisit`.
 | Namespace-package subpath ownership for Python imports — `google.*` style namespace packages fail closed when multiple declared distributions share one import root; resolve with package file metadata or target-env module ownership | Debate 8 PR-C review | When namespace package imports become product-critical |
 | Physical Python / TypeScript extractor moves into `source/kg/languages/<language>/` — wrappers now make language ownership clear, but existing modules still live under `source/kg/extraction/{python,typescript}/`; only move after import/path adjacency checks, especially TypeScript parser bridge assets | Debate 15 Post-P5 | When language-package adjacency simplification justifies a moved-files PR; gate on parser-bridge sibling lookup, legacy adapter import, packaging-data, and wrapper-compatibility checks |
 | File-format extractor split — config adapters such as OpenAPI, Serverless, Terraform, dotenv, Apache vhost, and package manifests are still under extraction/config or central adapters rather than an explicit file-format layer | Debate 15 Post-P5 | When adding another non-language config/IaC extractor would otherwise blur language vs file-format ownership |
-| Delete language compatibility shims — `RepoSnapshot.python_files` / `typescript_files` and `ExtractionContext.python_*` / `js_ts_*` properties remain for legacy callers such as `source/kg/extraction/python/ast_extractor.py`, `source/kg/extraction/typescript/parser_bridge.py`, and compatibility tests | Debate 15 Post-P5 | After `rg` shows no production or test callers of legacy fields/functions and a dedicated removal PR updates baselines/docs |
+| Delete language compatibility shims — `RepoSnapshot.python_files` / `RepoSnapshot.typescript_files` and `ExtractionContext.python_*` / `ExtractionContext.js_ts_*` properties remain for legacy callers such as `source/kg/extraction/python/ast_extractor.py`, `source/kg/extraction/typescript/parser_bridge.py`, and compatibility tests | Debate 15 Post-P5 | After `rg` shows no production or test callers of legacy fields/functions and a dedicated removal PR updates baselines/docs |
 
 ## Per-ADR open follow-ups
 
