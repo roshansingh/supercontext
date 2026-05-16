@@ -1,3 +1,3 @@
-from source.kg.extraction.config.static_extractor import StaticConfigExtractor
+from source.kg.extraction.file_formats import StaticConfigExtractor
 
 __all__ = ["StaticConfigExtractor"]

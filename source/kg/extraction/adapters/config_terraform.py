@@ -1,42 +1,6 @@
-from __future__ import annotations
+import sys
 
-from dataclasses import dataclass
+# Compatibility shim: route the legacy import path to the canonical file_formats module.
+from source.kg.extraction.file_formats.adapters import config_terraform as _config_terraform
 
-from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.adapters.config_shared import scan_coverage_rows, scannable_config_files
-from source.kg.extraction.config.common import ConfigKgBuild
-from source.kg.extraction.config.static_extractor import StaticConfigExtractor
-from source.kg.extraction.config.terraform import extract_terraform
-from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
-
-
-@dataclass(frozen=True)
-class ConfigTerraformAdapter:
-    capability = AdapterCapability(
-        name="config-terraform",
-        languages=("config",),
-        file_kinds=("config",),
-        framework_tags=("terraform",),
-        produces_predicates=("REFERENCES_DOMAIN",),
-        produces_entity_kinds=("Domain",),
-        ontology_scope="mixed",
-        source_system=StaticConfigExtractor.source_system,
-    )
-
-    def applies_to(self, repo: RepoSnapshot, ctx: ExtractionContext) -> bool:
-        return True
-
-    def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
-        build = ConfigKgBuild()
-        service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
-        for scanned in scannable_config_files(repo, ctx):
-            extract_terraform(repo, scanned, service_entity, build, ctx.tenant_id)
-        return AdapterResult(
-            entities=list(build.entities),
-            facts=list(build.facts),
-            evidence=list(build.evidence),
-            coverage=list(build.coverage) + scan_coverage_rows(repo, ctx),
-        )
-
-
-CONFIG_TERRAFORM_ADAPTER = ConfigTerraformAdapter()
+sys.modules[__name__] = _config_terraform
