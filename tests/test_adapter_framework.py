@@ -24,7 +24,7 @@ from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
 from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
-from source.kg.extraction.python.ast_extractor import PythonAstExtractor
+from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
 from source.kg.file_formats import REGISTERED_FILE_FORMATS, discover_file_formats, file_format_adapters
 
 

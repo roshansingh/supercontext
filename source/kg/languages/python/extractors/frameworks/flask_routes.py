@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 
-from source.kg.extraction.python.frameworks.routes import EndpointRoute
+from source.kg.languages.python.extractors.frameworks.routes import EndpointRoute
 
 
 HTTP_METHODS = {"get", "post", "put", "delete", "patch"}

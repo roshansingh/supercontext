@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 from source.kg.core.models import Entity, Fact
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.python.ast_extractor import PythonAstExtractor
-from source.kg.extraction.python.transport_extractor import module_transport_context
+from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
+from source.kg.languages.python.extractors.transport_extractor import module_transport_context
 
 
 class PythonTransportExtractorTest(unittest.TestCase):
@@ -1147,7 +1147,7 @@ class PythonTransportExtractorTest(unittest.TestCase):
         )
 
         with patch(
-            "source.kg.extraction.python.ast_extractor.module_transport_context",
+            "source.kg.languages.python.extractors.ast_extractor.module_transport_context",
             wraps=module_transport_context,
         ) as context_builder:
             _extract_single_file(source)

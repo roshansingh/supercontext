@@ -15,7 +15,7 @@ from source.kg.file_formats._shared.channel_normalization import (
     normalize_sqs_url,
 )
 from source.kg.file_formats._shared.common import event_channel_entity
-from source.kg.extraction.python.dataflow import (
+from source.kg.languages.python.extractors.dataflow import (
     LiteralIndex,
     ResolvedValue,
     UnresolvedValue,
@@ -30,8 +30,8 @@ from source.kg.extraction.python.dataflow import (
     resolved_to_json,
     unresolved_coverage,
 )
-from source.kg.extraction.python.transport_apis import supported_transports, transport_spec
-from source.kg.normalization.python.imports import NormalizedImport
+from source.kg.languages.python.extractors.transport_apis import supported_transports, transport_spec
+from source.kg.languages.python.normalization.imports import NormalizedImport
 
 
 MAX_WRAPPER_RESOLUTION_DEPTH = 2
