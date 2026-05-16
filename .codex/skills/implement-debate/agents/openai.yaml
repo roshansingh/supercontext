@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Debate"
+  short_description: "Run debate PRs end to end"
+  default_prompt: "Use $implement-debate to implement debate <number> through all PR slices, reviews, merges, and main refreshes."

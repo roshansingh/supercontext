@@ -9,7 +9,7 @@ from typing import Any
 
 
 COPILOT_LOGINS = {"copilot", "copilot-pull-request-reviewer"}
-DEFAULT_POLL_DELAYS_SECONDS = (120, 120, 60, 60)
+DEFAULT_POLL_DELAYS_SECONDS = (120, 120, 60, 60, 60)
 
 
 def main() -> None:
@@ -19,13 +19,13 @@ def main() -> None:
     parser.add_argument(
         "--interval-seconds",
         type=int,
-        help="Use a fixed polling interval instead of the default 2m, 2m, 1m, 1m schedule.",
+        help="Use a fixed polling interval instead of the default 2m, 2m, 1m, 1m, 1m schedule.",
     )
     parser.add_argument(
         "--timeout-seconds",
         type=int,
         default=sum(DEFAULT_POLL_DELAYS_SECONDS),
-        help="Maximum polling window. Defaults to 6 minutes.",
+        help="Maximum polling window. Defaults to 7 minutes.",
     )
     parser.add_argument(
         "--skip-request",

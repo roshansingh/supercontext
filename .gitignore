@@ -5,3 +5,6 @@ docs/reviews/
 __pycache__/
 *.pyc
 node_modules/
+uv.lock
+uv.log
+*.egg-info/

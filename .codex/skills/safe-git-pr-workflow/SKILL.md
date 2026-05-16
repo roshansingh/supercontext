@@ -42,9 +42,9 @@ git add path/to/file.py path/to/other.md
 git commit -m "Short imperative summary"
 ```
 
-5. Before creating a PR for the first time, run one automated Claude pre-PR review.
+5. Before creating a PR for the first time, run the first automated Claude pre-PR review.
 
-Only do this once per PR, after coding is finished, tests pass, and the local semantic self-review is complete.
+Do this after coding is finished, tests pass, and the local semantic self-review is complete.
 
 Run the project helper yourself:
 
@@ -60,6 +60,8 @@ Read the generated review file. It must use the same review structure as existin
 - `deny`: record the concrete reason in PR notes or review discussion.
 
 Do not create the PR until accepted/actionable Claude findings are handled.
+
+Do not run Claude again before the first Copilot review. Each PR gets at most two Claude reviews unless the user explicitly asks otherwise.
 
 6. Push once.
 
@@ -101,14 +103,24 @@ Treat the comment fallback as experimental because GitHub documents reviewer req
 python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
-The poll script requests `@copilot` first, then waits on the default 6-minute schedule: 2 minutes, 2 minutes, then 1 minute and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll. Use `--no-comment-fallback` only when comment noise is unacceptable.
+The poll script requests `@copilot` first, then waits on the default 7-minute schedule: 2 minutes, 2 minutes, then 1 minute, 1 minute, and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll. Use `--no-comment-fallback` only when comment noise is unacceptable.
 
 Interpret the result precisely:
 - If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
-- If current-head Copilot activity starts but no completed review appears within 6 minutes, stop and report that review activity did not finish in time.
-- If no current-head Copilot activity appears within 6 minutes after the CLI request, stop and report that the request produced no review activity.
+- If current-head Copilot activity starts but no completed review appears within 7 minutes, stop and report that review activity did not finish in time.
+- If no current-head Copilot activity appears within 7 minutes after the CLI request, stop and report that the request produced no review activity.
 
-For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread. If a fix is made, rerun the semantic review checklist, push, request Copilot again, and repeat until a requested current-head review completes with zero actionable feedback.
+For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread.
+
+After implementing changes from the first Copilot review batch, before pushing those changes, run Claude Code exactly one more time:
+
+```bash
+python3 .codex/scripts/request_claude_pre_pr_review.py --base main
+```
+
+This is the second and final Claude review for the PR. For each finding, decide `accept`, `deny`, or `act`. Implement accepted/actionable findings with tests when behavior changes, but do not run Claude again unless the user explicitly asks.
+
+If a fix is made, rerun the semantic review checklist, push, request Copilot again, and repeat until a requested current-head review completes with zero actionable feedback.
 
 ## PR Review Comments
 
