@@ -5,7 +5,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from source.kg.build.multi_repo import build_multi, validate_unique_repo_identities
+from source.kg.build.multi_repo import (
+    LINKER_RULE_VERSION,
+    LINKER_SOURCE_SYSTEM,
+    build_multi,
+    validate_unique_repo_identities,
+)
 from source.kg.core.models import JsonObject, utc_now_iso
 from source.kg.core.repo_source import discover_repo
 from source.kg.core.store import JsonlKgStore
@@ -70,8 +75,8 @@ def build_private_goldset_kg(
             for repo in repos
         ],
         "linker": {
-            "source_system": "package_linker_v0",
-            "rule_version": "package-linker-v0.1",
+            "source_system": LINKER_SOURCE_SYSTEM,
+            "rule_version": LINKER_RULE_VERSION,
             "provider_count": len(build.providers),
             "link_count": build.link_count,
             "ambiguous_package_count": build.ambiguous_package_count,

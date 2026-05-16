@@ -8,7 +8,7 @@ from source.kg.languages.python.extractors.ast_extractor import PythonAstExtract
 
 
 @dataclass(frozen=True)
-class LegacyAdapter:
+class ExtractorAdapter:
     capability: AdapterCapability
     extractor: PythonAstExtractor
 
@@ -25,9 +25,9 @@ class LegacyAdapter:
         )
 
 
-LEGACY_PYTHON_AST_ADAPTER = LegacyAdapter(
+PYTHON_AST_ADAPTER = ExtractorAdapter(
     capability=AdapterCapability(
-        name="legacy-python-ast",
+        name="python-ast",
         languages=("python",),
         file_kinds=("python",),
         framework_tags=("flask", "django", "fastapi"),

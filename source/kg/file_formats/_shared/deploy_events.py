@@ -1,4 +1,4 @@
-"""Legacy queue-line config extraction used by the static config monolith."""
+"""Queue-line config extraction shared by the static config pipeline."""
 
 from __future__ import annotations
 

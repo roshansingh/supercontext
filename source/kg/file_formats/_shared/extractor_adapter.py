@@ -9,7 +9,7 @@ from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 
 
 @dataclass(frozen=True)
-class LegacyAdapter:
+class ExtractorAdapter:
     capability: AdapterCapability
     extractor: StaticConfigExtractor
 
@@ -27,9 +27,9 @@ class LegacyAdapter:
         )
 
 
-LEGACY_STATIC_CONFIG_ADAPTER = LegacyAdapter(
+STATIC_CONFIG_ADAPTER = ExtractorAdapter(
     capability=AdapterCapability(
-        name="legacy-static-config",
+        name="static-config",
         languages=("config",),
         file_kinds=("config",),
         framework_tags=(),

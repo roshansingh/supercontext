@@ -8,7 +8,7 @@ from source.kg.languages.typescript.extractors.compiler_api_extractor import Typ
 
 
 @dataclass(frozen=True)
-class LegacyAdapter:
+class ExtractorAdapter:
     capability: AdapterCapability
     extractor: TypeScriptCompilerApiExtractor
 
@@ -25,9 +25,9 @@ class LegacyAdapter:
         )
 
 
-LEGACY_TYPESCRIPT_COMPILER_API_ADAPTER = LegacyAdapter(
+TYPESCRIPT_COMPILER_API_ADAPTER = ExtractorAdapter(
     capability=AdapterCapability(
-        name="legacy-typescript-compiler-api",
+        name="typescript-compiler-api",
         languages=("javascript", "typescript"),
         file_kinds=("javascript", "typescript"),
         framework_tags=(),

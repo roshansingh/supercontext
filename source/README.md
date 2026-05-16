@@ -12,7 +12,7 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - Links imported external packages to another indexed repo/service when a unique manifest package-name match exists.
 - Writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - Provides small query scripts for summary, callers, blast radius, and imports.
-- Provides a local read-only MCP v0 server skeleton over existing JSONL snapshots.
+- Provides a local read-only MCP server skeleton over existing JSONL snapshots.
 - Provides a product-validation runner that converts goldset scenario plans into normalized evidence packets.
 - Provides a canonical validation runner for low/medium smoke checks plus goldset answer judgement.
 
@@ -132,7 +132,7 @@ Optional ground-truth JSON can be loaded from the sidebar for local evaluation. 
 
 ## Local MCP Server
 
-The local MCP v0 server exposes the ADR-0002 tool names over a dependency-free JSON-RPC HTTP endpoint. It is read-only and does not build snapshots. v0 is single-request/single-response over plain HTTP; ADR-0002 streamable transport remains a follow-up.
+The local MCP server exposes the ADR-0002 tool names over a dependency-free JSON-RPC HTTP endpoint. It is read-only and does not build snapshots. The current implementation is single-request/single-response over plain HTTP; ADR-0002 streamable transport remains a follow-up.
 
 ```bash
 python -m source.scripts.mcp_server --snapshot data/kg_runs/mercury_ml --port 3845
@@ -145,9 +145,9 @@ Supported JSON-RPC methods:
 - `tools/call`
 - `ping`
 
-Current v0 tools are `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, and `deploy_blockers_for`. `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
+Current tools are `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, and `deploy_blockers_for`. `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
 
-Security note: v0 has no authentication. Keep the default loopback bind (`127.0.0.1`). Do not expose it with `--host 0.0.0.0` unless you are on a trusted network and intentionally pass `--allow-public`.
+Security note: the local MCP server has no authentication. Keep the default loopback bind (`127.0.0.1`). Do not expose it with `--host 0.0.0.0` unless you are on a trusted network and intentionally pass `--allow-public`.
 
 Example:
 
@@ -203,6 +203,6 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/true_loop blast-radius
 
 ## LLM Policy
 
-The v0 extractor is deterministic and does not call an LLM.
+The default extractor path is deterministic and does not call an LLM.
 
 If later enrichment needs an LLM, use `source.kg.integrations.llm.LightLlmClient`. It reads `OPENAI_API_KEY` from the environment and defaults to `gpt-4.1-mini`, overrideable via `SUPERCONTEXT_LLM_MODEL`.

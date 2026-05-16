@@ -1826,7 +1826,7 @@ def _superseded_artifacts(evaluation_dir: Path) -> list[str]:
 def _is_historical_evaluation_artifact(name: str) -> bool:
     if not name.endswith(".md"):
         return False
-    return _has_iso_date_stamp(Path(name).stem) or _has_legacy_historical_marker(name)
+    return _has_iso_date_stamp(Path(name).stem) or _has_historical_baseline_marker(name)
 
 
 def _has_iso_date_stamp(value: str) -> bool:
@@ -1841,7 +1841,7 @@ def _has_iso_date_stamp(value: str) -> bool:
     return False
 
 
-def _has_legacy_historical_marker(name: str) -> bool:
+def _has_historical_baseline_marker(name: str) -> bool:
     if name.endswith("-SCENARIO-AUDIT.md"):
         return False
     return (

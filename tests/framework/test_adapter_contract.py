@@ -15,7 +15,7 @@ from source.kg.languages import language_adapters
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "adapters"
-LEGACY_ADAPTER_NAMES = {"legacy-static-config", "legacy-python-ast", "legacy-typescript-compiler-api"}
+EXCLUDED_FROM_SPLIT_FIXTURE_CONTRACT = {"static-config", "python-ast", "typescript-compiler-api"}
 RESERVED_FIXTURE_NAMES = {"expected.json", "expected_coverage.json"}
 
 
@@ -99,7 +99,7 @@ def _contract_adapters() -> tuple[Adapter, ...]:
     return tuple(
         adapter
         for adapter in (*language_adapters(), *file_format_adapters())
-        if adapter.capability.name not in LEGACY_ADAPTER_NAMES
+        if adapter.capability.name not in EXCLUDED_FROM_SPLIT_FIXTURE_CONTRACT
     )
 
 

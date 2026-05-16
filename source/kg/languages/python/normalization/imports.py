@@ -263,8 +263,9 @@ def _requirement_name(requirement: str) -> str:
 def _distributions_by_import_root() -> dict[str, tuple[str, ...]]:
     """Map import roots to distributions visible in the runner's Python env.
 
-    This is intentionally process-cached for v0. Hosted per-repo venv
-    resolution is tracked in BACKLOG.md and should revisit this cache scope.
+    This is intentionally process-cached for the current local runner.
+    Hosted per-repo venv resolution is tracked in BACKLOG.md and should
+    revisit this cache scope.
     """
     package_map = metadata.packages_distributions()
     return {

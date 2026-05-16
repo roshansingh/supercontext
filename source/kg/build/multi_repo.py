@@ -13,8 +13,8 @@ from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
 
 
-LINKER_SOURCE_SYSTEM = "package_linker_v0"
-LINKER_RULE_VERSION = "package-linker-v0.1"
+LINKER_SOURCE_SYSTEM = "package_linker"
+LINKER_RULE_VERSION = "package-linker-1"
 
 
 @dataclass(frozen=True)
@@ -172,7 +172,7 @@ def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:
 
 
 def _repo_identity(repo: RepoSnapshot, tenant_id: str) -> RepoIdentity:
-    # V0 local builds do not preserve git forge host yet; owner/name still
+    # Local builds do not preserve git forge host yet; owner/name still
     # prevents same-directory-name repos under different org roots from merging.
     return RepoIdentity(tenant_id=tenant_id, host="local", owner=repo.owner, name=repo.name)
 
