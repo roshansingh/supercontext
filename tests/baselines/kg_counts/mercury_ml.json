@@ -28,9 +28,7 @@
     "coverage": 6,
     "entities": 6613,
     "evidence": 103651,
-    "facts": 24836,
-    "python_files": 225,
-    "typescript_files": 0
+    "facts": 24836
   },
   "name": "mercury_ml"
 }
