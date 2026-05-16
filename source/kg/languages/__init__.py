@@ -65,6 +65,11 @@ def _validate_language(language: LanguageSupport) -> None:
     for method_name in (
         "matches_file",
         "source_roots",
+        "parse_repo",
+        "opportunity_detectors",
+        "package_resolver",
+        "dimension_rules",
+        "useful_edges",
         "adapters",
         "known_stacks",
     ):

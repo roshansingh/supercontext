@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters.legacy import LEGACY_TYPESCRIPT_COMPILER_API_ADAPTER
@@ -37,6 +39,21 @@ class TypeScriptLanguageSupport:
 
     def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> dict[str, set[str]]:
         return {"javascript": ctx.js_ts_import_roots}
+
+    def parse_repo(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, Any]:
+        return {}
+
+    def opportunity_detectors(self) -> tuple[Any, ...]:
+        return ()
+
+    def package_resolver(self) -> Any | None:
+        return None
+
+    def dimension_rules(self) -> Mapping[str, Any]:
+        return {}
+
+    def useful_edges(self) -> Mapping[str, Any]:
+        return {}
 
     def adapters(self) -> tuple[Adapter, ...]:
         return (TYPESCRIPT_EXPRESS_ROUTES_ADAPTER, LEGACY_TYPESCRIPT_COMPILER_API_ADAPTER)
