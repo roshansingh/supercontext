@@ -103,12 +103,12 @@ Treat the comment fallback as experimental because GitHub documents reviewer req
 python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>
 ```
 
-The poll script requests `@copilot` first, then waits on the default 7-minute schedule: 2 minutes, 2 minutes, then 1 minute, 1 minute, and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll. Use `--no-comment-fallback` only when comment noise is unacceptable.
+The poll script requests `@copilot` first, then waits on the default 8-minute schedule: 3 minutes, 2 minutes, then 1 minute, 1 minute, and 1 minute. Use `--skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll. Use `--no-comment-fallback` only when comment noise is unacceptable.
 
 Interpret the result precisely:
 - If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
-- If current-head Copilot activity starts but no completed review appears within 7 minutes, stop and report that review activity did not finish in time.
-- If no current-head Copilot activity appears within 7 minutes after the CLI request, stop and report that the request produced no review activity.
+- If current-head Copilot activity starts but no completed review appears within 8 minutes, stop and report that review activity did not finish in time.
+- If no current-head Copilot activity appears within 8 minutes after the CLI request, stop and report that the request produced no review activity.
 
 For every Copilot thread, explicitly decide `accept`, `deny`, or `act`, reply with that decision, and resolve the thread.
 

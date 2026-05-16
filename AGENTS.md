@@ -68,10 +68,10 @@ After every `git push` to a PR branch, request and verify Copilot review state. 
 
 - Run `python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER>` after each push. This script requests `@copilot` first, then polls.
 - Use `python .codex/scripts/poll_copilot_review.py --pr <PR_NUMBER> --skip-request` only when the user has already manually requested Copilot for the current head and asks you to poll.
-- Poll on the default 7-minute schedule: 2 minutes, 2 minutes, then 1 minute, 1 minute, and 1 minute.
+- Poll on the default 8-minute schedule: 3 minutes, 2 minutes, then 1 minute, 1 minute, and 1 minute.
 - If a current-head Copilot review completes with zero unresolved threads or issue comments, the review step is done.
-- If current-head Copilot activity starts but no completed review appears within 7 minutes, stop and report that review activity did not finish in time.
-- If no current-head Copilot activity appears within 7 minutes after the CLI request, stop and report that the request produced no review activity.
+- If current-head Copilot activity starts but no completed review appears within 8 minutes, stop and report that review activity did not finish in time.
+- If no current-head Copilot activity appears within 8 minutes after the CLI request, stop and report that the request produced no review activity.
 - Check both top-level Copilot reviews and inline review comments.
 - For each Copilot comment, make an explicit decision: `accept`, `deny`, or `act`.
 - If accepting/acting, implement the fix with a regression test when behavior changes.
