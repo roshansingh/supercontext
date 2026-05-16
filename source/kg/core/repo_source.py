@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 import subprocess
+from types import MappingProxyType
 
 from source.kg.languages.file_matchers import REGISTERED_LANGUAGE_FILES
 from source.kg.languages.types import LanguageFileMatcher
@@ -32,7 +34,7 @@ class RepoSnapshot:
     name: str
     owner: str
     commit_sha: str
-    files_by_language: dict[str, tuple[Path, ...]]
+    files_by_language: Mapping[str, tuple[Path, ...]]
 
     def __init__(
         self,
@@ -40,10 +42,13 @@ class RepoSnapshot:
         name: str,
         owner: str,
         commit_sha: str,
-        files_by_language: dict[str, tuple[Path, ...]] | None = None,
+        files_by_language: Mapping[str, tuple[Path, ...]] | None = None,
         python_files: tuple[Path, ...] | None = None,
         typescript_files: tuple[Path, ...] | None = None,
     ) -> None:
+        has_legacy_files = python_files is not None or typescript_files is not None
+        if files_by_language is not None and has_legacy_files:
+            raise ValueError("Pass either files_by_language or legacy python_files/typescript_files, not both")
         if files_by_language is None:
             files_by_language = {
                 "python": python_files or (),
@@ -56,7 +61,7 @@ class RepoSnapshot:
         object.__setattr__(
             self,
             "files_by_language",
-            {language: tuple(paths) for language, paths in files_by_language.items()},
+            MappingProxyType({language: tuple(paths) for language, paths in files_by_language.items()}),
         )
 
     @property

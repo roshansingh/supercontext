@@ -294,6 +294,32 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(left, right)
         self.assertEqual(hash(left), hash(right))
 
+    def test_repo_snapshot_files_by_language_is_read_only(self) -> None:
+        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        repo = RepoSnapshot(
+            root=root,
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (root / "app.py",)},
+        )
+
+        with self.assertRaises(TypeError):
+            repo.files_by_language["python"] = ()
+
+    def test_repo_snapshot_rejects_mixed_generic_and_legacy_file_args(self) -> None:
+        root = Path("/tmp/bettercontext-adapter-framework-repo")
+
+        with self.assertRaisesRegex(ValueError, "Pass either files_by_language or legacy"):
+            RepoSnapshot(
+                root=root,
+                name="repo",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": ()},
+                python_files=(root / "app.py",),
+            )
+
     def test_pipeline_selects_language_discovered_adapters_without_central_registry(self) -> None:
         repo = _repo()
         adapter = _Adapter("language-owned", "language_owned_v0", languages=("python",))
