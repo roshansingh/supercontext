@@ -351,6 +351,27 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
         self.assertIn("yml", capabilities["config-serverless-yaml"].file_kinds)
 
+    def test_domain_env_adapter_uses_config_language_bucket(self) -> None:
+        repo = _repo(python_files=(), typescript_files=())
+        capabilities = {adapter.capability.name: adapter.capability for adapter in REGISTERED_ADAPTERS}
+
+        selected = select_applicable_adapters(repo, (CONFIG_DOMAIN_ENV_ADAPTER,))
+
+        self.assertEqual(selected, [CONFIG_DOMAIN_ENV_ADAPTER])
+        self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.capability.languages, ("config",))
+        self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.capability.file_kinds, ("config",))
+        for name in (
+            "config-apache-vhost",
+            "config-domain-env",
+            "config-dotenv",
+            "config-openapi",
+            "config-serverless-yaml",
+            "config-terraform",
+            "config-zappa",
+            "event-channel-normalizer",
+        ):
+            self.assertEqual(capabilities[name].languages, ("config",))
+
     def test_file_format_modules_are_canonical_with_compatibility_aliases(self) -> None:
         legacy_to_canonical = {
             "source.kg.extraction.config.apache_vhost": "source.kg.extraction.file_formats.apache_vhost",

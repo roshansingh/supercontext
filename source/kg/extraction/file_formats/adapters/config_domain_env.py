@@ -14,8 +14,8 @@ from source.kg.extraction.framework.adapter import AdapterCapability, AdapterRes
 class ConfigDomainEnvAdapter:
     capability = AdapterCapability(
         name="config-domain-env",
-        languages=("config", "javascript", "python", "typescript"),
-        file_kinds=("config", "javascript", "python", "typescript"),
+        languages=("config",),
+        file_kinds=("config",),
         framework_tags=("domain", "env"),
         produces_predicates=("REFERENCES_DOMAIN", "REFERENCES_ENV_VAR"),
         produces_entity_kinds=("Domain", "EnvVar"),
