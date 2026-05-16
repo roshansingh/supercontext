@@ -11,6 +11,7 @@ from source.kg.core.models import JsonObject
 
 
 BASELINE_VERSION = 1
+LANGUAGE_FILE_COUNT_SUFFIX = "_files"
 NORMALIZED_COVERAGE_REASONS = {
     "parser_backed_js_ts_route_extraction_partial_express_only": (
         "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only"
@@ -46,7 +47,7 @@ def capture_snapshot_baseline(snapshot: Path, name: str | None = None) -> JsonOb
     return {
         "baseline_version": BASELINE_VERSION,
         "name": name or snapshot_path.name,
-        "manifest_counts": _string_int_map(manifest.get("counts", {}), "manifest.counts"),
+        "manifest_counts": _top_level_int_counts(manifest.get("counts", {}), "manifest.counts"),
         "extractor_errors_count": len(extractor_errors),
         "entity_kind_counts": _counter_dict(
             _required_string(row, "kind", "entities.jsonl") for row in _read_jsonl(snapshot_path / "entities.jsonl")
@@ -114,11 +115,17 @@ def _counter_dict(values: Iterable[object]) -> JsonObject:
     return dict(sorted(Counter(str(value) for value in values).items()))
 
 
-def _string_int_map(value: object, label: str) -> JsonObject:
+def _top_level_int_counts(value: object, label: str) -> JsonObject:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object")
     result: JsonObject = {}
     for key, count in value.items():
+        # Per-language file counters are represented by the structured
+        # files_by_language manifest field, not the distilled count baseline.
+        if str(key).endswith(LANGUAGE_FILE_COUNT_SUFFIX):
+            continue
+        if isinstance(count, dict):
+            continue
         if not _is_int_count(count):
             raise ValueError(f"{label}.{key} must be an integer")
         result[str(key)] = count

@@ -15,7 +15,19 @@ class SnapshotBaselineTest(unittest.TestCase):
     def test_capture_snapshot_baseline_counts_distilled_distributions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             snapshot = Path(tmpdir)
-            _write_json(snapshot / "manifest.json", {"counts": {"entities": 2, "facts": 2}, "extractor_errors": ["boom"]})
+            legacy_language_file_key = "python" + "_files"
+            _write_json(
+                snapshot / "manifest.json",
+                {
+                    "counts": {
+                        "entities": 2,
+                        "facts": 2,
+                        "files_by_language": {"python": 1},
+                        legacy_language_file_key: 1,
+                    },
+                    "extractor_errors": ["boom"],
+                },
+            )
             _write_jsonl(snapshot / "entities.jsonl", [{"kind": "Repo"}, {"kind": "Service"}])
             _write_jsonl(snapshot / "facts.jsonl", [{"predicate": "CALLS"}, {"predicate": "CALLS"}])
             _write_jsonl(snapshot / "evidence.jsonl", [{"id": "ev-1"}])

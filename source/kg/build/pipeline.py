@@ -30,8 +30,6 @@ def build_kg(
         "extractors": extractor_names,
         "extractor_errors": build.extractor_errors,
         "counts": {
-            "python_files": len(repo.python_files),
-            "typescript_files": len(repo.typescript_files),
             "files_by_language": {
                 language: len(paths) for language, paths in sorted(repo.files_by_language.items())
             },

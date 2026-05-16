@@ -32,9 +32,7 @@
     "coverage": 13,
     "entities": 1810,
     "evidence": 7702,
-    "facts": 3659,
-    "python_files": 1,
-    "typescript_files": 185
+    "facts": 3659
   },
   "name": "true_loop"
 }
