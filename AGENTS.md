@@ -54,10 +54,10 @@ Use short imperative commit messages, matching the current history, for example 
 
 Before creating a PR for the first time, after coding is finished, tests pass, and self-review is complete:
 
-- Do not run Claude Code CLI yourself for the pre-PR review.
-- Give the user an exact copy-paste prompt/command for Claude Code and wait for the review file under `docs/reviews/`.
-- The command must tell Claude to review the current branch against `main`, not edit files, and write the review to a named file such as `docs/reviews/PR-XX-REVIEW.md`.
-- The manual review must follow the same structure as existing `docs/reviews/PR-*-REVIEW.md` files.
+- Run `python3 .codex/scripts/request_claude_pre_pr_review.py --base main` yourself.
+- The helper must run Claude Code CLI non-interactively, review the current branch against `main`, include any uncommitted working-tree diff, forbid edits, and write the review under `docs/reviews/`.
+- If the helper reports that `claude` is missing or unauthenticated, stop and report that blocker instead of creating the PR.
+- The generated review must follow the same structure as existing `docs/reviews/PR-*-REVIEW.md` files.
 - For each Claude finding, make an explicit decision: `accept`, `deny`, or `act`.
 - If accepting/acting, implement the fix with a regression test when behavior changes.
 - If denying, document the concrete reason in the PR notes or a reply/comment.

@@ -42,19 +42,19 @@ git add path/to/file.py path/to/other.md
 git commit -m "Short imperative summary"
 ```
 
-5. Before creating a PR for the first time, ask the user for one manual Claude pre-PR review.
+5. Before creating a PR for the first time, run one automated Claude pre-PR review.
 
 Only do this once per PR, after coding is finished, tests pass, and the local semantic self-review is complete.
 
-Do not run Claude Code CLI yourself for this step. Give the user an exact copy-paste prompt/command for Claude Code and ask them to provide the resulting review file under `docs/reviews/`.
+Run the project helper yourself:
 
-The command must tell Claude to:
-- Review the current branch against `main`.
-- Do not edit files.
-- Write the review to a named path under `docs/reviews/`, such as `docs/reviews/PR-XX-REVIEW.md`.
-- Use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files.
+```bash
+python3 .codex/scripts/request_claude_pre_pr_review.py --base main
+```
 
-Read the manual review file. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
+The helper invokes Claude Code CLI in non-interactive review mode, includes the branch diff against `main`, includes any uncommitted working-tree diff, tells Claude not to edit files, and writes the markdown review under `docs/reviews/`. If the helper reports that `claude` is missing or unauthenticated, stop and report that blocker instead of creating the PR.
+
+Read the generated review file. It must use the same review structure as existing `docs/reviews/PR-*-REVIEW.md` files: metadata, verdict, summary, what works, real issues, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
 
 - `accept` / `act`: make the fix, add a regression test when behavior changes, rerun checks, and commit.
 - `deny`: record the concrete reason in PR notes or review discussion.
