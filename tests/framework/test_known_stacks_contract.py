@@ -7,8 +7,8 @@ from pathlib import Path
 
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.repo_source import discover_repo
-from source.kg.extraction.adapters import REGISTERED_ADAPTERS
-from source.kg.languages import REGISTERED_LANGUAGES
+from source.kg.file_formats import file_format_adapters
+from source.kg.languages import REGISTERED_LANGUAGES, language_adapters
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "known_stacks"
@@ -16,7 +16,7 @@ FIXTURE_ROOT = Path(__file__).resolve().parent / "known_stacks"
 
 class KnownStacksContractTest(unittest.TestCase):
     def test_known_stack_entries_have_adapter_tag_or_fixture(self) -> None:
-        supported_tags = {tag for adapter in REGISTERED_ADAPTERS for tag in adapter.capability.framework_tags}
+        supported_tags = _supported_framework_tags()
 
         missing = []
         for language, imports in _known_stack_imports().items():
@@ -28,7 +28,7 @@ class KnownStacksContractTest(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_unsupported_known_stack_fixtures_emit_expected_coverage(self) -> None:
-        supported_tags = {tag for adapter in REGISTERED_ADAPTERS for tag in adapter.capability.framework_tags}
+        supported_tags = _supported_framework_tags()
         for fixture_dir in sorted(FIXTURE_ROOT.glob("*/*")):
             if not fixture_dir.is_dir():
                 continue
@@ -86,6 +86,14 @@ def _known_stack_imports() -> dict[str, dict[str, str]]:
     for language in REGISTERED_LANGUAGES:
         result.update(language.known_stacks())
     return result
+
+
+def _supported_framework_tags() -> set[str]:
+    return {
+        tag
+        for adapter in (*language_adapters(), *file_format_adapters())
+        for tag in adapter.capability.framework_tags
+    }
 
 
 def _coverage_matches(actual: dict[str, object], expected: dict[str, object]) -> bool:

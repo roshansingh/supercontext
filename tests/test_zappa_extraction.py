@@ -6,8 +6,8 @@ from pathlib import Path
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.common import ConfigKgBuild, ScannedFile
-from source.kg.extraction.config.zappa import extract_zappa_event_sources
+from source.kg.file_formats._shared.common import ConfigKgBuild, ScannedFile
+from source.kg.file_formats.zappa import extract_zappa_event_sources
 
 
 class ZappaExtractionTest(unittest.TestCase):

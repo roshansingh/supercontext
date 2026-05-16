@@ -8,10 +8,10 @@ from collections import Counter
 from pathlib import Path
 
 from source.kg.core.repo_source import discover_repo
-from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.framework.adapter import Adapter, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.runner import run_adapters
 from source.kg.file_formats import file_format_adapters
+from source.kg.languages import language_adapters
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "adapters"
@@ -98,7 +98,7 @@ def _copy_fixture_files(fixture_dir: Path, root: Path) -> None:
 def _contract_adapters() -> tuple[Adapter, ...]:
     return tuple(
         adapter
-        for adapter in (*REGISTERED_ADAPTERS, *file_format_adapters())
+        for adapter in (*language_adapters(), *file_format_adapters())
         if adapter.capability.name not in LEGACY_ADAPTER_NAMES
     )
 

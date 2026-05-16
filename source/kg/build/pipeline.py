@@ -8,6 +8,7 @@ from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework import Adapter, ExtractionContext
+from source.kg.extraction.framework.registry import validate_adapters
 
 
 def build_kg(
@@ -64,13 +65,12 @@ def extract_repo(
     strict_extractors: bool = False,
     tenant_id: str | None = None,
 ) -> RepoKgBuild:
-    from source.kg.extraction.adapters import REGISTERED_ADAPTERS
     from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
-    from source.kg.file_formats import file_format_adapters
+    from source.kg.file_formats import LEGACY_STATIC_CONFIG_ADAPTER, file_format_adapters
     from source.kg.languages import language_adapters
 
     ctx = ExtractionContext(tenant_id=resolve_tenant_id(tenant_id))
-    adapters = _combined_adapters(REGISTERED_ADAPTERS, language_adapters(), file_format_adapters())
+    adapters = _combined_adapters((LEGACY_STATIC_CONFIG_ADAPTER,), language_adapters(), file_format_adapters())
     selected = select_applicable_adapter_specs(repo, adapters, ctx=ctx)
     selected_adapters = [selection.adapter for selection in selected]
     entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(
@@ -100,4 +100,4 @@ def _combined_adapters(*adapter_groups: tuple[Adapter, ...]) -> tuple[Adapter, .
                     continue
                 raise ValueError(f"Duplicate adapter name: {name}")
             adapters_by_name[name] = adapter
-    return tuple(adapters_by_name.values())
+    return validate_adapters(tuple(adapters_by_name.values()))

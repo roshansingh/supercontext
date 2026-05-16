@@ -6,17 +6,17 @@ from pathlib import Path
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.adapters.event_channel_normalizer import EVENT_CHANNEL_NORMALIZER_ADAPTER
-from source.kg.extraction.config.channel_normalization import (
+from source.kg.file_formats.adapters.event_channel_normalizer import EVENT_CHANNEL_NORMALIZER_ADAPTER
+from source.kg.file_formats._shared.channel_normalization import (
     normalize_sns_arn,
     normalize_sqs_arn,
     normalize_sqs_queue_name,
     normalize_sqs_url,
     normalized_channels_in_text,
 )
-from source.kg.extraction.config.common import ConfigKgBuild, ScannedFile, event_channel_entity
-from source.kg.extraction.config.deploy_events import extract_deploy_events
-from source.kg.extraction.config.static_extractor import StaticConfigExtractor
+from source.kg.file_formats._shared.common import ConfigKgBuild, ScannedFile, event_channel_entity
+from source.kg.file_formats._shared.deploy_events import extract_deploy_events
+from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.extraction.framework.runner import run_adapters
 

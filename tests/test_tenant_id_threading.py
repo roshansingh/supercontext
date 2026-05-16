@@ -8,7 +8,7 @@ from unittest.mock import patch
 from source.kg.build.multi_repo import build_multi_kg
 from source.kg.build.pipeline import build_kg
 from source.kg.core.store import read_jsonl
-from source.kg.extraction.config.common import endpoint_entity, event_channel_entity
+from source.kg.file_formats._shared.common import endpoint_entity, event_channel_entity
 
 
 class TenantIdThreadingTest(unittest.TestCase):

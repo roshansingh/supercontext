@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.common import ScannedFile, is_dotenv_file, scan_config_files
-from source.kg.extraction.config.dotenv import parse_dotenv_assignment
-from source.kg.extraction.config.static_extractor import StaticConfigExtractor
+from source.kg.file_formats._shared.common import ScannedFile, is_dotenv_file, scan_config_files
+from source.kg.file_formats.dotenv import parse_dotenv_assignment
+from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 
 
 class DotenvExtractionTest(unittest.TestCase):
