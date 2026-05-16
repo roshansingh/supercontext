@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Discovery entry points for config and IaC file-format support.
 
 Default discovery is cached for one process. Tests that need to mutate the
 on-disk package tree should call ``reset_file_format_cache_for_tests()`` before
 reading ``REGISTERED_FILE_FORMATS`` or ``file_format_adapters()`` again.
 """
+
+from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
