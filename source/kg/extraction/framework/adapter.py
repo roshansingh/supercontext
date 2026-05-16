@@ -31,10 +31,10 @@ class ExtractionContext:
     """
 
     tenant_id: str
-    config_scans: dict[str, Any]
-    parsed_by_language: dict[str, dict[str, Any]]
-    literal_indexes_by_language: dict[str, dict[str, Any]]
-    import_roots_by_language: dict[str, set[str]]
+    config_scans: dict[str, Any] = field(compare=False, repr=False)
+    parsed_by_language: dict[str, dict[str, Any]] = field(compare=False, repr=False)
+    literal_indexes_by_language: dict[str, dict[str, Any]] = field(compare=False, repr=False)
+    import_roots_by_language: dict[str, set[str]] = field(compare=False, repr=False)
 
     def __init__(
         self,

@@ -259,6 +259,21 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertFalse(left == right)
 
+    def test_extraction_context_repr_excludes_large_mutable_caches(self) -> None:
+        ctx = ExtractionContext(
+            tenant_id="tenant",
+            config_scans={"large": "scan"},
+            parsed_by_language={"python": {"repo": "parsed"}},
+            literal_indexes_by_language={"python": {"repo": "literal"}},
+            import_roots_by_language={"python": {"flask"}},
+        )
+
+        rendered = repr(ctx)
+
+        self.assertEqual(rendered, "ExtractionContext(tenant_id='tenant')")
+        self.assertNotIn("parsed", rendered)
+        self.assertNotIn("flask", rendered)
+
     def test_repo_snapshot_hash_and_equality_use_stable_identity(self) -> None:
         root = Path("/tmp/bettercontext-adapter-framework-repo")
         left = RepoSnapshot(
