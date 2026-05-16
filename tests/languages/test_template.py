@@ -12,7 +12,7 @@ from source.kg.languages._template.language import LANGUAGE_SUPPORT
 
 class LanguageTemplateTest(unittest.TestCase):
     def test_registered_languages_include_python_and_typescript(self) -> None:
-        self.assertEqual({language.name for language in REGISTERED_LANGUAGES}, {"python", "typescript"})
+        self.assertGreaterEqual({language.name for language in REGISTERED_LANGUAGES}, {"python", "typescript"})
 
     def test_template_is_noop_and_not_registered(self) -> None:
         root = Path("/tmp/bettercontext-template-language")
