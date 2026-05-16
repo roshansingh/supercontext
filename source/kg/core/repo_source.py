@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 
+from source.kg.languages.file_matchers import REGISTERED_LANGUAGE_FILES
+from source.kg.languages.types import LanguageFileMatcher
+from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
+
 
 IGNORED_DIRS = {
     ".git",
@@ -23,45 +27,91 @@ IGNORED_DIRS = {
     "node_modules",
 }
 
-TYPESCRIPT_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RepoSnapshot:
     root: Path
     name: str
     owner: str
     commit_sha: str
-    python_files: tuple[Path, ...]
-    typescript_files: tuple[Path, ...]
+    files_by_language: dict[str, tuple[Path, ...]]
+
+    def __init__(
+        self,
+        root: Path,
+        name: str,
+        owner: str,
+        commit_sha: str,
+        files_by_language: dict[str, tuple[Path, ...]] | None = None,
+        python_files: tuple[Path, ...] | None = None,
+        typescript_files: tuple[Path, ...] | None = None,
+    ) -> None:
+        if files_by_language is None:
+            files_by_language = {
+                "python": python_files or (),
+                "typescript": typescript_files or (),
+            }
+        object.__setattr__(self, "root", root)
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "owner", owner)
+        object.__setattr__(self, "commit_sha", commit_sha)
+        object.__setattr__(
+            self,
+            "files_by_language",
+            {language: tuple(paths) for language, paths in files_by_language.items()},
+        )
+
+    @property
+    def python_files(self) -> tuple[Path, ...]:
+        return self.files_by_language.get("python", ())
+
+    @property
+    def typescript_files(self) -> tuple[Path, ...]:
+        return self.files_by_language.get("typescript", ())
+
+    def __hash__(self) -> int:
+        return hash((self.root, self.name, self.owner, self.commit_sha))
 
 
-def discover_repo(repo_path: str | Path) -> RepoSnapshot:
+def discover_repo(
+    repo_path: str | Path,
+    language_files: tuple[LanguageFileMatcher, ...] = REGISTERED_LANGUAGE_FILES,
+) -> RepoSnapshot:
     root = Path(repo_path).expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(f"Repo path does not exist: {root}")
 
-    source_files = tuple(sorted(_iter_source_files(root)))
+    files_by_language = _files_by_language(root, language_files)
     return RepoSnapshot(
         root=root,
         name=root.name,
         owner=root.parent.name,
         commit_sha=_git_commit_sha(root),
-        python_files=tuple(path for path in source_files if path.suffix == ".py"),
-        typescript_files=tuple(path for path in source_files if _is_typescript_file(path)),
+        files_by_language=files_by_language,
     )
 
 
 def _iter_source_files(root: Path) -> list[Path]:
+    return sorted({path for paths in _files_by_language(root).values() for path in paths})
+
+
+def _files_by_language(
+    root: Path,
+    language_files: tuple[LanguageFileMatcher, ...] = REGISTERED_LANGUAGE_FILES,
+) -> dict[str, tuple[Path, ...]]:
+    buckets: dict[str, list[Path]] = {language.name: [] for language in language_files}
     files: list[Path] = []
     for path in root.rglob("*"):
         if not path.is_file():
             continue
         if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
             continue
-        if path.suffix == ".py" or _is_typescript_file(path):
-            files.append(path)
-    return files
+        files.append(path)
+
+    for path in sorted(files):
+        for language in language_files:
+            if language.matches_file(path):
+                buckets.setdefault(language.name, []).append(path)
+    return {language: tuple(paths) for language, paths in buckets.items()}
 
 
 def _is_typescript_file(path: Path) -> bool:

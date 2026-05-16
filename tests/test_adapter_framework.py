@@ -240,11 +240,27 @@ class AdapterFrameworkTest(unittest.TestCase):
         repo = _repo()
         adapter = _Adapter("stateful", "stateful_v0")
 
-        with patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)):
+        with (
+            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)),
+            patch("source.kg.languages.language_adapters", return_value=()),
+        ):
             build = extract_repo(repo)
 
         self.assertEqual(build.extractor_names, ["stateful_v0"])
         self.assertEqual(adapter.capability_reads, 2)
+
+    def test_pipeline_selects_language_discovered_adapters_without_central_registry(self) -> None:
+        repo = _repo()
+        adapter = _Adapter("language-owned", "language_owned_v0", languages=("python",))
+
+        with (
+            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", ()),
+            patch("source.kg.languages.language_adapters", return_value=(adapter,)),
+        ):
+            build = extract_repo(repo)
+
+        self.assertEqual(build.extractor_names, ["language_owned_v0"])
+        self.assertEqual(adapter.calls, 1)
 
     def test_registered_adapters_include_pr_fw_2_splits(self) -> None:
         names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}

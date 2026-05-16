@@ -11,7 +11,7 @@ from source.kg.extraction.framework.allowlists import (
     SUPPORTED_ENTITY_KINDS,
     SUPPORTED_FACT_PREDICATES,
 )
-from source.kg.extraction.framework.known_stacks import KNOWN_STACK_CATEGORY_PREDICATE, KNOWN_STACK_IMPORTS
+from source.kg.extraction.framework.known_stacks import KNOWN_STACK_CATEGORY_PREDICATE
 
 
 @dataclass(frozen=True)
@@ -117,10 +117,10 @@ def select_applicable_adapter_specs(
 
 def _repo_languages(repo: RepoSnapshot) -> frozenset[str]:
     languages = {"config"}
-    if repo.python_files:
-        languages.add("python")
-    if repo.typescript_files:
-        languages.update({"javascript", "typescript"})
+    for language in _registered_languages():
+        if repo.files_by_language.get(language.name):
+            languages.add(language.name)
+            languages.update(language.aliases)
     return frozenset(languages)
 
 
@@ -187,32 +187,63 @@ def _unsupported_known_stack_coverage(
     capabilities: list[AdapterCapability],
 ) -> list[Coverage]:
     supported_tags = {tag for capability in capabilities for tag in capability.framework_tags}
+    known_stacks_by_language: dict[str, dict[str, str]] = {}
+    for language_support in _registered_languages():
+        for language, stacks in language_support.known_stacks().items():
+            known_stacks_by_language.setdefault(language, {}).update(stacks)
+
     rows: list[Coverage] = []
-    for language, import_roots in (
-        ("python", ctx.python_import_roots),
-        ("javascript", ctx.js_ts_import_roots),
-    ):
-        for import_root in sorted(import_roots):
-            category = KNOWN_STACK_IMPORTS.get(language, {}).get(import_root)
-            if category is None or import_root in supported_tags:
-                continue
-            predicate = KNOWN_STACK_CATEGORY_PREDICATE[category]
-            rows.append(
-                Coverage(
-                    tenant_id=ctx.tenant_id,
-                    predicate=predicate,
-                    scope_ref={
-                        "repo": repo.name,
-                        "language": language,
-                        "import_root": import_root,
-                        "category": category,
-                        "reason": "no_adapter_for_known_stack",
-                    },
-                    state="uninstrumented",
-                    source_system="extraction_framework",
+    for language_support in _registered_languages():
+        for language, import_roots in language_support.source_roots(repo, ctx).items():
+            rows.extend(
+                _known_stack_rows_for_roots(
+                    repo,
+                    ctx,
+                    supported_tags,
+                    known_stacks_by_language,
+                    language,
+                    import_roots,
                 )
             )
     return rows
+
+
+def _known_stack_rows_for_roots(
+    repo: RepoSnapshot,
+    ctx: ExtractionContext,
+    supported_tags: set[str],
+    known_stacks_by_language: dict[str, dict[str, str]],
+    language: str,
+    import_roots: set[str],
+) -> list[Coverage]:
+    rows: list[Coverage] = []
+    for import_root in sorted(import_roots):
+        category = known_stacks_by_language.get(language, {}).get(import_root)
+        if category is None or import_root in supported_tags:
+            continue
+        predicate = KNOWN_STACK_CATEGORY_PREDICATE[category]
+        rows.append(
+            Coverage(
+                tenant_id=ctx.tenant_id,
+                predicate=predicate,
+                scope_ref={
+                    "repo": repo.name,
+                    "language": language,
+                    "import_root": import_root,
+                    "category": category,
+                    "reason": "no_adapter_for_known_stack",
+                },
+                state="uninstrumented",
+                source_system="extraction_framework",
+            )
+        )
+    return rows
+
+
+def _registered_languages():
+    from source.kg.languages import REGISTERED_LANGUAGES
+
+    return REGISTERED_LANGUAGES
 
 
 def _adapter_error_message(repo_name: str, errors: list[JsonObject]) -> str:
