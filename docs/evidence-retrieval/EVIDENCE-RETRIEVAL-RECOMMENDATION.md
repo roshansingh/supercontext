@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-04-29
 - **Authors:** Roshan Singh, Maruti Agarwal
-- **Supersedes:** `claude-evidence-retrieval-research.md`, `codex-evidence-retrieval-research.md`, and `codex-runtime-retrieval-patterns.md` as decision inputs
+- **Supersedes:** prior paired evidence-retrieval research notes and runtime retrieval pattern notes as decision inputs
 - **Binding ADR:** [`../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`](../adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md)
 
 ---
@@ -54,9 +54,6 @@ This is an open-source enterprise platform decision, not a fixed v1 script.
 
 ## Historical inputs
 
-- [`claude-evidence-retrieval-research.md`](./claude-evidence-retrieval-research.md)
-- [`codex-evidence-retrieval-research.md`](./codex-evidence-retrieval-research.md)
-- [`codex-runtime-retrieval-patterns.md`](./codex-runtime-retrieval-patterns.md)
-- [`../debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md`](../debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md)
+The paired research notes and the runtime retrieval patterns note were consolidated into this recommendation. Read this document and the linked debate as the surviving decision history:
 
-Read those as research and debate history, not as open decisions.
+- [`../debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md`](../debates/1-2026-04-29-finalize-evidence-retrieval-architecture.md)

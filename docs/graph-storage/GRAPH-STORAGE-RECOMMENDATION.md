@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-04-29
 - **Authors:** Roshan Singh, Maruti Agarwal
-- **Supersedes:** `codex-graph-storage-research.md` and `claude-graph-storage-research.md` as decision inputs
+- **Supersedes:** prior paired graph-storage research notes as decision inputs
 - **Binding ADR:** [`adr/0003-postgres-age-as-initial-graph-storage.md`](../adr/0003-postgres-age-as-initial-graph-storage.md)
 
 ---
@@ -48,8 +48,4 @@ SuperContext is expected to add more connectors and may later support additional
 
 ## Historical inputs
 
-- [`claude-graph-storage-research.md`](./claude-graph-storage-research.md)
-- [`codex-graph-storage-research.md`](./codex-graph-storage-research.md)
-
-Read those as research history, not as open decisions.
-
+The paired graph-storage research notes were consolidated into this recommendation. Read this document as the surviving decision history.
