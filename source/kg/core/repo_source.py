@@ -113,20 +113,20 @@ def _files_by_language(
     language_files: tuple[LanguageFileMatcher, ...] = REGISTERED_LANGUAGE_FILES,
 ) -> dict[str, tuple[Path, ...]]:
     buckets: dict[str, list[Path]] = {language.name: [] for language in language_files}
-    files: list[Path] = []
+    candidate_extensions = {extension for language in language_files for extension in language.file_extensions}
+    candidate_manifest_files = {filename for language in language_files for filename in language.manifest_files}
     for path in root.rglob("*"):
         if not path.is_file():
             continue
         if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
             continue
-        files.append(path)
-
-    for path in sorted(files):
+        if path.suffix not in candidate_extensions and path.name not in candidate_manifest_files:
+            continue
         for language in language_files:
             if language.matches_file(path):
                 buckets.setdefault(language.name, []).append(path)
                 break
-    return {language: tuple(paths) for language, paths in buckets.items()}
+    return {language: tuple(sorted(paths)) for language, paths in buckets.items()}
 
 
 def _git_commit_sha(root: Path) -> str:

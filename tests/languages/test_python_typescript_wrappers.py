@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 import tempfile
 import unittest
@@ -46,6 +47,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
             python_file.write_text("print('ok')\n", encoding="utf-8")
             ts_file.write_text("export const ok = true;\n", encoding="utf-8")
             declaration_file.write_text("declare const value: string;\n", encoding="utf-8")
+            (root / "README.md").write_text("# docs\n", encoding="utf-8")
 
             repo = discover_repo(root)
 
@@ -54,9 +56,36 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertEqual(repo.files_by_language["python"], (python_file.resolve(),))
         self.assertEqual(repo.files_by_language["typescript"], (ts_file.resolve(),))
 
+    def test_repo_discovery_prefilters_non_candidate_files_before_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_file = root / "main.example"
+            readme = root / "README.md"
+            source_file.write_text("example\n", encoding="utf-8")
+            readme.write_text("# docs\n", encoding="utf-8")
+            matcher = _CountingMatcher()
+
+            repo = discover_repo(root, language_files=(matcher,))
+
+        self.assertEqual(repo.files_by_language["example"], (source_file.resolve(),))
+        self.assertEqual(matcher.calls, [source_file.resolve()])
+
 
 def _repo_snapshot() -> RepoSnapshot:
     return RepoSnapshot(root=Path("/tmp/bettercontext-language-test"), name="repo", owner="test", commit_sha="sha")
+
+
+@dataclass(frozen=True)
+class _CountingMatcher:
+    name: str = "example"
+    aliases: tuple[str, ...] = ()
+    file_extensions: frozenset[str] = frozenset({".example"})
+    manifest_files: frozenset[str] = frozenset()
+    calls: list[Path] = field(default_factory=list, compare=False)
+
+    def matches_file(self, path: Path) -> bool:
+        self.calls.append(path)
+        return path.suffix == ".example"
 
 
 if __name__ == "__main__":

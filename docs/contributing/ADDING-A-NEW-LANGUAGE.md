@@ -13,9 +13,9 @@ This split keeps repo discovery import-safe while still making each language own
 2. Update `files.py`:
    - `name`: canonical language key, such as `java`.
    - `aliases`: emitted labels or ecosystem aliases, such as `("javascript",)` for TypeScript.
-   - `file_extensions`: source extensions.
-   - `manifest_files`: package/build manifests.
-   - `matches_file(path)`: exact source-file predicate. Put exclusions here, such as TypeScript `.d.ts` files.
+   - `file_extensions`: source extensions used to prefilter candidate files.
+   - `manifest_files`: package/build manifests used to prefilter candidate files.
+   - `matches_file(path)`: exact source-file predicate for those candidates. Put exclusions here, such as TypeScript `.d.ts` files.
 3. Update `language.py`:
    - `source_roots(repo, ctx)` for known-stack coverage labels.
    - `adapters()` for language-owned adapters.

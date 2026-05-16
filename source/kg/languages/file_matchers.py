@@ -25,6 +25,7 @@ def discover_language_file_matchers(
             raise ValueError(f"{child.name}.files must export LANGUAGE_FILES")
         _validate_language_file_matcher(matcher)
         matchers.append(matcher)
+    _validate_unique_language_names(matchers)
     return tuple(matchers)
 
 
@@ -43,6 +44,14 @@ def _validate_language_file_matcher(matcher: LanguageFileMatcher) -> None:
         raise ValueError(f"{matcher.name} manifest_files must be frozenset[str]")
     if not callable(getattr(matcher, "matches_file", None)):
         raise ValueError(f"{matcher.name} must implement matches_file(path)")
+
+
+def _validate_unique_language_names(matchers: list[LanguageFileMatcher]) -> None:
+    seen: set[str] = set()
+    for matcher in matchers:
+        if matcher.name in seen:
+            raise ValueError(f"Duplicate language file matcher name: {matcher.name}")
+        seen.add(matcher.name)
 
 
 REGISTERED_LANGUAGE_FILES = discover_language_file_matchers(Path(__file__).parent, __package__)

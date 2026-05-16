@@ -31,6 +31,7 @@ def discover_languages(
             raise ValueError(f"{child.name}.language must export LANGUAGE_SUPPORT")
         _validate_language(language)
         languages.append(language)
+    _validate_unique_language_names(languages)
     return tuple(languages)
 
 
@@ -69,6 +70,14 @@ def _validate_language(language: LanguageSupport) -> None:
     ):
         if not callable(getattr(language, method_name, None)):
             raise ValueError(f"{language.name} must implement {method_name}()")
+
+
+def _validate_unique_language_names(languages: list[LanguageSupport]) -> None:
+    seen: set[str] = set()
+    for language in languages:
+        if language.name in seen:
+            raise ValueError(f"Duplicate language support name: {language.name}")
+        seen.add(language.name)
 
 
 def __getattr__(name: str):
