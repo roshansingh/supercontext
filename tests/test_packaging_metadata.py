@@ -19,9 +19,9 @@ class PackagingMetadataTest(unittest.TestCase):
         self.assertEqual(project["name"], "bettercontext")
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(project["readme"], "README.md")
+        self.assertIn("PyYAML>=6.0", project["dependencies"])
         self.assertIn("classifiers", project)
         self.assertIn("Repository", project["urls"])
-        self.assertIn("yaml", project["optional-dependencies"])
         self.assertIn("agent", project["optional-dependencies"])
 
     def test_console_script_targets_import(self) -> None:
@@ -64,6 +64,9 @@ class PackagingMetadataTest(unittest.TestCase):
 
         self.assertIn("ts_parser.mjs", package_data["source.kg.extraction.typescript"])
         self.assertTrue((ROOT / "source/kg/extraction/typescript/ts_parser.mjs").exists())
+        for package in ("source.kg.languages.python", "source.kg.languages.typescript"):
+            self.assertIn("known_stacks.yaml", package_data[package])
+            self.assertTrue((ROOT / Path(*package.split(".")) / "known_stacks.yaml").exists())
 
 
 if __name__ == "__main__":
