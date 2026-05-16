@@ -34,8 +34,8 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - `source/kg/query/` contains snapshot query surfaces, aggregations, and path search.
 - `source/kg/languages/python/extractors/` contains Python AST extraction.
 - `source/kg/languages/typescript/extractors/` contains TypeScript/JavaScript compiler-API extraction.
-- `source/kg/extraction/file_formats/` contains deterministic file-format extraction for domains, env vars, endpoints, deploy mappings, and event channels.
-- `source/kg/extraction/config/` is a compatibility import path for older config-extractor imports; shims preserve module identity by redirecting legacy module names to `file_formats`.
+- `source/kg/file_formats/` contains deterministic file-format extraction for domains, env vars, endpoints, deploy mappings, and event channels.
+- `source/kg/extraction/framework/` contains the shared adapter protocol, registry validation, and adapter runner.
 - `source/kg/languages/python/normalization/` contains Python import normalization.
 - `source/kg/languages/typescript/normalization/` contains TypeScript/JavaScript import normalization.
 - `source/kg/product/` contains public product-validation reports, evidence packets, answer synthesis, judgement, and contract reconciliation.

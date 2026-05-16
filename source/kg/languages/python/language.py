@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.adapters.legacy import LEGACY_PYTHON_AST_ADAPTER
-from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages.known_stacks import load_known_stacks
+from source.kg.languages.python.extractors.legacy_adapter import LEGACY_PYTHON_AST_ADAPTER
+from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
 
 

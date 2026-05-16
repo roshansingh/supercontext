@@ -11,21 +11,21 @@ from unittest.mock import patch
 from source.kg.build.pipeline import _combined_adapters, extract_repo
 from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.adapters import REGISTERED_ADAPTERS
-from source.kg.extraction.adapters import config_shared
-from source.kg.extraction.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
-from source.kg.extraction.adapters.config_serverless_yaml import CONFIG_SERVERLESS_YAML_ADAPTER
-from source.kg.extraction.adapters.config_terraform import CONFIG_TERRAFORM_ADAPTER
-from source.kg.extraction.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
-from source.kg.extraction.adapters.legacy import LEGACY_STATIC_CONFIG_ADAPTER, LegacyAdapter
-from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
-from source.kg.extraction.adapters.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
-from source.kg.extraction.config.static_extractor import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
 from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
-from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
 from source.kg.file_formats import REGISTERED_FILE_FORMATS, discover_file_formats, file_format_adapters
+from source.kg.file_formats._shared.legacy_adapter import LEGACY_STATIC_CONFIG_ADAPTER
+from source.kg.file_formats._shared.static_config import StaticConfigExtractor
+from source.kg.file_formats.adapters import config_shared
+from source.kg.file_formats.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
+from source.kg.file_formats.adapters.config_serverless_yaml import CONFIG_SERVERLESS_YAML_ADAPTER
+from source.kg.file_formats.adapters.config_terraform import CONFIG_TERRAFORM_ADAPTER
+from source.kg.file_formats.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
+from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
+from source.kg.languages.python.extractors.legacy_adapter import LegacyAdapter
+from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
+from source.kg.languages.typescript.extractors.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
 
 
 class AdapterFrameworkTest(unittest.TestCase):
@@ -41,6 +41,12 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Duplicate adapter name: dup"):
             _combined_adapters((left,), (right,))
+
+    def test_pipeline_adapter_combiner_validates_adapter_capabilities(self) -> None:
+        adapter = _Adapter("missing-source", "")
+
+        with self.assertRaisesRegex(ValueError, "must declare source_system"):
+            _combined_adapters((adapter,))
 
     def test_registry_rejects_missing_source_system(self) -> None:
         with self.assertRaisesRegex(ValueError, "must declare source_system"):
@@ -250,14 +256,13 @@ class AdapterFrameworkTest(unittest.TestCase):
         adapter = _Adapter("stateful", "stateful_v0")
 
         with (
-            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", (adapter,)),
             patch("source.kg.file_formats.file_format_adapters", return_value=()),
-            patch("source.kg.languages.language_adapters", return_value=()),
+            patch("source.kg.languages.language_adapters", return_value=(adapter,)),
         ):
             build = extract_repo(repo)
 
-        self.assertEqual(build.extractor_names, ["stateful_v0"])
-        self.assertEqual(adapter.capability_reads, 3)
+        self.assertEqual(build.extractor_names, ["static_config_v0", "stateful_v0"])
+        self.assertEqual(adapter.capability_reads, 4)
 
     def test_extraction_context_mutable_caches_do_not_change_equality(self) -> None:
         left = ExtractionContext()
@@ -333,13 +338,12 @@ class AdapterFrameworkTest(unittest.TestCase):
         adapter = _Adapter("language-owned", "language_owned_v0", languages=("python",))
 
         with (
-            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", ()),
             patch("source.kg.file_formats.file_format_adapters", return_value=()),
             patch("source.kg.languages.language_adapters", return_value=(adapter,)),
         ):
             build = extract_repo(repo)
 
-        self.assertEqual(build.extractor_names, ["language_owned_v0"])
+        self.assertEqual(build.extractor_names, ["static_config_v0", "language_owned_v0"])
         self.assertEqual(adapter.calls, 1)
 
     def test_pipeline_selects_file_format_adapters_without_central_registry(self) -> None:
@@ -347,13 +351,12 @@ class AdapterFrameworkTest(unittest.TestCase):
         adapter = _Adapter("config-owned", "config_owned_v0", languages=("config",))
 
         with (
-            patch("source.kg.extraction.adapters.REGISTERED_ADAPTERS", ()),
             patch("source.kg.file_formats.file_format_adapters", return_value=(adapter,)),
             patch("source.kg.languages.language_adapters", return_value=()),
         ):
             build = extract_repo(repo)
 
-        self.assertEqual(build.extractor_names, ["config_owned_v0"])
+        self.assertEqual(build.extractor_names, ["static_config_v0", "config_owned_v0"])
         self.assertEqual(adapter.calls, 1)
 
     def test_registered_adapters_include_pr_fw_2_splits(self) -> None:
@@ -369,7 +372,6 @@ class AdapterFrameworkTest(unittest.TestCase):
     def test_file_format_support_is_discovered_without_central_adapter_registry(self) -> None:
         format_names = {file_format.name for file_format in REGISTERED_FILE_FORMATS}
         adapter_names = {adapter.capability.name for adapter in file_format_adapters()}
-        central_names = {adapter.capability.name for adapter in REGISTERED_ADAPTERS}
 
         self.assertGreaterEqual(
             format_names,
@@ -385,8 +387,7 @@ class AdapterFrameworkTest(unittest.TestCase):
             },
         )
         self.assertIn("config-openapi", adapter_names)
-        self.assertNotIn("config-openapi", central_names)
-        self.assertNotIn("config-serverless-yaml", central_names)
+        self.assertEqual(LEGACY_STATIC_CONFIG_ADAPTER.capability.name, "legacy-static-config")
         self.assertNotIn("_shared", format_names)
         self.assertNotIn("_template", format_names)
 
@@ -454,85 +455,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         ):
             self.assertEqual(capabilities[name].languages, ("config",))
 
-    def test_file_format_modules_are_canonical_with_compatibility_aliases(self) -> None:
-        legacy_to_canonical = {
-            "source.kg.extraction.config.apache_vhost": "source.kg.file_formats.apache_vhost",
-            "source.kg.extraction.config.channel_normalization": "source.kg.file_formats._shared.channel_normalization",
-            "source.kg.extraction.config.common": "source.kg.file_formats._shared.common",
-            "source.kg.extraction.config.deploy_events": "source.kg.file_formats._shared.deploy_events",
-            "source.kg.extraction.config.domain_env": "source.kg.file_formats.domain_env",
-            "source.kg.extraction.config.domain_literals": "source.kg.file_formats._shared.domain_literals",
-            "source.kg.extraction.config.dotenv": "source.kg.file_formats.dotenv",
-            "source.kg.extraction.config.endpoints": "source.kg.file_formats._shared.endpoints",
-            "source.kg.extraction.config.openapi_yaml": "source.kg.file_formats.openapi_yaml",
-            "source.kg.extraction.config.serverless_yaml": "source.kg.file_formats.serverless_yaml",
-            "source.kg.extraction.config.static_extractor": "source.kg.file_formats._shared.static_config",
-            "source.kg.extraction.config.terraform": "source.kg.file_formats.terraform",
-            "source.kg.extraction.config.zappa": "source.kg.file_formats.zappa",
-            "source.kg.extraction.file_formats.apache_vhost": "source.kg.file_formats.apache_vhost",
-            "source.kg.extraction.file_formats.channel_normalization": "source.kg.file_formats._shared.channel_normalization",
-            "source.kg.extraction.file_formats.common": "source.kg.file_formats._shared.common",
-            "source.kg.extraction.file_formats.deploy_events": "source.kg.file_formats._shared.deploy_events",
-            "source.kg.extraction.file_formats.domain_env": "source.kg.file_formats.domain_env",
-            "source.kg.extraction.file_formats.domain_literals": "source.kg.file_formats._shared.domain_literals",
-            "source.kg.extraction.file_formats.dotenv": "source.kg.file_formats.dotenv",
-            "source.kg.extraction.file_formats.endpoints": "source.kg.file_formats._shared.endpoints",
-            "source.kg.extraction.file_formats.openapi_yaml": "source.kg.file_formats.openapi_yaml",
-            "source.kg.extraction.file_formats.serverless_yaml": "source.kg.file_formats.serverless_yaml",
-            "source.kg.extraction.file_formats.static_extractor": "source.kg.file_formats._shared.static_config",
-            "source.kg.extraction.file_formats.terraform": "source.kg.file_formats.terraform",
-            "source.kg.extraction.file_formats.zappa": "source.kg.file_formats.zappa",
-            "source.kg.extraction.adapters.config_apache_vhost": (
-                "source.kg.file_formats.adapters.config_apache_vhost"
-            ),
-            "source.kg.extraction.adapters.config_domain_env": (
-                "source.kg.file_formats.adapters.config_domain_env"
-            ),
-            "source.kg.extraction.adapters.config_dotenv": "source.kg.file_formats.adapters.config_dotenv",
-            "source.kg.extraction.adapters.config_openapi": "source.kg.file_formats.adapters.config_openapi",
-            "source.kg.extraction.adapters.config_serverless_yaml": (
-                "source.kg.file_formats.adapters.config_serverless_yaml"
-            ),
-            "source.kg.extraction.adapters.config_shared": "source.kg.file_formats.adapters.config_shared",
-            "source.kg.extraction.adapters.config_terraform": (
-                "source.kg.file_formats.adapters.config_terraform"
-            ),
-            "source.kg.extraction.adapters.config_zappa": "source.kg.file_formats.adapters.config_zappa",
-            "source.kg.extraction.adapters.event_channel_normalizer": (
-                "source.kg.file_formats.adapters.event_channel_normalizer"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_apache_vhost": (
-                "source.kg.file_formats.adapters.config_apache_vhost"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_domain_env": (
-                "source.kg.file_formats.adapters.config_domain_env"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_dotenv": (
-                "source.kg.file_formats.adapters.config_dotenv"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_openapi": (
-                "source.kg.file_formats.adapters.config_openapi"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_serverless_yaml": (
-                "source.kg.file_formats.adapters.config_serverless_yaml"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_shared": (
-                "source.kg.file_formats.adapters.config_shared"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_terraform": (
-                "source.kg.file_formats.adapters.config_terraform"
-            ),
-            "source.kg.extraction.file_formats.adapters.config_zappa": (
-                "source.kg.file_formats.adapters.config_zappa"
-            ),
-            "source.kg.extraction.file_formats.adapters.event_channel_normalizer": (
-                "source.kg.file_formats.adapters.event_channel_normalizer"
-            ),
-        }
-
-        for legacy_name, canonical_name in legacy_to_canonical.items():
-            with self.subTest(legacy=legacy_name):
-                self.assertIs(importlib.import_module(legacy_name), importlib.import_module(canonical_name))
+    def test_file_format_modules_are_canonical(self) -> None:
         self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.__class__.__module__, "source.kg.file_formats.adapters.config_domain_env")
         self.assertIs(
             importlib.import_module("source.kg.file_formats.adapters.config_openapi").CONFIG_OPENAPI_ADAPTER,
@@ -635,7 +558,7 @@ class AdapterFrameworkTest(unittest.TestCase):
             )
 
             with patch(
-                "source.kg.extraction.adapters.config_shared.scan_config_files",
+                "source.kg.file_formats.adapters.config_shared.scan_config_files",
                 wraps=config_shared.scan_config_files,
             ) as scan:
                 extract_repo(repo)
@@ -654,7 +577,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 files_by_language={"python": (), "typescript": ()},
             )
 
-            with patch("source.kg.extraction.config.common.MAX_SCAN_BYTES", 4):
+            with patch("source.kg.file_formats._shared.common.MAX_SCAN_BYTES", 4):
                 build = extract_repo(repo)
 
         rows = {
@@ -682,7 +605,7 @@ class AdapterFrameworkTest(unittest.TestCase):
                 files_by_language={"python": (), "typescript": ()},
             )
 
-            with patch("source.kg.extraction.config.common.MAX_SCAN_BYTES", 4):
+            with patch("source.kg.file_formats._shared.common.MAX_SCAN_BYTES", 4):
                 _, _, _, coverage, _ = run_adapters(repo, (LEGACY_STATIC_CONFIG_ADAPTER, CONFIG_DOMAIN_ENV_ADAPTER))
 
         rows = [row for row in coverage if row.scope_ref.get("reason") == "exceeds_max_scan_bytes"]
@@ -799,7 +722,6 @@ class AdapterFrameworkTest(unittest.TestCase):
                     source_system=PythonAstExtractor.source_system,
                 ),
                 extractor=PythonAstExtractor(include_transport=False),
-                language_gate="python",
             )
 
             _, _, _, coverage, errors = run_adapters(repo, (adapter,))

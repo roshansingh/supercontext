@@ -6,8 +6,8 @@ from pathlib import Path
 
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.config.common import ConfigKgBuild, ScannedFile
-from source.kg.extraction.config.terraform import extract_terraform
+from source.kg.file_formats._shared.common import ConfigKgBuild, ScannedFile
+from source.kg.file_formats.terraform import extract_terraform
 
 
 class TerraformExtractionTest(unittest.TestCase):
