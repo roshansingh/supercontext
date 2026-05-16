@@ -221,7 +221,9 @@ def _known_stack_rows_for_roots(
         category = known_stacks_by_language.get(language, {}).get(import_root)
         if category is None or import_root in supported_tags:
             continue
-        predicate = KNOWN_STACK_CATEGORY_PREDICATE[category]
+        predicate = KNOWN_STACK_CATEGORY_PREDICATE.get(category)
+        if predicate is None:
+            continue
         rows.append(
             Coverage(
                 tenant_id=ctx.tenant_id,

@@ -586,6 +586,15 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(rows[0].scope_ref["language"], "python")
         self.assertEqual(rows[0].scope_ref["import_root"], "flask")
 
+    def test_unknown_known_stack_category_fails_closed(self) -> None:
+        repo = _repo(python_files=())
+
+        with patch("source.kg.extraction.framework.runner._registered_languages", return_value=(_UnknownCategoryLanguage(),)):
+            _, _, _, coverage, errors = run_adapters(repo, ())
+
+        self.assertEqual(errors, [])
+        self.assertEqual(_known_stack_rows(coverage), [])
+
 
 @dataclass
 class _Adapter:
@@ -635,6 +644,17 @@ class _ImportRootAdapter(_Adapter):
         ctx.python_import_roots.update(self.python_import_roots)
         ctx.js_ts_import_roots.update(self.js_ts_import_roots)
         return self.result or AdapterResult()
+
+
+class _UnknownCategoryLanguage:
+    name = "python"
+    aliases: tuple[str, ...] = ()
+
+    def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> dict[str, set[str]]:
+        return {"python": {"custom_stack"}}
+
+    def known_stacks(self) -> dict[str, dict[str, str]]:
+        return {"python": {"custom_stack": "unknown_category"}}
 
 
 def _repo(python_files: tuple[Path, ...] | None = None, typescript_files: tuple[Path, ...] = ()) -> RepoSnapshot:
