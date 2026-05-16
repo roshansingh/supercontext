@@ -189,8 +189,8 @@ This ADR is partially implemented in the local KG harness.
 
 What exists now:
 
-- Python deterministic import normalization in `source/kg/normalization/python/imports.py`.
-- TypeScript/JavaScript deterministic import normalization in `source/kg/normalization/typescript/imports.py`.
+- Python deterministic import normalization in `source/kg/languages/python/normalization/imports.py`.
+- TypeScript/JavaScript deterministic import normalization in `source/kg/languages/typescript/normalization/imports.py`.
 - Python categories: `stdlib`, `third_party`, `internal_module`, `relative_internal_module`, `unknown`.
 - TypeScript/JavaScript categories: `node_builtin`, `third_party`, `internal_module`, `relative_internal_module`, `unknown`.
 - Metadata parsing from `pyproject.toml` and `package.json`.
@@ -259,10 +259,10 @@ Import normalization complements deterministic symbol lookup:
 ## References
 
 - `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`
-- `source/kg/extraction/python/ast_extractor.py`
-- `source/kg/normalization/python/imports.py`
-- `source/kg/extraction/typescript/compiler_api_extractor.py`
-- `source/kg/normalization/typescript/imports.py`
+- `source/kg/languages/python/extractors/ast_extractor.py`
+- `source/kg/languages/python/normalization/imports.py`
+- `source/kg/languages/typescript/extractors/compiler_api_extractor.py`
+- `source/kg/languages/typescript/normalization/imports.py`
 - ADR-0001: `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
 - ADR-0006: `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

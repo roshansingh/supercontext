@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.python.dataflow import (
+from source.kg.languages.python.extractors.dataflow import (
     ResolvedValue,
     UnresolvedValue,
     ValueResolver,
@@ -21,7 +21,7 @@ from source.kg.extraction.python.dataflow import (
     resolved_to_json,
     unresolved_coverage,
 )
-from source.kg.normalization.python.imports import PythonImportNormalizer
+from source.kg.languages.python.normalization.imports import PythonImportNormalizer
 
 
 class PythonDataflowTest(unittest.TestCase):
@@ -204,7 +204,7 @@ class PythonDataflowTest(unittest.TestCase):
             parsed_tree = ast.parse(config_module.read_text(encoding="utf-8"))
 
             with patch(
-                "source.kg.extraction.python.dataflow.ast.parse",
+                "source.kg.languages.python.extractors.dataflow.ast.parse",
                 side_effect=AssertionError("unexpected parse"),
             ):
                 assignments, source_assignments = config_object_value_assignments(repo, {config_module: parsed_tree})

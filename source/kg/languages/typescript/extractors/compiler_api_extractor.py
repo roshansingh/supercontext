@@ -5,12 +5,12 @@ from pathlib import Path
 import json
 import re
 
-from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
+from source.kg.languages.typescript.normalization.imports import JsImportNormalizer, JsImportRef, NormalizedJsImport
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework.adapter import ExtractionContext
-from source.kg.extraction.typescript.parser_bridge import parse_typescript_repo
+from source.kg.languages.typescript.extractors.parser_bridge import parse_typescript_repo
 
 
 @dataclass

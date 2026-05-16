@@ -58,7 +58,7 @@ Negative:
 
 ## Implementation Status
 
-Implemented in `source/kg/normalization/python/imports.py`.
+Implemented in `source/kg/languages/python/normalization/imports.py`.
 
 The current curated aliases are intentionally small and must stay covered by tests when changed.
 
@@ -69,6 +69,6 @@ The current curated aliases are intentionally small and must stay covered by tes
 
 ## References
 
-- `source/kg/normalization/python/imports.py`
+- `source/kg/languages/python/normalization/imports.py`
 - `tests/test_import_normalization.py`
 - `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`

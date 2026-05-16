@@ -7,10 +7,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.normalization.python import imports as python_imports
-from source.kg.normalization.python.imports import ImportRef, PythonImportNormalizer
-from source.kg.normalization.typescript import imports as typescript_imports
-from source.kg.normalization.typescript.imports import JsImportNormalizer, JsImportRef
+from source.kg.languages.python.normalization import imports as python_imports
+from source.kg.languages.python.normalization.imports import ImportRef, PythonImportNormalizer
+from source.kg.languages.typescript.normalization import imports as typescript_imports
+from source.kg.languages.typescript.normalization.imports import JsImportNormalizer, JsImportRef
 
 
 class PythonImportNormalizationTest(unittest.TestCase):
@@ -31,7 +31,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={
                     "bs4": ["beautifulsoup4"],
                     "dateutil": ["python-dateutil"],
@@ -75,7 +75,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={"bs4": ["beautifulsoup4"]},
             ):
                 python_imports._distributions_by_import_root.cache_clear()
@@ -100,7 +100,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={},
             ):
                 python_imports._distributions_by_import_root.cache_clear()
@@ -139,7 +139,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={},
             ):
                 python_imports._distributions_by_import_root.cache_clear()
@@ -161,7 +161,7 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={},
             ):
                 python_imports._distributions_by_import_root.cache_clear()
@@ -200,9 +200,9 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={},
-            ), patch("source.kg.normalization.python.imports.util.find_spec", return_value=object()):
+            ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
             python_imports._distributions_by_import_root.cache_clear()
@@ -225,9 +225,9 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={},
-            ), patch("source.kg.normalization.python.imports.util.find_spec", return_value=object()):
+            ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
             python_imports._distributions_by_import_root.cache_clear()
@@ -250,9 +250,9 @@ class PythonImportNormalizationTest(unittest.TestCase):
             repo = _repo_snapshot(root, python_files=(root / "app.py",))
 
             with patch(
-                "source.kg.normalization.python.imports.metadata.packages_distributions",
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
                 return_value={"google": ["google-api-core", "protobuf"]},
-            ), patch("source.kg.normalization.python.imports.util.find_spec", return_value=object()):
+            ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
             python_imports._distributions_by_import_root.cache_clear()
@@ -289,7 +289,7 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             root = Path(tmpdir)
             repo = _repo_snapshot(root, typescript_files=(root / "src" / "index.ts",))
 
-            with patch("source.kg.normalization.typescript.imports._node_builtin_modules", return_value=builtin_modules):
+            with patch("source.kg.languages.typescript.normalization.imports._node_builtin_modules", return_value=builtin_modules):
                 normalizer = JsImportNormalizer(repo)
 
             for raw_import in (
@@ -345,7 +345,7 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
     def test_node_builtin_modules_fall_back_when_node_is_unavailable(self) -> None:
         typescript_imports._node_builtin_modules.cache_clear()
         with patch(
-            "source.kg.normalization.typescript.imports.subprocess.run",
+            "source.kg.languages.typescript.normalization.imports.subprocess.run",
             side_effect=FileNotFoundError,
         ):
             builtins = typescript_imports._node_builtin_modules()
@@ -362,7 +362,7 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             stdout='["node:fictional_builtin"]',
             stderr="",
         )
-        with patch("source.kg.normalization.typescript.imports.subprocess.run", return_value=completed):
+        with patch("source.kg.languages.typescript.normalization.imports.subprocess.run", return_value=completed):
             builtins = typescript_imports._node_builtin_modules()
         typescript_imports._node_builtin_modules.cache_clear()
 

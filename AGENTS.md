@@ -8,8 +8,8 @@ This repository is currently a documentation-heavy architecture repo plus a mini
 - `docs/` contains PRDs, research notes, ontology, graph storage/building, evidence retrieval, and evaluation artifacts.
 - `debates/` contains multi-agent debate transcripts and state files.
 - `source/` contains the executable KG prototype.
-- `source/kg/extraction/python/` and `source/kg/extraction/typescript/` contain language-specific extractors.
-- `source/kg/normalization/python/` and `source/kg/normalization/typescript/` contain deterministic normalization logic.
+- `source/kg/languages/python/extractors/` and `source/kg/languages/typescript/extractors/` contain language-specific extractors.
+- `source/kg/languages/python/normalization/` and `source/kg/languages/typescript/normalization/` contain deterministic normalization logic.
 - `source/scripts/` contains CLI entry points for building and querying KG snapshots.
 - `data/kg_runs/` stores generated local KG snapshots; treat these as test artifacts.
 

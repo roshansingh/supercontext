@@ -10,7 +10,7 @@ from source.kg.file_formats._shared.endpoints import (
 )
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
-from source.kg.extraction.typescript.parser_bridge import parse_typescript_repo
+from source.kg.languages.typescript.extractors.parser_bridge import parse_typescript_repo
 
 
 @dataclass(frozen=True)

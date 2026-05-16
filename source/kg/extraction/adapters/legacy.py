@@ -7,8 +7,8 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.file_formats.adapters.config_shared import scan_coverage_rows, scannable_config_files
 from source.kg.file_formats import StaticConfigExtractor
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
-from source.kg.extraction.python.ast_extractor import PythonAstExtractor
-from source.kg.extraction.typescript.compiler_api_extractor import TypeScriptCompilerApiExtractor
+from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
+from source.kg.languages.typescript.extractors.compiler_api_extractor import TypeScriptCompilerApiExtractor
 
 
 class LegacyExtractor(Protocol):

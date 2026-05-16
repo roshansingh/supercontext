@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from source.kg.extraction.python.frameworks.routes import EndpointRoute
+from source.kg.languages.python.extractors.frameworks.routes import EndpointRoute
 
 
 def extract_django_routes(tree: ast.AST, file_path: Path) -> tuple[list[EndpointRoute], bool]:

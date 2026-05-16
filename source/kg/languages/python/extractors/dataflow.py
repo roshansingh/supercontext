@@ -8,7 +8,7 @@ from pathlib import Path
 from source.kg.core.models import Coverage, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.normalization.python.imports import NormalizedImport
+from source.kg.languages.python.normalization.imports import NormalizedImport
 
 
 @dataclass(frozen=True)

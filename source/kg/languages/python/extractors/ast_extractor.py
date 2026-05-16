@@ -9,20 +9,20 @@ from typing import Literal
 import warnings
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
-from source.kg.extraction.python.dataflow import (
+from source.kg.languages.python.extractors.dataflow import (
     LiteralIndex,
     LiteralRef,
     body_call_nodes,
     config_object_value_assignments,
     module_literal_assignments,
 )
-from source.kg.extraction.python.transport_extractor import (
+from source.kg.languages.python.extractors.transport_extractor import (
     extract_transport_events,
     module_transport_context,
 )
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.normalization.python.imports import NormalizedImport, PythonImportNormalizer
+from source.kg.languages.python.normalization.imports import NormalizedImport, PythonImportNormalizer
 from source.kg.core.repo_source import RepoSnapshot
 
 

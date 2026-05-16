@@ -208,8 +208,8 @@ Symbols are implementation-side evidence/query-resolution artifacts. They may be
 ## References
 
 - `docs/evaluation/CANONICAL-VALIDATION-REPORT.md`
-- `source/kg/extraction/python/ast_extractor.py`
-- `source/kg/extraction/typescript/compiler_api_extractor.py`
+- `source/kg/languages/python/extractors/ast_extractor.py`
+- `source/kg/languages/typescript/extractors/compiler_api_extractor.py`
 - ADR-0001: `adr/0001-claude-agent-sdk-for-internal-runtime.md`
 - ADR-0005: `adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md`
 - ADR-0006: `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`

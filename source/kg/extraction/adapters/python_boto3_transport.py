@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
-from source.kg.extraction.python.ast_extractor import PythonAstExtractor
+from source.kg.languages.python.extractors.ast_extractor import PythonAstExtractor
 
 
 @dataclass(frozen=True)

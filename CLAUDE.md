@@ -45,8 +45,8 @@ LLM enrichment is not part of the default v0 path. If used: `source.kg.integrati
 | `docs/overall-architecture/TECHNICAL-BUILDING-BLOCKS.md` | Implementation map, ADR coverage, next-ADR priority |
 | `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md` | Registry for high-precision call-site extractors that auto-promote `CALLS` facts |
 | `BACKLOG.md` | Single-page index of every deferred item across the project |
-| `source/kg/extraction/{python,typescript}/` | Per-language deterministic extractors |
-| `source/kg/normalization/{python,typescript}/` | Per-language import normalizers |
+| `source/kg/languages/{python,typescript}/extractors/` | Per-language deterministic extractors |
+| `source/kg/languages/{python,typescript}/normalization/` | Per-language import normalizers |
 | `source/kg/{models,store,queries,pipeline,repo_source,llm}.py` | Core data classes, JSONL store, query layer, pipeline orchestration, optional LLM client |
 | `source/scripts/{build_kg,query_kg}.py` | CLI entry points |
 | `data/kg_runs/` | Gitignored KG snapshots |
