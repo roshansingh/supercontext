@@ -9,7 +9,7 @@ description = "Typed cross-service knowledge graph for AI coding agents in micro
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "BetterContext contributors" }]
-dependencies = []
+dependencies = ["PyYAML>=6.0"]
 keywords = ["code-analysis", "knowledge-graph", "mcp", "software-architecture"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -25,11 +25,10 @@ Repository = "https://github.com/roshansingh/bettercontext"
 Issues = "https://github.com/roshansingh/bettercontext/issues"
 
 [project.optional-dependencies]
-yaml = ["PyYAML>=6.0"]
 ui = ["streamlit>=1.30"]
 llm = ["openai>=1.0"]
 agent = ["claude-agent-sdk"]
-dev = ["PyYAML>=6.0", "build>=1.2"]
+dev = ["build>=1.2"]
 
 [project.scripts]
 bettercontext-build-kg = "source.scripts.build_kg:main"
@@ -43,3 +42,5 @@ include = ["source*"]
 
 [tool.setuptools.package-data]
 "source.kg.extraction.typescript" = ["ts_parser.mjs"]
+"source.kg.languages.python" = ["known_stacks.yaml"]
+"source.kg.languages.typescript" = ["known_stacks.yaml"]

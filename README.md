@@ -10,12 +10,12 @@ License: TBD before public OSS release.
 
 - Python 3.11 or newer.
 - Node.js and `npm ci` for TypeScript/JavaScript indexing.
-- Optional Python extras for specific features: `yaml`, `ui`, `llm`, and `agent`.
+- Optional Python extras for specific features: `ui`, `llm`, and `agent`.
 
 ## Quickstart
 
 ```bash
-python -m pip install -e ".[yaml]"
+python -m pip install -e .
 npm ci
 
 bettercontext-build-kg --repo /path/to/repo --out ./data/kg_runs/example

@@ -8,7 +8,7 @@ from pathlib import Path
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.repo_source import discover_repo
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
-from source.kg.extraction.framework.known_stacks import KNOWN_STACK_IMPORTS
+from source.kg.languages import REGISTERED_LANGUAGES
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "known_stacks"
@@ -19,7 +19,7 @@ class KnownStacksContractTest(unittest.TestCase):
         supported_tags = {tag for adapter in REGISTERED_ADAPTERS for tag in adapter.capability.framework_tags}
 
         missing = []
-        for language, imports in KNOWN_STACK_IMPORTS.items():
+        for language, imports in _known_stack_imports().items():
             for import_root in imports:
                 fixture_dir = FIXTURE_ROOT / language / import_root
                 if import_root not in supported_tags and not fixture_dir.is_dir():
@@ -79,6 +79,13 @@ def _load_expected_rows(path: Path) -> list[dict[str, object]]:
         if not isinstance(scope_ref, dict):
             raise AssertionError(f"{path}[{index}].scope_ref must be a JSON object")
     return data
+
+
+def _known_stack_imports() -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for language in REGISTERED_LANGUAGES:
+        result.update(language.known_stacks())
+    return result
 
 
 def _coverage_matches(actual: dict[str, object], expected: dict[str, object]) -> bool:

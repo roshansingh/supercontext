@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.adapters.legacy import LEGACY_PYTHON_AST_ADAPTER
 from source.kg.extraction.adapters.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
-from source.kg.extraction.framework.known_stacks import KNOWN_STACK_IMPORTS
+from source.kg.languages.known_stacks import load_known_stacks
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
 
 
@@ -41,7 +42,13 @@ class PythonLanguageSupport:
         return (LEGACY_PYTHON_AST_ADAPTER, PYTHON_BOTO3_TRANSPORT_ADAPTER)
 
     def known_stacks(self) -> dict[str, dict[str, str]]:
-        return {"python": dict(KNOWN_STACK_IMPORTS["python"])}
+        return {"python": dict(_known_stack_imports())}
 
 
 LANGUAGE_SUPPORT = PythonLanguageSupport()
+
+
+@cache
+def _known_stack_imports() -> dict[str, str]:
+    # Static package metadata: read once per process and return copies above.
+    return load_known_stacks(Path(__file__).with_name("known_stacks.yaml"))
