@@ -130,8 +130,7 @@ def _repo_snapshot(root: Path):
         name=root.name,
         owner=root.parent.name,
         commit_sha="test-sha",
-        python_files=(),
-        typescript_files=(),
+        files_by_language={"python": (), "typescript": ()},
     )
 
 

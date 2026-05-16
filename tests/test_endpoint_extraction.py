@@ -39,7 +39,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_source_kinds_by_path(routes)["/123"], {"flask_route"})
         self.assertEqual(_source_kinds_by_path(routes)["/health"], {"flask_get"})
 
-    def test_legacy_javascript_regexes_do_not_run_on_python_files(self) -> None:
+    def test_legacy_javascript_regexes_do_not_run_on_py_source_files(self) -> None:
         build = _extract_config(
             {
                 "app.py": (
@@ -320,8 +320,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="express-api",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = extract_repo(repo)
 
@@ -368,8 +367,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="node-api",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = extract_repo(repo)
 
@@ -416,8 +414,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="node-cjs-api",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = extract_repo(repo)
 
@@ -443,8 +440,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="web-client",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = extract_repo(repo)
 
@@ -475,8 +471,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="web-client",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = extract_repo(repo)
 
@@ -967,8 +962,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="not-express",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = extract_repo(repo)
 
@@ -987,8 +981,7 @@ class EndpointExtractionTest(unittest.TestCase):
                 name="web",
                 owner="test",
                 commit_sha="test-sha",
-                python_files=(),
-                typescript_files=(source_path,),
+                files_by_language={"python": (), "typescript": (source_path,)},
             )
             build = StaticConfigExtractor().extract(repo)
             snapshot_dir = root / "kg"
@@ -1126,7 +1119,13 @@ def _extract_config(files: dict[str, str]):
             path = root / relative_path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
-        repo = RepoSnapshot(root=root, name=root.name, owner=root.parent.name, commit_sha="test-sha", python_files=(), typescript_files=())
+        repo = RepoSnapshot(
+            root=root,
+            name=root.name,
+            owner=root.parent.name,
+            commit_sha="test-sha",
+            files_by_language={"python": (), "typescript": ()},
+        )
         return StaticConfigExtractor().extract(repo)
 
 
@@ -1140,8 +1139,7 @@ def _extract_typescript_client(source: str):
             name="web-client",
             owner="test",
             commit_sha="test-sha",
-            python_files=(),
-            typescript_files=(source_path,),
+            files_by_language={"python": (), "typescript": (source_path,)},
         )
         return extract_repo(repo)
 
@@ -1161,8 +1159,7 @@ def _extract_typescript_client_files(files: dict[str, str]):
             name="web-client",
             owner="test",
             commit_sha="test-sha",
-            python_files=(),
-            typescript_files=tuple(source_paths),
+            files_by_language={"python": (), "typescript": tuple(source_paths)},
         )
         return extract_repo(repo)
 

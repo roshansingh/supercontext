@@ -84,7 +84,13 @@ def _extract(text: str) -> ConfigKgBuild:
         root = Path(tmpdir)
         settings = root / "zappa_settings.json"
         settings.write_text(text, encoding="utf-8")
-        repo = RepoSnapshot(root=root, name="zappa-service", owner="test", commit_sha="sha", python_files=(), typescript_files=())
+        repo = RepoSnapshot(
+            root=root,
+            name="zappa-service",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (), "typescript": ()},
+        )
         scanned = ScannedFile(
             path=settings,
             relative_path="zappa_settings.json",

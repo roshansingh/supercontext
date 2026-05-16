@@ -90,10 +90,6 @@ def extract_repo(
     )
 
 
-def build_python_kg(repo_path: str | Path, output_dir: str | Path) -> JsonObject:
-    return build_kg(repo_path, output_dir)
-
-
 def _combined_adapters(*adapter_groups: tuple[Adapter, ...]) -> tuple[Adapter, ...]:
     adapters_by_name: dict[str, Adapter] = {}
     for group in adapter_groups:

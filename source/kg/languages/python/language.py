@@ -38,7 +38,7 @@ class PythonLanguageSupport:
         return self.files.matches_file(path)
 
     def source_roots(self, repo: RepoSnapshot, ctx: ExtractionContext) -> dict[str, set[str]]:
-        return {"python": ctx.python_import_roots}
+        return {"python": ctx.import_roots_by_language.setdefault("python", set())}
 
     def parse_repo(self, repo: RepoSnapshot, ctx: ExtractionContext) -> Mapping[str, Any]:
         return {}

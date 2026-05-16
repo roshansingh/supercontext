@@ -27,7 +27,7 @@ class TypeScriptExpressRoutesAdapter:
     )
 
     def applies_to(self, repo: RepoSnapshot, ctx: ExtractionContext) -> bool:
-        return bool(repo.typescript_files)
+        return bool(repo.files_by_language.get("typescript", ()))
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()

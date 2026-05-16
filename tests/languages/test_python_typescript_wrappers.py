@@ -14,7 +14,7 @@ from source.kg.languages.typescript.language import LANGUAGE_SUPPORT as TYPESCRI
 class PythonTypeScriptWrapperTest(unittest.TestCase):
     def test_python_wrapper_exposes_existing_adapter_names_and_roots(self) -> None:
         ctx = ExtractionContext()
-        ctx.python_import_roots.update({"flask"})
+        ctx.import_roots_by_language.setdefault("python", set()).update({"flask"})
 
         self.assertEqual(
             [adapter.capability.name for adapter in PYTHON_SUPPORT.adapters()],
@@ -29,7 +29,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
 
     def test_typescript_wrapper_exposes_existing_adapter_names_and_javascript_roots(self) -> None:
         ctx = ExtractionContext()
-        ctx.js_ts_import_roots.update({"express"})
+        ctx.import_roots_by_language.setdefault("javascript", set()).update({"express"})
 
         self.assertEqual(
             [adapter.capability.name for adapter in TYPESCRIPT_SUPPORT.adapters()],
@@ -61,8 +61,6 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
 
             repo = discover_repo(root)
 
-        self.assertEqual(repo.python_files, (python_file.resolve(),))
-        self.assertEqual(repo.typescript_files, (ts_file.resolve(),))
         self.assertEqual(repo.files_by_language["python"], (python_file.resolve(),))
         self.assertEqual(repo.files_by_language["typescript"], (ts_file.resolve(),))
 
@@ -82,7 +80,13 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
 
 
 def _repo_snapshot() -> RepoSnapshot:
-    return RepoSnapshot(root=Path("/tmp/bettercontext-language-test"), name="repo", owner="test", commit_sha="sha")
+    return RepoSnapshot(
+        root=Path("/tmp/bettercontext-language-test"),
+        name="repo",
+        owner="test",
+        commit_sha="sha",
+        files_by_language={"python": (), "typescript": ()},
+    )
 
 
 @dataclass(frozen=True)

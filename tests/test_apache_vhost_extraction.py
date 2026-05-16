@@ -126,7 +126,13 @@ def _extract(text: str) -> ConfigKgBuild:
         root = Path(tmpdir)
         conf = root / "site.conf"
         conf.write_text(text, encoding="utf-8")
-        repo = RepoSnapshot(root=root, name="deploy-config", owner="test", commit_sha="sha", python_files=(), typescript_files=())
+        repo = RepoSnapshot(
+            root=root,
+            name="deploy-config",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": (), "typescript": ()},
+        )
         scanned = ScannedFile(path=conf, relative_path="site.conf", text=text, lines=tuple(text.splitlines()))
         service = Entity(kind="Service", identity={"tenant_id": "default", "namespace": "default", "slug": "svc"})
         build = ConfigKgBuild()

@@ -12,13 +12,13 @@ from source.kg.extraction.framework.adapter import ExtractionContext
 def parse_typescript_repo(repo: RepoSnapshot, ctx: ExtractionContext | None = None) -> dict[str, JsonObject]:
     cache_key = f"{repo.root}:{repo.commit_sha}"
     if ctx is not None:
-        cached = ctx.js_ts_parsed_files.get(cache_key)
+        cached = ctx.parsed_by_language.setdefault("typescript", {}).get(cache_key)
         if isinstance(cached, dict):
             return cached
 
     parsed = _parse_typescript_repo_uncached(repo)
     if ctx is not None:
-        ctx.js_ts_parsed_files[cache_key] = parsed
+        ctx.parsed_by_language.setdefault("typescript", {})[cache_key] = parsed
     return parsed
 
 
@@ -26,7 +26,7 @@ def _parse_typescript_repo_uncached(repo: RepoSnapshot) -> dict[str, JsonObject]
     parser_path = Path(__file__).with_name("ts_parser.mjs")
     payload = {
         "repoRoot": str(repo.root),
-        "files": [str(path.relative_to(repo.root)) for path in repo.typescript_files],
+        "files": [str(path.relative_to(repo.root)) for path in repo.files_by_language.get("typescript", ())],
     }
     try:
         result = subprocess.run(
