@@ -7,14 +7,14 @@ from typing import Callable, Protocol
 
 from source.kg.core.models import Coverage, Entity, EvidenceDerivationClass, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.extraction.file_formats.channel_normalization import (
+from source.kg.file_formats._shared.channel_normalization import (
     NormalizedChannel,
     normalize_sns_arn,
     normalize_sqs_arn,
     normalize_sqs_queue_name,
     normalize_sqs_url,
 )
-from source.kg.extraction.file_formats.common import event_channel_entity
+from source.kg.file_formats._shared.common import event_channel_entity
 from source.kg.extraction.python.dataflow import (
     LiteralIndex,
     ResolvedValue,

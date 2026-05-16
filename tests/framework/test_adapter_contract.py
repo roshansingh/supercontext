@@ -11,6 +11,7 @@ from source.kg.core.repo_source import discover_repo
 from source.kg.extraction.adapters import REGISTERED_ADAPTERS
 from source.kg.extraction.framework.adapter import Adapter, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.runner import run_adapters
+from source.kg.file_formats import file_format_adapters
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "adapters"
@@ -21,16 +22,12 @@ RESERVED_FIXTURE_NAMES = {"expected.json", "expected_coverage.json"}
 class AdapterContractTest(unittest.TestCase):
     def test_required_split_adapters_have_fixture_directories(self) -> None:
         fixture_names = {path.name for path in FIXTURE_ROOT.iterdir() if path.is_dir()}
-        required_adapters = {
-            adapter.capability.name
-            for adapter in REGISTERED_ADAPTERS
-            if adapter.capability.name not in LEGACY_ADAPTER_NAMES
-        }
+        required_adapters = {adapter.capability.name for adapter in _contract_adapters()}
 
         self.assertEqual(required_adapters - fixture_names, set())
 
     def test_adapter_fixture_contracts(self) -> None:
-        adapters = {adapter.capability.name: adapter for adapter in REGISTERED_ADAPTERS}
+        adapters = {adapter.capability.name: adapter for adapter in _contract_adapters()}
         for fixture_dir in sorted(path for path in FIXTURE_ROOT.iterdir() if path.is_dir()):
             with self.subTest(adapter=fixture_dir.name):
                 adapter = adapters.get(fixture_dir.name)
@@ -96,6 +93,14 @@ def _copy_fixture_files(fixture_dir: Path, root: Path) -> None:
         target = root / source.relative_to(fixture_dir)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+
+
+def _contract_adapters() -> tuple[Adapter, ...]:
+    return tuple(
+        adapter
+        for adapter in (*REGISTERED_ADAPTERS, *file_format_adapters())
+        if adapter.capability.name not in LEGACY_ADAPTER_NAMES
+    )
 
 
 def _load_json_object(path: Path) -> dict[str, object]:
