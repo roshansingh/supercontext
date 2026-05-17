@@ -14,6 +14,7 @@ from source.kg.languages.known_stacks import load_known_stacks
 from source.kg.languages.python.extractors.extractor_adapter import PYTHON_AST_ADAPTER
 from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
+from source.kg.languages.python.opportunities import HttpClientOpportunityDetector
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ class PythonLanguageSupport:
         return {}
 
     def opportunity_detectors(self) -> tuple[Any, ...]:
-        return ()
+        return (HttpClientOpportunityDetector(),)
 
     def package_resolver(self) -> Any | None:
         return None

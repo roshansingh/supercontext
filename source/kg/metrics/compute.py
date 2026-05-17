@@ -16,6 +16,7 @@ from source.kg.core.store import read_jsonl
 from source.kg.extraction.framework.allowlists import SUPPORTED_FACT_PREDICATES
 from source.kg.metrics.config import MetricsConfig, load_metrics_config
 from source.kg.metrics.dimension import DimensionAssignment, classify_repo
+from source.kg.metrics.opportunity import Opportunity
 from source.kg.metrics.types import CellMetrics, MetricValue
 
 
@@ -52,6 +53,13 @@ class _MetricContext:
     scoped_entities: tuple[JsonObject, ...]
     scoped_facts: tuple[JsonObject, ...]
     scoped_evidence: tuple[JsonObject, ...]
+    scoped_opportunities: tuple["_ScopedOpportunity", ...]
+
+
+@dataclass(frozen=True)
+class _ScopedOpportunity:
+    opportunity: Opportunity
+    scope_keys: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,7 @@ def compute_all(
     cells = assignments or (DimensionAssignment("unknown", ".", tuple(), "no-dimension-detected", "1"),)
     repo_name = _repo_name(snapshot.manifest)
     commit_sha_set = _commit_sha_set(snapshot.manifest)
+    opportunities = _snapshot_opportunities(snapshot)
 
     results: list[CellMetrics] = []
     for assignment in cells:
@@ -88,6 +97,7 @@ def compute_all(
             dimension,
             dimension_files,
             expected_repos,
+            opportunities,
             is_unclassified_cell=not has_assignments,
         )
         metric_values = {
@@ -166,6 +176,7 @@ def _build_context(
     dimension: str | None,
     dimension_files: frozenset[str] | None,
     expected_repos: int | None,
+    opportunities: tuple[_ScopedOpportunity, ...],
     is_unclassified_cell: bool,
 ) -> _MetricContext:
     evidence = _scope_evidence(snapshot.evidence, dimension_files)
@@ -196,6 +207,11 @@ def _build_context(
     )
     if dimension_files is not None and not scoped_facts:
         scoped_facts = tuple(fact for fact in snapshot.facts if str(fact.get("fact_id")) in evidence_target_ids)
+    scoped_opportunities = tuple(
+        opportunity
+        for opportunity in opportunities
+        if dimension_files is None or opportunity.scope_keys.intersection(dimension_files)
+    )
     return _MetricContext(
         snapshot=snapshot,
         config=config,
@@ -206,6 +222,7 @@ def _build_context(
         scoped_entities=scoped_entities,
         scoped_facts=scoped_facts,
         scoped_evidence=evidence,
+        scoped_opportunities=scoped_opportunities,
     )
 
 
@@ -227,13 +244,13 @@ def _compute_metric(metric_name: str, context: _MetricContext, *, fleet_dir: Pat
     if metric_name == "M_freshness":
         return _m_freshness(context)
     if metric_name == "M_extractor_opportunity":
-        return MetricValue(0.0, "partial", "no opportunity detectors implemented in PR-1")
+        return _m_extractor_opportunity(context)
     if metric_name == "M_evidence_grounding":
         return _m_evidence_grounding(context)
     if metric_name == "M_meta_coverage":
         return _m_meta_coverage(context)
     if metric_name == "M_silent_gap":
-        return MetricValue(0.0, "partial", "no opportunity detectors implemented in PR-1")
+        return _m_silent_gap(context)
     if metric_name == "M_trust_mix":
         return _m_trust_mix(context)
     if metric_name == "M_useful_edge":
@@ -300,6 +317,29 @@ def _m_freshness(context: _MetricContext) -> MetricValue:
     return MetricValue(fresh / parsed, "usable")
 
 
+def _m_extractor_opportunity(context: _MetricContext) -> MetricValue:
+    if not context.scoped_opportunities:
+        return MetricValue(None, "n_a", "no detected opportunities")
+    covered = sum(
+        1
+        for opportunity in context.scoped_opportunities
+        if _fact_covers_opportunity(context, opportunity)
+    )
+    return MetricValue(covered / len(context.scoped_opportunities), "usable")
+
+
+def _m_silent_gap(context: _MetricContext) -> MetricValue:
+    if not context.scoped_opportunities:
+        return MetricValue(None, "n_a", "no detected opportunities")
+    silent = sum(
+        1
+        for opportunity in context.scoped_opportunities
+        if not _fact_covers_opportunity(context, opportunity)
+        and not _coverage_covers_opportunity(context, opportunity)
+    )
+    return MetricValue(silent / len(context.scoped_opportunities), "usable")
+
+
 def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
     if not context.scoped_facts:
         return MetricValue(None, "n_a", "no source-backed facts")
@@ -316,6 +356,57 @@ def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
     }
     value = len(grounded_fact_ids) / len(fact_ids)
     return MetricValue(value, "usable")
+
+
+def _fact_covers_opportunity(context: _MetricContext, scoped_opportunity: _ScopedOpportunity) -> bool:
+    opportunity = scoped_opportunity.opportunity
+    fact_ids = {
+        str(fact.get("fact_id"))
+        for fact in context.scoped_facts
+        if fact.get("predicate") == opportunity.predicate
+    }
+    if not fact_ids:
+        return False
+    for row in context.scoped_evidence:
+        if row.get("target_type") != "fact" or str(row.get("target_id")) not in fact_ids:
+            continue
+        bytes_ref = row.get("bytes_ref")
+        if _bytes_ref_scope_key(bytes_ref) not in scoped_opportunity.scope_keys:
+            continue
+        if _line_covers(bytes_ref, opportunity.line):
+            return True
+    return False
+
+
+def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _ScopedOpportunity) -> bool:
+    opportunity = scoped_opportunity.opportunity
+    for row in context.snapshot.coverage:
+        if row.get("predicate") != opportunity.predicate:
+            continue
+        # M_silent_gap measures absence of graph facts and absence of explicit
+        # coverage. An uninstrumented row is a loud refusal, not a silent gap.
+        scope_ref = row.get("scope_ref")
+        if not isinstance(scope_ref, dict):
+            continue
+        path = scope_ref.get("file_path", scope_ref.get("path"))
+        if path != opportunity.path:
+            continue
+        line = scope_ref.get("line")
+        if line is None or line == opportunity.line:
+            return True
+    return False
+
+
+def _line_covers(bytes_ref: Any, line: int) -> bool:
+    if not isinstance(bytes_ref, dict):
+        return False
+    line_start = bytes_ref.get("line_start")
+    line_end = bytes_ref.get("line_end")
+    if not isinstance(line_start, int) or isinstance(line_start, bool):
+        return False
+    if not isinstance(line_end, int) or isinstance(line_end, bool):
+        return False
+    return line_start <= line <= line_end
 
 
 def _m_meta_coverage(context: _MetricContext) -> MetricValue:
@@ -553,6 +644,37 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
         )
         for dimension, files in sorted(files_by_dimension.items())
     )
+
+
+def _snapshot_opportunities(snapshot: _Snapshot) -> tuple[_ScopedOpportunity, ...]:
+    opportunities: list[_ScopedOpportunity] = []
+    for repo_ref in _manifest_repo_refs(snapshot.manifest):
+        root = Path(repo_ref.path).expanduser()
+        if not root.exists():
+            continue
+        try:
+            repo = discover_repo(root)
+        except OSError:
+            continue
+        for language in _registered_languages():
+            for detector in language.opportunity_detectors():
+                for opportunity in detector.detect(repo):
+                    opportunities.append(
+                        _ScopedOpportunity(
+                            opportunity=opportunity,
+                            scope_keys=frozenset(
+                                _file_scope_key(repo_identity_key, repo_ref.commit_sha, opportunity.path)
+                                for repo_identity_key in repo_ref.identity_keys
+                            ),
+                        )
+                    )
+    return tuple(opportunities)
+
+
+def _registered_languages():
+    from source.kg.languages import REGISTERED_LANGUAGES
+
+    return REGISTERED_LANGUAGES
 
 
 def _manifest_repo_identity_key(tenant_id: str, owner: Any, name: str) -> str:

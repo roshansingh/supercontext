@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from source.kg.build.pipeline import build_kg
+from source.kg.core.models import Entity, Evidence, Fact
+from source.kg.core.repo_source import discover_repo
+from source.kg.core.store import JsonlKgStore
+from source.kg.languages.python.language import LANGUAGE_SUPPORT as PYTHON_SUPPORT
+from source.kg.languages.python.opportunities import HttpClientOpportunityDetector
+from source.kg.metrics import compute_all
+
+
+class PythonHttpClientOpportunityTest(unittest.TestCase):
+    def test_detector_finds_common_http_client_shapes_without_shadowed_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import requests as rq\n"
+                "from httpx import get as http_get, Client\n"
+                "import aiohttp\n\n"
+                "def shadowed(requests):\n"
+                "    requests.get('https://shadowed.example')\n\n"
+                "def call():\n"
+                "    rq.post('https://example.com/orders')\n"
+                "    http_get('/health')\n"
+                "    client = Client()\n"
+                "    client.get('/users')\n"
+                "    with aiohttp.ClientSession() as session:\n"
+                "        session.put('/events')\n"
+                "    rq = object()\n"
+                "    rq.get('/not-http-client')\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            opportunities = HttpClientOpportunityDetector().detect(repo)
+
+        self.assertEqual([row.predicate for row in opportunities], ["CALLS_ENDPOINT"] * 4)
+        self.assertEqual([row.line for row in opportunities], [9, 10, 12, 14])
+        self.assertEqual(
+            [row.source_kind for row in opportunities],
+            ["requests.post", "httpx.get", "httpx.client.get", "aiohttp.client.put"],
+        )
+
+    def test_python_language_exposes_http_client_opportunity_detector(self) -> None:
+        detectors = PYTHON_SUPPORT.opportunity_detectors()
+
+        self.assertEqual([type(detector).__name__ for detector in detectors], ["HttpClientOpportunityDetector"])
+
+    def test_metrics_report_uncovered_http_client_opportunity_as_silent_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname = 'repo'\ndependencies = ['fastapi', 'requests']\n",
+                encoding="utf-8",
+            )
+            (repo / "app.py").write_text("import requests\nrequests.get('https://example.com')\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+
+            build_kg(repo, snapshot)
+            backend = _backend_cell(compute_all(snapshot, expected_repos=1))
+
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].state, "usable")
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 0.0)
+        self.assertEqual(backend.metric_values["M_silent_gap"].state, "usable")
+        self.assertEqual(backend.metric_values["M_silent_gap"].value, 1.0)
+
+    def test_metrics_count_fact_backed_http_client_opportunity_as_covered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname = 'repo'\ndependencies = ['fastapi', 'requests']\n",
+                encoding="utf-8",
+            )
+            (repo / "app.py").write_text("import requests\nrequests.get('/health')\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            endpoint = Entity(
+                "Endpoint",
+                {
+                    "tenant_id": "default",
+                    "repo": "repo",
+                    "protocol": "http",
+                    "method": "GET",
+                    "path": "/health",
+                    "host": None,
+                },
+            )
+            fact = Fact("CALLS_ENDPOINT", service.entity_id, endpoint.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[service, endpoint],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"predicate": "CALLS_ENDPOINT"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "app.py",
+                            "line_start": 2,
+                            "line_end": 2,
+                        },
+                    )
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "owner": "acme",
+                    "tenant_id": "default",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _backend_cell(compute_all(snapshot, expected_repos=1))
+
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 1.0)
+        self.assertEqual(backend.metric_values["M_silent_gap"].value, 0.0)
+
+
+def _backend_cell(cells):
+    for cell in cells:
+        if cell.dimension == "backend":
+            return cell
+    raise AssertionError(f"missing backend cell: {cells}")
+
+
+if __name__ == "__main__":
+    unittest.main()
