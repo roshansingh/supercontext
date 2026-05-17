@@ -36,7 +36,8 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 1.0)
             self.assertEqual(backend.metric_values["M_extractor_opportunity"].state, "partial")
             self.assertEqual(backend.metric_values["M_useful_edge"].state, "partial")
-            self.assertEqual(backend.metric_values["M_identity_health"].state, "partial")
+            self.assertEqual(backend.metric_values["M_identity_health"].state, "usable")
+            self.assertEqual(backend.metric_values["M_identity_health"].value, 1.0)
 
     def test_evidence_grounding_counts_scoped_facts_without_evidence_as_ungrounded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -527,10 +528,10 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 0.0)
 
-    def test_hash_urn_shape_matches_current_entity_urn(self) -> None:
+    def test_per_kind_urn_shape_no_longer_counts_as_hash_urn(self) -> None:
         entity = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
 
-        self.assertTrue(_looks_like_hash_urn(entity.urn))
+        self.assertFalse(_looks_like_hash_urn(entity.urn))
 
 
 def _write_backend_snapshot(
@@ -545,7 +546,10 @@ def _write_backend_snapshot(
     snapshot = root / "snapshot"
     service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
     module = Entity("CodeModule", {"tenant_id": "default", "repo": "repo", "module": "app"})
-    symbol = Entity("CodeSymbol", {"tenant_id": "default", "repo": "repo", "module": "app", "qualname": "run"})
+    symbol = Entity(
+        "CodeSymbol",
+        {"tenant_id": "default", "repo": "repo", "module": "app", "qualname": "run", "symbol_kind": "function"},
+    )
     fact = Fact("IMPLEMENTS", module.entity_id, service.entity_id)
     ungrounded_fact = Fact("DEFINED_IN", symbol.entity_id, module.entity_id)
     evidence = [

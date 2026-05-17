@@ -402,7 +402,7 @@ def _m_identity_health(context: _MetricContext) -> MetricValue:
         urn = entity.get("urn")
         if isinstance(urn, str) and not _looks_like_hash_urn(urn):
             healthy += 1
-    return MetricValue(healthy / len(context.scoped_entities), "partial", "per-kind URNs land in Debate 19 PR-4")
+    return MetricValue(healthy / len(context.scoped_entities), "usable")
 
 
 def _cell_score(metric_values: dict[str, MetricValue]) -> float | None:
@@ -780,8 +780,6 @@ def _canonical_status_weight(status: str) -> float:
 
 
 def _looks_like_hash_urn(urn: str) -> bool:
-    # Current Entity.urn uses stable_hash(identity), whose output is 24 hex
-    # characters. PR-4 replaces this with per-kind URN templates.
     tail = urn.rsplit("/", 1)[-1]
     return len(tail) == 24 and all(char in "0123456789abcdef" for char in tail)
 
