@@ -113,6 +113,32 @@ class CoverageMetricsDeltaTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "value must be numeric"):
                 compare_metrics(before, after)
 
+    def test_compare_rejects_missing_persisted_top_level_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            before = root / "before"
+            after = root / "after"
+            malformed = _record(value=0.25, state="usable")
+            malformed.pop("built_at")
+            _write_metrics(before, malformed)
+            _write_metrics(after, _record(value=0.75, state="usable"))
+
+            with self.assertRaisesRegex(ValueError, "missing required field\\(s\\): built_at"):
+                compare_metrics(before, after)
+
+    def test_compare_rejects_malformed_commit_sha_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            before = root / "before"
+            after = root / "after"
+            malformed = _record(value=0.25, state="usable")
+            malformed["commit_sha_set"] = []
+            _write_metrics(before, malformed)
+            _write_metrics(after, _record(value=0.75, state="usable"))
+
+            with self.assertRaisesRegex(ValueError, "commit_sha_set must be a non-empty list"):
+                compare_metrics(before, after)
+
 
 def _write_metrics(snapshot: Path, *records: dict) -> None:
     snapshot.mkdir()

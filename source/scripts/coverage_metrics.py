@@ -193,15 +193,13 @@ def _read_metrics_file(snapshot_dir: Path) -> tuple[JsonObject, ...]:
 def _metrics_by_key(rows: tuple[JsonObject, ...], snapshot_dir: Path) -> dict[tuple[str, str, str], JsonObject]:
     result: dict[tuple[str, str, str], JsonObject] = {}
     for index, row in enumerate(rows):
+        _validate_metric_record(snapshot_dir, index, row)
         repo = row.get("repo")
         dimension = row.get("dimension")
         metric_values = row.get("metric_values")
-        if not isinstance(repo, str) or not repo:
-            raise ValueError(f"{snapshot_dir / METRICS_FILENAME}: row {index + 1} repo must be a non-empty string")
-        if dimension is not None and (not isinstance(dimension, str) or not dimension):
-            raise ValueError(f"{snapshot_dir / METRICS_FILENAME}: row {index + 1} dimension must be null or a non-empty string")
-        if not isinstance(metric_values, dict) or not metric_values:
-            raise ValueError(f"{snapshot_dir / METRICS_FILENAME}: row {index + 1} metric_values must be a non-empty object")
+        assert isinstance(repo, str)
+        assert dimension is None or isinstance(dimension, str)
+        assert isinstance(metric_values, dict)
         for metric_name, metric_value in metric_values.items():
             if not isinstance(metric_name, str) or not metric_name:
                 raise ValueError(f"{snapshot_dir / METRICS_FILENAME}: row {index + 1} metric name must be a non-empty string")
@@ -213,6 +211,51 @@ def _metrics_by_key(rows: tuple[JsonObject, ...], snapshot_dir: Path) -> dict[tu
                 raise ValueError(f"{snapshot_dir / METRICS_FILENAME}: duplicate metric key {key!r}")
             result[key] = row
     return result
+
+
+def _validate_metric_record(snapshot_dir: Path, row_index: int, row: JsonObject) -> None:
+    path = snapshot_dir / METRICS_FILENAME
+    row_label = f"{path}: row {row_index + 1}"
+    required_keys = {
+        "repo",
+        "dimension",
+        "metric_values",
+        "cell_score",
+        "contract_flags",
+        "commit_sha_set",
+        "built_at",
+    }
+    missing_keys = sorted(required_keys - row.keys())
+    if missing_keys:
+        raise ValueError(f"{row_label} missing required field(s): {', '.join(missing_keys)}")
+
+    repo = row.get("repo")
+    dimension = row.get("dimension")
+    metric_values = row.get("metric_values")
+    cell_score = row.get("cell_score")
+    contract_flags = row.get("contract_flags")
+    commit_sha_set = row.get("commit_sha_set")
+    built_at = row.get("built_at")
+
+    if not isinstance(repo, str) or not repo:
+        raise ValueError(f"{row_label} repo must be a non-empty string")
+    if dimension is not None and (not isinstance(dimension, str) or not dimension):
+        raise ValueError(f"{row_label} dimension must be null or a non-empty string")
+    if not isinstance(metric_values, dict) or not metric_values:
+        raise ValueError(f"{row_label} metric_values must be a non-empty object")
+    if cell_score is not None:
+        if not isinstance(cell_score, (int, float)) or isinstance(cell_score, bool):
+            raise ValueError(f"{row_label} cell_score must be numeric or null")
+        if not 0 <= float(cell_score) <= 1:
+            raise ValueError(f"{row_label} cell_score must be between 0 and 1")
+    if not isinstance(contract_flags, list) or not all(isinstance(flag, str) for flag in contract_flags):
+        raise ValueError(f"{row_label} contract_flags must be a list of strings")
+    if not isinstance(commit_sha_set, list) or not commit_sha_set or not all(
+        isinstance(commit_sha, str) and commit_sha for commit_sha in commit_sha_set
+    ):
+        raise ValueError(f"{row_label} commit_sha_set must be a non-empty list of non-empty strings")
+    if not isinstance(built_at, str) or not built_at:
+        raise ValueError(f"{row_label} built_at must be a non-empty string")
 
 
 def _metric_payload(row: JsonObject, metric: str) -> JsonObject:
