@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 import unittest
 
 import yaml
@@ -51,6 +52,23 @@ class MetricsYamlShapeTest(unittest.TestCase):
         for config in data["tools"].values():
             for predicate in config["predicates"]:
                 self.assertIn(predicate, SUPPORTED_FACT_PREDICATES)
+
+    def test_trust_weights_reject_invalid_ratio_values(self) -> None:
+        invalid_values = (True, -0.1, 1.1)
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    config = Path(tmpdir) / "metrics.yaml"
+                    config.write_text(
+                        "enabled_metrics:\n"
+                        "  - M_trust_mix\n"
+                        "trust_weights:\n"
+                        f"  deterministic_static: {str(value).lower()}\n",
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaisesRegex(ValueError, "trust_weights.deterministic_static"):
+                        load_metrics_config(config)
 
 
 if __name__ == "__main__":

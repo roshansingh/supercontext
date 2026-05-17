@@ -85,8 +85,10 @@ def _float_mapping(path: Path, field: str, value: Any) -> dict[str, float]:
     for key, raw_weight in value.items():
         if not isinstance(key, str) or not key:
             raise ValueError(f"{path}: {field} keys must be non-empty strings")
-        if not isinstance(raw_weight, (int, float)):
+        if not isinstance(raw_weight, (int, float)) or isinstance(raw_weight, bool):
             raise ValueError(f"{path}: {field}.{key} must be numeric")
+        if raw_weight < 0 or raw_weight > 1:
+            raise ValueError(f"{path}: {field}.{key} must be between 0 and 1")
         if key not in SUPPORTED_TRUST_WEIGHT_KEYS:
             raise ValueError(f"{path}: {field}.{key} is not a supported evidence derivation class")
         result[key] = float(raw_weight)

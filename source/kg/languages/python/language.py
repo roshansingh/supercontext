@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -51,7 +52,7 @@ class PythonLanguageSupport:
         return None
 
     def dimension_rules(self) -> Mapping[str, Any]:
-        return dict(_dimension_rules())
+        return deepcopy(_dimension_rules())
 
     def useful_edges(self) -> Mapping[str, Any]:
         return {}
