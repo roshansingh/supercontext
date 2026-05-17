@@ -1,0 +1,20 @@
+version: 1
+rules:
+  - id: typescript-frontend-framework
+    dimension: frontend
+    packages:
+      - next
+      - react
+      - svelte
+      - vue
+  - id: typescript-backend-framework
+    dimension: backend
+    packages:
+      - "@nestjs/core"
+      - express
+      - fastify
+      - koa
+  - id: typescript-shared-library
+    dimension: shared-lib
+    manifest_files:
+      - package.json

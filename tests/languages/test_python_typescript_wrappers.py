@@ -24,7 +24,9 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertEqual(PYTHON_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
         self.assertEqual(PYTHON_SUPPORT.opportunity_detectors(), ())
         self.assertIsNone(PYTHON_SUPPORT.package_resolver())
-        self.assertEqual(PYTHON_SUPPORT.dimension_rules(), {})
+        python_rules = PYTHON_SUPPORT.dimension_rules()
+        self.assertEqual(python_rules["version"], 1)
+        self.assertIn("backend", {rule["dimension"] for rule in python_rules["rules"]})
         self.assertEqual(PYTHON_SUPPORT.useful_edges(), {})
 
     def test_typescript_wrapper_exposes_existing_adapter_names_and_javascript_roots(self) -> None:
@@ -39,7 +41,9 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertEqual(TYPESCRIPT_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
         self.assertEqual(TYPESCRIPT_SUPPORT.opportunity_detectors(), ())
         self.assertIsNone(TYPESCRIPT_SUPPORT.package_resolver())
-        self.assertEqual(TYPESCRIPT_SUPPORT.dimension_rules(), {})
+        typescript_rules = TYPESCRIPT_SUPPORT.dimension_rules()
+        self.assertEqual(typescript_rules["version"], 1)
+        self.assertIn("frontend", {rule["dimension"] for rule in typescript_rules["rules"]})
         self.assertEqual(TYPESCRIPT_SUPPORT.useful_edges(), {})
 
     def test_typescript_matcher_preserves_declaration_file_exclusion(self) -> None:

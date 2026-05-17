@@ -1,0 +1,40 @@
+version: 1
+rules:
+  - id: python-backend-framework
+    dimension: backend
+    imports:
+      - django
+      - fastapi
+      - flask
+    packages:
+      - django
+      - fastapi
+      - flask
+  - id: python-ai-ml-framework
+    dimension: ai-ml
+    imports:
+      - sklearn
+      - tensorflow
+      - torch
+      - transformers
+    packages:
+      - scikit-learn
+      - tensorflow
+      - torch
+      - transformers
+  - id: python-data-pipeline-framework
+    dimension: data-pipeline
+    imports:
+      - airflow
+      - dagster
+      - prefect
+    packages:
+      - apache-airflow
+      - dagster
+      - prefect
+  - id: python-shared-library
+    dimension: shared-lib
+    manifest_files:
+      - pyproject.toml
+      - setup.cfg
+      - setup.py
