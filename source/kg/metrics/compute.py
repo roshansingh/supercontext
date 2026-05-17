@@ -134,7 +134,8 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
         if not root.exists():
             continue
         try:
-            assignments.extend(classify_repo(discover_repo(root)))
+            repo = discover_repo(root)
+            assignments.extend(_qualify_assignment_files(assignment, repo.name) for assignment in classify_repo(repo))
         except (OSError, ValueError):
             continue
     return _merge_assignments(assignments)
@@ -193,7 +194,7 @@ def _scope_evidence(evidence: tuple[JsonObject, ...], dimension_files: frozenset
     return tuple(
         row
         for row in evidence
-        if _bytes_ref_path(row.get("bytes_ref")) in dimension_files
+        if _bytes_ref_scope_key(row.get("bytes_ref")) in dimension_files
     )
 
 
@@ -239,7 +240,11 @@ def _m_dimension_classification(context: _MetricContext) -> MetricValue:
     manifest_counts = counts.get("files_by_language")
     if not isinstance(manifest_counts, dict):
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
-    total = sum(value for value in manifest_counts.values() if isinstance(value, int))
+    total = 0
+    for language, value in manifest_counts.items():
+        if not isinstance(language, str) or not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return MetricValue(None, "n_a", "malformed manifest counts.files_by_language denominator")
+        total += value
     if total <= 0:
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
     claimed = len(context.dimension_files or ())
@@ -463,6 +468,20 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
     )
 
 
+def _qualify_assignment_files(assignment: DimensionAssignment, repo_name: str) -> DimensionAssignment:
+    return DimensionAssignment(
+        dimension=assignment.dimension,
+        path_prefix=assignment.path_prefix,
+        files=tuple(_file_scope_key(repo_name, path) for path in assignment.files),
+        rule_id=assignment.rule_id,
+        rule_version=assignment.rule_version,
+    )
+
+
+def _file_scope_key(repo_name: str, path: str) -> str:
+    return f"{repo_name}:{path}"
+
+
 def _repo_name(manifest: JsonObject) -> str:
     name = manifest.get("repo_name")
     if isinstance(name, str) and name:
@@ -504,6 +523,16 @@ def _bytes_ref_path(value: Any) -> str | None:
         return None
     path = value.get("path")
     return path if isinstance(path, str) and path else None
+
+
+def _bytes_ref_scope_key(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    repo = value.get("repo")
+    path = value.get("path")
+    if not isinstance(repo, str) or not repo or not isinstance(path, str) or not path:
+        return None
+    return _file_scope_key(repo, path)
 
 
 @cache

@@ -207,6 +207,98 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             self.assertEqual(cell.metric_values["M_dimension_classification"].state, "n_a")
 
+    def test_partially_malformed_file_count_denominator_is_na(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "abc",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1, "typescript": "100"}},
+                },
+            )
+
+            cell = compute_all(snapshot, expected_repos=1)[0]
+
+            self.assertEqual(cell.metric_values["M_dimension_classification"].state, "n_a")
+            self.assertEqual(
+                cell.metric_values["M_dimension_classification"].reason,
+                "malformed manifest counts.files_by_language denominator",
+            )
+
+    def test_dimension_scoping_uses_repo_and_path_for_multi_repo_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            api_repo = root / "api"
+            ml_repo = root / "ml"
+            api_repo.mkdir()
+            ml_repo.mkdir()
+            (api_repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            (ml_repo / "app.py").write_text("import torch\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+
+            api_module = Entity("CodeModule", {"tenant_id": "default", "repo": "api", "module": "app"})
+            api_service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "api", "slug": "api"})
+            api_fact = Fact("IMPLEMENTS", api_module.entity_id, api_service.entity_id)
+            ml_module = Entity("CodeModule", {"tenant_id": "default", "repo": "ml", "module": "app"})
+            ml_service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "ml", "slug": "ml"})
+            ml_fact = Fact("IMPLEMENTS", ml_module.entity_id, ml_service.entity_id)
+
+            JsonlKgStore(snapshot).write(
+                entities=[api_module, api_service, ml_module, ml_service],
+                facts=[api_fact, ml_fact],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=api_module.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "api-module"},
+                        bytes_ref={"repo": "api", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=api_fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "api-implements"},
+                        bytes_ref={"repo": "api", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="entity",
+                        target_id=ml_module.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "ml-module"},
+                        bytes_ref={"repo": "ml", "commit_sha": "def", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_count": 2,
+                    "repos": [
+                        {"repo_path": str(api_repo), "repo_name": "api", "commit_sha": "abc"},
+                        {"repo_path": str(ml_repo), "repo_name": "ml", "commit_sha": "def"},
+                    ],
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 2}},
+                },
+            )
+
+            backend = _cell(compute_all(snapshot, expected_repos=2), "backend")
+
+            self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 1.0)
+
     def test_hash_urn_shape_matches_current_entity_urn(self) -> None:
         entity = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
 
