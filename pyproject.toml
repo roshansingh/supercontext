@@ -29,6 +29,7 @@ ui = ["streamlit>=1.30"]
 llm = ["openai>=1.0"]
 agent = ["claude-agent-sdk"]
 dev = ["build>=1.2"]
+dotnet = ["tree-sitter>=0.20", "tree-sitter-c-sharp>=0.20"]
 
 [project.scripts]
 bettercontext-build-kg = "source.scripts.build_kg:main"
