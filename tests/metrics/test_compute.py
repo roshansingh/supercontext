@@ -97,8 +97,8 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                 manifest={
                     "repo_count": 2,
                     "repos": [
-                        {"repo_path": str(api_repo), "repo_name": "api", "commit_sha": "abc"},
-                        {"repo_path": str(ui_repo), "repo_name": "ui", "commit_sha": "def"},
+                        {"repo_path": str(api_repo), "repo_name": "api", "owner": root.name, "commit_sha": "working-tree"},
+                        {"repo_path": str(ui_repo), "repo_name": "ui", "owner": root.name, "commit_sha": "working-tree"},
                     ],
                     "built_at": "2026-05-17T00:00:00+00:00",
                     "counts": {"files_by_language": {"python": 1, "typescript": 1}},
@@ -108,6 +108,28 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             cells = compute_all(snapshot, expected_repos=2)
 
             self.assertGreaterEqual({cell.dimension for cell in cells}, {"backend", "frontend"})
+
+    def test_inventory_fails_closed_on_malformed_repo_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_count": 1,
+                    "repos": [{}],
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            cell = compute_all(snapshot, expected_repos=1)[0]
+
+            self.assertEqual(cell.metric_values["M_inventory"].state, "n_a")
+            self.assertEqual(cell.metric_values["M_inventory"].reason, "missing actual repo count in manifest")
 
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -264,7 +286,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"entity": "api-module"},
-                        bytes_ref={"repo": "api", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": "api", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                     Evidence(
                         target_type="fact",
@@ -272,7 +294,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"fact": "api-implements"},
-                        bytes_ref={"repo": "api", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": "api", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                     Evidence(
                         target_type="entity",
@@ -280,15 +302,15 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"entity": "ml-module"},
-                        bytes_ref={"repo": "ml", "commit_sha": "def", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": "ml", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                 ],
                 coverage=[],
                 manifest={
                     "repo_count": 2,
                     "repos": [
-                        {"repo_path": str(api_repo), "repo_name": "api", "commit_sha": "abc"},
-                        {"repo_path": str(ml_repo), "repo_name": "ml", "commit_sha": "def"},
+                        {"repo_path": str(api_repo), "repo_name": "api", "owner": root.name, "commit_sha": "working-tree"},
+                        {"repo_path": str(ml_repo), "repo_name": "ml", "owner": root.name, "commit_sha": "working-tree"},
                     ],
                     "built_at": "2026-05-17T00:00:00+00:00",
                     "counts": {"files_by_language": {"python": 2}},
@@ -322,7 +344,7 @@ def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False
             derivation_class="deterministic_static",
             source_system="test",
             source_ref={"entity": "module"},
-            bytes_ref={"repo": "repo", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+            bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
         ),
         Evidence(
             target_type="entity",
@@ -330,7 +352,7 @@ def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False
             derivation_class="deterministic_static",
             source_system="test",
             source_ref={"entity": "symbol"},
-            bytes_ref={"repo": "repo", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+            bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
         ),
         Evidence(
             target_type="fact",
@@ -338,7 +360,7 @@ def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False
             derivation_class="deterministic_static",
             source_system="test",
             source_ref={"fact": "implements"},
-            bytes_ref={"repo": "repo", "commit_sha": "abc", "path": "app.py", "line_start": 1, "line_end": 1},
+            bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
         ),
     ]
     JsonlKgStore(snapshot).write(
@@ -349,7 +371,7 @@ def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False
         manifest={
             "repo_path": str(repo),
             "repo_name": "repo",
-            "commit_sha": "abc",
+            "commit_sha": "working-tree",
             "built_at": "2026-05-17T00:00:00+00:00",
             "counts": {"files_by_language": {"python": 1}},
         },

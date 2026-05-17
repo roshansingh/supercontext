@@ -47,6 +47,7 @@ class _MetricContext:
     config: MetricsConfig
     dimension: str | None
     dimension_files: frozenset[str] | None
+    is_unclassified_cell: bool
     expected_repos: int | None
     scoped_entities: tuple[JsonObject, ...]
     scoped_facts: tuple[JsonObject, ...]
@@ -65,6 +66,7 @@ def compute_all(
     snapshot = _read_snapshot(Path(snapshot_dir))
     config = load_metrics_config(Path(config_path) if config_path is not None else None)
     assignments = _dimension_assignments(snapshot)
+    has_assignments = bool(assignments)
     cells = assignments or (DimensionAssignment("unknown", ".", tuple(), "no-dimension-detected", "1"),)
     repo_name = _repo_name(snapshot.manifest)
     commit_sha_set = _commit_sha_set(snapshot.manifest)
@@ -72,8 +74,15 @@ def compute_all(
     results: list[CellMetrics] = []
     for assignment in cells:
         dimension = None if assignment.dimension == "unknown" else assignment.dimension
-        dimension_files = frozenset(assignment.files)
-        context = _build_context(snapshot, config, dimension, dimension_files, expected_repos)
+        dimension_files = None if assignment.dimension == "unknown" else frozenset(assignment.files)
+        context = _build_context(
+            snapshot,
+            config,
+            dimension,
+            dimension_files,
+            expected_repos,
+            is_unclassified_cell=not has_assignments,
+        )
         metric_values = {
             metric_name: _compute_metric(metric_name, context, fleet_dir=Path(fleet_dir) if fleet_dir else None)
             for metric_name in config.enabled_metrics
@@ -135,7 +144,7 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
             continue
         try:
             repo = discover_repo(root)
-            assignments.extend(_qualify_assignment_files(assignment, repo.name) for assignment in classify_repo(repo))
+            assignments.extend(_qualify_assignment_files(assignment, repo.name, repo.commit_sha) for assignment in classify_repo(repo))
         except (OSError, ValueError):
             continue
     return _merge_assignments(assignments)
@@ -147,6 +156,7 @@ def _build_context(
     dimension: str | None,
     dimension_files: frozenset[str] | None,
     expected_repos: int | None,
+    is_unclassified_cell: bool,
 ) -> _MetricContext:
     evidence = _scope_evidence(snapshot.evidence, dimension_files)
     evidence_target_ids = {str(row.get("target_id")) for row in evidence}
@@ -181,6 +191,7 @@ def _build_context(
         config=config,
         dimension=dimension,
         dimension_files=dimension_files,
+        is_unclassified_cell=is_unclassified_cell,
         expected_repos=expected_repos,
         scoped_entities=scoped_entities,
         scoped_facts=scoped_facts,
@@ -234,6 +245,8 @@ def _m_inventory(context: _MetricContext) -> MetricValue:
 
 
 def _m_dimension_classification(context: _MetricContext) -> MetricValue:
+    if context.is_unclassified_cell:
+        return MetricValue(0.0, "usable")
     counts = context.snapshot.manifest.get("counts")
     if not isinstance(counts, dict):
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
@@ -421,15 +434,33 @@ def _contract_flags(metric_values: dict[str, MetricValue]) -> tuple[str, ...]:
 
 
 def _actual_repo_count(manifest: JsonObject) -> int | None:
+    repos = manifest.get("repos")
+    if repos is not None:
+        if not isinstance(repos, list) or not repos:
+            return None
+        for repo in repos:
+            if not _valid_manifest_repo_entry(repo, require_owner=True):
+                return None
+        return len(repos)
+
     repo_count = manifest.get("repo_count")
     if isinstance(repo_count, int) and repo_count > 0:
         return repo_count
-    repos = manifest.get("repos")
-    if isinstance(repos, list) and repos:
-        return len(repos)
-    if isinstance(manifest.get("repo_name"), str):
+
+    if _valid_single_repo_manifest(manifest):
         return 1
     return None
+
+
+def _valid_single_repo_manifest(manifest: JsonObject) -> bool:
+    return all(isinstance(manifest.get(field), str) and manifest.get(field) for field in ("repo_path", "repo_name", "commit_sha"))
+
+
+def _valid_manifest_repo_entry(value: Any, *, require_owner: bool) -> bool:
+    if not isinstance(value, dict):
+        return False
+    required = ("repo_path", "repo_name", "commit_sha", "owner") if require_owner else ("repo_path", "repo_name", "commit_sha")
+    return all(isinstance(value.get(field), str) and value.get(field) for field in required)
 
 
 def _manifest_repo_paths(manifest: JsonObject) -> tuple[str, ...]:
@@ -468,18 +499,18 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
     )
 
 
-def _qualify_assignment_files(assignment: DimensionAssignment, repo_name: str) -> DimensionAssignment:
+def _qualify_assignment_files(assignment: DimensionAssignment, repo_name: str, commit_sha: str) -> DimensionAssignment:
     return DimensionAssignment(
         dimension=assignment.dimension,
         path_prefix=assignment.path_prefix,
-        files=tuple(_file_scope_key(repo_name, path) for path in assignment.files),
+        files=tuple(_file_scope_key(repo_name, commit_sha, path) for path in assignment.files),
         rule_id=assignment.rule_id,
         rule_version=assignment.rule_version,
     )
 
 
-def _file_scope_key(repo_name: str, path: str) -> str:
-    return f"{repo_name}:{path}"
+def _file_scope_key(repo_name: str, commit_sha: str, path: str) -> str:
+    return f"{repo_name}@{commit_sha}:{path}"
 
 
 def _repo_name(manifest: JsonObject) -> str:
@@ -529,10 +560,18 @@ def _bytes_ref_scope_key(value: Any) -> str | None:
     if not isinstance(value, dict):
         return None
     repo = value.get("repo")
+    commit_sha = value.get("commit_sha")
     path = value.get("path")
-    if not isinstance(repo, str) or not repo or not isinstance(path, str) or not path:
+    if (
+        not isinstance(repo, str)
+        or not repo
+        or not isinstance(commit_sha, str)
+        or not commit_sha
+        or not isinstance(path, str)
+        or not path
+    ):
         return None
-    return _file_scope_key(repo, path)
+    return _file_scope_key(repo, commit_sha, path)
 
 
 @cache

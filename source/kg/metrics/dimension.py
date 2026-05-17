@@ -180,6 +180,8 @@ def _package_json_packages(root: Path) -> set[str]:
             data = json.loads(package_json.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if not isinstance(data, dict):
+            continue
         for field in ("dependencies", "devDependencies", "peerDependencies"):
             values = data.get(field, {})
             if isinstance(values, dict):

@@ -62,6 +62,17 @@ class DimensionClassifierTest(unittest.TestCase):
 
             self.assertNotIn("frontend", {row.dimension for row in assignments})
 
+    def test_ignores_non_object_package_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "package.json").write_text("[]\n", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "index.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+
+            assignments = classify_repo(discover_repo(root))
+
+            self.assertNotIn("frontend", {row.dimension for row in assignments})
+
 
 if __name__ == "__main__":
     unittest.main()
