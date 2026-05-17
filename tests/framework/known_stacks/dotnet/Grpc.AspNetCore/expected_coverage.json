@@ -1,0 +1,13 @@
+[
+  {
+    "predicate": "EXPOSES_ENDPOINT",
+    "state": "uninstrumented",
+    "source_system": "extraction_framework",
+    "scope_ref": {
+      "language": "dotnet",
+      "import_root": "Grpc.AspNetCore",
+      "category": "web_framework",
+      "reason": "no_adapter_for_known_stack"
+    }
+  }
+]

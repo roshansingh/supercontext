@@ -64,7 +64,11 @@ class PackagingMetadataTest(unittest.TestCase):
 
         self.assertIn("ts_parser.mjs", package_data["source.kg.languages.typescript.extractors"])
         self.assertTrue((ROOT / "source/kg/languages/typescript/extractors/ts_parser.mjs").exists())
-        for package in ("source.kg.languages.python", "source.kg.languages.typescript"):
+        for package in (
+            "source.kg.languages.python",
+            "source.kg.languages.typescript",
+            "source.kg.languages.dotnet",
+        ):
             self.assertIn("known_stacks.yaml", package_data[package])
             self.assertTrue((ROOT / Path(*package.split(".")) / "known_stacks.yaml").exists())
 

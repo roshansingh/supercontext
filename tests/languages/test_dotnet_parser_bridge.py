@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from source.kg.core.repo_source import discover_repo
+from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
+
+
+class DotnetParserBridgeTest(unittest.TestCase):
+    def test_parses_minimal_file_into_per_file_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Foo.cs").write_text(
+                "using System;\n"
+                "namespace Demo {\n"
+                "    public class Foo {\n"
+                "        public void Bar() { Console.WriteLine(\"hi\"); }\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+            ctx = ExtractionContext()
+
+            parsed = parse_dotnet_repo(repo, ctx)
+
+            self.assertIn("Foo.cs", parsed)
+            entry = parsed["Foo.cs"]
+            self.assertIn("imports", entry)
+            self.assertIn("symbols", entry)
+            self.assertIn("calls", entry)
+            self.assertIn("parse_diagnostics", entry)
+
+            import_targets = [imp["raw_target"] for imp in entry["imports"]]
+            self.assertIn("System", import_targets)
+
+            symbol_names = {sym["name"] for sym in entry["symbols"]}
+            self.assertIn("Foo", symbol_names)
+            self.assertTrue(any(name.endswith("Bar") for name in symbol_names))
+
+    def test_cache_returns_same_object_for_same_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "A.cs").write_text("class A {}\n", encoding="utf-8")
+            repo = discover_repo(root)
+            ctx = ExtractionContext()
+
+            first = parse_dotnet_repo(repo, ctx)
+            second = parse_dotnet_repo(repo, ctx)
+
+            self.assertIs(first, second)
+
+
+if __name__ == "__main__":
+    unittest.main()

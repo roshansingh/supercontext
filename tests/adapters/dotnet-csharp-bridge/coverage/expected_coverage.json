@@ -1,0 +1,12 @@
+[
+  {
+    "predicate": "PRODUCES_EVENT",
+    "state": "uninstrumented",
+    "scope_ref": {
+      "language": "dotnet",
+      "import_root": "MassTransit",
+      "category": "transport",
+      "reason": "no_adapter_for_known_stack"
+    }
+  }
+]
