@@ -1,0 +1,21 @@
+dimensions:
+  backend: []
+  frontend: []
+  ai-ml: []
+  iac: []
+  data-pipeline: []
+  shared-lib: []
+  mobile: []
+  cli-tool: []
+  docs: []
+
+adr_followups:
+  - predicate: DEPLOYS_VIA_CONFIG
+    dimension: iac
+    adr_followup_required: true
+  - predicate: PROVIDES_RESOURCE
+    dimension: iac
+    adr_followup_required: true
+  - predicate: DEPENDS_ON_MODULE
+    dimension: iac
+    adr_followup_required: true

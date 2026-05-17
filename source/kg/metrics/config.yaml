@@ -1,0 +1,25 @@
+enabled_metrics:
+  - M_inventory
+  - M_dimension_classification
+  - M_freshness
+  - M_extractor_opportunity
+  - M_evidence_grounding
+  - M_meta_coverage
+  - M_silent_gap
+  - M_trust_mix
+  - M_useful_edge
+  - M_cross_repo_linkage
+  - M_identity_health
+
+freshness:
+  default_days: 365
+
+trust_weights:
+  authoritative_declared: 1.0
+  authoritative_static: 1.0
+  deterministic_static: 0.95
+  manual_override: 0.9
+  runtime_observed: 0.85
+  static_inferred: 0.7
+  candidate: 0.45
+  inferred_llm: 0.35
