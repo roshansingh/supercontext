@@ -32,7 +32,7 @@ def load_dimension_rules(path: Path) -> dict[str, Any]:
         raise ValueError(f"{path} must contain a dimension-rules object")
 
     version = data.get("version")
-    if not isinstance(version, int) or version <= 0:
+    if not isinstance(version, int) or isinstance(version, bool) or version <= 0:
         raise ValueError(f"{path}: version must be a positive integer")
     rules = data.get("rules")
     if not isinstance(rules, list):

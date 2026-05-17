@@ -46,6 +46,53 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 0.5)
 
+    def test_evidence_grounding_ignores_fact_evidence_outside_dimension_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            (repo / "notes.md").write_text("outside scope\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            module = Entity("CodeModule", {"tenant_id": "default", "repo": "repo", "module": "app"})
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            fact = Fact("IMPLEMENTS", module.entity_id, service.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[module, service],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=module.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "module"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "outside-scope"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "notes.md", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _cell(compute_all(snapshot, expected_repos=1), "backend")
+
+            self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 0.0)
+            self.assertEqual(backend.metric_values["M_trust_mix"].value, 0.0)
+
     def test_meta_coverage_ignores_uninstrumented_coverage_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

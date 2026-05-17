@@ -306,7 +306,7 @@ def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
     fact_ids = {str(fact.get("fact_id")) for fact in context.scoped_facts}
     fact_evidence = [
         row
-        for row in context.snapshot.evidence
+        for row in context.scoped_evidence
         if row.get("target_type") == "fact" and str(row.get("target_id")) in fact_ids
     ]
     grounded_fact_ids = {
@@ -336,7 +336,7 @@ def _m_trust_mix(context: _MetricContext) -> MetricValue:
     if not context.scoped_facts:
         return MetricValue(None, "n_a", "no facts in scope")
     evidence_by_fact: dict[str, list[JsonObject]] = {}
-    for row in context.snapshot.evidence:
+    for row in context.scoped_evidence:
         if row.get("target_type") == "fact":
             evidence_by_fact.setdefault(str(row.get("target_id")), []).append(row)
     scores: list[float] = []

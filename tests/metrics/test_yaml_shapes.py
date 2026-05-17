@@ -23,6 +23,22 @@ class MetricsYamlShapeTest(unittest.TestCase):
         self.assertTrue(load_dimension_rules(root / "python" / "dimension_rules.yaml")["rules"])
         self.assertTrue(load_dimension_rules(root / "typescript" / "dimension_rules.yaml")["rules"])
 
+    def test_dimension_rules_reject_boolean_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules = Path(tmpdir) / "dimension_rules.yaml"
+            rules.write_text(
+                "version: true\n"
+                "rules:\n"
+                "  - id: backend\n"
+                "    dimension: backend\n"
+                "    imports:\n"
+                "      - fastapi\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "version"):
+                load_dimension_rules(rules)
+
     def test_useful_edges_are_supported_or_followups(self) -> None:
         path = Path("source/kg/metrics/useful_edges.yaml")
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -69,6 +85,21 @@ class MetricsYamlShapeTest(unittest.TestCase):
 
                     with self.assertRaisesRegex(ValueError, "trust_weights.deterministic_static"):
                         load_metrics_config(config)
+
+    def test_freshness_default_days_rejects_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Path(tmpdir) / "metrics.yaml"
+            config.write_text(
+                "enabled_metrics:\n"
+                "  - M_freshness\n"
+                "freshness:\n"
+                "  default_days: true\n"
+                "trust_weights: {}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "freshness.default_days"):
+                load_metrics_config(config)
 
 
 if __name__ == "__main__":

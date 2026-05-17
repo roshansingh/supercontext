@@ -55,7 +55,11 @@ def load_metrics_config(path: Path | None = None) -> MetricsConfig:
     if not isinstance(freshness, dict):
         raise ValueError(f"{config_path}: freshness must be an object")
     freshness_default_days = freshness.get("default_days", 365)
-    if not isinstance(freshness_default_days, int) or freshness_default_days <= 0:
+    if (
+        not isinstance(freshness_default_days, int)
+        or isinstance(freshness_default_days, bool)
+        or freshness_default_days <= 0
+    ):
         raise ValueError(f"{config_path}: freshness.default_days must be a positive integer")
 
     trust_weights = _float_mapping(config_path, "trust_weights", data.get("trust_weights", {}))
