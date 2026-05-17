@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import json
 import re
@@ -125,7 +125,7 @@ def build_multi(
                 entity_repo_identities.setdefault(entity.entity_id, set()).add(repo_identity)
         entities.extend(repo_build.entities)
         facts.extend(repo_build.facts)
-        evidence.extend(repo_build.evidence)
+        evidence.extend(_repo_identity_evidence(repo_build.evidence, repo, repo_identity))
         coverage.extend(repo_build.coverage)
         extractor_errors.extend(
             {
@@ -170,6 +170,22 @@ def _files_by_language_counts(repos: list[RepoSnapshot]) -> JsonObject:
         for language, paths in repo.files_by_language.items():
             counts[language] = counts.get(language, 0) + len(paths)
     return dict(sorted(counts.items()))
+
+
+def _repo_identity_evidence(evidence: list[Evidence], repo: RepoSnapshot, repo_identity: RepoIdentity) -> list[Evidence]:
+    rows: list[Evidence] = []
+    for row in evidence:
+        if row.bytes_ref is None:
+            rows.append(row)
+            continue
+        bytes_ref = {
+            **row.bytes_ref,
+            "repo": _repo_identity_key(repo_identity),
+            "repo_name": repo.name,
+            "repo_identity": repo_identity.to_json(),
+        }
+        rows.append(replace(row, bytes_ref=bytes_ref))
+    return rows
 
 
 def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:

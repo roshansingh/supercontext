@@ -57,7 +57,7 @@ class _MetricContext:
 @dataclass(frozen=True)
 class _ManifestRepoRef:
     path: str
-    name: str
+    identity_keys: tuple[str, ...]
     commit_sha: str
 
 
@@ -154,7 +154,7 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
         except OSError:
             continue
         assignments.extend(
-            _qualify_assignment_files(assignment, repo_ref.name, repo_ref.commit_sha)
+            _qualify_assignment_files(assignment, repo_ref.identity_keys, repo_ref.commit_sha)
             for assignment in classify_repo(repo)
         )
     return _merge_assignments(assignments)
@@ -478,9 +478,11 @@ def _manifest_repo_paths(manifest: JsonObject) -> tuple[str, ...]:
 
 
 def _manifest_repo_refs(manifest: JsonObject) -> tuple[_ManifestRepoRef, ...]:
-    refs: list[_ManifestRepoRef] = []
+    raw_refs: list[tuple[str, str, str, str]] = []
+    tenant_id = manifest.get("tenant_id") if isinstance(manifest.get("tenant_id"), str) else "default"
     repo_path = manifest.get("repo_path")
     repo_name = manifest.get("repo_name")
+    owner = manifest.get("owner")
     commit_sha = manifest.get("commit_sha")
     if (
         isinstance(repo_path, str)
@@ -490,7 +492,8 @@ def _manifest_repo_refs(manifest: JsonObject) -> tuple[_ManifestRepoRef, ...]:
         and isinstance(commit_sha, str)
         and commit_sha
     ):
-        refs.append(_ManifestRepoRef(repo_path, repo_name, commit_sha))
+        identity_key = _manifest_repo_identity_key(tenant_id, owner, repo_name)
+        raw_refs.append((repo_path, repo_name, identity_key, commit_sha))
     repos = manifest.get("repos")
     if isinstance(repos, list):
         for repo in repos:
@@ -498,6 +501,7 @@ def _manifest_repo_refs(manifest: JsonObject) -> tuple[_ManifestRepoRef, ...]:
                 continue
             nested_path = repo.get("repo_path")
             nested_name = repo.get("repo_name")
+            nested_owner = repo.get("owner")
             nested_commit = repo.get("commit_sha")
             if (
                 isinstance(nested_path, str)
@@ -507,11 +511,28 @@ def _manifest_repo_refs(manifest: JsonObject) -> tuple[_ManifestRepoRef, ...]:
                 and isinstance(nested_commit, str)
                 and nested_commit
             ):
-                refs.append(_ManifestRepoRef(nested_path, nested_name, nested_commit))
+                identity_key = _manifest_repo_identity_key(tenant_id, nested_owner, nested_name)
+                raw_refs.append((nested_path, nested_name, identity_key, nested_commit))
+    ambiguous_legacy_keys = _duplicate_legacy_keys(raw_refs)
     deduped: dict[str, _ManifestRepoRef] = {}
-    for ref in refs:
+    for path, repo_name, identity_key, commit_sha in raw_refs:
+        identity_keys = (identity_key,)
+        if identity_key != repo_name and (repo_name, commit_sha) not in ambiguous_legacy_keys:
+            identity_keys = (identity_key, repo_name)
+        ref = _ManifestRepoRef(path, identity_keys, commit_sha)
         deduped.setdefault(ref.path, ref)
     return tuple(deduped.values())
+
+
+def _duplicate_legacy_keys(raw_refs: list[tuple[str, str, str, str]]) -> set[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    duplicates: set[tuple[str, str]] = set()
+    for _, repo_name, _, commit_sha in raw_refs:
+        key = (repo_name, commit_sha)
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+    return duplicates
 
 
 def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[DimensionAssignment, ...]:
@@ -534,18 +555,28 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
     )
 
 
-def _qualify_assignment_files(assignment: DimensionAssignment, repo_name: str, commit_sha: str) -> DimensionAssignment:
+def _manifest_repo_identity_key(tenant_id: str, owner: Any, name: str) -> str:
+    if isinstance(owner, str) and owner:
+        return f"{tenant_id}/local/{owner}/{name}"
+    return name
+
+
+def _qualify_assignment_files(assignment: DimensionAssignment, repo_identity_keys: tuple[str, ...], commit_sha: str) -> DimensionAssignment:
     return DimensionAssignment(
         dimension=assignment.dimension,
         path_prefix=assignment.path_prefix,
-        files=tuple(_file_scope_key(repo_name, commit_sha, path) for path in assignment.files),
+        files=tuple(
+            _file_scope_key(repo_identity_key, commit_sha, path)
+            for path in assignment.files
+            for repo_identity_key in repo_identity_keys
+        ),
         rule_id=assignment.rule_id,
         rule_version=assignment.rule_version,
     )
 
 
-def _file_scope_key(repo_name: str, commit_sha: str, path: str) -> str:
-    return f"{repo_name}@{commit_sha}:{path}"
+def _file_scope_key(repo_identity_key: str, commit_sha: str, path: str) -> str:
+    return f"{repo_identity_key}@{commit_sha}:{path}"
 
 
 def _repo_name(manifest: JsonObject) -> str:
@@ -603,19 +634,33 @@ def _bytes_ref_path(value: Any) -> str | None:
 def _bytes_ref_scope_key(value: Any) -> str | None:
     if not isinstance(value, dict):
         return None
-    repo = value.get("repo")
+    repo_identity_key = _bytes_ref_repo_identity_key(value)
     commit_sha = value.get("commit_sha")
     path = value.get("path")
     if (
-        not isinstance(repo, str)
-        or not repo
+        repo_identity_key is None
         or not isinstance(commit_sha, str)
         or not commit_sha
         or not isinstance(path, str)
         or not path
     ):
         return None
-    return _file_scope_key(repo, commit_sha, path)
+    return _file_scope_key(repo_identity_key, commit_sha, path)
+
+
+def _bytes_ref_repo_identity_key(value: JsonObject) -> str | None:
+    repo_identity = value.get("repo_identity")
+    if isinstance(repo_identity, dict):
+        tenant_id = repo_identity.get("tenant_id")
+        host = repo_identity.get("host")
+        owner = repo_identity.get("owner")
+        name = repo_identity.get("name")
+        if all(isinstance(part, str) and part for part in (tenant_id, host, owner, name)):
+            return f"{tenant_id}/{host}/{owner}/{name}"
+    repo = value.get("repo")
+    if isinstance(repo, str) and repo:
+        return repo
+    return None
 
 
 @cache

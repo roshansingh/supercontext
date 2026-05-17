@@ -318,6 +318,8 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             (api_repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
             (ml_repo / "app.py").write_text("import torch\n", encoding="utf-8")
             snapshot = root / "snapshot"
+            api_identity = f"default/local/{root.name}/api"
+            ml_identity = f"default/local/{root.name}/ml"
 
             api_module = Entity("CodeModule", {"tenant_id": "default", "repo": "api", "module": "app"})
             api_service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "api", "slug": "api"})
@@ -336,7 +338,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"entity": "api-module"},
-                        bytes_ref={"repo": "api", "commit_sha": "api-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": api_identity, "commit_sha": "api-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                     Evidence(
                         target_type="fact",
@@ -344,7 +346,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"fact": "api-implements"},
-                        bytes_ref={"repo": "api", "commit_sha": "api-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": api_identity, "commit_sha": "api-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                     Evidence(
                         target_type="entity",
@@ -352,7 +354,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"entity": "ml-module"},
-                        bytes_ref={"repo": "ml", "commit_sha": "ml-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": ml_identity, "commit_sha": "ml-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                 ],
                 coverage=[],
@@ -361,6 +363,72 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                     "repos": [
                         {"repo_path": str(api_repo), "repo_name": "api", "owner": root.name, "commit_sha": "api-snapshot"},
                         {"repo_path": str(ml_repo), "repo_name": "ml", "owner": root.name, "commit_sha": "ml-snapshot"},
+                    ],
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 2}},
+                },
+            )
+
+            backend = _cell(compute_all(snapshot, expected_repos=2), "backend")
+
+            self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 1.0)
+
+    def test_dimension_scoping_uses_owner_identity_for_same_name_working_tree_repos(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend_repo = root / "owner-a" / "svc"
+            data_repo = root / "owner-b" / "svc"
+            backend_repo.mkdir(parents=True)
+            data_repo.mkdir(parents=True)
+            (backend_repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            (data_repo / "app.py").write_text("import torch\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            backend_identity = "default/local/owner-a/svc"
+            data_identity = "default/local/owner-b/svc"
+
+            backend_module = Entity("CodeModule", {"tenant_id": "default", "repo": backend_identity, "module": "app"})
+            backend_service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": backend_identity, "slug": "svc"})
+            backend_fact = Fact("IMPLEMENTS", backend_module.entity_id, backend_service.entity_id)
+            data_module = Entity("CodeModule", {"tenant_id": "default", "repo": data_identity, "module": "app"})
+            data_service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": data_identity, "slug": "svc"})
+            data_fact = Fact("IMPLEMENTS", data_module.entity_id, data_service.entity_id)
+
+            JsonlKgStore(snapshot).write(
+                entities=[backend_module, backend_service, data_module, data_service],
+                facts=[backend_fact, data_fact],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=backend_module.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "backend-module"},
+                        bytes_ref={"repo": backend_identity, "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=backend_fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "backend-implements"},
+                        bytes_ref={"repo": backend_identity, "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="entity",
+                        target_id=data_module.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "data-module"},
+                        bytes_ref={"repo": data_identity, "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "tenant_id": "default",
+                    "repo_count": 2,
+                    "repos": [
+                        {"repo_path": str(backend_repo), "repo_name": "svc", "owner": "owner-a", "commit_sha": "working-tree"},
+                        {"repo_path": str(data_repo), "repo_name": "svc", "owner": "owner-b", "commit_sha": "working-tree"},
                     ],
                     "built_at": "2026-05-17T00:00:00+00:00",
                     "counts": {"files_by_language": {"python": 2}},
