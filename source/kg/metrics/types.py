@@ -7,6 +7,7 @@ from source.kg.core.models import JsonObject
 
 
 MetricState = Literal["usable", "partial", "n_a"]
+METRIC_STATES = frozenset({"usable", "partial", "n_a"})
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,8 @@ class MetricValue:
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        if self.state not in METRIC_STATES:
+            raise ValueError(f"MetricValue.state must be one of {sorted(METRIC_STATES)}")
         if self.state == "n_a":
             if self.value is not None:
                 raise ValueError("MetricValue.value must be None when state is n_a")

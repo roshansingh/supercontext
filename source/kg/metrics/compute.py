@@ -270,7 +270,7 @@ def _m_dimension_classification(context: _MetricContext) -> MetricValue:
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
     if context.is_unclassified_cell:
         return MetricValue(0.0, "usable")
-    claimed = len(context.dimension_files or ())
+    claimed = _dimension_file_count(context.dimension_files or frozenset())
     if context.dimension_files is None:
         claimed = total
     return MetricValue(min(claimed / total, 1.0), "usable")
@@ -577,6 +577,34 @@ def _qualify_assignment_files(assignment: DimensionAssignment, repo_identity_key
 
 def _file_scope_key(repo_identity_key: str, commit_sha: str, path: str) -> str:
     return f"{repo_identity_key}@{commit_sha}:{path}"
+
+
+def _dimension_file_count(dimension_files: frozenset[str]) -> int:
+    full_identity_files: set[tuple[str, str, str]] = set()
+    legacy_files: set[tuple[str, str, str]] = set()
+    full_identity_legacy_aliases: set[tuple[str, str, str]] = set()
+    for key in dimension_files:
+        parsed = _parse_file_scope_key(key)
+        if parsed is None:
+            legacy_files.add((key, "", ""))
+            continue
+        repo_identity_key, commit_sha, path = parsed
+        if "/" in repo_identity_key:
+            full_identity_files.add((repo_identity_key, commit_sha, path))
+            full_identity_legacy_aliases.add((repo_identity_key.rsplit("/", 1)[-1], commit_sha, path))
+        else:
+            legacy_files.add((repo_identity_key, commit_sha, path))
+    return len(full_identity_files) + len(legacy_files - full_identity_legacy_aliases)
+
+
+def _parse_file_scope_key(key: str) -> tuple[str, str, str] | None:
+    identity_and_commit, separator, path = key.partition(":")
+    if not separator or not path:
+        return None
+    repo_identity_key, separator, commit_sha = identity_and_commit.rpartition("@")
+    if not separator or not repo_identity_key or not commit_sha:
+        return None
+    return repo_identity_key, commit_sha, path
 
 
 def _repo_name(manifest: JsonObject) -> str:

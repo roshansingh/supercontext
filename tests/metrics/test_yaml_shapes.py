@@ -27,10 +27,19 @@ class MetricsYamlShapeTest(unittest.TestCase):
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
         dimensions = data["dimensions"]
-        for dimension, predicates in dimensions.items():
+        for dimension, entries in dimensions.items():
             self.assertIsInstance(dimension, str)
-            for predicate in predicates:
+            self.assertIsInstance(entries, list)
+            for entry in entries:
+                self.assertIsInstance(entry, dict)
+                predicate = entry.get("predicate")
+                subject_kinds = entry.get("subject_kinds")
                 self.assertIn(predicate, SUPPORTED_FACT_PREDICATES)
+                self.assertIsInstance(subject_kinds, list)
+                self.assertTrue(subject_kinds)
+                for subject_kind in subject_kinds:
+                    self.assertIsInstance(subject_kind, str)
+                    self.assertTrue(subject_kind)
         for row in data["adr_followups"]:
             self.assertTrue(row["adr_followup_required"])
             self.assertNotIn(row["predicate"], SUPPORTED_FACT_PREDICATES)

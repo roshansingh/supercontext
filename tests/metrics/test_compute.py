@@ -371,6 +371,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             backend = _cell(compute_all(snapshot, expected_repos=2), "backend")
 
+            self.assertEqual(backend.metric_values["M_dimension_classification"].value, 0.5)
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 1.0)
 
     def test_dimension_scoping_uses_owner_identity_for_same_name_working_tree_repos(self) -> None:
