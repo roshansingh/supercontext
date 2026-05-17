@@ -54,6 +54,13 @@ class _MetricContext:
     scoped_evidence: tuple[JsonObject, ...]
 
 
+@dataclass(frozen=True)
+class _ManifestRepoRef:
+    path: str
+    name: str
+    commit_sha: str
+
+
 def compute_all(
     snapshot_dir: str | Path,
     *,
@@ -138,15 +145,18 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
     # snapshots do not persist dimension tags yet. Debate 19 PR-3 moves
     # dimension tags into coverage rows during ingestion.
     assignments: list[DimensionAssignment] = []
-    for repo_path in _manifest_repo_paths(snapshot.manifest):
-        root = Path(repo_path).expanduser()
+    for repo_ref in _manifest_repo_refs(snapshot.manifest):
+        root = Path(repo_ref.path).expanduser()
         if not root.exists():
             continue
         try:
             repo = discover_repo(root)
-            assignments.extend(_qualify_assignment_files(assignment, repo.name, repo.commit_sha) for assignment in classify_repo(repo))
-        except (OSError, ValueError):
+        except OSError:
             continue
+        assignments.extend(
+            _qualify_assignment_files(assignment, repo_ref.name, repo_ref.commit_sha)
+            for assignment in classify_repo(repo)
+        )
     return _merge_assignments(assignments)
 
 
@@ -464,19 +474,44 @@ def _valid_manifest_repo_entry(value: Any, *, require_owner: bool) -> bool:
 
 
 def _manifest_repo_paths(manifest: JsonObject) -> tuple[str, ...]:
-    paths: list[str] = []
+    return tuple(ref.path for ref in _manifest_repo_refs(manifest))
+
+
+def _manifest_repo_refs(manifest: JsonObject) -> tuple[_ManifestRepoRef, ...]:
+    refs: list[_ManifestRepoRef] = []
     repo_path = manifest.get("repo_path")
-    if isinstance(repo_path, str) and repo_path:
-        paths.append(repo_path)
+    repo_name = manifest.get("repo_name")
+    commit_sha = manifest.get("commit_sha")
+    if (
+        isinstance(repo_path, str)
+        and repo_path
+        and isinstance(repo_name, str)
+        and repo_name
+        and isinstance(commit_sha, str)
+        and commit_sha
+    ):
+        refs.append(_ManifestRepoRef(repo_path, repo_name, commit_sha))
     repos = manifest.get("repos")
     if isinstance(repos, list):
         for repo in repos:
             if not isinstance(repo, dict):
                 continue
             nested_path = repo.get("repo_path")
-            if isinstance(nested_path, str) and nested_path:
-                paths.append(nested_path)
-    return tuple(dict.fromkeys(paths))
+            nested_name = repo.get("repo_name")
+            nested_commit = repo.get("commit_sha")
+            if (
+                isinstance(nested_path, str)
+                and nested_path
+                and isinstance(nested_name, str)
+                and nested_name
+                and isinstance(nested_commit, str)
+                and nested_commit
+            ):
+                refs.append(_ManifestRepoRef(nested_path, nested_name, nested_commit))
+    deduped: dict[str, _ManifestRepoRef] = {}
+    for ref in refs:
+        deduped.setdefault(ref.path, ref)
+    return tuple(deduped.values())
 
 
 def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[DimensionAssignment, ...]:

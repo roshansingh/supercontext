@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
@@ -258,7 +259,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                 "malformed manifest counts.files_by_language denominator",
             )
 
-    def test_dimension_scoping_uses_repo_and_path_for_multi_repo_snapshots(self) -> None:
+    def test_dimension_scoping_uses_snapshot_repo_commit_and_path_for_multi_repo_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             api_repo = root / "api"
@@ -286,7 +287,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"entity": "api-module"},
-                        bytes_ref={"repo": "api", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": "api", "commit_sha": "api-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                     Evidence(
                         target_type="fact",
@@ -294,7 +295,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"fact": "api-implements"},
-                        bytes_ref={"repo": "api", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": "api", "commit_sha": "api-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                     Evidence(
                         target_type="entity",
@@ -302,15 +303,15 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                         derivation_class="deterministic_static",
                         source_system="test",
                         source_ref={"entity": "ml-module"},
-                        bytes_ref={"repo": "ml", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                        bytes_ref={"repo": "ml", "commit_sha": "ml-snapshot", "path": "app.py", "line_start": 1, "line_end": 1},
                     ),
                 ],
                 coverage=[],
                 manifest={
                     "repo_count": 2,
                     "repos": [
-                        {"repo_path": str(api_repo), "repo_name": "api", "owner": root.name, "commit_sha": "working-tree"},
-                        {"repo_path": str(ml_repo), "repo_name": "ml", "owner": root.name, "commit_sha": "working-tree"},
+                        {"repo_path": str(api_repo), "repo_name": "api", "owner": root.name, "commit_sha": "api-snapshot"},
+                        {"repo_path": str(ml_repo), "repo_name": "ml", "owner": root.name, "commit_sha": "ml-snapshot"},
                     ],
                     "built_at": "2026-05-17T00:00:00+00:00",
                     "counts": {"files_by_language": {"python": 2}},
@@ -320,6 +321,38 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             backend = _cell(compute_all(snapshot, expected_repos=2), "backend")
 
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 1.0)
+
+    def test_dimension_rule_loader_errors_are_not_hidden(self) -> None:
+        class BadLanguage:
+            name = "python"
+            aliases = ()
+
+            def dimension_rules(self):
+                raise ValueError("bad dimension rules")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "snapshot-commit",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            with mock.patch("source.kg.metrics.dimension._registered_languages", return_value=(BadLanguage(),)):
+                with self.assertRaisesRegex(ValueError, "bad dimension rules"):
+                    compute_all(snapshot, expected_repos=1)
 
     def test_hash_urn_shape_matches_current_entity_urn(self) -> None:
         entity = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
