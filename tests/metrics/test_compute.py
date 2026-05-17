@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from source.kg.core.models import Entity, Evidence, Fact
+from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
 from source.kg.metrics import compute_all
 from source.kg.metrics.compute import _looks_like_hash_urn
@@ -36,6 +36,78 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertEqual(backend.metric_values["M_extractor_opportunity"].state, "partial")
             self.assertEqual(backend.metric_values["M_useful_edge"].state, "partial")
             self.assertEqual(backend.metric_values["M_identity_health"].state, "partial")
+
+    def test_evidence_grounding_counts_scoped_facts_without_evidence_as_ungrounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot = _write_backend_snapshot(Path(tmpdir), include_ungrounded_fact=True)
+
+            backend = _cell(compute_all(snapshot, expected_repos=1), "backend")
+
+            self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 0.5)
+
+    def test_meta_coverage_ignores_uninstrumented_coverage_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[
+                    Coverage(
+                        tenant_id="default",
+                        predicate="CALLS",
+                        scope_ref={"repo": "repo", "reason": "not_supported"},
+                        state="uninstrumented",
+                        source_system="test",
+                    )
+                ],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "abc",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            cell = compute_all(snapshot, expected_repos=1)[0]
+
+            self.assertEqual(cell.metric_values["M_meta_coverage"].value, 0.0)
+
+    def test_multi_repo_manifest_paths_feed_dimension_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            api_repo = root / "api"
+            ui_repo = root / "ui"
+            api_repo.mkdir()
+            ui_repo.mkdir()
+            (api_repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            (ui_repo / "package.json").write_text('{"dependencies": {"react": "latest"}}\n', encoding="utf-8")
+            (ui_repo / "index.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_count": 2,
+                    "repos": [
+                        {"repo_path": str(api_repo), "repo_name": "api", "commit_sha": "abc"},
+                        {"repo_path": str(ui_repo), "repo_name": "ui", "commit_sha": "def"},
+                    ],
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1, "typescript": 1}},
+                },
+            )
+
+            cells = compute_all(snapshot, expected_repos=2)
+
+            self.assertGreaterEqual({cell.dimension for cell in cells}, {"backend", "frontend"})
 
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -141,7 +213,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
         self.assertTrue(_looks_like_hash_urn(entity.urn))
 
 
-def _write_backend_snapshot(root: Path) -> Path:
+def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False) -> Path:
     repo = root / "repo"
     repo.mkdir()
     (repo / "app.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
@@ -150,6 +222,7 @@ def _write_backend_snapshot(root: Path) -> Path:
     module = Entity("CodeModule", {"tenant_id": "default", "repo": "repo", "module": "app"})
     symbol = Entity("CodeSymbol", {"tenant_id": "default", "repo": "repo", "module": "app", "qualname": "run"})
     fact = Fact("IMPLEMENTS", module.entity_id, service.entity_id)
+    ungrounded_fact = Fact("DEFINED_IN", symbol.entity_id, module.entity_id)
     evidence = [
         Evidence(
             target_type="entity",
@@ -178,7 +251,7 @@ def _write_backend_snapshot(root: Path) -> Path:
     ]
     JsonlKgStore(snapshot).write(
         entities=[service, module, symbol],
-        facts=[fact],
+        facts=[fact, ungrounded_fact] if include_ungrounded_fact else [fact],
         evidence=evidence,
         coverage=[],
         manifest={

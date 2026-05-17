@@ -128,16 +128,16 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
     # PR-1 derives dimensions from the current repo_path working tree because
     # snapshots do not persist dimension tags yet. Debate 19 PR-3 moves
     # dimension tags into coverage rows during ingestion.
-    repo_path = snapshot.manifest.get("repo_path")
-    if not isinstance(repo_path, str) or not repo_path:
-        return ()
-    root = Path(repo_path).expanduser()
-    if not root.exists():
-        return ()
-    try:
-        return classify_repo(discover_repo(root))
-    except (OSError, ValueError):
-        return ()
+    assignments: list[DimensionAssignment] = []
+    for repo_path in _manifest_repo_paths(snapshot.manifest):
+        root = Path(repo_path).expanduser()
+        if not root.exists():
+            continue
+        try:
+            assignments.extend(classify_repo(discover_repo(root)))
+        except (OSError, ValueError):
+            continue
+    return _merge_assignments(assignments)
 
 
 def _build_context(
@@ -273,20 +273,20 @@ def _m_freshness(context: _MetricContext) -> MetricValue:
 
 
 def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
+    if not context.scoped_facts:
+        return MetricValue(None, "n_a", "no source-backed facts")
     fact_ids = {str(fact.get("fact_id")) for fact in context.scoped_facts}
     fact_evidence = [
         row
         for row in context.snapshot.evidence
         if row.get("target_type") == "fact" and str(row.get("target_id")) in fact_ids
     ]
-    if not fact_evidence:
-        return MetricValue(None, "n_a", "no source-backed fact evidence")
     grounded_fact_ids = {
         str(row.get("target_id"))
         for row in fact_evidence
         if _valid_bytes_ref(row.get("bytes_ref"))
     }
-    value = len(grounded_fact_ids) / len({str(row.get("target_id")) for row in fact_evidence})
+    value = len(grounded_fact_ids) / len(fact_ids)
     return MetricValue(value, "usable")
 
 
@@ -294,7 +294,11 @@ def _m_meta_coverage(context: _MetricContext) -> MetricValue:
     entries = _tool_predicate_entries()
     if not entries:
         return MetricValue(None, "n_a", "no tool predicate configuration")
-    coverage_predicates = {str(row.get("predicate")) for row in context.snapshot.coverage}
+    coverage_predicates = {
+        str(row.get("predicate"))
+        for row in context.snapshot.coverage
+        if row.get("state") in {"instrumented", "partially_instrumented"}
+    }
     facts_by_predicate = {str(fact.get("predicate")) for fact in context.scoped_facts}
     covered = sum(1 for predicate in entries if predicate in coverage_predicates or predicate in facts_by_predicate)
     return MetricValue(covered / len(entries), "usable")
@@ -421,6 +425,42 @@ def _actual_repo_count(manifest: JsonObject) -> int | None:
     if isinstance(manifest.get("repo_name"), str):
         return 1
     return None
+
+
+def _manifest_repo_paths(manifest: JsonObject) -> tuple[str, ...]:
+    paths: list[str] = []
+    repo_path = manifest.get("repo_path")
+    if isinstance(repo_path, str) and repo_path:
+        paths.append(repo_path)
+    repos = manifest.get("repos")
+    if isinstance(repos, list):
+        for repo in repos:
+            if not isinstance(repo, dict):
+                continue
+            nested_path = repo.get("repo_path")
+            if isinstance(nested_path, str) and nested_path:
+                paths.append(nested_path)
+    return tuple(dict.fromkeys(paths))
+
+
+def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[DimensionAssignment, ...]:
+    files_by_dimension: dict[str, set[str]] = {}
+    rule_ids_by_dimension: dict[str, set[str]] = {}
+    versions_by_dimension: dict[str, set[str]] = {}
+    for assignment in assignments:
+        files_by_dimension.setdefault(assignment.dimension, set()).update(assignment.files)
+        rule_ids_by_dimension.setdefault(assignment.dimension, set()).add(assignment.rule_id)
+        versions_by_dimension.setdefault(assignment.dimension, set()).add(assignment.rule_version)
+    return tuple(
+        DimensionAssignment(
+            dimension=dimension,
+            path_prefix=".",
+            files=tuple(sorted(files)),
+            rule_id="+".join(sorted(rule_ids_by_dimension.get(dimension, {"unknown-rule"}))),
+            rule_version="+".join(sorted(versions_by_dimension.get(dimension, {"1"}))),
+        )
+        for dimension, files in sorted(files_by_dimension.items())
+    )
 
 
 def _repo_name(manifest: JsonObject) -> str:
