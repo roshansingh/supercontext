@@ -454,7 +454,7 @@ def _actual_repo_count(manifest: JsonObject) -> int | None:
         return len(repos)
 
     repo_count = manifest.get("repo_count")
-    if isinstance(repo_count, int) and repo_count > 0:
+    if isinstance(repo_count, int) and not isinstance(repo_count, bool) and repo_count > 0:
         return repo_count
 
     if _valid_single_repo_manifest(manifest):

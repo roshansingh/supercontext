@@ -132,6 +132,26 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertEqual(cell.metric_values["M_inventory"].state, "n_a")
             self.assertEqual(cell.metric_values["M_inventory"].reason, "missing actual repo count in manifest")
 
+    def test_inventory_rejects_boolean_repo_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_count": True,
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            cell = compute_all(snapshot, expected_repos=1)[0]
+
+            self.assertEqual(cell.metric_values["M_inventory"].state, "n_a")
+
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

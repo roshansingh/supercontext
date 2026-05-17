@@ -84,6 +84,7 @@ def build_multi_kg(
         },
         "extractor_errors": build.extractor_errors,
         "counts": {
+            "files_by_language": _files_by_language_counts(repos),
             "entities": len({entity.entity_id for entity in build.entities}),
             "facts": len({fact.fact_id for fact in build.facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
@@ -161,6 +162,14 @@ def _build_multi(
     tenant_id: str | None = None,
 ) -> MultiRepoBuild:
     return build_multi(repos, strict_extractors=strict_extractors, tenant_id=tenant_id)
+
+
+def _files_by_language_counts(repos: list[RepoSnapshot]) -> JsonObject:
+    counts: dict[str, int] = {}
+    for repo in repos:
+        for language, paths in repo.files_by_language.items():
+            counts[language] = counts.get(language, 0) + len(paths)
+    return dict(sorted(counts.items()))
 
 
 def _multi_extractor_error_message(extractor_errors: list[JsonObject]) -> str:

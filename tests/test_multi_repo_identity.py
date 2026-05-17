@@ -21,6 +21,7 @@ class MultiRepoIdentityTest(unittest.TestCase):
             manifest = build_multi_kg([consumer, provider], out)
 
             self.assertEqual(manifest["repo_count"], 2)
+            self.assertEqual(manifest["counts"]["files_by_language"]["python"], 3)
             repo_entities = [row for row in read_jsonl(out / "entities.jsonl") if row["kind"] == "Repo"]
             svc_repos = [row for row in repo_entities if row["identity"]["name"] == "svc"]
             self.assertEqual({row["identity"]["owner"] for row in svc_repos}, {"owner-a", "owner-b"})
