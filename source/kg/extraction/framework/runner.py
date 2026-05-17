@@ -13,7 +13,7 @@ from source.kg.extraction.framework.allowlists import (
     SUPPORTED_FACT_PREDICATES,
 )
 from source.kg.extraction.framework.known_stacks import KNOWN_STACK_CATEGORY_PREDICATE
-from source.kg.metrics.dimension import classify_repo, normalize_package_name
+from source.kg.metrics.dimension import normalize_package_name
 
 
 @dataclass(frozen=True)
@@ -194,7 +194,7 @@ def _unsupported_known_stack_coverage(
     for language_support in registered_languages:
         for language, stacks in language_support.known_stacks().items():
             known_stacks_by_language.setdefault(language, {}).update(stacks)
-    dimension_scopes = _known_stack_dimension_scopes(repo, registered_languages)
+    dimension_scopes = _known_stack_dimension_scopes(registered_languages)
 
     rows: list[Coverage] = []
     for language_support in registered_languages:
@@ -250,19 +250,12 @@ def _known_stack_rows_for_roots(
     return rows
 
 
-def _known_stack_dimension_scopes(
-    repo: RepoSnapshot,
-    registered_languages: tuple[Any, ...],
-) -> dict[tuple[str, str], JsonObject]:
+def _known_stack_dimension_scopes(registered_languages: tuple[Any, ...]) -> dict[tuple[str, str], JsonObject]:
     dimension_languages = tuple(
         language_support
         for language_support in registered_languages
         if callable(getattr(language_support, "dimension_rules", None))
     )
-    assignments_by_dimension = {
-        assignment.dimension: assignment
-        for assignment in classify_repo(repo, dimension_languages)
-    }
     scopes: dict[tuple[str, str], JsonObject] = {}
     for language_support in dimension_languages:
         language_names = (language_support.name, *getattr(language_support, "aliases", ()))
@@ -274,10 +267,7 @@ def _known_stack_dimension_scopes(
             dimension = rule.get("dimension")
             if not isinstance(dimension, str):
                 continue
-            assignment = assignments_by_dimension.get(dimension)
-            if assignment is None:
-                continue
-            scope = {"dimension": dimension, "path_prefix": assignment.path_prefix}
+            scope = {"dimension": dimension}
             for stack_name in _dimension_rule_stack_names(rule):
                 for language_name in language_names:
                     scopes.setdefault((language_name, stack_name), scope)
