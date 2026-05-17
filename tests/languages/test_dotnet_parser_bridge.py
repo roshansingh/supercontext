@@ -6,9 +6,15 @@ from pathlib import Path
 
 from source.kg.core.repo_source import discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
-from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
+
+try:
+    from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
+    DOTNET_AVAILABLE = True
+except RuntimeError:
+    DOTNET_AVAILABLE = False
 
 
+@unittest.skipIf(not DOTNET_AVAILABLE, "tree-sitter and tree-sitter-c-sharp not installed; install with pip install -e '.[dotnet]'")
 class DotnetParserBridgeTest(unittest.TestCase):
     def test_parses_minimal_file_into_per_file_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

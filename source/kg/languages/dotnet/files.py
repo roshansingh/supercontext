@@ -9,7 +9,7 @@ class DotnetLanguageFiles:
     name: str = "dotnet"
     aliases: tuple[str, ...] = ("csharp",)
     file_extensions: frozenset[str] = frozenset({".cs"})
-    manifest_files: frozenset[str] = frozenset({"*.csproj"})
+    manifest_files: frozenset[str] = frozenset()
 
     def matches_file(self, path: Path) -> bool:
         return path.suffix == ".cs"

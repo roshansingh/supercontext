@@ -142,10 +142,16 @@ def _collect(
 
 
 def _using_target(node: Any, source: bytes) -> str:
+    found_equals = False
+    result = ""
     for child in node.children:
-        if child.type in {"qualified_name", "identifier"}:
-            return _node_text(child, source)
-    return ""
+        if child.type == "=":
+            found_equals = True
+        elif child.type in {"qualified_name", "identifier"}:
+            result = _node_text(child, source)
+            if found_equals:
+                return result
+    return result
 
 
 def _declared_name(node: Any, source: bytes) -> str:

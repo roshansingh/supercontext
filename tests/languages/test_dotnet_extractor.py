@@ -7,9 +7,15 @@ from pathlib import Path
 
 from source.kg.core.repo_source import discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
-from source.kg.languages.dotnet.extractors.csharp_extractor import CSharpExtractor
+
+try:
+    from source.kg.languages.dotnet.extractors.csharp_extractor import CSharpExtractor
+    DOTNET_AVAILABLE = True
+except RuntimeError:
+    DOTNET_AVAILABLE = False
 
 
+@unittest.skipIf(not DOTNET_AVAILABLE, "tree-sitter and tree-sitter-c-sharp not installed; install with pip install -e '.[dotnet]'")
 class CSharpExtractorTest(unittest.TestCase):
     def test_minimal_repo_emits_expected_entity_kinds_and_facts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -141,7 +141,7 @@ class CSharpExtractor:
             )
 
         symbols_by_qualname: dict[str, Entity] = {}
-        symbols_by_short: dict[str, Entity] = {}
+        symbols_by_short: dict[str, list[Entity]] = {}
         for sym in parsed_file.get("symbols", []):
             qualname = str(sym.get("name", "")).strip()
             if not qualname:
@@ -170,7 +170,7 @@ class CSharpExtractor:
             self._add_fact(build, "DEFINED_IN", symbol_entity, module_entity, repo, file_path, line, line)
             symbols_by_qualname[qualname] = symbol_entity
             short = qualname.rsplit(".", 1)[-1]
-            symbols_by_short.setdefault(short, symbol_entity)
+            symbols_by_short.setdefault(short, []).append(symbol_entity)
 
         for call in parsed_file.get("calls", []):
             caller_qualname = str(call.get("caller", "")).strip()
@@ -181,8 +181,11 @@ class CSharpExtractor:
             if caller is None:
                 continue
             short_callee = callee_name.rsplit(".", 1)[-1]
-            callee = symbols_by_short.get(short_callee)
-            if callee is None or callee.entity_id == caller.entity_id:
+            callees = symbols_by_short.get(short_callee, [])
+            if len(callees) != 1:
+                continue
+            callee = callees[0]
+            if callee.entity_id == caller.entity_id:
                 continue
             line = int(call.get("line") or 1)
             self._add_fact(
