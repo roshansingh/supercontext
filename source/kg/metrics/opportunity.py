@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Typed opportunity detector contract for Debate 19 follow-up PRs."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
