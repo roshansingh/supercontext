@@ -38,7 +38,7 @@ def urn_for_kind(kind: str, identity: JsonObject) -> str:
     if kind == "Repo":
         return _structured_urn("repo", identity, ("tenant_id", "host", "owner", "name"))
     if kind == "Service":
-        return _structured_urn("service", identity, ("tenant_id", "namespace", "slug"))
+        return _structured_urn("service", identity, ("tenant_id", "namespace", "repo", "slug"))
     if kind == "CodeModule":
         return _structured_urn("code-module", identity, ("tenant_id", "repo", "module"))
     if kind == "CodeSymbol":

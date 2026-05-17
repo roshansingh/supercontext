@@ -54,8 +54,21 @@ class PerKindUrnTest(unittest.TestCase):
         entity = Entity("Service", identity)
 
         self.assertEqual(entity.entity_id, f"ent_{stable_hash('Service', identity)}")
-        self.assertEqual(entity.urn, "supercontext://service/tenant-a/default/payments")
+        self.assertEqual(entity.urn, "supercontext://service/tenant-a/default/payments-api/payments")
         self.assertFalse(_looks_like_hash_urn(entity.urn))
+
+    def test_service_urn_distinguishes_repo_for_shared_slug(self) -> None:
+        base_identity = {
+            "tenant_id": "tenant-a",
+            "namespace": "default",
+            "slug": "shared-package",
+        }
+
+        service_a = Entity("Service", {**base_identity, "repo": "repo-a"})
+        service_b = Entity("Service", {**base_identity, "repo": "repo-b"})
+
+        self.assertNotEqual(service_a.entity_id, service_b.entity_id)
+        self.assertNotEqual(service_a.urn, service_b.urn)
 
     def test_code_symbol_urn_uses_current_identity_fields(self) -> None:
         entity = Entity(
