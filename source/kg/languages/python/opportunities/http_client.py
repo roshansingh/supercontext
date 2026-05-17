@@ -128,6 +128,34 @@ class _ScopeScanner:
                 opportunities.extend(self._scan_statements(statement.body, scope))
                 opportunities.extend(self._scan_statements(statement.orelse, scope))
                 continue
+            if isinstance(statement, ast.If):
+                opportunities.extend(self._opportunities_in_node(statement.test, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope))
+                continue
+            if isinstance(statement, ast.While):
+                opportunities.extend(self._opportunities_in_node(statement.test, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope))
+                continue
+            if isinstance(statement, ast.Try):
+                opportunities.extend(self._scan_statements(statement.body, scope))
+                for handler in statement.handlers:
+                    if handler.type is not None:
+                        opportunities.extend(self._opportunities_in_node(handler.type, scope))
+                    handler_scope = scope.child({handler.name} if handler.name else ())
+                    opportunities.extend(self._scan_statements(handler.body, handler_scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope))
+                opportunities.extend(self._scan_statements(statement.finalbody, scope))
+                continue
+            if isinstance(statement, ast.Match):
+                opportunities.extend(self._opportunities_in_node(statement.subject, scope))
+                for case in statement.cases:
+                    case_scope = scope.child(_pattern_names(case.pattern))
+                    if case.guard is not None:
+                        opportunities.extend(self._opportunities_in_node(case.guard, case_scope))
+                    opportunities.extend(self._scan_statements(case.body, case_scope))
+                continue
             opportunities.extend(self._opportunities_in_node(statement, scope))
             self._bind_statement_targets(statement, scope)
         return opportunities
@@ -232,6 +260,49 @@ class _CallVisitor(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         return
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+        self._visit_with_scope(node.body, self.scope.child(_argument_names(node.args)))
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension(node.elt, node.generators)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comprehension(node.elt, node.generators)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comprehension(node.elt, node.generators)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comprehension(node.key, node.generators, node.value)
+
+    def _visit_comprehension(
+        self,
+        result: ast.AST,
+        generators: list[ast.comprehension],
+        extra_result: ast.AST | None = None,
+    ) -> None:
+        comp_scope = self.scope.child(())
+        for index, generator in enumerate(generators):
+            if index == 0:
+                self.visit(generator.iter)
+            else:
+                self._visit_with_scope(generator.iter, comp_scope)
+            for name in _target_names(generator.target):
+                comp_scope.shadow(name)
+            for condition in generator.ifs:
+                self._visit_with_scope(condition, comp_scope)
+        self._visit_with_scope(result, comp_scope)
+        if extra_result is not None:
+            self._visit_with_scope(extra_result, comp_scope)
+
+    def _visit_with_scope(self, node: ast.AST, scope: _Scope) -> None:
+        visitor = _CallVisitor(self.scanner, scope)
+        visitor.visit(node)
+        self.opportunities.extend(visitor.opportunities)
+
 
 def _http_call_source_kind(func: ast.AST, scope: _Scope) -> str | None:
     if isinstance(func, ast.Name):
@@ -298,4 +369,33 @@ def _target_names(target: ast.AST) -> set[str]:
         return {target.id}
     if isinstance(target, (ast.Tuple, ast.List)):
         return {name for element in target.elts for name in _target_names(element)}
+    return set()
+
+
+def _pattern_names(pattern: ast.AST) -> set[str]:
+    if isinstance(pattern, ast.MatchAs):
+        names = set()
+        if pattern.name is not None:
+            names.add(pattern.name)
+        if pattern.pattern is not None:
+            names.update(_pattern_names(pattern.pattern))
+        return names
+    if isinstance(pattern, ast.MatchStar):
+        return {pattern.name} if pattern.name is not None else set()
+    if isinstance(pattern, ast.MatchMapping):
+        names = set()
+        for nested_pattern in pattern.patterns:
+            names.update(_pattern_names(nested_pattern))
+        if pattern.rest is not None:
+            names.add(pattern.rest)
+        return names
+    if isinstance(pattern, ast.MatchSequence):
+        return {name for nested_pattern in pattern.patterns for name in _pattern_names(nested_pattern)}
+    if isinstance(pattern, ast.MatchClass):
+        names = set()
+        for nested_pattern in (*pattern.patterns, *pattern.kwd_patterns):
+            names.update(_pattern_names(nested_pattern))
+        return names
+    if isinstance(pattern, ast.MatchOr):
+        return {name for nested_pattern in pattern.patterns for name in _pattern_names(nested_pattern)}
     return set()

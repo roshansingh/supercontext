@@ -30,6 +30,7 @@ CORE_SCORE_METRICS = (
     "M_silent_gap",
     "M_identity_health",
 )
+OPPORTUNITY_METRICS = frozenset({"M_extractor_opportunity", "M_silent_gap"})
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class _MetricContext:
 class _ScopedOpportunity:
     opportunity: Opportunity
     scope_keys: frozenset[str]
+    coverage_repos: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -85,7 +87,11 @@ def compute_all(
     cells = assignments or (DimensionAssignment("unknown", ".", tuple(), "no-dimension-detected", "1"),)
     repo_name = _repo_name(snapshot.manifest)
     commit_sha_set = _commit_sha_set(snapshot.manifest)
-    opportunities = _snapshot_opportunities(snapshot)
+    opportunities = (
+        _snapshot_opportunities(snapshot)
+        if OPPORTUNITY_METRICS.intersection(config.enabled_metrics)
+        else ()
+    )
 
     results: list[CellMetrics] = []
     for assignment in cells:
@@ -388,6 +394,9 @@ def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _S
         scope_ref = row.get("scope_ref")
         if not isinstance(scope_ref, dict):
             continue
+        repo = scope_ref.get("repo")
+        if not isinstance(repo, str) or repo not in scoped_opportunity.coverage_repos:
+            continue
         path = scope_ref.get("file_path", scope_ref.get("path"))
         if path != opportunity.path:
             continue
@@ -666,6 +675,7 @@ def _snapshot_opportunities(snapshot: _Snapshot) -> tuple[_ScopedOpportunity, ..
                                 _file_scope_key(repo_identity_key, repo_ref.commit_sha, opportunity.path)
                                 for repo_identity_key in repo_ref.identity_keys
                             ),
+                            coverage_repos=frozenset(repo_ref.identity_keys),
                         )
                     )
     return tuple(opportunities)

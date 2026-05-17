@@ -3,9 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from source.kg.build.pipeline import build_kg
-from source.kg.core.models import Entity, Evidence, Fact
+from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import discover_repo
 from source.kg.core.store import JsonlKgStore
 from source.kg.languages.python.language import LANGUAGE_SUPPORT as PYTHON_SUPPORT
@@ -50,6 +51,48 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
         detectors = PYTHON_SUPPORT.opportunity_detectors()
 
         self.assertEqual([type(detector).__name__ for detector in detectors], ["HttpClientOpportunityDetector"])
+
+    def test_detector_finds_calls_inside_functions_nested_in_compound_statements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import requests\n"
+                "if True:\n"
+                "    def fetch_if():\n"
+                "        requests.get('/if')\n"
+                "try:\n"
+                "    def fetch_try():\n"
+                "        requests.post('/try')\n"
+                "except Exception:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            opportunities = HttpClientOpportunityDetector().detect(repo)
+
+        self.assertEqual([row.source_kind for row in opportunities], ["requests.get", "requests.post"])
+        self.assertEqual([row.line for row in opportunities], [4, 7])
+
+    def test_detector_respects_lambda_and_comprehension_shadowing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import requests\n"
+                "def call(clients):\n"
+                "    lambda_call = lambda requests: requests.get('/lambda')\n"
+                "    [requests.get('/comprehension') for requests in clients]\n"
+                "    requests.get('/real')\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            opportunities = HttpClientOpportunityDetector().detect(repo)
+
+        self.assertEqual([row.source_kind for row in opportunities], ["requests.get"])
+        self.assertEqual([row.line for row in opportunities], [5])
 
     def test_metrics_report_uncovered_http_client_opportunity_as_silent_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -130,6 +173,85 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
 
         self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 1.0)
         self.assertEqual(backend.metric_values["M_silent_gap"].value, 0.0)
+
+    def test_metrics_do_not_scan_opportunities_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text("[project]\nname = 'repo'\n", encoding="utf-8")
+            (repo / "app.py").write_text("import requests\nrequests.get('/health')\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            config = root / "metrics.yaml"
+            config.write_text(
+                "enabled_metrics:\n"
+                "  - M_inventory\n"
+                "freshness:\n"
+                "  default_days: 365\n"
+                "trust_weights: {}\n",
+                encoding="utf-8",
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            with mock.patch.object(
+                HttpClientOpportunityDetector,
+                "detect",
+                side_effect=AssertionError("opportunity detector should not run"),
+            ):
+                cells = compute_all(snapshot, expected_repos=1, config_path=config)
+
+        self.assertEqual(tuple(cells[0].metric_values), ("M_inventory",))
+        self.assertEqual(cells[0].metric_values["M_inventory"].state, "usable")
+
+    def test_coverage_rows_from_other_repos_do_not_cover_http_client_opportunities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname = 'repo'\ndependencies = ['fastapi', 'requests']\n",
+                encoding="utf-8",
+            )
+            (repo / "app.py").write_text("import requests\nrequests.get('/health')\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[
+                    Coverage(
+                        tenant_id="default",
+                        predicate="CALLS_ENDPOINT",
+                        scope_ref={"repo": "other", "commit_sha": "working-tree", "path": "app.py", "line": 2},
+                        state="uninstrumented",
+                        source_system="test",
+                    )
+                ],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _backend_cell(compute_all(snapshot, expected_repos=1))
+
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 0.0)
+        self.assertEqual(backend.metric_values["M_silent_gap"].value, 1.0)
 
 
 def _backend_cell(cells):
