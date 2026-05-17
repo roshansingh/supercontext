@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 import tempfile
@@ -45,6 +45,21 @@ class CoverageMetricsDeltaTest(unittest.TestCase):
             self.assertEqual(payload["value_delta"], None)
             self.assertTrue(payload["state_changed"])
             self.assertEqual(payload["after"]["reason"], "no facts")
+
+    def test_compare_cli_rejects_snapshot_only_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            before = root / "before"
+            after = root / "after"
+            _write_metrics(before, _record(value=0.25, state="usable"))
+            _write_metrics(after, _record(value=0.75, state="usable"))
+
+            with redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    main(["--compare", str(before), str(after), "--expected-repos", "1"])
+            with redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    main(["--compare", str(before), str(after), "--expected-repos", "0"])
 
     def test_compare_reports_asymmetric_metric_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

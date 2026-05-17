@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
-from source.kg.core.models import JsonObject
+from source.kg.core.models import JsonObject, utc_now_iso
 from source.kg.core.store import read_jsonl
 from source.kg.metrics import compute_all
 from source.kg.metrics.types import METRIC_STATES, CellMetrics
@@ -37,8 +36,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.compare:
-        if args.no_persist:
-            parser.error("--no-persist can only be used with --snapshot")
+        ignored_compare_args = [
+            flag
+            for flag, value, default in (
+                ("--fleet-dir", args.fleet_dir, None),
+                ("--expected-repos", args.expected_repos, None),
+                ("--config", args.config, None),
+                ("--no-persist", args.no_persist, False),
+            )
+            if value != default
+        ]
+        if ignored_compare_args:
+            parser.error(f"{', '.join(ignored_compare_args)} can only be used with --snapshot")
         deltas = compare_metrics(Path(args.compare[0]), Path(args.compare[1]))
         if args.json:
             for delta in deltas:
@@ -73,15 +82,21 @@ def persist_metrics(snapshot_dir: Path, cells: tuple[CellMetrics, ...]) -> tuple
 
 
 def _metric_records(cells: tuple[CellMetrics, ...]) -> tuple[JsonObject, ...]:
-    built_at = datetime.now(UTC).isoformat()
+    built_at = utc_now_iso()
     return tuple({**cell.to_record(), "built_at": built_at} for cell in cells)
 
 
 def _write_metrics_records(snapshot_dir: Path, records: tuple[JsonObject, ...]) -> None:
     path = snapshot_dir.expanduser().resolve() / METRICS_FILENAME
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def compare_metrics(before_snapshot: Path, after_snapshot: Path) -> tuple[JsonObject, ...]:
