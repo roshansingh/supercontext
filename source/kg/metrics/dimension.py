@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
 from source.kg.languages._shared.dimension_rules_loader import SUPPORTED_DIMENSIONS
 
 
@@ -98,7 +98,7 @@ def _collect_features(repo: RepoSnapshot) -> _RepoFeatures:
         files_by_language=files_by_language,
         imports_by_language=imports_by_language,
         packages_by_language=packages_by_language,
-        manifest_names={path.name for path in repo.root.rglob("*") if path.is_file()},
+        manifest_names={path.name for path in _iter_repo_files(repo.root)},
         file_extensions={Path(path).suffix for path in source_paths},
     )
 
@@ -175,7 +175,7 @@ def _python_packages(root: Path) -> set[str]:
 
 def _package_json_packages(root: Path) -> set[str]:
     packages: set[str] = set()
-    for package_json in root.rglob("package.json"):
+    for package_json in _iter_repo_files(root, "package.json"):
         try:
             data = json.loads(package_json.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -206,8 +206,19 @@ def _normalized_set(values: Any) -> set[str]:
 
 def _all_source_paths(repo: RepoSnapshot) -> tuple[str, ...]:
     paths = {str(path.relative_to(repo.root)) for paths in repo.files_by_language.values() for path in paths}
-    paths.update(str(path.relative_to(repo.root)) for path in repo.root.rglob("*.tf") if path.is_file())
+    paths.update(str(path.relative_to(repo.root)) for path in _iter_repo_files(repo.root, "*.tf"))
     return tuple(sorted(paths))
+
+
+def _iter_repo_files(root: Path, pattern: str = "*") -> tuple[Path, ...]:
+    files: list[Path] = []
+    for path in root.rglob(pattern):
+        if not path.is_file():
+            continue
+        if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
+            continue
+        files.append(path)
+    return tuple(sorted(files))
 
 
 def _common_path_prefix(files: set[str]) -> str:

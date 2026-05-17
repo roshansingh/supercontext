@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from source.kg.metrics import compute_all
+from source.kg.metrics.types import CellMetrics
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _print_table(cells) -> None:
+def _print_table(cells: tuple[CellMetrics, ...]) -> None:
     rows: list[tuple[str, str, str, str, str, str]] = []
     for cell in cells:
         for metric_name, metric_value in sorted(cell.metric_values.items()):

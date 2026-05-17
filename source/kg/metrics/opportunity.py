@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Typed opportunity detector contract for Debate 19 follow-up PRs."""
+
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -18,3 +20,6 @@ class Opportunity:
 
 class OpportunityDetector(Protocol):
     def detect(self, repo: RepoSnapshot, dimension: str | None = None) -> tuple[Opportunity, ...]: ...
+
+
+__all__ = ["Opportunity", "OpportunityDetector"]

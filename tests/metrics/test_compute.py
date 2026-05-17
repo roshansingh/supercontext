@@ -110,6 +110,31 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                 "missing manifest counts.files_by_language denominator",
             )
 
+    def test_malformed_counts_denominator_is_na(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "abc",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": "malformed",
+                },
+            )
+
+            cell = compute_all(snapshot, expected_repos=1)[0]
+
+            self.assertEqual(cell.metric_values["M_dimension_classification"].state, "n_a")
+
     def test_hash_urn_shape_matches_current_entity_urn(self) -> None:
         entity = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
 

@@ -49,6 +49,19 @@ class DimensionClassifierTest(unittest.TestCase):
 
             self.assertGreaterEqual({row.dimension for row in assignments}, {"backend", "frontend"})
 
+    def test_ignores_package_manifests_under_ignored_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            (root / "src" / "index.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+            package_dir = root / "node_modules" / "react"
+            package_dir.mkdir(parents=True)
+            (package_dir / "package.json").write_text('{"name": "react"}\n', encoding="utf-8")
+
+            assignments = classify_repo(discover_repo(root))
+
+            self.assertNotIn("frontend", {row.dimension for row in assignments})
+
 
 if __name__ == "__main__":
     unittest.main()

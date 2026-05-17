@@ -233,11 +233,13 @@ def _m_inventory(context: _MetricContext) -> MetricValue:
 
 
 def _m_dimension_classification(context: _MetricContext) -> MetricValue:
-    manifest_counts = context.snapshot.manifest.get("counts", {}).get("files_by_language", {})
-    if isinstance(manifest_counts, dict):
-        total = sum(value for value in manifest_counts.values() if isinstance(value, int))
-    else:
-        total = 0
+    counts = context.snapshot.manifest.get("counts")
+    if not isinstance(counts, dict):
+        return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
+    manifest_counts = counts.get("files_by_language")
+    if not isinstance(manifest_counts, dict):
+        return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
+    total = sum(value for value in manifest_counts.values() if isinstance(value, int))
     if total <= 0:
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
     claimed = len(context.dimension_files or ())
@@ -347,12 +349,13 @@ def _m_cross_repo_linkage(context: _MetricContext, *, fleet_dir: Path | None) ->
     external_packages = [entity for entity in context.snapshot.entities if entity.get("kind") == "ExternalPackage"]
     if not external_packages:
         return MetricValue(None, "n_a", "no external package imports")
+    external_package_ids = {str(entity.get("entity_id")) for entity in external_packages}
     resolved = {
         str(fact.get("subject_id"))
         for fact in context.snapshot.facts
         if fact.get("predicate") == "RESOLVES_TO_REPO"
     }
-    value = len(resolved) / len({str(entity.get("entity_id")) for entity in external_packages})
+    value = len(resolved.intersection(external_package_ids)) / len(external_package_ids)
     reason = _linker_stale_reason(context.snapshot, fleet_dir)
     if reason:
         return MetricValue(value, "partial", reason)
@@ -373,7 +376,7 @@ def _m_identity_health(context: _MetricContext) -> MetricValue:
 def _cell_score(metric_values: dict[str, MetricValue]) -> float | None:
     if not all(metric_name in metric_values for metric_name in CORE_SCORE_METRICS):
         return None
-    if any(metric_values[metric_name].state == "n_a" for metric_name in CORE_SCORE_METRICS):
+    if any(metric_values[metric_name].state != "usable" for metric_name in CORE_SCORE_METRICS):
         return None
     values = [metric_values[metric_name].value for metric_name in CORE_SCORE_METRICS]
     if any(value is None for value in values):
