@@ -33,18 +33,29 @@ class CoverageMetricsDeltaTest(unittest.TestCase):
             root = Path(tmpdir)
             before = root / "before"
             after = root / "after"
-            _write_metrics(before, _record(value=0.25, state="usable"))
-            _write_metrics(after, _record(value=None, state="n_a", reason="no facts"))
+            _write_metrics(
+                before,
+                _record(metric="M_evidence_grounding", value=0.25, state="usable"),
+                _record(metric="M_trust_mix", value=0.5, state="usable"),
+            )
+            _write_metrics(
+                after,
+                _record(metric="M_evidence_grounding", value=None, state="n_a", reason="no facts"),
+                _record(metric="M_trust_mix", value=0.75, state="usable"),
+            )
             stdout = io.StringIO()
 
             with redirect_stdout(stdout):
                 exit_code = main(["--compare", str(before), str(after), "--json"])
 
-            payload = json.loads(stdout.getvalue())
+            payloads = [json.loads(line) for line in stdout.getvalue().splitlines()]
+            by_metric = {payload["metric"]: payload for payload in payloads}
             self.assertEqual(exit_code, 0)
-            self.assertEqual(payload["value_delta"], None)
-            self.assertTrue(payload["state_changed"])
-            self.assertEqual(payload["after"]["reason"], "no facts")
+            self.assertEqual(len(payloads), 2)
+            self.assertEqual(by_metric["M_evidence_grounding"]["value_delta"], None)
+            self.assertTrue(by_metric["M_evidence_grounding"]["state_changed"])
+            self.assertEqual(by_metric["M_evidence_grounding"]["after"]["reason"], "no facts")
+            self.assertEqual(by_metric["M_trust_mix"]["value_delta"], 0.25)
 
     def test_compare_cli_rejects_snapshot_only_options(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
