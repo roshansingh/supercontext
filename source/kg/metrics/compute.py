@@ -255,8 +255,6 @@ def _m_inventory(context: _MetricContext) -> MetricValue:
 
 
 def _m_dimension_classification(context: _MetricContext) -> MetricValue:
-    if context.is_unclassified_cell:
-        return MetricValue(0.0, "usable")
     counts = context.snapshot.manifest.get("counts")
     if not isinstance(counts, dict):
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
@@ -270,6 +268,8 @@ def _m_dimension_classification(context: _MetricContext) -> MetricValue:
         total += value
     if total <= 0:
         return MetricValue(None, "n_a", "missing manifest counts.files_by_language denominator")
+    if context.is_unclassified_cell:
+        return MetricValue(0.0, "usable")
     claimed = len(context.dimension_files or ())
     if context.dimension_files is None:
         claimed = total
@@ -581,7 +581,16 @@ def _valid_bytes_ref(value: Any) -> bool:
     required_strings = ("repo", "commit_sha", "path")
     if any(not isinstance(value.get(field), str) or not value.get(field) for field in required_strings):
         return False
-    return isinstance(value.get("line_start"), int) and isinstance(value.get("line_end"), int)
+    line_start = value.get("line_start")
+    line_end = value.get("line_end")
+    return (
+        isinstance(line_start, int)
+        and not isinstance(line_start, bool)
+        and isinstance(line_end, int)
+        and not isinstance(line_end, bool)
+        and line_start > 0
+        and line_end >= line_start
+    )
 
 
 def _bytes_ref_path(value: Any) -> str | None:

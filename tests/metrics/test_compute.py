@@ -177,6 +177,35 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertIsNone(cell.dimension)
             self.assertEqual(cell.metric_values["M_dimension_classification"].value, 0.0)
 
+    def test_missing_dimension_still_requires_file_count_denominator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "plain.py").write_text("print('plain')\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "abc",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                },
+            )
+
+            cell = compute_all(snapshot, expected_repos=1)[0]
+
+            self.assertIsNone(cell.dimension)
+            self.assertEqual(cell.metric_values["M_dimension_classification"].state, "n_a")
+            self.assertEqual(
+                cell.metric_values["M_dimension_classification"].reason,
+                "missing manifest counts.files_by_language denominator",
+            )
+
     def test_missing_file_count_denominator_is_na(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -354,13 +383,26 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "bad dimension rules"):
                     compute_all(snapshot, expected_repos=1)
 
+    def test_evidence_grounding_rejects_boolean_line_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot = _write_backend_snapshot(Path(tmpdir), fact_line_start=True)
+
+            backend = _cell(compute_all(snapshot, expected_repos=1), "backend")
+
+            self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 0.0)
+
     def test_hash_urn_shape_matches_current_entity_urn(self) -> None:
         entity = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
 
         self.assertTrue(_looks_like_hash_urn(entity.urn))
 
 
-def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False) -> Path:
+def _write_backend_snapshot(
+    root: Path,
+    *,
+    include_ungrounded_fact: bool = False,
+    fact_line_start: object = 1,
+) -> Path:
     repo = root / "repo"
     repo.mkdir()
     (repo / "app.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
@@ -393,7 +435,13 @@ def _write_backend_snapshot(root: Path, *, include_ungrounded_fact: bool = False
             derivation_class="deterministic_static",
             source_system="test",
             source_ref={"fact": "implements"},
-            bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+            bytes_ref={
+                "repo": "repo",
+                "commit_sha": "working-tree",
+                "path": "app.py",
+                "line_start": fact_line_start,
+                "line_end": 1,
+            },
         ),
     ]
     JsonlKgStore(snapshot).write(
