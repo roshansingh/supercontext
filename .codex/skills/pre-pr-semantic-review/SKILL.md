@@ -1,6 +1,6 @@
 ---
 name: pre-pr-semantic-review
-description: "Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, loaders, endpoint/path reconciliation, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, and regression tests."
+description: "Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, metrics, loaders, endpoint/path reconciliation, config/YAML contracts, manifest producers/consumers, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, metric scope correctness, and regression tests."
 ---
 
 # Pre-PR Semantic Review
@@ -16,7 +16,7 @@ git diff --stat
 git diff --check
 ```
 
-2. Review changed code against the checklist below. For every applicable item, either add a regression test or state why it is not applicable.
+2. Review changed code against the checklist below. For every applicable item, either add a regression test or state why it is not applicable. If touching metrics, manifests, config, YAML, evidence scoping, or evaluation output, always run the Metrics, Config, And Data-Contract Checklist.
 
 3. Run focused tests for touched modules, then the full test suite.
 
@@ -47,11 +47,28 @@ git status --short --branch
 ## Validation Checklist
 
 - Validate external JSON/input shapes before `.get`, iteration, or rendering.
+- Reject Python `bool` anywhere JSON/YAML expects an `int` or `float`; `bool` is a subclass of `int`.
+- Validate enum-like runtime values explicitly. `Literal[...]` type hints are not runtime validation.
+- Validate numeric ratios, weights, confidences, and scores stay within their allowed range, usually `[0, 1]`.
 - Validate config documents by structural schema markers, not by broad content keywords. For OpenAPI, require a `paths` object plus an `openapi` or `swagger` version marker before emitting endpoint documentation facts.
 - Reject malformed rows, duplicate IDs, padded IDs, non-list list fields, and non-string list members with field-specific errors.
 - Treat sentinel values as contracts; pass/fail fields must be mutually consistent.
 - Keep allowlists as the single source of truth for supported languages, transports, methods, statuses, and derivation classes.
 - Resolve executable/SDK dependencies early with actionable errors.
+
+## Metrics, Config, And Data-Contract Checklist
+
+- Keep numerator, denominator, and evidence scope identical for each metric cell. If the denominator is scoped by dimension/repo/path, the numerator must use the same scoped rows, not whole-snapshot rows.
+- Do not return a usable zero before validating the denominator. Missing or malformed denominators should produce `n_a`, not a valid score.
+- Distinguish physical file counts from compatibility aliases. Compatibility aliases may help match old evidence, but must not inflate classified-file or coverage numerators.
+- For multi-repo snapshots, qualify evidence and file scopes by full repo identity when available. Repo name alone is unsafe; same-name repos and `working-tree` commits can collide.
+- Preserve legacy single-repo compatibility only when the legacy key is unambiguous. If `repo_name + commit_sha` is duplicated, fail closed or require full identity.
+- Validate producer/consumer manifest contracts end to end. If a metric requires `manifest.counts.files_by_language`, verify every snapshot producer writes it or the consumer derives it safely.
+- When adding a manifest/config field, trace definition, construction, serialization, loading, consumption, and test coverage.
+- Deep-copy cached YAML/config structures before returning them from public wrapper methods, or make them immutable. Shallow copies can let callers mutate cached nested lists/dicts.
+- Make YAML shape tests validate the shape consumed by implementation, including nested object fields such as `predicate` and `subject_kinds`.
+- Check module docstrings are the first statement in the module, before `from __future__` imports, when the string is intended for generated docs.
+- For every metric/config hardening change, add a negative fixture for the malformed shape and a positive fixture proving the valid shape still works.
 
 ## Path And Scope Semantics
 
