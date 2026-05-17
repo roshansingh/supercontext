@@ -196,8 +196,12 @@ def _normalize_requirement_name(value: str) -> str:
     return _normalize_package(name)
 
 
-def _normalize_package(value: str) -> str:
+def normalize_package_name(value: str) -> str:
     return value.strip().lower().replace("_", "-")
+
+
+def _normalize_package(value: str) -> str:
+    return normalize_package_name(value)
 
 
 def _normalized_set(values: Any) -> set[str]:
