@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from functools import cache
 from math import prod
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 import json
 
 import yaml
@@ -13,7 +13,7 @@ import yaml
 from source.kg.core.models import JsonObject
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import read_jsonl
-from source.kg.extraction.framework.allowlists import SUPPORTED_FACT_PREDICATES
+from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS, SUPPORTED_FACT_PREDICATES
 from source.kg.metrics.config import MetricsConfig, load_metrics_config
 from source.kg.metrics.dimension import DimensionAssignment, classify_repo
 from source.kg.metrics.opportunity import Opportunity
@@ -64,6 +64,12 @@ class _ScopedOpportunity:
     opportunity: Opportunity
     scope_keys: frozenset[str]
     coverage_repos: frozenset[str]
+
+
+class _UsefulEdgeSpec(TypedDict):
+    predicate: str
+    subject_kinds: tuple[str, ...]
+    object_kinds: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -527,23 +533,53 @@ def _m_useful_edge(context: _MetricContext) -> MetricValue:
     specs = _useful_edge_specs_for_dimension(context.dimension)
     if not specs:
         return MetricValue(0.0, "partial", "useful_edges.yaml has no predicates for this dimension")
-    if not context.scoped_entities:
-        return MetricValue(None, "n_a", "no anchor entities in scope")
-    useful_predicates = {spec["predicate"] for spec in specs}
-    subject_kinds = {kind for spec in specs for kind in spec["subject_kinds"]}
-    useful_subjects = {
-        str(fact.get("subject_id"))
-        for fact in context.scoped_facts
-        if str(fact.get("predicate")) in useful_predicates
+    subject_specs = {
+        (str(spec["predicate"]), kind)
+        for spec in specs
+        for kind in spec["subject_kinds"]
+    }
+    object_specs = {
+        (str(spec["predicate"]), kind)
+        for spec in specs
+        for kind in spec["object_kinds"]
+    }
+    anchor_kinds = {kind for _, kind in subject_specs}.union(kind for _, kind in object_specs)
+    snapshot_entity_kinds_by_id = {
+        str(entity.get("entity_id")): str(entity.get("kind"))
+        for entity in context.snapshot.entities
+    }
+    scoped_entity_kinds_by_id = {
+        str(entity.get("entity_id")): str(entity.get("kind"))
+        for entity in context.scoped_entities
     }
     anchors = {
-        str(entity.get("entity_id"))
-        for entity in context.scoped_entities
-        if str(entity.get("kind")) in subject_kinds
+        entity_id
+        for entity_id, kind in scoped_entity_kinds_by_id.items()
+        if kind in anchor_kinds
     }
+    for fact in context.scoped_facts:
+        subject_id = str(fact.get("subject_id"))
+        object_id = str(fact.get("object_id"))
+        subject_kind = snapshot_entity_kinds_by_id.get(subject_id)
+        object_kind = snapshot_entity_kinds_by_id.get(object_id)
+        if subject_kind in anchor_kinds:
+            anchors.add(subject_id)
+        if object_kind in anchor_kinds:
+            anchors.add(object_id)
     if not anchors:
         return MetricValue(None, "n_a", "no useful-edge anchor entities in scope")
-    return MetricValue(len(anchors.intersection(useful_subjects)) / len(anchors), "usable")
+    useful_anchors: set[str] = set()
+    for fact in context.scoped_facts:
+        predicate = str(fact.get("predicate"))
+        subject_id = str(fact.get("subject_id"))
+        object_id = str(fact.get("object_id"))
+        subject_kind = snapshot_entity_kinds_by_id.get(subject_id)
+        object_kind = snapshot_entity_kinds_by_id.get(object_id)
+        if subject_kind is not None and (predicate, subject_kind) in subject_specs:
+            useful_anchors.add(subject_id)
+        if object_kind is not None and (predicate, object_kind) in object_specs:
+            useful_anchors.add(object_id)
+    return MetricValue(len(useful_anchors) / len(anchors), "usable")
 
 
 def _m_cross_repo_linkage(context: _MetricContext, *, fleet_dir: Path | None) -> MetricValue:
@@ -922,7 +958,7 @@ def _tool_predicate_entries() -> tuple[str, ...]:
 
 
 @cache
-def _useful_edge_specs_for_dimension(dimension: str | None) -> tuple[dict[str, tuple[str, ...] | str], ...]:
+def _useful_edge_specs_for_dimension(dimension: str | None) -> tuple[_UsefulEdgeSpec, ...]:
     path = Path(__file__).with_name("useful_edges.yaml")
     data = _load_yaml_object(path)
     dimensions = data.get("dimensions")
@@ -950,21 +986,35 @@ def _useful_edge_specs_for_dimension(dimension: str | None) -> tuple[dict[str, t
     return specs
 
 
-def _parse_useful_edge_spec(path: Path, entry: Any) -> dict[str, tuple[str, ...] | str]:
+def _parse_useful_edge_spec(path: Path, entry: Any) -> _UsefulEdgeSpec:
     if not isinstance(entry, dict):
         raise ValueError(f"{path}: useful edge entries must be objects")
     predicate = entry.get("predicate")
     if not isinstance(predicate, str) or not predicate:
         raise ValueError(f"{path}: useful edge predicate must be a non-empty string")
-    subject_kinds = entry.get("subject_kinds")
-    if not isinstance(subject_kinds, list) or not subject_kinds:
-        raise ValueError(f"{path}: useful edge subject_kinds must be a non-empty list")
-    parsed_subject_kinds: list[str] = []
-    for index, kind in enumerate(subject_kinds):
+    parsed_subject_kinds = _parse_useful_edge_kinds(path, entry, "subject_kinds")
+    parsed_object_kinds = _parse_useful_edge_kinds(path, entry, "object_kinds")
+    if not parsed_subject_kinds and not parsed_object_kinds:
+        raise ValueError(f"{path}: useful edge entries must define subject_kinds or object_kinds")
+    return {
+        "predicate": predicate,
+        "subject_kinds": tuple(parsed_subject_kinds),
+        "object_kinds": tuple(parsed_object_kinds),
+    }
+
+
+def _parse_useful_edge_kinds(path: Path, entry: dict[str, Any], field: str) -> list[str]:
+    raw_kinds = entry.get(field, [])
+    if not isinstance(raw_kinds, list):
+        raise ValueError(f"{path}: useful edge {field} must be a list")
+    parsed: list[str] = []
+    for index, kind in enumerate(raw_kinds):
         if not isinstance(kind, str) or not kind:
-            raise ValueError(f"{path}: useful edge subject_kinds[{index}] must be a non-empty string")
-        parsed_subject_kinds.append(kind)
-    return {"predicate": predicate, "subject_kinds": tuple(parsed_subject_kinds)}
+            raise ValueError(f"{path}: useful edge {field}[{index}] must be a non-empty string")
+        if kind not in SUPPORTED_ENTITY_KINDS:
+            raise ValueError(f"{path}: useful edge {field}[{index}] has unsupported entity kind: {kind}")
+        parsed.append(kind)
+    return parsed
 
 
 @cache
