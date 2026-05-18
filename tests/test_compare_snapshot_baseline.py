@@ -193,6 +193,16 @@ class SnapshotBaselineTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "fact_predicate_counts.CALLS"):
                 load_baseline(path)
 
+    def test_load_baseline_normalizes_legacy_coverage_reason_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "baseline.json"
+            baseline = _baseline(coverage_counts={"host_env_backed": 2, "unresolved_host": 3})
+            _write_json(path, baseline)
+
+            loaded = load_baseline(path)
+
+        self.assertEqual(loaded["coverage_reason_counts"], {"host_env_backed": 5})
+
     def test_compare_snapshot_baseline_treats_boolean_actual_counts_as_invalid(self) -> None:
         expected = _baseline(fact_counts={"CALLS": 1})
         actual = _baseline(fact_counts={"CALLS": 1})

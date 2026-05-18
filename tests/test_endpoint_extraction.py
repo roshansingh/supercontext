@@ -617,6 +617,23 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/local"][0]["resolution_kind"], "local_var")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
 
+    def test_typescript_client_nearest_block_local_overrides_parameter_shadow(self) -> None:
+        build = _extract_typescript_client(
+            "function load(url) {\n"
+            "  {\n"
+            "    const url = '/api/local';\n"
+            "    fetch(url);\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/local": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/local"][0]["resolution_kind"], "local_var")
+        self.assertFalse(_call_site_coverage(build))
+
     def test_typescript_client_switch_case_local_url_resolves_source_order(self) -> None:
         build = _extract_typescript_client(
             "function load(kind) {\n"
@@ -685,6 +702,17 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_reassigned_binding"], 2)
+
+    def test_typescript_client_same_statement_later_declarator_mutation_fails_closed(self) -> None:
+        build = _extract_typescript_client(
+            "function load() {\n"
+            "  let url = '/api/first', other = (url = '/api/second');\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_reassigned_binding"], 1)
 
     def test_typescript_client_local_helper_initializer_preserves_deferred_reason(self) -> None:
         build = _extract_typescript_client(
@@ -764,6 +792,48 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
+    def test_typescript_client_accessor_parameter_shadows_module_binding(self) -> None:
+        build = _extract_typescript_client(
+            "const url = '/api/module';\n"
+            "class Api {\n"
+            "  set endpoint(url) {\n"
+            "    fetch(url);\n"
+            "  }\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
+    def test_typescript_client_catch_binding_shadows_module_binding(self) -> None:
+        build = _extract_typescript_client(
+            "const url = '/api/module';\n"
+            "try {\n"
+            "  risky();\n"
+            "} catch (url) {\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
+    def test_typescript_client_function_and_class_declarations_shadow_module_binding(self) -> None:
+        build = _extract_typescript_client(
+            "const url = '/api/module';\n"
+            "function withFunctionShadow() {\n"
+            "  function url() {}\n"
+            "  fetch(url);\n"
+            "}\n"
+            "function withClassShadow() {\n"
+            "  class url {}\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 2)
 
     def test_typescript_client_helper_call_target_is_classified_as_deferred(self) -> None:
         build = _extract_typescript_client(

@@ -57,7 +57,9 @@ function isFunctionBoundary(node) {
     ts.isFunctionExpression(node) ||
     ts.isArrowFunction(node) ||
     ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node)
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
   );
 }
 
@@ -332,6 +334,20 @@ function loopInitializerShadowsUse(node, targetName, sourceFile) {
   return false;
 }
 
+function catchClauseShadowsUse(node, targetName, sourceFile) {
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if (ts.isCatchClause(current) && current.variableDeclaration && declaresNameInBindingName(current.variableDeclaration.name, targetName)) {
+      return true;
+    }
+    if (isFunctionBoundary(current)) {
+      break;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
 function nodeIsInsideFunction(node, sourceFile) {
   let current = node.parent;
   while (current && current !== sourceFile) {
@@ -399,6 +415,12 @@ function directVariableDeclaration(statement, targetName) {
   return found == null ? null : { ambiguous: false, declaration: found };
 }
 
+function nonVariableStatementDeclaresName(statement, targetName) {
+  return (
+    ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name?.text === targetName)
+  );
+}
+
 function containerHasPriorLiteralDeclaration(container, targetName, sourceFile, useStart) {
   for (const statement of statementListForContainer(container)) {
     if (statement.getStart(sourceFile) >= useStart) continue;
@@ -436,7 +458,13 @@ function resolveIdentifierInContainer(targetName, container, containerIndex, con
       }
       declaration = declarationMatch.declaration;
       if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) sawDynamicDeclaration = true;
+      if (statementMutatesIdentifier(statement, targetName)) {
+        return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_reassigned_binding" } };
+      }
       continue;
+    }
+    if (nonVariableStatementDeclaresName(statement, targetName)) {
+      return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_shadowed_binding" } };
     }
     if (statementMutatesIdentifier(statement, targetName)) {
       return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_reassigned_binding" } };
@@ -469,18 +497,24 @@ function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames) {
   if (nodeHasWithAncestor(node, sourceFile)) {
     return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "with_block_present" };
   }
-  if (parameterShadowsUse(node, targetName, sourceFile)) {
-    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
-  }
-  if (loopInitializerShadowsUse(node, targetName, sourceFile)) {
-    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
-  }
   const containers = scopeContainersForUse(node, sourceFile);
   const insideFunction = nodeIsInsideFunction(node, sourceFile);
+  const hasLexicalShadow =
+    parameterShadowsUse(node, targetName, sourceFile) ||
+    loopInitializerShadowsUse(node, targetName, sourceFile) ||
+    catchClauseShadowsUse(node, targetName, sourceFile);
   for (let index = 0; index < containers.length; index += 1) {
-    if (insideFunction && ts.isSourceFile(containers[index])) continue;
+    if (ts.isSourceFile(containers[index])) {
+      if (insideFunction) continue;
+      if (hasLexicalShadow) {
+        return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
+      }
+    }
     const resolved = resolveIdentifierInContainer(targetName, containers[index], index, containers, sourceFile, bindings, useStart, resolvingNames);
     if (resolved.status !== "none") return resolved.result;
+  }
+  if (hasLexicalShadow) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
   }
   if (sourceFileImportDeclaresName(sourceFile, targetName)) {
     return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
