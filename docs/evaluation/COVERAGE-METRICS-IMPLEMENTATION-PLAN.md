@@ -1,6 +1,6 @@
 # Coverage Metrics — Implementation Plan (Debate-19 contract)
 
-**Status:** in flight — 10 PRs merged to `main`; PR-11 BACKLOG-only slice next as of 2026-05-18
+**Status:** in flight — 10 PRs merged to `main`; PR-11 BACKLOG-only slice in progress as of 2026-05-18
 **Source:** Debate 19 (`debates/` was local-gitignored and is no longer present; this doc captures the converged contract)
 **Related docs:**
 - `docs/evaluation/claude-kg-coverage-metrices.md` + `docs/evaluation/codex-kg-coverage-metrices.md` — parallel research inputs (Debate-14 inputs)
@@ -100,7 +100,7 @@ Branched from `main` (not `dotnet-support`). Each PR independently green via `py
 | PR-8 | Extract linker into `source/kg/build/relink.py` + `bettercontext-relink` CLI + `_fleet/` artifacts + `linker_stale` flag | ✅ merged | PR #88 (`debate19-pr8-relink-only`) — bundles the original PR-8 refactor + PR-9 CLI |
 | **PR-9** | Python PyPI package resolver | ✅ merged | PR #89 (`debate19-pr9-python-package-resolver`) — was PR-10 in the original plan |
 | **PR-10** | TS npm package resolver | ✅ merged | PR #90 (`debate19-pr10-typescript-package-resolver`) — was PR-11 in the original plan |
-| **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | **⏳ not started** | (was PR-12) |
+| **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | **🚧 in progress** | `debate19-pr11-backlog-followups` (was PR-12) |
 
 Note on numbering drift: the converged plan originally had 12 PRs and treated the linker refactor (PR-8) and the relink CLI (PR-9) as separate. PR #88 landed both as one PR. Current numbering above reflects what actually shipped, with 2 PRs still pending.
 
@@ -206,7 +206,7 @@ Evaluation movement:
 
 | Row | When triggered |
 |-----|----------------|
-| CODEOWNERS extractor for `OWNED_BY`/`OWNS` — requires ADR-0006 allowlist update first | When deploy-blocker semantics or PR-bot ownership routing becomes a product surface |
+| CODEOWNERS extractor for ownership facts — emit canonical `OWNS` unless ADR-0006 later ratifies an `OWNED_BY` inverse | When deploy-blocker semantics or PR-bot ownership routing becomes a product surface |
 | `USES_SCHEMA` qualifier with version chains — partial today; required for deploy-blocker semantics | When `deploy_blockers_for` lands meaningfully |
 | `evidence.valid_from`/`valid_to` envelope — ADR-0006 §36 binding; current `Evidence` dataclass omits | When time-window-based `M_freshness` reporting becomes needed |
 | `CALLS` grain elevation from `CodeSymbol → CodeSymbol` to `Service → Endpoint` — required for accurate cross-service metric semantics | When inter-service blast-radius queries land |
