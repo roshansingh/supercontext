@@ -33,6 +33,7 @@ dev = ["build>=1.2"]
 [project.scripts]
 bettercontext-build-kg = "source.scripts.build_kg:main"
 bettercontext-build-multi-kg = "source.scripts.build_multi_kg:main"
+bettercontext-relink = "source.scripts.relink:main"
 bettercontext-query-kg = "source.scripts.query_kg:main"
 bettercontext-mcp-server = "source.scripts.mcp_server:main"
 bettercontext-run-validation = "source.scripts.run_product_validation:main"
