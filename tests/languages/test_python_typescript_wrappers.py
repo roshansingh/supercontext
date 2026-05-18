@@ -7,6 +7,7 @@ import unittest
 
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.languages.dotnet.language import LANGUAGE_SUPPORT as DOTNET_SUPPORT
 from source.kg.languages.python.language import LANGUAGE_SUPPORT as PYTHON_SUPPORT
 from source.kg.languages.typescript.language import LANGUAGE_SUPPORT as TYPESCRIPT_SUPPORT
 
@@ -61,6 +62,30 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertTrue(TYPESCRIPT_SUPPORT.matches_file(Path("src/index.ts")))
         self.assertTrue(TYPESCRIPT_SUPPORT.matches_file(Path("src/index.jsx")))
 
+    def test_dotnet_wrapper_exposes_adapter_names_and_rules(self) -> None:
+        ctx = ExtractionContext()
+        ctx.import_roots_by_language.setdefault("dotnet", set()).update({"Microsoft.AspNetCore.Mvc"})
+
+        self.assertEqual(
+            [adapter.capability.name for adapter in DOTNET_SUPPORT.adapters()],
+            ["dotnet-csharp-bridge"],
+        )
+        self.assertEqual(DOTNET_SUPPORT.source_roots(_repo_snapshot(), ctx), {"dotnet": {"Microsoft.AspNetCore.Mvc"}})
+        self.assertEqual(DOTNET_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
+        self.assertEqual(DOTNET_SUPPORT.opportunity_detectors(), ())
+        self.assertIsNone(DOTNET_SUPPORT.package_resolver())
+        dotnet_rules = DOTNET_SUPPORT.dimension_rules()
+        self.assertEqual(dotnet_rules["version"], 1)
+        self.assertIn("backend", {rule["dimension"] for rule in dotnet_rules["rules"]})
+        dotnet_rules["rules"].clear()
+        self.assertTrue(DOTNET_SUPPORT.dimension_rules()["rules"])
+        self.assertEqual(DOTNET_SUPPORT.useful_edges(), {})
+
+    def test_dotnet_matcher_excludes_build_output_dirs(self) -> None:
+        self.assertTrue(DOTNET_SUPPORT.matches_file(Path("src/Program.cs")))
+        self.assertFalse(DOTNET_SUPPORT.matches_file(Path("obj/Debug/net8.0/Generated.cs")))
+        self.assertFalse(DOTNET_SUPPORT.matches_file(Path("bin/Debug/net8.0/Generated.cs")))
+
     def test_repo_discovery_populates_generic_language_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -99,7 +124,7 @@ def _repo_snapshot() -> RepoSnapshot:
         name="repo",
         owner="test",
         commit_sha="sha",
-        files_by_language={"python": (), "typescript": ()},
+        files_by_language={"python": (), "typescript": (), "dotnet": ()},
     )
 
 

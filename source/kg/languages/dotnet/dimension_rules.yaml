@@ -1,0 +1,6 @@
+version: 1
+rules:
+  - id: dotnet-csharp-backend
+    dimension: backend
+    file_extensions:
+      - .cs

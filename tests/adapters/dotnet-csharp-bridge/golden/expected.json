@@ -1,0 +1,14 @@
+{
+  "entities": {
+    "Repo": 1,
+    "Service": 1,
+    "CodeModule": 1,
+    "CodeSymbol": 2,
+    "ExternalPackage": 1
+  },
+  "facts": {
+    "DEFINED_IN": 4,
+    "IMPLEMENTS": 1,
+    "IMPORTS": 1
+  }
+}

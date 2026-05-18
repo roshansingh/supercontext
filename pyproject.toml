@@ -29,6 +29,7 @@ ui = ["streamlit>=1.30"]
 llm = ["openai>=1.0"]
 agent = ["claude-agent-sdk"]
 dev = ["build>=1.2"]
+dotnet = ["tree-sitter>=0.25", "tree-sitter-c-sharp>=0.23.5"]
 
 [project.scripts]
 bettercontext-build-kg = "source.scripts.build_kg:main"
@@ -44,6 +45,7 @@ include = ["source*"]
 
 [tool.setuptools.package-data]
 "source.kg.languages.typescript.extractors" = ["ts_parser.mjs"]
+"source.kg.languages.dotnet" = ["known_stacks.yaml", "dimension_rules.yaml"]
 "source.kg.metrics" = ["config.yaml", "tool_predicates.yaml", "useful_edges.yaml"]
 "source.kg.languages.python" = ["known_stacks.yaml", "dimension_rules.yaml"]
 "source.kg.languages.typescript" = ["known_stacks.yaml", "dimension_rules.yaml"]

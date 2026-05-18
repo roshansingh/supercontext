@@ -23,6 +23,7 @@ class MetricsYamlShapeTest(unittest.TestCase):
 
         self.assertTrue(load_dimension_rules(root / "python" / "dimension_rules.yaml")["rules"])
         self.assertTrue(load_dimension_rules(root / "typescript" / "dimension_rules.yaml")["rules"])
+        self.assertTrue(load_dimension_rules(root / "dotnet" / "dimension_rules.yaml")["rules"])
 
     def test_dimension_rules_reject_boolean_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

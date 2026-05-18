@@ -1,0 +1,7 @@
+transport:
+  - Azure.Messaging.ServiceBus
+  - MassTransit
+  - NServiceBus
+web_framework:
+  - Grpc.AspNetCore
+  - Microsoft.AspNetCore.Mvc
