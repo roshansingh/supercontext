@@ -6,7 +6,7 @@
 - `docs/evaluation/claude-kg-coverage-metrices.md` + `docs/evaluation/codex-kg-coverage-metrices.md` — parallel research inputs (Debate-14 inputs)
 - `docs/evaluation/COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md` — incremental ingestion + linker-staleness follow-up (binding sub-spec)
 - ADR-0006 — canonical ontology; URN per-kind spec at §3
-- ADR-0011 — Python import distribution aliases (used by PyPI resolver PR-10)
+- ADR-0011 — Python import distribution aliases (used by PyPI resolver PR-9)
 
 ## 1. Why this doc
 
@@ -102,7 +102,7 @@ Branched from `main` (not `dotnet-support`). Each PR independently green via `py
 | **PR-10** | TS npm package resolver | ✅ merged | PR #90 (`debate19-pr10-typescript-package-resolver`) — was PR-11 in the original plan |
 | **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | ✅ merged | PR #91 (`debate19-pr11-backlog-followups`) — was PR-12 |
 
-Note on numbering drift: the converged plan originally had 12 PRs and treated the linker refactor (PR-8) and the relink CLI (PR-9) as separate. PR #88 landed both as one PR. Current numbering above reflects what actually shipped, with 2 PRs still pending.
+Note on numbering drift: the converged plan originally had 12 PRs and treated the linker refactor (PR-8) and the relink CLI (PR-9) as separate. PR #88 landed both as one PR. Current numbering above reflects what actually shipped.
 
 ## 5. What's left to land
 
