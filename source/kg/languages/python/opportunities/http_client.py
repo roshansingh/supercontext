@@ -167,7 +167,7 @@ class _ScopeScanner:
         for default in (*node.args.defaults, *node.args.kw_defaults):
             if default is not None:
                 opportunities.extend(self._opportunities_in_node(default, parent_scope))
-        child_scope = parent_scope.child(_argument_names(node.args))
+        child_scope = parent_scope.child(_function_binding_names(node))
         opportunities.extend(self._scan_statements(node.body, child_scope))
         return opportunities
 
@@ -355,12 +355,135 @@ def _argument_names(args: ast.arguments) -> set[str]:
     return names
 
 
+def _function_binding_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    names = _argument_names(node.args)
+    collector = _BindingCollector()
+    for statement in node.body:
+        collector.visit(statement)
+    names.update(collector.names)
+    names.difference_update(collector.global_names)
+    names.update(collector.nonlocal_names)
+    return names
+
+
 def _target_names(target: ast.AST) -> set[str]:
     if isinstance(target, ast.Name):
         return {target.id}
     if isinstance(target, (ast.Tuple, ast.List)):
         return {name for element in target.elts for name in _target_names(element)}
     return set()
+
+
+class _BindingCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+        self.global_names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.nonlocal_names.update(node.names)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            self.names.update(_target_names(target))
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.names.update(_target_names(node.target))
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.value)
+
+    def visit_For(self, node: ast.For) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.iter)
+        for statement in (*node.body, *node.orelse):
+            self.visit(statement)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.iter)
+        for statement in (*node.body, *node.orelse):
+            self.visit(statement)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.names.update(_target_names(item.optional_vars))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.names.update(_target_names(item.optional_vars))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name is not None:
+            self.names.add(node.name)
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.names.add(alias.asname or alias.name.split(".", 1)[0])
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name != "*":
+                self.names.add(alias.asname or alias.name)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.names.update(_target_names(node.target))
+        self.visit(node.value)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        self.visit(node.subject)
+        for case in node.cases:
+            self.names.update(_pattern_names(case.pattern))
+            if case.guard is not None:
+                self.visit(case.guard)
+            for statement in case.body:
+                self.visit(statement)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.names.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.names.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_arg_defaults(node.args)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.names.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._visit_arg_defaults(node.args)
+
+    def _visit_arg_defaults(self, args: ast.arguments) -> None:
+        for default in (*args.defaults, *args.kw_defaults):
+            if default is not None:
+                self.visit(default)
 
 
 def _pattern_names(pattern: ast.AST) -> set[str]:

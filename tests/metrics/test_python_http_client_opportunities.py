@@ -32,6 +32,8 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
                 "    client.get('/users')\n"
                 "    with aiohttp.ClientSession() as session:\n"
                 "        session.put('/events')\n"
+                "\n"
+                "def shadowed_assignment():\n"
                 "    rq = object()\n"
                 "    rq.get('/not-http-client')\n",
                 encoding="utf-8",
@@ -46,6 +48,28 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
             [row.source_kind for row in opportunities],
             ["requests.post", "httpx.get", "httpx.client.get", "aiohttp.client.put"],
         )
+
+    def test_detector_respects_function_scope_for_late_assignment_and_global(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import requests\n"
+                "def late_assignment():\n"
+                "    requests.get('/not-global')\n"
+                "    requests = object()\n"
+                "\n"
+                "def explicit_global():\n"
+                "    global requests\n"
+                "    requests.get('/global')\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            opportunities = HttpClientOpportunityDetector().detect(repo)
+
+        self.assertEqual([row.source_kind for row in opportunities], ["requests.get"])
+        self.assertEqual([row.line for row in opportunities], [8])
 
     def test_python_language_exposes_http_client_opportunity_detector(self) -> None:
         detectors = PYTHON_SUPPORT.opportunity_detectors()
