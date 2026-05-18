@@ -7,6 +7,7 @@ from unittest import mock
 
 from source.kg.build.pipeline import build_kg
 from source.kg.core.repo_source import discover_repo
+from source.kg.core.store import read_jsonl
 from source.kg.file_formats.opportunities import TerraformDomainOpportunityDetector
 from source.kg.languages.typescript.language import LANGUAGE_SUPPORT as TYPESCRIPT_SUPPORT
 from source.kg.languages.typescript.opportunities import TypeScriptHttpClientOpportunityDetector
@@ -120,8 +121,18 @@ class TypeScriptTerraformOpportunityTest(unittest.TestCase):
             snapshot = root / "snapshot"
 
             build_kg(repo, snapshot)
+            coverage = read_jsonl(snapshot / "coverage.jsonl")
             cell = compute_all(snapshot, expected_repos=1)[0]
 
+        self.assertTrue(
+            any(
+                row.get("predicate") == "CALLS_ENDPOINT"
+                and row.get("scope_ref", {}).get("reason") == "external_endpoint_suppressed"
+                and row.get("scope_ref", {}).get("file_path") == "client.ts"
+                and row.get("scope_ref", {}).get("line") == 2
+                for row in coverage
+            )
+        )
         self.assertEqual(cell.metric_values["M_extractor_opportunity"].value, 0.0)
         self.assertEqual(cell.metric_values["M_silent_gap"].value, 0.0)
 
