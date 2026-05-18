@@ -414,6 +414,47 @@ class CoverageMetricsComputeTest(unittest.TestCase):
         self.assertEqual(backend.metric_values["M_useful_edge"].state, "usable")
         self.assertEqual(backend.metric_values["M_useful_edge"].value, 1.0)
 
+    def test_useful_edge_counts_references_event_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("from fastapi import FastAPI\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            channel = Entity(
+                "EventChannel",
+                {"tenant_id": "default", "broker_kind": "sqs", "channel_address": "orders"},
+            )
+            fact = Fact("REFERENCES_EVENT_CHANNEL", service.entity_id, channel.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[service, channel],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "event-reference"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _cell(compute_all(snapshot, expected_repos=1), "backend")
+
+        self.assertEqual(backend.metric_values["M_useful_edge"].state, "usable")
+        self.assertEqual(backend.metric_values["M_useful_edge"].value, 1.0)
+
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

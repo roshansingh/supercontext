@@ -10,6 +10,9 @@ dimensions:
       subject_kinds: [Service]
     - predicate: REFERENCES_ENV_VAR
       subject_kinds: [Service]
+    - predicate: REFERENCES_EVENT_CHANNEL
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: PRODUCES_EVENT
       subject_kinds: [Service]
       object_kinds: [EventChannel]
@@ -32,6 +35,9 @@ dimensions:
       subject_kinds: [Service]
     - predicate: REFERENCES_ENV_VAR
       subject_kinds: [Service]
+    - predicate: REFERENCES_EVENT_CHANNEL
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: PRODUCES_EVENT
       subject_kinds: [Service]
       object_kinds: [EventChannel]
@@ -49,6 +55,9 @@ dimensions:
   data-pipeline:
     - predicate: IMPLEMENTS
       object_kinds: [Service]
+    - predicate: REFERENCES_EVENT_CHANNEL
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: PRODUCES_EVENT
       subject_kinds: [Service]
       object_kinds: [EventChannel]
