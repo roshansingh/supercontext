@@ -86,12 +86,12 @@ def relink_snapshot_dirs(
     if not inputs:
         raise ValueError("relink requires at least one snapshot directory")
     _validate_unique_input_identities(inputs)
-
-    result = link_external_packages(inputs)
     out = Path(output_dir).expanduser().resolve()
     input_dirs = {input_repo.snapshot_dir for input_repo in inputs if input_repo.snapshot_dir is not None}
     if out in input_dirs:
         raise ValueError(f"relink output_dir must not be one of the input snapshot directories: {out}")
+
+    result = link_external_packages(inputs)
     out.mkdir(parents=True, exist_ok=True)
     _write_jsonl(out / "cross_repo_links.jsonl", (fact.to_record() for fact in result.facts), "fact_id")
     _write_jsonl(
@@ -153,11 +153,7 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
             continue
         if not root.exists():
             raise FileNotFoundError(f"Snapshot directory does not exist: {root}")
-        children = sorted(
-            child
-            for child in root.iterdir()
-            if child.is_dir() and child.name != "_fleet" and (child / "manifest.json").exists()
-        )
+        children = sorted(child for child in root.iterdir() if child.is_dir() and _is_repo_snapshot_dir(child))
         if not children:
             raise FileNotFoundError(f"No snapshot manifests found under: {root}")
         snapshots.extend(children)
@@ -170,6 +166,26 @@ def default_output_dir(paths: tuple[Path, ...]) -> Path:
     if len(paths) == 1 and not (paths[0].expanduser().resolve() / "manifest.json").exists():
         return paths[0].expanduser().resolve() / "_fleet"
     raise ValueError("--out is required unless --snapshot-dir points to a single fleet directory")
+
+
+def _is_repo_snapshot_dir(path: Path) -> bool:
+    manifest_path = path / "manifest.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    if manifest.get("build_type") == "fleet_relink":
+        return False
+    return (
+        isinstance(manifest.get("repo_path"), str)
+        and bool(manifest.get("repo_path"))
+        and isinstance(manifest.get("commit_sha"), str)
+        and bool(manifest.get("commit_sha"))
+    )
 
 
 def repo_identity(repo: RepoSnapshot, tenant_id: str) -> RepoIdentity:
@@ -443,6 +459,8 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
 
 def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
     _validate_repo_commit_matches_snapshot(repo)
+    if repo.commit_sha == "working-tree":
+        return
     status = _git_status_porcelain(repo.root, manifest_path)
     if status:
         relative = manifest_path.relative_to(repo.root)
@@ -451,6 +469,8 @@ def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: 
 
 def _validate_missing_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
     _validate_repo_commit_matches_snapshot(repo)
+    if repo.commit_sha == "working-tree":
+        return
     status = _git_status_porcelain(repo.root, manifest_path)
     if status:
         relative = manifest_path.relative_to(repo.root)
@@ -492,8 +512,8 @@ def _git_status_porcelain(root: Path, path: Path) -> str:
         )
     except FileNotFoundError as exc:
         raise RuntimeError("git is required to validate package manifest cleanliness before relink") from exc
-    except subprocess.CalledProcessError:
-        return ""
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f"git status failed while validating package manifest: {path}") from exc
     return result.stdout.strip()
 
 

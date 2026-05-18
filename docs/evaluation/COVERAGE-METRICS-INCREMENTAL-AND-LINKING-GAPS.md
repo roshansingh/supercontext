@@ -48,9 +48,9 @@ This PR adds a `bettercontext-relink` entry point so the linker can be refreshed
 
 Current storage shape matters here:
 
-- `build_multi_kg(...)` writes one combined snapshot through `JsonlKgStore(output_dir).write(...)` (`source/kg/build/multi_repo.py:54-100`), not one mutable snapshot per input repo.
-- The combined manifest stores `built_at`, repo list, and linker counts (`source/kg/build/multi_repo.py:64-91`), while `JsonlKgStore.write(...)` writes only `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` in that one output directory (`source/kg/core/store.py:14-28`).
-- The CLI wrapper `source/scripts/build_multi_kg.py:9-21` accepts repeated `--repo` inputs and one `--out` directory for from-source builds. The relink-only path is now owned by `source/scripts/relink.py`.
+- `build_multi_kg(...)` writes one combined snapshot through `JsonlKgStore(output_dir).write(...)`, not one mutable snapshot per input repo.
+- The combined manifest stores `built_at`, repo list, and linker counts, while `JsonlKgStore.write(...)` writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` in that one output directory.
+- The CLI wrapper `source/scripts/build_multi_kg.py` accepts repeated `--repo` inputs and one `--out` directory for from-source builds. The relink-only path is now owned by `source/scripts/relink.py`.
 
 **Design implication:** relink-only should introduce an explicit fleet-level artifact instead of mutating per-repo JSONL files by default. Mutating per-repo `facts.jsonl` would mix repo-local extraction output with a fleet projection and make the same repo snapshot differ depending on which fleet it was linked in.
 
@@ -123,10 +123,10 @@ bettercontext-build-kg --repo /work/team-new --out data/kg_runs/team-new
 # Refresh the cross-repo linker only — re-extraction skipped
 bettercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
 
-# Re-aggregate metrics — pure projection, always safe
-bettercontext-coverage-metrics --snapshot data/kg_runs/_fleet --fleet-dir data/kg_runs/_fleet
+# Re-aggregate metrics for a repo or combined snapshot, with fleet linker freshness context
+bettercontext-coverage-metrics --snapshot data/kg_runs/team-new --fleet-dir data/kg_runs
 
-# Result identical (modulo timestamps) to a from-scratch:
+# Relinked cross-repo link facts/evidence should match the linker slice from a from-source build:
 #   bettercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/_fleet
 ```
 

@@ -50,11 +50,17 @@ class RelinkOnlyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             snapshot = root / "repo-a"
-            fleet = root / "_fleet"
+            fleet = root / "links"
             snapshot.mkdir()
             fleet.mkdir()
-            (snapshot / "manifest.json").write_text("{}\n", encoding="utf-8")
-            (fleet / "manifest.json").write_text("{}\n", encoding="utf-8")
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"repo_path": str(snapshot), "commit_sha": "working-tree"}) + "\n",
+                encoding="utf-8",
+            )
+            (fleet / "manifest.json").write_text(
+                json.dumps({"build_type": "fleet_relink"}) + "\n",
+                encoding="utf-8",
+            )
 
             self.assertEqual(resolve_snapshot_dirs((root,)), (snapshot.resolve(),))
 
@@ -247,7 +253,12 @@ def _python_repo(path: Path, package_name: str, source: str) -> Path:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "commit.gpgsign=false", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 if __name__ == "__main__":
