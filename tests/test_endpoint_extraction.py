@@ -714,6 +714,16 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_reassigned_binding"], 1)
 
+    def test_typescript_client_same_statement_later_declarator_is_not_in_scope(self) -> None:
+        build = _extract_typescript_client(
+            "function load() {\n"
+            "  const other = fetch(url), url = '/api/later';\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
     def test_typescript_client_local_helper_initializer_preserves_deferred_reason(self) -> None:
         build = _extract_typescript_client(
             "function load() {\n"

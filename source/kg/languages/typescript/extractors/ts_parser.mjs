@@ -446,7 +446,8 @@ function resolveIdentifierInContainer(targetName, container, containerIndex, con
   for (const statement of statementListForContainer(container)) {
     const statementStart = statement.getStart(sourceFile);
     const declarationMatch = directVariableDeclaration(statement, targetName);
-    if (declarationMatch && statementStart >= useStart) {
+    const declarationStart = declarationMatch?.declaration?.getStart(sourceFile) ?? null;
+    if (declarationMatch && (statementStart >= useStart || (declarationStart != null && declarationStart >= useStart))) {
       sawFutureDeclaration = true;
       continue;
     }
