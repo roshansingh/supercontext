@@ -13,7 +13,7 @@ import yaml
 from source.kg.core.models import JsonObject
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import read_jsonl
-from source.kg.extraction.framework.allowlists import SUPPORTED_FACT_PREDICATES
+from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS, SUPPORTED_FACT_PREDICATES
 from source.kg.metrics.config import MetricsConfig, load_metrics_config
 from source.kg.metrics.dimension import DimensionAssignment, classify_repo
 from source.kg.metrics.opportunity import Opportunity
@@ -1011,6 +1011,8 @@ def _parse_useful_edge_kinds(path: Path, entry: dict[str, Any], field: str) -> l
     for index, kind in enumerate(raw_kinds):
         if not isinstance(kind, str) or not kind:
             raise ValueError(f"{path}: useful edge {field}[{index}] must be a non-empty string")
+        if kind not in SUPPORTED_ENTITY_KINDS:
+            raise ValueError(f"{path}: useful edge {field}[{index}] has unsupported entity kind: {kind}")
         parsed.append(kind)
     return parsed
 

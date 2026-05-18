@@ -6,9 +6,10 @@ import unittest
 
 import yaml
 
-from source.kg.extraction.framework.allowlists import SUPPORTED_FACT_PREDICATES
+from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS, SUPPORTED_FACT_PREDICATES
 from source.kg.languages._shared.dimension_rules_loader import load_dimension_rules
 from source.kg.metrics.config import KNOWN_METRICS, load_metrics_config
+from source.kg.metrics.compute import _parse_useful_edge_spec
 
 
 class MetricsYamlShapeTest(unittest.TestCase):
@@ -63,9 +64,17 @@ class MetricsYamlShapeTest(unittest.TestCase):
                     for entity_kind in field_value:
                         self.assertIsInstance(entity_kind, str)
                         self.assertTrue(entity_kind)
+                        self.assertIn(entity_kind, SUPPORTED_ENTITY_KINDS)
         for row in data["adr_followups"]:
             self.assertTrue(row["adr_followup_required"])
             self.assertNotIn(row["predicate"], SUPPORTED_FACT_PREDICATES)
+
+    def test_useful_edge_parser_rejects_unknown_entity_kind(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported entity kind"):
+            _parse_useful_edge_spec(
+                Path("useful_edges.yaml"),
+                {"predicate": "IMPLEMENTS", "object_kinds": ["TypoService"]},
+            )
 
     def test_tool_predicates_are_supported(self) -> None:
         path = Path("source/kg/metrics/tool_predicates.yaml")

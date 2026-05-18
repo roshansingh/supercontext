@@ -12,8 +12,10 @@ dimensions:
       subject_kinds: [Service]
     - predicate: PRODUCES_EVENT
       subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: CONSUMES_EVENT
       subject_kinds: [Service]
+      object_kinds: [EventChannel]
   frontend:
     - predicate: IMPLEMENTS
       object_kinds: [Service]
@@ -32,8 +34,10 @@ dimensions:
       subject_kinds: [Service]
     - predicate: PRODUCES_EVENT
       subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: CONSUMES_EVENT
       subject_kinds: [Service]
+      object_kinds: [EventChannel]
   iac:
     - predicate: REFERENCES_DOMAIN
       subject_kinds: [Service]
@@ -47,8 +51,10 @@ dimensions:
       object_kinds: [Service]
     - predicate: PRODUCES_EVENT
       subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: CONSUMES_EVENT
       subject_kinds: [Service]
+      object_kinds: [EventChannel]
     - predicate: REFERENCES_ENV_VAR
       subject_kinds: [Service]
   shared-lib:
