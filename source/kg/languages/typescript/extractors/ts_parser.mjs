@@ -51,6 +51,16 @@ function bindingNames(name) {
   return [];
 }
 
+function isFunctionBoundary(node) {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
 function collectImports(sourceFile) {
   const imports = [];
   for (const statement of sourceFile.statements) {
@@ -175,13 +185,8 @@ function collectTopLevelLiteralBindings(sourceFile) {
       }
       continue;
     }
-    if (
-      ts.isExpressionStatement(statement) &&
-      ts.isBinaryExpression(statement.expression) &&
-      ASSIGNMENT_OPERATORS.has(statement.expression.operatorToken.kind) &&
-      ts.isIdentifier(statement.expression.left)
-    ) {
-      invalid.add(statement.expression.left.text);
+    for (const name of bindings.keys()) {
+      if (statementMutatesIdentifier(statement, name)) invalid.add(name);
     }
   }
   for (const name of invalid) bindings.delete(name);
@@ -289,7 +294,7 @@ function scopeContainersForUse(node, sourceFile) {
     if ((ts.isBlock(current) || ts.isSourceFile(current)) && !containers.includes(current)) {
       containers.push(current);
     }
-    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) {
+    if (isFunctionBoundary(current)) {
       break;
     }
     current = current.parent;
@@ -301,13 +306,10 @@ function scopeContainersForUse(node, sourceFile) {
 function parameterShadowsUse(node, targetName, sourceFile) {
   let current = node.parent;
   while (current && current !== sourceFile) {
-    if (
-      (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) &&
-      parametersDeclareName(current, targetName)
-    ) {
+    if (isFunctionBoundary(current) && parametersDeclareName(current, targetName)) {
       return true;
     }
-    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) {
+    if (isFunctionBoundary(current)) {
       break;
     }
     current = current.parent;
@@ -320,7 +322,7 @@ function loopInitializerShadowsUse(node, targetName, sourceFile) {
   while (current && current !== sourceFile) {
     if (ts.isForStatement(current) && forInitializerDeclaresName(current.initializer, targetName)) return true;
     if ((ts.isForOfStatement(current) || ts.isForInStatement(current)) && forInOfInitializerDeclaresName(current.initializer, targetName)) return true;
-    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) {
+    if (isFunctionBoundary(current)) {
       break;
     }
     current = current.parent;
@@ -331,7 +333,7 @@ function loopInitializerShadowsUse(node, targetName, sourceFile) {
 function nodeIsInsideFunction(node, sourceFile) {
   let current = node.parent;
   while (current && current !== sourceFile) {
-    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) {
+    if (isFunctionBoundary(current)) {
       return true;
     }
     current = current.parent;
@@ -339,17 +341,49 @@ function nodeIsInsideFunction(node, sourceFile) {
   return false;
 }
 
-function expressionAssignsIdentifier(expression, targetName) {
-  return (
-    ts.isBinaryExpression(expression) &&
-    ASSIGNMENT_OPERATORS.has(expression.operatorToken.kind) &&
-    ts.isIdentifier(expression.left) &&
-    expression.left.text === targetName
-  );
+function assignmentTargetMutatesIdentifier(node, targetName) {
+  if (ts.isIdentifier(node)) return node.text === targetName;
+  if (ts.isParenthesizedExpression(node)) return assignmentTargetMutatesIdentifier(node.expression, targetName);
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.some((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) return property.name.text === targetName;
+      if (ts.isPropertyAssignment(property)) return assignmentTargetMutatesIdentifier(property.initializer, targetName);
+      return false;
+    });
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements.some((element) => assignmentTargetMutatesIdentifier(element, targetName));
+  }
+  return false;
 }
 
-function statementAssignsIdentifier(statement, targetName) {
-  return ts.isExpressionStatement(statement) && expressionAssignsIdentifier(statement.expression, targetName);
+function expressionMutatesIdentifier(expression, targetName) {
+  if (ts.isBinaryExpression(expression) && ASSIGNMENT_OPERATORS.has(expression.operatorToken.kind)) {
+    return assignmentTargetMutatesIdentifier(expression.left, targetName);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
+    (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
+    ts.isIdentifier(expression.operand)
+  ) {
+    return expression.operand.text === targetName;
+  }
+  return false;
+}
+
+function statementMutatesIdentifier(statement, targetName) {
+  let mutated = false;
+  function visit(node) {
+    if (mutated) return;
+    if (node !== statement && isFunctionBoundary(node)) return;
+    if (expressionMutatesIdentifier(node, targetName)) {
+      mutated = true;
+      return;
+    }
+    node.forEachChild(visit);
+  }
+  visit(statement);
+  return mutated;
 }
 
 function directVariableDeclaration(statement, targetName) {
@@ -402,7 +436,7 @@ function resolveIdentifierInContainer(targetName, container, containerIndex, con
       if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) sawDynamicDeclaration = true;
       continue;
     }
-    if (statementAssignsIdentifier(statement, targetName)) {
+    if (statementMutatesIdentifier(statement, targetName)) {
       return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_reassigned_binding" } };
     }
   }
