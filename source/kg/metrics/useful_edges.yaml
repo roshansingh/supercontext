@@ -37,6 +37,7 @@ dimensions:
   iac:
     - predicate: REFERENCES_DOMAIN
       subject_kinds: [Service]
+      object_kinds: [Domain]
     - predicate: REFERENCES_ENV_VAR
       subject_kinds: [Service]
     - predicate: ROUTES_DOMAIN_TO_DEPLOY

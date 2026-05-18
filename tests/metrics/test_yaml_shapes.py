@@ -54,9 +54,10 @@ class MetricsYamlShapeTest(unittest.TestCase):
                 object_kinds = entry.get("object_kinds")
                 self.assertIn(predicate, SUPPORTED_FACT_PREDICATES)
                 self.assertTrue(subject_kinds or object_kinds)
-                for field_value in (subject_kinds, object_kinds):
-                    if field_value is None:
+                for field in ("subject_kinds", "object_kinds"):
+                    if field not in entry:
                         continue
+                    field_value = entry[field]
                     self.assertIsInstance(field_value, list)
                     self.assertTrue(field_value)
                     for entity_kind in field_value:

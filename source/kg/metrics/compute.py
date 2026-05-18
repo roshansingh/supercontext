@@ -533,8 +533,6 @@ def _m_useful_edge(context: _MetricContext) -> MetricValue:
     specs = _useful_edge_specs_for_dimension(context.dimension)
     if not specs:
         return MetricValue(0.0, "partial", "useful_edges.yaml has no predicates for this dimension")
-    if not context.scoped_entities:
-        return MetricValue(None, "n_a", "no anchor entities in scope")
     subject_specs = {
         (str(spec["predicate"]), kind)
         for spec in specs

@@ -283,6 +283,93 @@ class CoverageMetricsComputeTest(unittest.TestCase):
         self.assertEqual(backend.metric_values["M_useful_edge"].state, "usable")
         self.assertEqual(backend.metric_values["M_useful_edge"].value, 0.0)
 
+    def test_useful_edge_counts_fact_endpoints_without_entity_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("from fastapi import FastAPI\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            endpoint = Entity(
+                "Endpoint",
+                {"tenant_id": "default", "repo": "repo", "protocol": "http", "method": "GET", "path": "/health"},
+            )
+            fact = Fact("EXPOSES_ENDPOINT", service.entity_id, endpoint.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[service, endpoint],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "endpoint"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _cell(compute_all(snapshot, expected_repos=1), "backend")
+
+        self.assertEqual(backend.metric_values["M_useful_edge"].state, "usable")
+        self.assertEqual(backend.metric_values["M_useful_edge"].value, 1.0)
+
+    def test_iac_useful_edge_counts_domain_object_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "main.tf").write_text('resource "aws_route53_record" "www" {}\n', encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            domain = Entity("Domain", {"tenant_id": "default", "repo": "repo", "name": "example.com"})
+            fact = Fact("REFERENCES_DOMAIN", service.entity_id, domain.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[service, domain],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=domain.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "domain"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "main.tf", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "domain"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "main.tf", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"terraform": 1}},
+                },
+            )
+
+            iac = _cell(compute_all(snapshot, expected_repos=1), "iac")
+
+        self.assertEqual(iac.metric_values["M_useful_edge"].state, "usable")
+        self.assertEqual(iac.metric_values["M_useful_edge"].value, 1.0)
+
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
