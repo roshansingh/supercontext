@@ -617,6 +617,29 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/local"][0]["resolution_kind"], "local_var")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
 
+    def test_typescript_client_switch_case_local_url_resolves_source_order(self) -> None:
+        build = _extract_typescript_client(
+            "function load(kind) {\n"
+            "  switch (kind) {\n"
+            "    case 'users':\n"
+            "      const url = '/api/case';\n"
+            "      fetch(url);\n"
+            "      break;\n"
+            "    default:\n"
+            "      const fallback = '/api/default';\n"
+            "      fetch(fallback);\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/case": {"ANY"}, "/api/default": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/case"][0]["resolution_kind"], "local_var")
+        self.assertEqual(qualifiers_by_path["/api/default"][0]["resolution_kind"], "local_var")
+        self.assertFalse(_call_site_coverage(build))
+
     def test_typescript_client_local_url_reassignment_is_source_ordered(self) -> None:
         build = _extract_typescript_client(
             "function load() {\n"
@@ -1469,6 +1492,7 @@ def _call_site_coverage(build) -> list[Coverage]:
         "external_endpoint_suppressed",
         "host_env_backed",
         "target_helper_call_deferred",
+        "target_dynamic_template_segment",
         "target_reassigned_binding",
         "target_shadowed_binding",
         "unresolved_target",

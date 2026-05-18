@@ -283,7 +283,9 @@ function nodeHasWithAncestor(node, sourceFile) {
 }
 
 function statementListForContainer(container) {
-  if (ts.isSourceFile(container) || ts.isBlock(container)) return Array.from(container.statements ?? []);
+  if (ts.isSourceFile(container) || ts.isBlock(container) || ts.isCaseClause(container) || ts.isDefaultClause(container)) {
+    return Array.from(container.statements ?? []);
+  }
   return [];
 }
 
@@ -291,7 +293,7 @@ function scopeContainersForUse(node, sourceFile) {
   const containers = [];
   let current = node.parent;
   while (current && current !== sourceFile) {
-    if ((ts.isBlock(current) || ts.isSourceFile(current)) && !containers.includes(current)) {
+    if ((ts.isBlock(current) || ts.isSourceFile(current) || ts.isCaseClause(current) || ts.isDefaultClause(current)) && !containers.includes(current)) {
       containers.push(current);
     }
     if (isFunctionBoundary(current)) {
