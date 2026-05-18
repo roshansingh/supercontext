@@ -437,6 +437,10 @@ def _build_module_clients_index(parsed_files: dict[str, object]) -> dict[str, di
     return index
 
 
+def build_typescript_module_clients_index(parsed_files: dict[str, object]) -> dict[str, dict[str, object]]:
+    return _build_module_clients_index(parsed_files)
+
+
 def _build_imports_by_local(parsed_file: dict) -> dict[str, dict[str, str]]:
     imports_by_local: dict[str, dict[str, str]] = {}
     duplicate_locals: set[str] = set()
@@ -464,6 +468,10 @@ def _build_imports_by_local(parsed_file: dict) -> dict[str, dict[str, str]]:
     return imports_by_local
 
 
+def build_typescript_imports_by_local(parsed_file: dict) -> dict[str, dict[str, str]]:
+    return _build_imports_by_local(parsed_file)
+
+
 def _resolve_imported_client(
     importer_path: str,
     row: dict,
@@ -485,6 +493,16 @@ def _resolve_imported_client(
         return None
     client_info = module_clients.get(module_path, {}).get(imported_name)
     return client_info if isinstance(client_info, dict) else None
+
+
+def resolve_typescript_imported_client(
+    importer_path: str,
+    row: dict,
+    imports_by_local: dict[str, dict[str, str]],
+    module_clients: dict[str, dict[str, object]],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
+) -> dict[str, object] | None:
+    return _resolve_imported_client(importer_path, row, imports_by_local, module_clients, path_aliases)
 
 
 def _resolve_import(
@@ -585,6 +603,10 @@ def _load_typescript_path_aliases(repo_root: Path) -> tuple[tuple[str, tuple[str
             if targets:
                 aliases.append((pattern, targets))
     return tuple(sorted(aliases, key=_typescript_path_pattern_sort_key, reverse=True))
+
+
+def load_typescript_path_aliases(repo_root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return _load_typescript_path_aliases(repo_root)
 
 
 def _normalize_repo_relative_path(value: str) -> str:

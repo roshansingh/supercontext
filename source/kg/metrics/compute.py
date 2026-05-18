@@ -726,22 +726,36 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
 
 def _snapshot_opportunities(discovered_repos: tuple[_DiscoveredRepoRef, ...]) -> tuple[_ScopedOpportunity, ...]:
     opportunities: list[_ScopedOpportunity] = []
+    detectors = _registered_opportunity_detectors()
     for discovered in discovered_repos:
         repo_ref = discovered.manifest_ref
-        for language in _registered_languages():
-            for detector in language.opportunity_detectors():
-                for opportunity in detector.detect(discovered.repo):
-                    opportunities.append(
-                        _ScopedOpportunity(
-                            opportunity=opportunity,
-                            scope_keys=frozenset(
-                                _file_scope_key(repo_identity_key, repo_ref.commit_sha, opportunity.path)
-                                for repo_identity_key in repo_ref.identity_keys
-                            ),
-                            coverage_repos=frozenset(repo_ref.identity_keys),
-                        )
+        for detector in detectors:
+            for opportunity in detector.detect(discovered.repo):
+                opportunities.append(
+                    _ScopedOpportunity(
+                        opportunity=opportunity,
+                        scope_keys=frozenset(
+                            _file_scope_key(repo_identity_key, repo_ref.commit_sha, opportunity.path)
+                            for repo_identity_key in repo_ref.identity_keys
+                        ),
+                        coverage_repos=frozenset(repo_ref.identity_keys),
                     )
+                )
     return tuple(opportunities)
+
+
+def _registered_opportunity_detectors():
+    detectors = []
+    for language in _registered_languages():
+        detectors.extend(language.opportunity_detectors())
+    detectors.extend(_registered_file_format_opportunity_detectors())
+    return tuple(detectors)
+
+
+def _registered_file_format_opportunity_detectors():
+    from source.kg.file_formats.opportunities import FILE_FORMAT_OPPORTUNITY_DETECTORS
+
+    return FILE_FORMAT_OPPORTUNITY_DETECTORS
 
 
 def _registered_languages():

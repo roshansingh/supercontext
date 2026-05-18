@@ -14,6 +14,7 @@ from source.kg.languages.known_stacks import load_known_stacks
 from source.kg.languages.typescript.extractors.extractor_adapter import TYPESCRIPT_COMPILER_API_ADAPTER
 from source.kg.languages.typescript.extractors.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
 from source.kg.languages.typescript.files import LANGUAGE_FILES, TypeScriptLanguageFiles
+from source.kg.languages.typescript.opportunities import TypeScriptHttpClientOpportunityDetector
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ class TypeScriptLanguageSupport:
         return {}
 
     def opportunity_detectors(self) -> tuple[Any, ...]:
-        return ()
+        return (TypeScriptHttpClientOpportunityDetector(),)
 
     def package_resolver(self) -> Any | None:
         return None
