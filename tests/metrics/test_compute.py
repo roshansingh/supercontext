@@ -455,6 +455,59 @@ class CoverageMetricsComputeTest(unittest.TestCase):
         self.assertEqual(backend.metric_values["M_useful_edge"].state, "usable")
         self.assertEqual(backend.metric_values["M_useful_edge"].value, 1.0)
 
+    def test_shared_lib_useful_edge_counts_incoming_call_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text("[project]\nname = \"repo\"\n", encoding="utf-8")
+            (repo / "lib.py").write_text("def caller():\n    return callee()\n\ndef callee():\n    return 1\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            caller = Entity(
+                "CodeSymbol",
+                {"tenant_id": "default", "repo": "repo", "module": "lib", "qualname": "caller", "symbol_kind": "function"},
+            )
+            callee = Entity(
+                "CodeSymbol",
+                {"tenant_id": "default", "repo": "repo", "module": "lib", "qualname": "callee", "symbol_kind": "function"},
+            )
+            fact = Fact("CALLS", caller.entity_id, callee.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[caller, callee],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=callee.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "callee"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "lib.py", "line_start": 4, "line_end": 5},
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "call"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "lib.py", "line_start": 2, "line_end": 2},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            shared_lib = _cell(compute_all(snapshot, expected_repos=1), "shared-lib")
+
+        self.assertEqual(shared_lib.metric_values["M_useful_edge"].state, "usable")
+        self.assertEqual(shared_lib.metric_values["M_useful_edge"].value, 1.0)
+
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -73,6 +73,7 @@ dimensions:
       subject_kinds: [CodeModule]
     - predicate: CALLS
       subject_kinds: [CodeSymbol]
+      object_kinds: [CodeSymbol]
   mobile:
     - predicate: IMPLEMENTS
       object_kinds: [Service]
