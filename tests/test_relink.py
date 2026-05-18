@@ -69,6 +69,15 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(resolve_snapshot_dirs((root,)), (snapshot.resolve(),))
             self.assertEqual(default_output_dir((root,)), root.resolve() / "_fleet")
 
+    def test_resolve_snapshot_dirs_rejects_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_arg = root / "not-a-dir"
+            snapshot_arg.write_text("not a snapshot directory\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(NotADirectoryError, "Snapshot path must be a directory"):
+                resolve_snapshot_dirs((snapshot_arg,))
+
     def test_relink_rejects_duplicate_repo_identity_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -188,6 +197,21 @@ class RelinkOnlyTest(unittest.TestCase):
                 handle.write("[]\n")
 
             with self.assertRaisesRegex(ValueError, "row .* must be a JSON object"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_entity_rows_missing_entity_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            rows = read_jsonl(snapshot / "entities.jsonl")
+            rows[0].pop("entity_id")
+            with (snapshot / "entities.jsonl").open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+            with self.assertRaisesRegex(ValueError, "entity_id must be a non-empty string"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_relink_accepts_non_object_package_json_as_repo_name_fallback(self) -> None:

@@ -81,10 +81,10 @@ Concrete proposal:
 - **Behavior**: reads each repo's existing `entities.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/multi_repo.py`; writes fleet-level linker output next to the per-repo snapshots:
   - `_fleet/cross_repo_links.jsonl` for linker facts such as `RESOLVES_TO_REPO`
   - `_fleet/cross_repo_link_evidence.jsonl` for linker evidence
-  - `_fleet/manifest.json` with linker `built_at`, `source_system`, `rule_version`, `repo_commit_sha_set`, `provider_count`, `link_count`, and `ambiguous_package_count`
+  - `_fleet/manifest.json` with linker `built_at`, `source_system`, `rule_version`, `repo_commit_fingerprints`, informational `repo_commit_sha_set`, `provider_count`, `link_count`, and `ambiguous_package_count`
 - **v1 constraint**: the original repo trees recorded in each snapshot `manifest.json.repo_path` must still exist. Relink reads package manifests (`pyproject.toml` / `package.json`) from that tree to identify provider aliases, and rejects git repos whose current `HEAD` no longer matches the snapshot `commit_sha`.
 - **Non-goal for v1**: do not write refreshed cross-repo facts back into each repo's `facts.jsonl`. Keep repo-local extraction snapshots immutable and fleet linking as a projection.
-- **Determinism guarantee**: `bettercontext-relink` over `{1..11}` must produce the same linker output as `build_multi_kg` extracting + linking `{1..11}` from scratch (same repo commits)
+- **Determinism guarantee**: `bettercontext-relink` over `{1..11}` must produce the same deterministic linker IDs and link semantics as `build_multi_kg` extracting + linking `{1..11}` from scratch at the same repo commits. Serialized timestamp fields such as `evidence.ingested_at` may differ.
 
 This is the single change that closes the incremental-correctness gap. Estimated effort: ~½ day given the linker is already isolated in `multi_repo.py`.
 
@@ -141,7 +141,7 @@ Debate 14 §"Final converged metric matrix" treats per-repo and fleet metrics as
 
 The 11 converged metrics remain unchanged. Three minor additions integrate cleanly:
 
-- **Plan row #11 (`compute.py`)** — also reads `manifest.json:built_at` and `commit_sha` from each per-repo snapshot plus `_fleet/manifest.json:built_at` and `repo_commit_sha_set`; computes `linker_stale = fleet.built_at < max(repo.built_at) OR commit_sha_set mismatch`, and attaches it as a contract flag to M_cross_repo_linkage when true
+- **Plan row #11 (`compute.py`)** — also reads `manifest.json:built_at` and `commit_sha` from each per-repo snapshot plus `_fleet/manifest.json:built_at` and `repo_commit_fingerprints`; computes `linker_stale = fleet.built_at < max(repo.built_at) OR repo_commit_fingerprints mismatch`, and attaches it as a contract flag to M_cross_repo_linkage when true
 - **Plan row #17 (BACKLOG)** — add a row: "Relink-only entry point — `bettercontext-relink --snapshot-dir`. Needed for incremental ingestion correctness. Triggered when a second repo is added to an existing fleet without a re-extraction window."
 - **New plan row (post-Debate-14 follow-up PR)** — `source/kg/build/relink.py` extracting the linker step from `multi_repo.py` so both `build_multi_kg` and the new CLI invoke the same code path. `build_multi_kg` may continue writing a combined snapshot; `relink.py` should additionally support fleet-level link artifacts for incremental snapshot directories.
 

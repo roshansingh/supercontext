@@ -153,6 +153,8 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
             continue
         if not root.exists():
             raise FileNotFoundError(f"Snapshot directory does not exist: {root}")
+        if not root.is_dir():
+            raise NotADirectoryError(f"Snapshot path must be a directory: {root}")
         children = sorted(child for child in root.iterdir() if child.is_dir() and _is_repo_snapshot_dir(child))
         if not children:
             raise FileNotFoundError(f"No snapshot manifests found under: {root}")
@@ -338,7 +340,9 @@ def _entity_from_record(row: JsonObject, path: Path) -> Entity:
         raise ValueError(f"{path}: entity canonical_status is unsupported: {canonical_status}")
     entity = Entity(kind, identity, properties, canonical_status=canonical_status)
     expected_id = row.get("entity_id")
-    if isinstance(expected_id, str) and expected_id != entity.entity_id:
+    if not isinstance(expected_id, str) or not expected_id:
+        raise ValueError(f"{path}: entity_id must be a non-empty string")
+    if expected_id != entity.entity_id:
         raise ValueError(f"{path}: entity_id does not match kind and identity: {expected_id}")
     return entity
 
