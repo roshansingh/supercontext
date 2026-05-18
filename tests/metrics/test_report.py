@@ -61,6 +61,8 @@ class CoverageReportTest(unittest.TestCase):
             self.assertEqual(payload["tenant"], "shopagain-latticeai")
             self.assertEqual(payload["repo_count_expected"], 23)
             self.assertEqual(payload["repo_count_indexed"], 2)
+            self.assertEqual(payload["metrics_built_at_set"], ["2026-05-18T00:00:00+00:00"])
+            self.assertNotIn("generated_at", payload)
             self.assertEqual(payload["summary"]["fleet_score"], 0.5)
             self.assertEqual(payload["summary"]["repos_with_lowest_coverage"][0]["repo"], "web")
             self.assertEqual(payload["summary"]["worst_dimensions"][0]["dimension"], "frontend")
@@ -83,6 +85,17 @@ class CoverageReportTest(unittest.TestCase):
             printed = json.loads(stdout.getvalue())
             self.assertEqual(exit_code, 0)
             self.assertEqual(printed, json.loads((out / REPORT_JSON_FILENAME).read_text(encoding="utf-8")))
+
+    def test_report_payload_is_stable_for_same_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(snapshot, _record())
+
+            first = write_coverage_report(snapshot, root / "first").payload
+            second = write_coverage_report(snapshot, root / "second").payload
+
+            self.assertEqual(first, second)
 
     def test_report_rejects_missing_metrics_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -122,6 +135,28 @@ class CoverageReportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must be numeric"):
                 write_coverage_report(snapshot, root / "report")
 
+    def test_report_rejects_missing_dimension_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            record = _record()
+            record.pop("dimension")
+            _write_snapshot(snapshot, record)
+
+            with self.assertRaisesRegex(ValueError, "missing required field: dimension"):
+                write_coverage_report(snapshot, root / "report")
+
+    def test_report_rejects_missing_metric_built_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            record = _record()
+            record.pop("built_at")
+            _write_snapshot(snapshot, record)
+
+            with self.assertRaisesRegex(ValueError, "built_at must be a non-empty string"):
+                write_coverage_report(snapshot, root / "report")
+
     def test_report_rejects_duplicate_cell_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -130,6 +165,18 @@ class CoverageReportTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "duplicate cell key"):
                 write_coverage_report(snapshot, root / "report")
+
+    def test_markdown_escapes_table_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(snapshot, _record(repo="repo|name", dimension="back`end"))
+
+            write_coverage_report(snapshot, root / "report")
+            markdown = (root / "report" / REPORT_MARKDOWN_FILENAME).read_text(encoding="utf-8")
+
+            self.assertIn("`repo\\|name`", markdown)
+            self.assertIn("`back'end`", markdown)
 
     def test_cli_rejects_non_positive_expected_repos_without_traceback(self) -> None:
         with redirect_stderr(io.StringIO()) as stderr:

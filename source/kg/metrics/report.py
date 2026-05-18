@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 import json
 
-from source.kg.core.models import JsonObject, utc_now_iso
+from source.kg.core.models import JsonObject
 from source.kg.core.store import read_jsonl
 from source.kg.metrics.constants import METRICS_FILENAME
 
@@ -78,7 +78,7 @@ def build_coverage_report_payload(
         "tenant": tenant or _tenant(manifest),
         "snapshot_dir": str(snapshot_dir),
         "snapshot_built_at": manifest.get("built_at") if isinstance(manifest.get("built_at"), str) else None,
-        "generated_at": utc_now_iso(),
+        "metrics_built_at_set": _metrics_built_at_set(metrics),
         "metric_config": metric_config,
         "repo_count_expected": expected_repos,
         "repo_count_indexed": _repo_count(manifest),
@@ -92,8 +92,8 @@ def render_coverage_report_markdown(payload: JsonObject) -> str:
     lines = [
         f"# Coverage Run: {payload['run_id']}",
         "",
-        f"- Tenant: `{payload['tenant']}`",
-        f"- Snapshot: `{payload['snapshot_dir']}`",
+        f"- Tenant: `{_markdown_code(payload['tenant'])}`",
+        f"- Snapshot: `{_markdown_code(payload['snapshot_dir'])}`",
         f"- Indexed repos: `{payload['repo_count_indexed']}`",
         f"- Expected repos: `{payload['repo_count_expected'] if payload['repo_count_expected'] is not None else '-'}`",
         f"- Fleet score: `{_format_score(summary.get('fleet_score'))}`",
@@ -106,21 +106,21 @@ def render_coverage_report_markdown(payload: JsonObject) -> str:
     ]
     for row in summary["worst_metrics"]:
         lines.append(
-            f"| `{row['metric']}` | {_format_score(row['badness'])} | {_format_score(row['avg_value'])} | "
+            f"| `{_markdown_code(row['metric'])}` | {_format_score(row['badness'])} | {_format_score(row['avg_value'])} | "
             f"{row['partial_count']} | {row['n_a_count']} |"
         )
     lines.extend(["", "## Worst Dimensions", "", "| dimension | avg_cell_score | cells | flags |", "|---|---:|---:|---:|"])
     for row in summary["worst_dimensions"]:
         lines.append(
-            f"| `{row['dimension']}` | {_format_score(row['avg_cell_score'])} | {row['cell_count']} | {row['flag_count']} |"
+            f"| `{_markdown_code(row['dimension'])}` | {_format_score(row['avg_cell_score'])} | {row['cell_count']} | {row['flag_count']} |"
         )
     lines.extend(["", "## Lowest Repo Coverage", "", "| repo | avg_cell_score | cells | flags |", "|---|---:|---:|---:|"])
     for row in summary["repos_with_lowest_coverage"]:
-        lines.append(f"| `{row['repo']}` | {_format_score(row['avg_cell_score'])} | {row['cell_count']} | {row['flag_count']} |")
+        lines.append(f"| `{_markdown_code(row['repo'])}` | {_format_score(row['avg_cell_score'])} | {row['cell_count']} | {row['flag_count']} |")
     lines.extend(["", "## Cells", "", "| repo | dimension | cell_score | flags |", "|---|---|---:|---:|"])
     for cell in payload["cells"]:
         lines.append(
-            f"| `{cell['repo']}` | `{cell['dimension'] or '-'}` | {_format_score(cell['cell_score'])} | "
+            f"| `{_markdown_code(cell['repo'])}` | `{_markdown_code(cell['dimension'] or '-')}` | {_format_score(cell['cell_score'])} | "
             f"{len(cell['contract_flags'])} |"
         )
     return "\n".join(lines) + "\n"
@@ -164,6 +164,10 @@ def _validate_metric_row(path: Path, index: int, row: JsonObject) -> None:
     label = f"{path}: row {index + 1}"
     if not isinstance(row.get("repo"), str) or not row.get("repo"):
         raise ValueError(f"{label} repo must be a non-empty string")
+    if not isinstance(row.get("built_at"), str) or not row.get("built_at"):
+        raise ValueError(f"{label} built_at must be a non-empty string")
+    if "dimension" not in row:
+        raise ValueError(f"{label} missing required field: dimension")
     if row.get("dimension") is not None and not isinstance(row.get("dimension"), str):
         raise ValueError(f"{label} dimension must be a string or null")
     if row.get("cell_score") is not None:
@@ -234,10 +238,13 @@ def _worst_metrics(cells: tuple[JsonObject, ...]) -> list[JsonObject]:
     rows_by_metric: dict[str, list[JsonObject]] = {}
     for cell in cells:
         metrics = cell["metrics"]
-        assert isinstance(metrics, dict)
+        if not isinstance(metrics, dict):
+            raise ValueError("cell metrics must be an object")
         for metric_name, metric_value in metrics.items():
-            assert isinstance(metric_name, str)
-            assert isinstance(metric_value, dict)
+            if not isinstance(metric_name, str) or not metric_name:
+                raise ValueError("metric name must be a non-empty string")
+            if not isinstance(metric_value, dict):
+                raise ValueError(f"metric {metric_name} must be an object")
             rows_by_metric.setdefault(metric_name, []).append(metric_value)
     rows: list[JsonObject] = []
     for metric_name, metric_rows in rows_by_metric.items():
@@ -328,10 +335,26 @@ def _repo_count(manifest: JsonObject) -> int | None:
     return None
 
 
+def _metrics_built_at_set(metrics: tuple[JsonObject, ...]) -> list[str]:
+    return sorted(
+        {
+            value
+            for row in metrics
+            for value in (row.get("built_at"),)
+            if isinstance(value, str) and value
+        }
+    )
+
+
 def _format_score(value: object) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "-"
     return f"{float(value):.3f}"
+
+
+def _markdown_code(value: object) -> str:
+    text = str(value)
+    return text.replace("|", "\\|").replace("`", "'")
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
