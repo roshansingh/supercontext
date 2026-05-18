@@ -13,6 +13,7 @@ from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_is
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import read_jsonl
 from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
+from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS
 
 
 LINKER_SOURCE_SYSTEM = "package_linker"
@@ -22,20 +23,7 @@ RELINK_OUTPUT_FILES = frozenset(("cross_repo_links.jsonl", "cross_repo_link_evid
 STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
     ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
 )
-TENANT_SCOPED_ENTITY_KINDS = frozenset(
-    (
-        "Repo",
-        "Service",
-        "CodeModule",
-        "CodeSymbol",
-        "ExternalPackage",
-        "Endpoint",
-        "Domain",
-        "EnvVar",
-        "EventChannel",
-        "DeployTarget",
-    )
-)
+TENANT_SCOPED_ENTITY_KINDS = SUPPORTED_ENTITY_KINDS
 
 
 @dataclass(frozen=True)
@@ -579,7 +567,9 @@ def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity 
 
 def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -> tuple[str, set[str], Path | None]:
     pyproject = repo.root / "pyproject.toml"
-    if pyproject.exists():
+    if pyproject.exists() and not pyproject.is_file():
+        raise ValueError(f"Package manifest path is not a file: {pyproject}")
+    if pyproject.is_file():
         if validate_snapshot_manifest:
             _validate_manifest_file_matches_snapshot(repo, pyproject)
         try:
@@ -592,9 +582,11 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
         return package_name, aliases, pyproject
 
     package_json = repo.root / "package.json"
+    if package_json.exists() and not package_json.is_file():
+        raise ValueError(f"Package manifest path is not a file: {package_json}")
     if validate_snapshot_manifest:
         _validate_missing_manifest_file_matches_snapshot(repo, pyproject)
-    if package_json.exists():
+    if package_json.is_file():
         if validate_snapshot_manifest:
             _validate_manifest_file_matches_snapshot(repo, package_json)
         try:
@@ -677,8 +669,8 @@ def _python_package_roots(data: JsonObject, repo: RepoSnapshot) -> set[str]:
         return roots
     for package in packages:
         include = package.get("include") if isinstance(package, dict) else None
-        if include:
-            roots.add(str(include).split(".", 1)[0])
+        if isinstance(include, str) and include:
+            roots.add(include.split(".", 1)[0])
     return roots
 
 

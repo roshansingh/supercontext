@@ -599,6 +599,50 @@ class RelinkOnlyTest(unittest.TestCase):
 
             self.assertEqual(manifest["provider_count"], 1)
 
+    def test_relink_rejects_pyproject_directory_manifest_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "pyproject.toml").unlink()
+            (repo / "pyproject.toml").mkdir()
+
+            with self.assertRaisesRegex(ValueError, "not a file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_package_json_directory_manifest_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "module.py").write_text("", encoding="utf-8")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "package.json").mkdir()
+
+            with self.assertRaisesRegex(ValueError, "not a file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_ignores_non_string_poetry_include_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import true\n")
+            provider = _python_repo(root / "owner-b" / "provider", "provider-package", "")
+            (provider / "pyproject.toml").write_text(
+                '[project]\nname = "provider-package"\n[tool.poetry]\npackages = [{ include = true }]\n',
+                encoding="utf-8",
+            )
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            build_kg(consumer, consumer_snapshot)
+            build_kg(provider, provider_snapshot)
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["link_count"], 0)
+            self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
+
     def test_relink_rejects_deleted_pyproject_before_package_json_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
