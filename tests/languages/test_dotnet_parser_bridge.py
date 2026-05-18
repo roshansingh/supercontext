@@ -66,6 +66,43 @@ class DotnetParserBridgeTest(unittest.TestCase):
 
             self.assertIs(first, second)
 
+    def test_alias_using_records_target_namespace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Alias.cs").write_text(
+                "using Json = System.Text.Json;\n"
+                "class A {}\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            parsed = parse_dotnet_repo(repo)
+
+            self.assertEqual(
+                [imp["raw_target"] for imp in parsed["Alias.cs"]["imports"]],
+                ["System.Text.Json"],
+            )
+
+    def test_top_level_statement_calls_have_module_caller(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Program.cs").write_text(
+                "namespace Demo.Api;\n"
+                "new Worker().Run();\n"
+                "class Worker { public void Run() {} }\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            parsed = parse_dotnet_repo(repo)
+            entry = parsed["Program.cs"]
+
+            self.assertIn("<module>", {sym["name"] for sym in entry["symbols"]})
+            self.assertIn(
+                {"caller": "<module>", "name": "new Worker().Run", "line": 2},
+                entry["calls"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

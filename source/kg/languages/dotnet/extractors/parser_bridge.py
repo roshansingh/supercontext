@@ -64,6 +64,21 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
         diagnostics.append({"line": root.start_point[0] + 1, "message": "tree-sitter reported parse errors"})
 
     _collect(root, source, imports, symbols, calls, qualname_prefix="")
+    has_module_calls = False
+    for call in calls:
+        if call.get("caller") == "":
+            call["caller"] = "<module>"
+            has_module_calls = True
+    if has_module_calls:
+        symbols.insert(
+            0,
+            {
+                "name": "<module>",
+                "kind": "module",
+                "line": 1,
+                "end_line": root.end_point[0] + 1,
+            },
+        )
     return {
         "imports": imports,
         "symbols": symbols,
@@ -145,7 +160,7 @@ def _using_target(node: Any, source: bytes) -> str:
     found_equals = False
     result = ""
     for child in node.children:
-        if child.type == "=":
+        if child.type in {"=", "name_equals"}:
             found_equals = True
         elif child.type in {"qualified_name", "identifier"}:
             result = _node_text(child, source)

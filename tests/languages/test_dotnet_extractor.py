@@ -65,6 +65,31 @@ class CSharpExtractorTest(unittest.TestCase):
                 for row in build.coverage
             ))
 
+    def test_top_level_statement_can_call_local_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Program.cs").write_text(
+                "namespace Demo.Api;\n"
+                "new Worker().Run();\n"
+                "class Worker { public void Run() {} }\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            build = CSharpExtractor().extract(repo)
+            entities = {entity.entity_id: entity for entity in build.entities}
+            calls = [
+                fact
+                for fact in build.facts
+                if fact.predicate == "CALLS"
+            ]
+
+            self.assertEqual(len(calls), 1)
+            caller = entities[calls[0].subject_id]
+            callee = entities[calls[0].object_id]
+            self.assertEqual(caller.identity["qualname"], "<module>")
+            self.assertEqual(callee.identity["qualname"], "Worker.Run")
+
 
 if __name__ == "__main__":
     unittest.main()
