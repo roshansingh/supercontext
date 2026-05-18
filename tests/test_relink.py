@@ -141,6 +141,20 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not valid JSON"):
                 resolve_snapshot_dirs((root,))
 
+    def test_resolve_snapshot_dirs_rejects_non_string_build_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "repo-a"
+            snapshot.mkdir()
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"build_type": ["multi_repo"], "repo_path": str(snapshot), "commit_sha": "working-tree"})
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "manifest is not a valid repo snapshot"):
+                resolve_snapshot_dirs((snapshot,))
+
     def test_resolve_snapshot_dirs_rejects_malformed_direct_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

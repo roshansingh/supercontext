@@ -256,7 +256,8 @@ def _classify_snapshot_manifest(path: Path) -> str | None:
     if not manifest_path.exists():
         return None
     manifest = _read_manifest_object(manifest_path)
-    if manifest.get("build_type") in SNAPSHOT_ARTIFACT_BUILD_TYPES:
+    build_type = manifest.get("build_type")
+    if isinstance(build_type, str) and build_type in SNAPSHOT_ARTIFACT_BUILD_TYPES:
         return "artifact"
     if _is_repo_snapshot_manifest(manifest):
         return "repo"
@@ -276,9 +277,10 @@ def _read_manifest_object(path: Path) -> JsonObject:
 
 
 def _is_repo_snapshot_manifest(manifest: JsonObject) -> bool:
+    if "build_type" in manifest:
+        return False
     return (
-        manifest.get("build_type") not in SNAPSHOT_ARTIFACT_BUILD_TYPES
-        and isinstance(manifest.get("repo_path"), str)
+        isinstance(manifest.get("repo_path"), str)
         and bool(manifest.get("repo_path"))
         and isinstance(manifest.get("commit_sha"), str)
         and bool(manifest.get("commit_sha"))
