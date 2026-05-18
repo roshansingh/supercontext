@@ -22,7 +22,10 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         )
         self.assertEqual(PYTHON_SUPPORT.source_roots(_repo_snapshot(), ctx), {"python": {"flask"}})
         self.assertEqual(PYTHON_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
-        self.assertEqual(PYTHON_SUPPORT.opportunity_detectors(), ())
+        self.assertEqual(
+            [type(detector).__name__ for detector in PYTHON_SUPPORT.opportunity_detectors()],
+            ["HttpClientOpportunityDetector"],
+        )
         self.assertIsNone(PYTHON_SUPPORT.package_resolver())
         python_rules = PYTHON_SUPPORT.dimension_rules()
         self.assertEqual(python_rules["version"], 1)

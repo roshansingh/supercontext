@@ -11,11 +11,12 @@ import json
 import yaml
 
 from source.kg.core.models import JsonObject
-from source.kg.core.repo_source import discover_repo
+from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import read_jsonl
 from source.kg.extraction.framework.allowlists import SUPPORTED_FACT_PREDICATES
 from source.kg.metrics.config import MetricsConfig, load_metrics_config
 from source.kg.metrics.dimension import DimensionAssignment, classify_repo
+from source.kg.metrics.opportunity import Opportunity
 from source.kg.metrics.types import CellMetrics, MetricValue
 
 
@@ -29,6 +30,7 @@ CORE_SCORE_METRICS = (
     "M_silent_gap",
     "M_identity_health",
 )
+OPPORTUNITY_METRICS = frozenset({"M_extractor_opportunity", "M_silent_gap"})
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,16 @@ class _MetricContext:
     scoped_entities: tuple[JsonObject, ...]
     scoped_facts: tuple[JsonObject, ...]
     scoped_evidence: tuple[JsonObject, ...]
+    scoped_opportunities: tuple["_ScopedOpportunity", ...]
+    fact_evidence_by_predicate: dict[str, tuple[JsonObject, ...]]
+    coverage_by_predicate: dict[str, tuple[JsonObject, ...]]
+
+
+@dataclass(frozen=True)
+class _ScopedOpportunity:
+    opportunity: Opportunity
+    scope_keys: frozenset[str]
+    coverage_repos: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -59,6 +71,12 @@ class _ManifestRepoRef:
     path: str
     identity_keys: tuple[str, ...]
     commit_sha: str
+
+
+@dataclass(frozen=True)
+class _DiscoveredRepoRef:
+    manifest_ref: _ManifestRepoRef
+    repo: RepoSnapshot
 
 
 def compute_all(
@@ -72,11 +90,17 @@ def compute_all(
         raise ValueError("expected_repos must be positive when provided")
     snapshot = _read_snapshot(Path(snapshot_dir))
     config = load_metrics_config(Path(config_path) if config_path is not None else None)
-    assignments = _dimension_assignments(snapshot)
+    discovered_repos = _discover_manifest_repos(snapshot.manifest)
+    assignments = _dimension_assignments(discovered_repos)
     has_assignments = bool(assignments)
     cells = assignments or (DimensionAssignment("unknown", ".", tuple(), "no-dimension-detected", "1"),)
     repo_name = _repo_name(snapshot.manifest)
     commit_sha_set = _commit_sha_set(snapshot.manifest)
+    opportunities = (
+        _snapshot_opportunities(discovered_repos)
+        if OPPORTUNITY_METRICS.intersection(config.enabled_metrics)
+        else ()
+    )
 
     results: list[CellMetrics] = []
     for assignment in cells:
@@ -88,6 +112,7 @@ def compute_all(
             dimension,
             dimension_files,
             expected_repos,
+            opportunities,
             is_unclassified_cell=not has_assignments,
         )
         metric_values = {
@@ -140,12 +165,9 @@ def _read_jsonl_if_exists(path: Path) -> list[JsonObject]:
     return rows
 
 
-def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ...]:
-    # PR-1 derives dimensions from the current repo_path working tree because
-    # snapshots do not persist dimension tags yet. Debate 19 PR-3 moves
-    # dimension tags into coverage rows during ingestion.
-    assignments: list[DimensionAssignment] = []
-    for repo_ref in _manifest_repo_refs(snapshot.manifest):
+def _discover_manifest_repos(manifest: JsonObject) -> tuple[_DiscoveredRepoRef, ...]:
+    discovered: list[_DiscoveredRepoRef] = []
+    for repo_ref in _manifest_repo_refs(manifest):
         root = Path(repo_ref.path).expanduser()
         if not root.exists():
             continue
@@ -153,9 +175,20 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
             repo = discover_repo(root)
         except OSError:
             continue
+        discovered.append(_DiscoveredRepoRef(repo_ref, repo))
+    return tuple(discovered)
+
+
+def _dimension_assignments(discovered_repos: tuple[_DiscoveredRepoRef, ...]) -> tuple[DimensionAssignment, ...]:
+    # PR-1 derives dimensions from the current repo_path working tree because
+    # snapshots do not persist dimension tags yet. Debate 19 PR-3 moves
+    # dimension tags into coverage rows during ingestion.
+    assignments: list[DimensionAssignment] = []
+    for discovered in discovered_repos:
+        repo_ref = discovered.manifest_ref
         assignments.extend(
             _qualify_assignment_files(assignment, repo_ref.identity_keys, repo_ref.commit_sha)
-            for assignment in classify_repo(repo)
+            for assignment in classify_repo(discovered.repo)
         )
     return _merge_assignments(assignments)
 
@@ -166,6 +199,7 @@ def _build_context(
     dimension: str | None,
     dimension_files: frozenset[str] | None,
     expected_repos: int | None,
+    opportunities: tuple[_ScopedOpportunity, ...],
     is_unclassified_cell: bool,
 ) -> _MetricContext:
     evidence = _scope_evidence(snapshot.evidence, dimension_files)
@@ -196,6 +230,13 @@ def _build_context(
     )
     if dimension_files is not None and not scoped_facts:
         scoped_facts = tuple(fact for fact in snapshot.facts if str(fact.get("fact_id")) in evidence_target_ids)
+    scoped_opportunities = tuple(
+        opportunity
+        for opportunity in opportunities
+        if dimension_files is None or opportunity.scope_keys.intersection(dimension_files)
+    )
+    fact_evidence_by_predicate = _fact_evidence_by_predicate(scoped_facts, evidence)
+    coverage_by_predicate = _rows_by_predicate(snapshot.coverage)
     return _MetricContext(
         snapshot=snapshot,
         config=config,
@@ -206,6 +247,9 @@ def _build_context(
         scoped_entities=scoped_entities,
         scoped_facts=scoped_facts,
         scoped_evidence=evidence,
+        scoped_opportunities=scoped_opportunities,
+        fact_evidence_by_predicate=fact_evidence_by_predicate,
+        coverage_by_predicate=coverage_by_predicate,
     )
 
 
@@ -227,13 +271,13 @@ def _compute_metric(metric_name: str, context: _MetricContext, *, fleet_dir: Pat
     if metric_name == "M_freshness":
         return _m_freshness(context)
     if metric_name == "M_extractor_opportunity":
-        return MetricValue(0.0, "partial", "no opportunity detectors implemented in PR-1")
+        return _m_extractor_opportunity(context)
     if metric_name == "M_evidence_grounding":
         return _m_evidence_grounding(context)
     if metric_name == "M_meta_coverage":
         return _m_meta_coverage(context)
     if metric_name == "M_silent_gap":
-        return MetricValue(0.0, "partial", "no opportunity detectors implemented in PR-1")
+        return _m_silent_gap(context)
     if metric_name == "M_trust_mix":
         return _m_trust_mix(context)
     if metric_name == "M_useful_edge":
@@ -300,6 +344,29 @@ def _m_freshness(context: _MetricContext) -> MetricValue:
     return MetricValue(fresh / parsed, "usable")
 
 
+def _m_extractor_opportunity(context: _MetricContext) -> MetricValue:
+    if not context.scoped_opportunities:
+        return MetricValue(None, "n_a", "no detected opportunities")
+    covered = sum(
+        1
+        for opportunity in context.scoped_opportunities
+        if _fact_covers_opportunity(context, opportunity)
+    )
+    return MetricValue(covered / len(context.scoped_opportunities), "usable")
+
+
+def _m_silent_gap(context: _MetricContext) -> MetricValue:
+    if not context.scoped_opportunities:
+        return MetricValue(None, "n_a", "no detected opportunities")
+    silent = sum(
+        1
+        for opportunity in context.scoped_opportunities
+        if not _fact_covers_opportunity(context, opportunity)
+        and not _coverage_covers_opportunity(context, opportunity)
+    )
+    return MetricValue(silent / len(context.scoped_opportunities), "usable")
+
+
 def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
     if not context.scoped_facts:
         return MetricValue(None, "n_a", "no source-backed facts")
@@ -316,6 +383,108 @@ def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
     }
     value = len(grounded_fact_ids) / len(fact_ids)
     return MetricValue(value, "usable")
+
+
+def _fact_covers_opportunity(context: _MetricContext, scoped_opportunity: _ScopedOpportunity) -> bool:
+    opportunity = scoped_opportunity.opportunity
+    for row in context.fact_evidence_by_predicate.get(opportunity.predicate, ()):
+        bytes_ref = row.get("bytes_ref")
+        if _bytes_ref_scope_key(bytes_ref) not in scoped_opportunity.scope_keys:
+            continue
+        if _line_covers(bytes_ref, opportunity.line):
+            return True
+    return False
+
+
+def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _ScopedOpportunity) -> bool:
+    opportunity = scoped_opportunity.opportunity
+    for row in context.coverage_by_predicate.get(opportunity.predicate, ()):
+        # M_silent_gap measures absence of graph facts and absence of explicit
+        # coverage. An uninstrumented row is a loud refusal, not a silent gap.
+        scope_ref = row.get("scope_ref")
+        if not isinstance(scope_ref, dict):
+            continue
+        repo = scope_ref.get("repo")
+        if not isinstance(repo, str) or repo not in scoped_opportunity.coverage_repos:
+            continue
+        if not _coverage_scope_matches_language(scope_ref, opportunity.language_or_format):
+            continue
+        if not _coverage_scope_matches_path(scope_ref, opportunity.path):
+            continue
+        line = scope_ref.get("line")
+        if line is None:
+            return True
+        if isinstance(line, bool) or not isinstance(line, int):
+            continue
+        if line == opportunity.line:
+            return True
+    return False
+
+
+def _fact_evidence_by_predicate(
+    scoped_facts: tuple[JsonObject, ...],
+    scoped_evidence: tuple[JsonObject, ...],
+) -> dict[str, tuple[JsonObject, ...]]:
+    predicate_by_fact_id = {
+        str(fact.get("fact_id")): str(fact.get("predicate"))
+        for fact in scoped_facts
+        if isinstance(fact.get("predicate"), str)
+    }
+    rows_by_predicate: dict[str, list[JsonObject]] = {}
+    for row in scoped_evidence:
+        if row.get("target_type") != "fact":
+            continue
+        predicate = predicate_by_fact_id.get(str(row.get("target_id")))
+        if predicate is None:
+            continue
+        rows_by_predicate.setdefault(predicate, []).append(row)
+    return {predicate: tuple(rows) for predicate, rows in rows_by_predicate.items()}
+
+
+def _rows_by_predicate(rows: tuple[JsonObject, ...]) -> dict[str, tuple[JsonObject, ...]]:
+    rows_by_predicate: dict[str, list[JsonObject]] = {}
+    for row in rows:
+        predicate = row.get("predicate")
+        if isinstance(predicate, str):
+            rows_by_predicate.setdefault(predicate, []).append(row)
+    return {predicate: tuple(predicate_rows) for predicate, predicate_rows in rows_by_predicate.items()}
+
+
+def _coverage_scope_matches_path(scope_ref: JsonObject, opportunity_path: str) -> bool:
+    has_path = "file_path" in scope_ref or "path" in scope_ref
+    if has_path:
+        path = scope_ref.get("file_path", scope_ref.get("path"))
+        return isinstance(path, str) and path == opportunity_path
+    path_prefix = scope_ref.get("path_prefix")
+    if path_prefix is None:
+        return True
+    if not isinstance(path_prefix, str) or not path_prefix:
+        return False
+    if path_prefix == ".":
+        return True
+    normalized = path_prefix.rstrip("/")
+    return opportunity_path == normalized or opportunity_path.startswith(f"{normalized}/")
+
+
+def _coverage_scope_matches_language(scope_ref: JsonObject, opportunity_language: str) -> bool:
+    language = scope_ref.get("language")
+    if language is None:
+        return True
+    if not isinstance(language, str) or not language:
+        return False
+    return opportunity_language in {part.strip() for part in language.split("/") if part.strip()}
+
+
+def _line_covers(bytes_ref: Any, line: int) -> bool:
+    if not isinstance(bytes_ref, dict):
+        return False
+    line_start = bytes_ref.get("line_start")
+    line_end = bytes_ref.get("line_end")
+    if not isinstance(line_start, int) or isinstance(line_start, bool):
+        return False
+    if not isinstance(line_end, int) or isinstance(line_end, bool):
+        return False
+    return line_start <= line <= line_end
 
 
 def _m_meta_coverage(context: _MetricContext) -> MetricValue:
@@ -553,6 +722,32 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
         )
         for dimension, files in sorted(files_by_dimension.items())
     )
+
+
+def _snapshot_opportunities(discovered_repos: tuple[_DiscoveredRepoRef, ...]) -> tuple[_ScopedOpportunity, ...]:
+    opportunities: list[_ScopedOpportunity] = []
+    for discovered in discovered_repos:
+        repo_ref = discovered.manifest_ref
+        for language in _registered_languages():
+            for detector in language.opportunity_detectors():
+                for opportunity in detector.detect(discovered.repo):
+                    opportunities.append(
+                        _ScopedOpportunity(
+                            opportunity=opportunity,
+                            scope_keys=frozenset(
+                                _file_scope_key(repo_identity_key, repo_ref.commit_sha, opportunity.path)
+                                for repo_identity_key in repo_ref.identity_keys
+                            ),
+                            coverage_repos=frozenset(repo_ref.identity_keys),
+                        )
+                    )
+    return tuple(opportunities)
+
+
+def _registered_languages():
+    from source.kg.languages import REGISTERED_LANGUAGES
+
+    return REGISTERED_LANGUAGES
 
 
 def _manifest_repo_identity_key(tenant_id: str, owner: Any, name: str) -> str:
