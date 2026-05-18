@@ -598,7 +598,7 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
             data = {}
         raw_name = data.get("name")
         package_name = raw_name if isinstance(raw_name, str) and raw_name else repo.name
-        aliases = {package_name, repo.name, _unscoped_package_name(package_name)}
+        aliases = {package_name, repo.name}
         return package_name, aliases, package_json
 
     if validate_snapshot_manifest:
@@ -887,7 +887,3 @@ def _manifest_bytes_ref(provider: PackageProvider) -> JsonObject | None:
 
 def _normalize_package_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.strip().lower())
-
-
-def _unscoped_package_name(name: str) -> str:
-    return name.rsplit("/", 1)[-1] if name.startswith("@") else name

@@ -351,8 +351,8 @@ class RelinkOnlyTest(unittest.TestCase):
             consumer_snapshot = root / "snapshots" / "consumer"
             provider_snapshot = root / "snapshots" / "provider"
             fleet = root / "snapshots" / "_fleet"
-            build_kg(consumer, consumer_snapshot)
-            build_kg(provider, provider_snapshot)
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
 
             manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], fleet)
 
@@ -676,6 +676,23 @@ class RelinkOnlyTest(unittest.TestCase):
                 ).to_record()
             )
             _write_jsonl_records(consumer_snapshot / "entities.jsonl", consumer_rows)
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["link_count"], 0)
+            self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
+
+    def test_relink_does_not_treat_scoped_npm_name_as_unscoped_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import shared\n")
+            provider = root / "owner-b" / "provider"
+            provider.mkdir(parents=True)
+            (provider / "package.json").write_text('{"name": "@scope/shared"}\n', encoding="utf-8")
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            build_kg(consumer, consumer_snapshot)
+            build_kg(provider, provider_snapshot)
 
             manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
 
