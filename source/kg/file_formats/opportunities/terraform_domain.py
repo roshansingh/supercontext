@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+import os
 
 from source.kg.core.models import Entity
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
-from source.kg.file_formats._shared.common import ConfigKgBuild, scan_config_files
+from source.kg.file_formats._shared.common import ConfigKgBuild, MAX_SCAN_BYTES, ScannedFile
 from source.kg.file_formats.terraform import extract_terraform
 from source.kg.metrics.opportunity import Opportunity
 
@@ -20,7 +22,7 @@ class TerraformDomainOpportunityDetector:
             kind="Service",
             identity={"tenant_id": tenant_id, "namespace": "default", "repo": repo.name, "slug": repo.name},
         )
-        terraform_files = [scanned for scanned in scan_config_files(repo, tenant_id).files if scanned.path.suffix == ".tf"]
+        terraform_files = _scan_terraform_files(repo)
         if not terraform_files:
             return ()
         for scanned in terraform_files:
@@ -66,3 +68,28 @@ def _opportunity_from_evidence(bytes_ref: Any, source_kind: Any, dimension: str 
         path=path,
         line=line,
     )
+
+
+def _scan_terraform_files(repo: RepoSnapshot) -> tuple[ScannedFile, ...]:
+    files: list[ScannedFile] = []
+    for dirpath, dirnames, filenames in os.walk(repo.root):
+        dirnames[:] = sorted(name for name in dirnames if name not in IGNORED_DIRS)
+        for filename in sorted(filenames):
+            path = Path(dirpath) / filename
+            if path.suffix != ".tf":
+                continue
+            try:
+                if path.stat().st_size > MAX_SCAN_BYTES:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            files.append(
+                ScannedFile(
+                    path=path,
+                    relative_path=str(path.relative_to(repo.root)),
+                    text=text,
+                    lines=tuple(text.splitlines()),
+                )
+            )
+    return tuple(files)
