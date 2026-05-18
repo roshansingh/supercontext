@@ -151,6 +151,15 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not valid JSON"):
                 resolve_snapshot_dirs((snapshot,))
 
+    def test_resolve_snapshot_dirs_rejects_manifest_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "repo-a"
+            (snapshot / "manifest.json").mkdir(parents=True)
+
+            with self.assertRaisesRegex(ValueError, "must be a JSON file"):
+                resolve_snapshot_dirs((snapshot,))
+
     def test_relink_rejects_duplicate_repo_identity_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -200,6 +209,20 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "tenant_id must be a non-empty string"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
+    def test_relink_rejects_non_string_manifest_repo_identity_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            manifest_path = snapshot / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["owner"] = ["owner-a"]
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "owner must be a non-empty string"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
     def test_relink_rejects_entity_tenant_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -211,6 +234,28 @@ class RelinkOnlyTest(unittest.TestCase):
                 if row.get("kind") == "ExternalPackage":
                     identity = dict(row["identity"])
                     identity["tenant_id"] = "other-tenant"
+                    rows[index] = Entity(
+                        kind="ExternalPackage",
+                        identity=identity,
+                        properties=row["properties"],
+                    ).to_record()
+                    break
+            _write_jsonl_records(snapshot / "entities.jsonl", rows)
+
+            with self.assertRaisesRegex(ValueError, "entity tenant_id values do not match"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_padded_entity_tenant_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import requests\n")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot, tenant_id="default")
+            rows = read_jsonl(snapshot / "entities.jsonl")
+            for index, row in enumerate(rows):
+                if row.get("kind") == "ExternalPackage":
+                    identity = dict(row["identity"])
+                    identity["tenant_id"] = " default "
                     rows[index] = Entity(
                         kind="ExternalPackage",
                         identity=identity,
@@ -509,6 +554,20 @@ class RelinkOnlyTest(unittest.TestCase):
             snapshot = root / "snapshots" / "consumer"
             build_kg(repo, snapshot)
             (repo / "package.json").write_text("[]\n", encoding="utf-8")
+
+            manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["provider_count"], 1)
+
+    def test_relink_accepts_non_string_package_json_name_as_repo_name_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "package.json").write_text('{"name": "consumer"}\n', encoding="utf-8")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "package.json").write_text('{"name": ["consumer"]}\n', encoding="utf-8")
 
             manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
 

@@ -22,6 +22,20 @@ RELINK_OUTPUT_FILES = frozenset(("cross_repo_links.jsonl", "cross_repo_link_evid
 STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
     ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
 )
+TENANT_SCOPED_ENTITY_KINDS = frozenset(
+    (
+        "Repo",
+        "Service",
+        "CodeModule",
+        "CodeSymbol",
+        "ExternalPackage",
+        "Endpoint",
+        "Domain",
+        "EnvVar",
+        "EventChannel",
+        "DeployTarget",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -250,6 +264,8 @@ def _classify_snapshot_manifest(path: Path) -> str | None:
 
 
 def _read_manifest_object(path: Path) -> JsonObject:
+    if not path.is_file():
+        raise ValueError(f"{path} must be a JSON file")
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -350,12 +366,12 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         raise FileNotFoundError(f"{manifest_path}: repo_path does not exist: {repo_root}")
     if not repo_root.is_dir():
         raise ValueError(f"{manifest_path}: repo_path must be a directory: {repo_root}")
-    repo_name = manifest.get("repo_name")
-    owner = manifest.get("owner")
+    repo_name = _optional_manifest_string(manifest, "repo_name", repo_root.name, manifest_path)
+    owner = _optional_manifest_string(manifest, "owner", repo_root.parent.name, manifest_path)
     repo = RepoSnapshot(
         repo_root,
-        repo_name if isinstance(repo_name, str) and repo_name else repo_root.name,
-        owner if isinstance(owner, str) and owner else repo_root.parent.name,
+        repo_name,
+        owner,
         commit_sha,
         {},
     )
@@ -373,6 +389,15 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         validate_package_manifests=True,
         snapshot_dir=root,
     )
+
+
+def _optional_manifest_string(manifest: JsonObject, field: str, fallback: str, path: Path) -> str:
+    if field not in manifest:
+        return fallback
+    value = manifest[field]
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{path}: {field} must be a non-empty string when present")
+    return value
 
 
 def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None, entities: tuple[Entity, ...]) -> str:
@@ -451,12 +476,12 @@ def _validate_entity_tenants(entities: tuple[Entity, ...], tenant_id: str, path:
     mismatches: list[str] = []
     for entity in entities:
         entity_tenant = entity.identity.get("tenant_id")
-        if entity_tenant is None:
-            continue
-        if not isinstance(entity_tenant, str) or not entity_tenant.strip():
-            raise ValueError(f"{path}: entity tenant_id must be a non-empty string when present")
-        if entity_tenant.strip() != tenant_id:
-            mismatches.append(f"{entity.kind}:{entity.entity_id}:{entity_tenant.strip()}")
+        if entity.kind in TENANT_SCOPED_ENTITY_KINDS and (
+            not isinstance(entity_tenant, str) or not entity_tenant
+        ):
+            raise ValueError(f"{path}: entity tenant_id must be a non-empty string")
+        if isinstance(entity_tenant, str) and entity_tenant != tenant_id:
+            mismatches.append(f"{entity.kind}:{entity.entity_id}:{entity_tenant}")
     if mismatches:
         raise ValueError(f"{path}: entity tenant_id values do not match snapshot tenant_id {tenant_id}: {mismatches}")
 
@@ -576,7 +601,8 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
             data = {}
         if not isinstance(data, dict):
             data = {}
-        package_name = str(data.get("name") or repo.name)
+        raw_name = data.get("name")
+        package_name = raw_name if isinstance(raw_name, str) and raw_name else repo.name
         aliases = {package_name, repo.name, _unscoped_package_name(package_name)}
         return package_name, aliases, package_json
 
