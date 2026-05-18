@@ -129,7 +129,7 @@ bettercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
 bettercontext-coverage-metrics --snapshot data/kg_runs/combined
 
 # Relinked cross-repo link facts/evidence should match the linker slice from a from-source build:
-#   bettercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/_fleet
+#   bettercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/combined-parity
 ```
 
 Without `bettercontext-relink`, the org's choice today is:

@@ -161,13 +161,16 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     snapshots: list[Path] = []
     for path in paths:
         root = path.expanduser().resolve()
-        if _is_repo_snapshot_dir(root):
-            snapshots.append(root)
-            continue
         if not root.exists():
             raise FileNotFoundError(f"Snapshot directory does not exist: {root}")
         if not root.is_dir():
             raise NotADirectoryError(f"Snapshot path must be a directory: {root}")
+        root_manifest_kind = _classify_snapshot_manifest(root)
+        if root_manifest_kind == "repo":
+            snapshots.append(root)
+            continue
+        if root_manifest_kind == "invalid":
+            raise ValueError(f"{root / 'manifest.json'}: manifest is not a valid repo snapshot")
         children = []
         for child in sorted(root.iterdir()):
             if not child.is_dir():
@@ -341,11 +344,12 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
 
 def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None) -> str:
     manifest_tenant = manifest.get("tenant_id")
-    resolved_manifest_tenant = (
-        resolve_tenant_id(manifest_tenant)
-        if isinstance(manifest_tenant, str) and manifest_tenant.strip()
-        else resolve_tenant_id(None)
-    )
+    if "tenant_id" in manifest:
+        if not isinstance(manifest_tenant, str) or not manifest_tenant.strip():
+            raise ValueError("snapshot manifest tenant_id must be a non-empty string when present")
+        resolved_manifest_tenant = resolve_tenant_id(manifest_tenant)
+    else:
+        resolved_manifest_tenant = resolve_tenant_id(None)
     if tenant_id is not None:
         resolved_override = resolve_tenant_id(tenant_id)
         if resolved_override != resolved_manifest_tenant:
@@ -557,7 +561,7 @@ def _git_commit_sha(root: Path) -> str:
 def _git_status_porcelain(root: Path, path: Path) -> str:
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--", str(path.relative_to(root))],
+            ["git", "-C", str(root), "status", "--porcelain", "--ignored", "--", str(path.relative_to(root))],
             check=True,
             capture_output=True,
             text=True,

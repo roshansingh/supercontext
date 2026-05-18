@@ -106,6 +106,16 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not valid JSON"):
                 resolve_snapshot_dirs((root,))
 
+    def test_resolve_snapshot_dirs_rejects_malformed_direct_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "repo-a"
+            snapshot.mkdir()
+            (snapshot / "manifest.json").write_text("{not-json}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "not valid JSON"):
+                resolve_snapshot_dirs((snapshot,))
+
     def test_relink_rejects_duplicate_repo_identity_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -140,6 +150,20 @@ class RelinkOnlyTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "one tenant"):
                 relink_snapshot_dirs([snapshot_a, snapshot_b], root / "_fleet")
+
+    def test_relink_rejects_non_string_manifest_tenant_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            manifest_path = snapshot / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["tenant_id"] = 123
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "tenant_id must be a non-empty string"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_relink_does_not_link_stdlib_imports_to_same_named_repos(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -322,6 +346,25 @@ class RelinkOnlyTest(unittest.TestCase):
             snapshot = root / "snapshots" / "consumer"
             build_kg(repo, snapshot)
             (repo / "pyproject.toml").unlink()
+
+            with self.assertRaisesRegex(ValueError, "Package manifest has uncommitted changes"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_ignored_package_manifest_added_after_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / ".gitignore").write_text("pyproject.toml\n", encoding="utf-8")
+            (repo / "module.py").write_text("", encoding="utf-8")
+            _git(repo, "init")
+            _git(repo, "config", "user.email", "test@example.com")
+            _git(repo, "config", "user.name", "Test User")
+            _git(repo, "add", ".")
+            _git(repo, "commit", "-m", "initial")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "pyproject.toml").write_text('[project]\nname = "ignored-provider"\n', encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "Package manifest has uncommitted changes"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
