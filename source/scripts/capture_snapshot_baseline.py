@@ -13,6 +13,7 @@ from source.kg.core.models import JsonObject
 BASELINE_VERSION = 1
 LANGUAGE_FILE_COUNT_SUFFIX = "_files"
 NORMALIZED_COVERAGE_REASONS = {
+    "unresolved_host": "host_env_backed",
     "parser_backed_js_ts_route_extraction_partial_express_only": (
         "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only"
     ),

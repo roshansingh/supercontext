@@ -70,14 +70,20 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_jsonl(snapshot / "evidence.jsonl", [])
             _write_jsonl(
                 snapshot / "coverage.jsonl",
-                [{"scope_ref": {"reason": "parser_backed_js_ts_route_extraction_partial_express_only"}}],
+                [
+                    {"scope_ref": {"reason": "parser_backed_js_ts_route_extraction_partial_express_only"}},
+                    {"scope_ref": {"reason": "unresolved_host"}},
+                ],
             )
 
             baseline = capture_snapshot_baseline(snapshot, name="fixture")
 
         self.assertEqual(
             baseline["coverage_reason_counts"],
-            {"parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 1},
+            {
+                "host_env_backed": 1,
+                "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 1,
+            },
         )
 
     def test_compare_snapshot_baseline_reports_distribution_drift(self) -> None:

@@ -41,7 +41,7 @@ Better metric:
 ```text
 detected 500 HTTP call-site opportunities
 320 became CALLS_ENDPOINT facts
-120 emitted unresolved_host coverage rows
+120 emitted host_env_backed coverage rows
 60 emitted unresolved_target coverage rows
 0 were silently ignored
 ```
@@ -250,4 +250,3 @@ The first version does not need to prove every opportunity denominator. It can s
 - Should coverage be weighted by repo importance, such as production service versus test fixture?
 - Should freshness be measured by commit age, branch divergence, or both?
 - How should private ignored/deferred scopes be represented so they do not look like failures?
-

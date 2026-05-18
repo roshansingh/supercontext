@@ -299,6 +299,8 @@ def extract_typescript_client_endpoint_calls(
             source_kind = str(row.get("source_kind") or "client_call")
             host = row.get("host")
             confidence = row.get("confidence")
+            resolution_kind = row.get("resolution_kind")
+            host_resolution_kind = row.get("host_resolution_kind")
             _add_endpoint_fact(
                 repo,
                 scanned,
@@ -313,14 +315,17 @@ def extract_typescript_client_endpoint_calls(
                 host=host if isinstance(host, str) else None,
                 raw_target=raw_target,
                 confidence=confidence if isinstance(confidence, str) else None,
+                resolution_kind=resolution_kind if isinstance(resolution_kind, str) else None,
+                host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
                 validate_path=False,
             )
             if confidence == "host_unresolved_path_resolved":
+                reason = row.get("reason")
                 _add_endpoint_coverage(
                     build,
                     repo,
                     tenant_id,
-                    "unresolved_host",
+                    reason if isinstance(reason, str) else "host_env_backed",
                     scanned.relative_path,
                     line_number,
                     raw_target,
@@ -388,6 +393,8 @@ def _add_imported_client_endpoint_call(
         return
 
     confidence = "host_unresolved_path_resolved" if resolved["kind"] == "host_unresolved" else None
+    resolution_kind = resolved.get("resolution_kind")
+    host_resolution_kind = resolved.get("host_resolution_kind")
     _add_endpoint_fact(
         repo,
         scanned,
@@ -402,14 +409,17 @@ def _add_imported_client_endpoint_call(
         host=resolved.get("host") if isinstance(resolved.get("host"), str) else None,
         raw_target=raw_target,
         confidence=confidence,
+        resolution_kind=resolution_kind if isinstance(resolution_kind, str) else None,
+        host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
         validate_path=False,
     )
     if confidence == "host_unresolved_path_resolved":
+        reason = resolved.get("reason") or row.get("reason")
         _add_endpoint_coverage(
             build,
             repo,
             tenant_id,
-            "unresolved_host",
+            reason if isinstance(reason, str) else "host_env_backed",
             scanned.relative_path,
             line_number,
             raw_target,
@@ -713,17 +723,25 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
             resolved["reason"] = reason
         return resolved
     target_value = target_value.strip()
+    resolution_kind = target.get("resolution_kind")
     if target_value.startswith("http://") or target_value.startswith("https://") or target_value.startswith("${env:"):
         resolved = _split_resolved_endpoint_target(target_value)
+        if isinstance(resolution_kind, str):
+            resolved["resolution_kind"] = resolution_kind
         return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
     if not isinstance(base_url, dict):
-        return _split_resolved_endpoint_target(target_value)
+        resolved = _split_resolved_endpoint_target(target_value)
+        if isinstance(resolution_kind, str):
+            resolved["resolution_kind"] = resolution_kind
+        return resolved
     base_kind = base_url.get("kind")
     base_value = base_url.get("value")
     if base_kind not in {"resolved", "env"} or not isinstance(base_value, str):
         return {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
     combined = f"{base_value.strip().rstrip('/')}/{target_value.lstrip('/')}"
     resolved = _split_resolved_endpoint_target(combined)
+    if isinstance(resolution_kind, str):
+        resolved["resolution_kind"] = resolution_kind
     return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
 
 
@@ -751,6 +769,8 @@ def _split_resolved_endpoint_target(value: str) -> dict[str, object]:
                     "path": trimmed[path_start:] or "/",
                     "host": trimmed[: host_end + 1],
                     "raw_target": trimmed,
+                    "reason": "host_env_backed",
+                    "host_resolution_kind": "env_backed_unresolved",
                 }
         return {"kind": "unresolved", "path": None, "host": None, "raw_target": trimmed}
     if not trimmed.startswith("/"):
@@ -806,6 +826,8 @@ def _add_endpoint_fact(
     host: str | None = None,
     raw_target: str | None = None,
     confidence: str | None = None,
+    resolution_kind: str | None = None,
+    host_resolution_kind: str | None = None,
     validate_path: bool = True,
 ) -> None:
     normalized_path = normalize_endpoint_path(path)
@@ -816,6 +838,10 @@ def _add_endpoint_fact(
     qualifier = {"source_kind": source_kind, "raw_target": raw_target or path, "path": scanned.relative_path}
     if confidence is not None:
         qualifier["confidence"] = confidence
+    if resolution_kind is not None:
+        qualifier["resolution_kind"] = resolution_kind
+    if host_resolution_kind is not None:
+        qualifier["host_resolution_kind"] = host_resolution_kind
     add_fact(
         build,
         predicate,

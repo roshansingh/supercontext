@@ -527,6 +527,10 @@ class EndpointExtractionTest(unittest.TestCase):
             ],
             1,
         )
+        qualifiers_by_path = _qualifiers_by_path(calls)
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["resolution_kind"], "local_var")
+        self.assertEqual(qualifiers_by_path["/api/v1/profiles"][0]["resolution_kind"], "concat")
+        self.assertEqual(qualifiers_by_path["/api/v1/reports"][0]["resolution_kind"], "template")
         self.assertFalse(_call_site_coverage(build))
 
     def test_typescript_client_calls_emit_env_host_confidence_and_coverage(self) -> None:
@@ -560,7 +564,16 @@ class EndpointExtractionTest(unittest.TestCase):
                 "/api/alt": "host_unresolved_path_resolved",
             },
         )
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 4)
+        self.assertEqual(
+            {path: rows[0]["host_resolution_kind"] for path, rows in qualifiers_by_path.items()},
+            {
+                "/api/orders": "env_backed_unresolved",
+                "/api/users": "env_backed_unresolved",
+                "/api/config": "env_backed_unresolved",
+                "/api/alt": "env_backed_unresolved",
+            },
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 4)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
 
     def test_typescript_client_dynamic_template_segment_fails_closed(self) -> None:
@@ -587,6 +600,126 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/api/users": {"ANY"}})
         self.assertFalse(_call_site_coverage(build))
 
+    def test_typescript_client_local_url_variable_flow_resolves_source_order(self) -> None:
+        build = _extract_typescript_client(
+            "function load() {\n"
+            "  const url = '/api/local';\n"
+            "  fetch(url);\n"
+            "  fetch(later);\n"
+            "  const later = '/api/later';\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/local": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/local"][0]["resolution_kind"], "local_var")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
+    def test_typescript_client_local_url_reassignment_is_source_ordered(self) -> None:
+        build = _extract_typescript_client(
+            "function load() {\n"
+            "  let url = '/api/first';\n"
+            "  url = '/api/second';\n"
+            "  fetch(url);\n"
+            "  let beforeMutation = '/api/before';\n"
+            "  fetch(beforeMutation);\n"
+            "  beforeMutation = '/api/after';\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/before": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/before"][0]["resolution_kind"], "local_var")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_reassigned_binding"], 1)
+
+    def test_typescript_client_local_helper_initializer_preserves_deferred_reason(self) -> None:
+        build = _extract_typescript_client(
+            "function load() {\n"
+            "  const url = getUrl('/api/helper');\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"],
+            1,
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
+
+    def test_typescript_client_function_body_does_not_use_mutated_module_binding(self) -> None:
+        build = _extract_typescript_client(
+            "let url = '/api/before';\n"
+            "function load() {\n"
+            "  fetch(url);\n"
+            "}\n"
+            "url = '/api/after';\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
+
+    def test_typescript_client_function_body_resolves_stable_module_binding(self) -> None:
+        build = _extract_typescript_client(
+            "const url = '/api/module';\n"
+            "function load() {\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/module": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/module"][0]["resolution_kind"], "module_var")
+        self.assertFalse(_call_site_coverage(build))
+
+    def test_typescript_client_for_loop_variable_shadows_module_binding(self) -> None:
+        build = _extract_typescript_client(
+            "const url = '/api/outer';\n"
+            "for (const url of urls) {\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
+    def test_typescript_client_outer_function_parameter_does_not_shadow_inner_reference(self) -> None:
+        build = _extract_typescript_client(
+            "function outer(url) {\n"
+            "  function inner() {\n"
+            "    fetch(url);\n"
+            "  }\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("target_shadowed_binding", 0), 0)
+
+    def test_typescript_client_helper_call_target_is_classified_as_deferred(self) -> None:
+        build = _extract_typescript_client(
+            "function getUrl(path) { return path; }\n"
+            "fetch(getUrl('/api/helper'));\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"],
+            1,
+        )
+
+    def test_typescript_client_with_block_fails_closed(self) -> None:
+        build = _extract_typescript_client("with (obj) { fetch(path); }\n")
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["with_block_present"], 1)
+
     def test_typescript_client_calls_emit_coverage_for_unresolved_external_and_shadowed_targets(self) -> None:
         build = _extract_typescript_client(
             "const P = '/api/orders';\n"
@@ -604,7 +737,10 @@ class EndpointExtractionTest(unittest.TestCase):
         )
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 6)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_reassigned_binding"], 2)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 2)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
 
     def test_typescript_imported_default_axios_client_calls_are_resolved(self) -> None:
@@ -631,7 +767,8 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_source_kinds_by_path(calls)["/api/token/"], {"imported_axios_call"})
         self.assertEqual(_hosts_by_path(calls)["/api/token/"], {"${env:VITE_API_ROOT}"})
         self.assertEqual(qualifiers_by_path["/api/token/"][0]["confidence"], "host_unresolved_path_resolved")
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+        self.assertEqual(qualifiers_by_path["/api/token/"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
         self.assertEqual(_fact_lines_by_path(build, "CALLS_ENDPOINT", "/api/token/"), [3])
 
     def test_typescript_imported_axios_client_dynamic_template_reason_is_preserved(self) -> None:
@@ -704,7 +841,8 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/auth/logout/": {"POST"}})
         self.assertEqual(_hosts_by_path(calls)["/auth/logout/"], {"${env:REACT_APP_API_ROOT}"})
         self.assertEqual(qualifiers_by_path["/auth/logout/"][0]["confidence"], "host_unresolved_path_resolved")
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+        self.assertEqual(qualifiers_by_path["/auth/logout/"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
 
     def test_typescript_imported_direct_config_call_without_literal_method_uses_any(self) -> None:
         build = _extract_typescript_client_files(
@@ -747,7 +885,8 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_methods_by_path(calls), {"/orders/": {"POST"}})
         self.assertEqual(_hosts_by_path(calls)["/orders/"], {"${env:ALT_API_ROOT}"})
         self.assertEqual(qualifiers_by_path["/orders/"][0]["confidence"], "host_unresolved_path_resolved")
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
+        self.assertEqual(qualifiers_by_path["/orders/"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
 
     def test_typescript_imported_default_axios_client_resolves_index_module(self) -> None:
         build = _extract_typescript_client_files(
@@ -995,7 +1134,7 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_methods_by_path(calls), {"/safe": {"GET"}})
         self.assertNotIn("/shadowed", _methods_by_path(calls))
-        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
 
     def test_non_express_javascript_routes_are_not_extracted_by_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1286,7 +1425,7 @@ def _coverage_reason_counts(build, predicate: str) -> dict[str, int]:
 
 
 def _call_site_coverage(build) -> list[Coverage]:
-    call_site_reasons = {"external_endpoint_suppressed", "unresolved_host", "unresolved_target"}
+    call_site_reasons = {"external_endpoint_suppressed", "host_env_backed", "unresolved_target"}
     return [
         row
         for row in build.coverage
