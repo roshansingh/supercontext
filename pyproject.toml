@@ -39,6 +39,7 @@ bettercontext-query-kg = "source.scripts.query_kg:main"
 bettercontext-mcp-server = "source.scripts.mcp_server:main"
 bettercontext-run-validation = "source.scripts.run_product_validation:main"
 bettercontext-coverage-metrics = "source.scripts.coverage_metrics:main"
+bettercontext-coverage-report = "source.scripts.coverage_report:main"
 
 [tool.setuptools.packages.find]
 include = ["source*"]
