@@ -71,6 +71,8 @@ class PackagingMetadataTest(unittest.TestCase):
         ):
             self.assertIn("known_stacks.yaml", package_data[package])
             self.assertTrue((ROOT / Path(*package.split(".")) / "known_stacks.yaml").exists())
+            self.assertIn("dimension_rules.yaml", package_data[package])
+            self.assertTrue((ROOT / Path(*package.split(".")) / "dimension_rules.yaml").exists())
 
 
 if __name__ == "__main__":

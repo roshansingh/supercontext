@@ -45,7 +45,7 @@ include = ["source*"]
 
 [tool.setuptools.package-data]
 "source.kg.languages.typescript.extractors" = ["ts_parser.mjs"]
-"source.kg.languages.dotnet" = ["known_stacks.yaml"]
+"source.kg.languages.dotnet" = ["known_stacks.yaml", "dimension_rules.yaml"]
 "source.kg.metrics" = ["config.yaml", "tool_predicates.yaml", "useful_edges.yaml"]
 "source.kg.languages.python" = ["known_stacks.yaml", "dimension_rules.yaml"]
 "source.kg.languages.typescript" = ["known_stacks.yaml", "dimension_rules.yaml"]

@@ -6,12 +6,19 @@ from pathlib import Path
 
 from source.kg.core.repo_source import discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
 
-try:
-    from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
-    DOTNET_AVAILABLE = True
-except RuntimeError:
-    DOTNET_AVAILABLE = False
+
+def _dotnet_dependencies_available() -> bool:
+    try:
+        import tree_sitter  # noqa: F401
+        import tree_sitter_c_sharp  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+DOTNET_AVAILABLE = _dotnet_dependencies_available()
 
 
 @unittest.skipIf(not DOTNET_AVAILABLE, "tree-sitter and tree-sitter-c-sharp not installed; install with pip install -e '.[dotnet]'")
