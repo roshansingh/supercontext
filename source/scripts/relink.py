@@ -31,7 +31,6 @@ def main() -> None:
     args = parser.parse_args()
 
     raw_snapshot_dirs = tuple(Path(path) for path in args.snapshot_dir)
-    snapshot_dirs = resolve_snapshot_dirs(raw_snapshot_dirs)
     if args.out:
         out = Path(args.out)
     else:
@@ -39,6 +38,7 @@ def main() -> None:
             out = default_output_dir(raw_snapshot_dirs)
         except ValueError as exc:
             parser.error(str(exc))
+    snapshot_dirs = resolve_snapshot_dirs(raw_snapshot_dirs, exclude_dirs=(out,))
     manifest = relink_snapshot_dirs(snapshot_dirs, out, tenant_id=args.tenant)
     print(json.dumps(manifest, indent=2, sort_keys=True))
 

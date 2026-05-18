@@ -191,8 +191,9 @@ def _publish_relink_outputs(out: Path, staged: Path) -> None:
             backup.unlink(missing_ok=True)
 
 
-def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+def resolve_snapshot_dirs(paths: tuple[Path, ...], *, exclude_dirs: tuple[Path, ...] = ()) -> tuple[Path, ...]:
     snapshots: list[Path] = []
+    excluded = {path.expanduser().resolve() for path in exclude_dirs}
     for path in paths:
         root = path.expanduser().resolve()
         if not root.exists():
@@ -208,6 +209,8 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
         children = []
         for child in sorted(root.iterdir()):
             if not child.is_dir():
+                continue
+            if child.resolve() in excluded:
                 continue
             manifest_kind = _classify_snapshot_manifest(child)
             if manifest_kind == "repo":

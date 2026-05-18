@@ -11,7 +11,7 @@ This doc captures:
 
 1. What incremental ingestion **does** preserve (per-repo determinism)
 2. Where it **silently breaks** (cross-repo linker)
-3. Whether the converged metric set actually catches the breakage (yes for extent, no for staleness)
+3. Whether the converged metric set catches the breakage (yes for extent; current staleness is a weaker signal than the fingerprint contract below)
 4. What needs to land for incremental ingestion to be safe + a metric output that's trustworthy
 
 Out of scope: Debate 14's metric semantics themselves (those are final).
@@ -36,7 +36,7 @@ KG row IDs are content-hashed via `stable_hash(...)` over the row's identifying 
 
 - `ExternalPackage` entity dedup across repos
 - `RESOLVES_TO_REPO` facts (e.g., a PyPI distribution imported in repo A maps to repo B if B publishes that distribution)
-- Manifest fields: `linker.provider_count`, `linker.link_count`, `linker.ambiguous_package_count`
+- Manifest count fields: combined builds store nested `linker.provider_count`, `linker.link_count`, and `linker.ambiguous_package_count`; relink-only `_fleet/manifest.json` stores the same counts as top-level `provider_count`, `link_count`, and `ambiguous_package_count`
 
 If the linker is run over `{1..10}` and later a snapshot for repo 11 is added without re-running the linker:
 

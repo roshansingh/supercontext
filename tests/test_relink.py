@@ -123,6 +123,21 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(resolve_snapshot_dirs((root,)), (snapshot.resolve(),))
             self.assertEqual(default_output_dir((root,)), root.resolve() / "_fleet")
 
+    def test_resolve_snapshot_dirs_excludes_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "repo-a"
+            fleet = root / "_fleet"
+            snapshot.mkdir()
+            fleet.mkdir()
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"repo_path": str(snapshot), "commit_sha": "working-tree"}) + "\n",
+                encoding="utf-8",
+            )
+            (fleet / "manifest.json").write_text("{not-json}\n", encoding="utf-8")
+
+            self.assertEqual(resolve_snapshot_dirs((root,), exclude_dirs=(fleet,)), (snapshot.resolve(),))
+
     def test_resolve_snapshot_dirs_rejects_regular_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
