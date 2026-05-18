@@ -10,6 +10,7 @@ from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework import Adapter, ExtractionContext
 from source.kg.extraction.framework.registry import validate_adapters
+from source.kg.languages.dotnet.package_resolver import iter_dotnet_package_manifest_paths
 
 
 def build_kg(
@@ -116,4 +117,11 @@ def _package_manifest_fingerprints(root: Path) -> list[JsonObject]:
         if not path.is_file():
             continue
         manifests.append({"path": filename, "sha256": sha256(path.read_bytes()).hexdigest()})
+    if manifests:
+        return manifests
+    for path in iter_dotnet_package_manifest_paths(root):
+        relative_path = path.relative_to(root)
+        if not path.is_file():
+            continue
+        manifests.append({"path": relative_path.as_posix(), "sha256": sha256(path.read_bytes()).hexdigest()})
     return manifests

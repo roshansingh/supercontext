@@ -69,6 +69,8 @@ Do not create the PR until accepted/actionable Claude findings are handled.
 
 Do not run Claude again before the first Copilot review. Each PR gets at most two Claude reviews unless the user explicitly asks otherwise.
 
+Package resolver and cross-repo linkage changes need one extra local check before this first Claude review: verify the language support exposes the resolver, add focused resolver tests for manifest parsing and ambiguous matches, and add or update a relink/coverage check that proves the resolver is used by the KG linkage path rather than only satisfying the metric hook.
+
 6. Push once.
 
 ```bash

@@ -19,6 +19,10 @@ from source.kg.languages.python.package_resolver import (
     PythonPackageMetadata,
     PythonPackageResolver,
 )
+from source.kg.languages.dotnet.package_resolver import (
+    DotnetPackageMetadata,
+    DotnetPackageResolver,
+)
 from source.kg.languages.typescript.package_resolver import (
     TYPESCRIPT_PACKAGE_MANIFESTS,
     TypeScriptPackageMetadata,
@@ -619,6 +623,11 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
     if typescript_metadata is not None:
         return typescript_metadata.package_name, set(typescript_metadata.aliases), typescript_metadata.manifest_path
 
+    dotnet_metadata = _dotnet_package_metadata(repo, validate_snapshot_manifest=validate_snapshot_manifest)
+    if dotnet_metadata is not None:
+        # Existing precedence is preserved for mixed repos: Python, then JS/TS, then .NET.
+        return dotnet_metadata.package_name, set(dotnet_metadata.aliases), dotnet_metadata.manifest_path
+
     if validate_snapshot_manifest:
         _validate_repo_commit_matches_snapshot(repo)
     return repo.name, {repo.name}, None
@@ -661,6 +670,22 @@ def _typescript_package_metadata(
             continue
         if validate_snapshot_manifest:
             _validate_missing_manifest_file_matches_snapshot(repo, candidate)
+    if manifest_paths:
+        return resolver.package_metadata(repo)
+    return None
+
+
+def _dotnet_package_metadata(
+    repo: RepoSnapshot,
+    *,
+    validate_snapshot_manifest: bool,
+) -> DotnetPackageMetadata | None:
+    resolver = DotnetPackageResolver()
+    manifest_paths = resolver.manifest_paths(repo)
+    for candidate in manifest_paths:
+        _validate_package_manifest_file(candidate)
+        if validate_snapshot_manifest:
+            _validate_manifest_file_matches_snapshot(repo, candidate)
     if manifest_paths:
         return resolver.package_metadata(repo)
     return None
@@ -740,6 +765,7 @@ def _link_external_packages(
     ambiguous_count = 0
     python_resolver = PythonPackageResolver()
     typescript_resolver = TypeScriptPackageResolver()
+    dotnet_resolver = DotnetPackageResolver()
     packages_by_id: dict[str, list[Entity]] = {}
     for entity in entities:
         if entity.kind == "ExternalPackage":
@@ -777,6 +803,13 @@ def _link_external_packages(
                     providers,
                     consumer_identity,
                     typescript_resolver,
+                )
+            if not consumer_matches:
+                consumer_matches = _dotnet_resolver_matches(
+                    candidate_names,
+                    providers,
+                    consumer_identity,
+                    dotnet_resolver,
                 )
             if not consumer_matches:
                 continue
@@ -880,6 +913,38 @@ def _typescript_resolver_matches(
 
 def _is_typescript_package_manifest(path: Path | None) -> bool:
     return path is not None and path.name in TYPESCRIPT_PACKAGE_MANIFESTS
+
+
+def _dotnet_resolver_matches(
+    candidate_names: set[str],
+    providers: list[PackageProvider],
+    consumer_identity: RepoIdentity,
+    resolver: DotnetPackageResolver,
+) -> set[PackageProvider]:
+    dotnet_providers = [
+        provider
+        for provider in providers
+        if provider.repo_identity != consumer_identity and _is_dotnet_package_manifest(provider.manifest_path)
+    ]
+    if not dotnet_providers:
+        return set()
+    matches: set[PackageProvider] = set()
+    target_repos = tuple(provider.repo for provider in dotnet_providers)
+    for name in candidate_names:
+        resolved_name = resolver.resolve(name, target_repos)
+        if resolved_name is None:
+            continue
+        normalized_resolved = _normalize_package_name(resolved_name)
+        matches.update(
+            provider
+            for provider in dotnet_providers
+            if _normalize_package_name(provider.package_name) == normalized_resolved
+        )
+    return matches if len(matches) == 1 else set()
+
+
+def _is_dotnet_package_manifest(path: Path | None) -> bool:
+    return path is not None and path.suffix == ".csproj"
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:
