@@ -16,6 +16,7 @@ from source.kg.core.tenant import resolve_tenant_id
 
 LINKER_SOURCE_SYSTEM = "package_linker"
 LINKER_RULE_VERSION = "package-linker-1"
+STALE_SNAPSHOT_OUTPUT_FILES = frozenset(("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl"))
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ def relink_snapshot_dirs(
 
     result = link_external_packages(inputs)
     out.mkdir(parents=True, exist_ok=True)
+    _remove_stale_snapshot_outputs(out)
     _write_jsonl(out / "cross_repo_links.jsonl", (fact.to_record() for fact in result.facts), "fact_id")
     _write_jsonl(
         out / "cross_repo_link_evidence.jsonl",
@@ -142,6 +144,15 @@ def relink_snapshot_dirs(
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
+
+
+def _remove_stale_snapshot_outputs(out: Path) -> None:
+    for filename in STALE_SNAPSHOT_OUTPUT_FILES:
+        stale_path = out / filename
+        if stale_path.exists():
+            if not stale_path.is_file():
+                raise ValueError(f"Cannot replace stale snapshot artifact because it is not a file: {stale_path}")
+            stale_path.unlink()
 
 
 def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:

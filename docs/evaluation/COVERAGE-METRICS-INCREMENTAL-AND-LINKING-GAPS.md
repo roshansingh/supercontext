@@ -86,7 +86,7 @@ Concrete proposal:
 - **Non-goal for v1**: do not write refreshed cross-repo facts back into each repo's `facts.jsonl`. Keep repo-local extraction snapshots immutable and fleet linking as a projection.
 - **Determinism guarantee**: `bettercontext-relink` over `{1..11}` must produce the same deterministic linker IDs and link semantics as `build_multi_kg` extracting + linking `{1..11}` from scratch at the same repo commits. Serialized timestamp fields such as `evidence.ingested_at` may differ.
 
-This is the single change that closes the incremental-correctness gap. Estimated effort: ~½ day given the linker is already isolated in `multi_repo.py`.
+This PR implements the relink-only entry point and routes from-source multi-repo builds through the same linker code path. The remaining gap is consumer integration: metrics and query readers must merge the fleet-level `cross_repo_links.jsonl` projection when they need current cross-repo links.
 
 ### 4.2 Linker-freshness contract flag on M_cross_repo_linkage
 
@@ -123,7 +123,9 @@ bettercontext-build-kg --repo /work/team-new --out data/kg_runs/team-new
 # Refresh the cross-repo linker only — re-extraction skipped
 bettercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
 
-# Re-aggregate metrics for a repo or combined snapshot, with fleet linker freshness context
+# Re-aggregate metrics for a repo or combined snapshot.
+# Current code can use --fleet-dir for linker freshness; the follow-up metrics reader
+# must also merge _fleet/cross_repo_links.jsonl before M_cross_repo_linkage is complete.
 bettercontext-coverage-metrics --snapshot data/kg_runs/team-new --fleet-dir data/kg_runs
 
 # Relinked cross-repo link facts/evidence should match the linker slice from a from-source build:

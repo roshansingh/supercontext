@@ -46,6 +46,24 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual({row["target_id"] for row in evidence}, set(relink_facts))
             self.assertEqual({row["source_system"] for row in evidence}, {"package_linker"})
 
+    def test_relink_removes_stale_full_snapshot_artifacts_from_output_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            fleet = root / "snapshots" / "_fleet"
+            build_kg(repo, snapshot)
+            fleet.mkdir(parents=True)
+            for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl"):
+                (fleet / filename).write_text('{"stale": true}\n', encoding="utf-8")
+
+            relink_snapshot_dirs([snapshot], fleet)
+
+            self.assertTrue((fleet / "cross_repo_links.jsonl").exists())
+            self.assertTrue((fleet / "cross_repo_link_evidence.jsonl").exists())
+            for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl"):
+                self.assertFalse((fleet / filename).exists())
+
     def test_resolve_snapshot_dirs_expands_fleet_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
