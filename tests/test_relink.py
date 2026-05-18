@@ -679,6 +679,19 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Package manifest has uncommitted changes"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
+    def test_relink_rejects_package_manifest_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "module.py").write_text("", encoding="utf-8")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "pyproject.toml").mkdir()
+
+            with self.assertRaisesRegex(ValueError, "Package manifest path is not a file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
     def test_build_multi_allows_dirty_package_manifest_for_fresh_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
