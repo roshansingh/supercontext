@@ -32,6 +32,14 @@ Format: `Item | Source | Trigger to revisit`.
 | Classify KG coverage rows currently captured as `unknown` in count baselines by adding `scope_ref.reason` at emission sites and regenerating `tests/baselines/kg_counts/*.json` | Debate 8 PR-0 baseline review | Before treating T2 count-baseline drift as a strict OSS-readiness gate |
 | Per-repo import-root metadata resolution — Python import normalization currently reads `importlib.metadata.packages_distributions()` from the runner environment, not the target repo's venv/lockfile; Node builtin normalization reads the runner `node` on `PATH` plus fallback inventory | Debate 8 PR-C review | Before hosted analysis claims target-repo environment fidelity |
 | Namespace-package subpath ownership for Python imports — `google.*` style namespace packages fail closed when multiple declared distributions share one import root; resolve with package file metadata or target-env module ownership | Debate 8 PR-C review | When namespace package imports become product-critical |
+| CODEOWNERS extractor for ownership facts — emit canonical `OWNS` unless ADR-0006 later ratifies an `OWNED_BY` inverse; requires extractor support and predicate emission policy | Debate 19 PR-11 parked follow-up | When deploy-blocker semantics or PR-bot ownership routing becomes a product surface |
+| `USES_SCHEMA` qualifier with version chains — current schema-use modeling is partial for deploy-blocker semantics | Debate 19 PR-11 parked follow-up | When `deploy_blockers_for` lands meaningfully |
+| Evidence `valid_from` / `valid_to` envelope — current `Evidence` dataclass omits the ADR-0006 time-validity fields | Debate 19 PR-11 parked follow-up | When time-window-based `M_freshness` reporting becomes needed |
+| `CALLS` grain elevation from `CodeSymbol → CodeSymbol` to `Service → Endpoint` for cross-service semantics | Debate 19 PR-11 parked follow-up | When inter-service blast-radius queries land |
+| Kafka producer/consumer detectors for `PRODUCES_EVENT` / `CONSUMES_EVENT` outside boto3 | Debate 19 PR-11 parked follow-up | When org-level Kafka deployments need cross-service event tracing |
+| Terraform broader IaC predicates — `DEPLOYS_VIA_CONFIG`, `PROVIDES_RESOURCE`, `DEPENDS_ON_MODULE` require ADR-0006 ratification before extractor emission | Debate 19 PR-11 parked follow-up | When Helm, Kubernetes, Terraform module, or Pulumi semantics become product-critical |
+| Per-file incremental extraction — `build_kg --incremental --since-commit <sha>` rebuilds only files changed in the diff | Debate 19 PR-11 parked follow-up | When fleet repos exceed sizes where full per-repo rebuild on each commit becomes the bottleneck |
+| Org dashboard / metric run history — persist and visualize `metrics.jsonl` across runs | Debate 19 PR-11 parked follow-up | When customer-facing coverage reporting becomes a feature requirement |
 
 ## Per-ADR open follow-ups
 
