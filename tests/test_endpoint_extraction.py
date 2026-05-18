@@ -450,12 +450,15 @@ class EndpointExtractionTest(unittest.TestCase):
             _methods_by_path(calls),
             {
                 "/api/orders": {"POST"},
-                "/api/orders/{}": {"ANY"},
                 "/api/profile": {"GET", "PATCH"},
             },
         )
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"fetch_call"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/profile"], {"axios_call"})
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
+            1,
+        )
 
     def test_fetch_with_unresolved_method_keeps_any_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -560,6 +563,30 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 4)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
 
+    def test_typescript_client_dynamic_template_segment_fails_closed(self) -> None:
+        build = _extract_typescript_client(
+            "const userId = getUserId();\n"
+            "fetch(`/api/users/${userId}`);\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
+            1,
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
+
+    def test_typescript_client_static_template_segment_still_resolves(self) -> None:
+        build = _extract_typescript_client(
+            "const resource = 'users';\n"
+            "fetch(`/api/${resource}`);\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/users": {"ANY"}})
+        self.assertFalse(_call_site_coverage(build))
+
     def test_typescript_client_calls_emit_coverage_for_unresolved_external_and_shadowed_targets(self) -> None:
         build = _extract_typescript_client(
             "const P = '/api/orders';\n"
@@ -606,6 +633,29 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/token/"][0]["confidence"], "host_unresolved_path_resolved")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
         self.assertEqual(_fact_lines_by_path(build, "CALLS_ENDPOINT", "/api/token/"), [3])
+
+    def test_typescript_imported_axios_client_dynamic_template_reason_is_preserved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api/axiosConfig.tsx": (
+                    "import axios from 'axios';\n"
+                    "const shopagainAxios = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "export default shopagainAxios;\n"
+                ),
+                "src/api/login.api.tsx": (
+                    "import shopagainAxios from './axiosConfig';\n"
+                    "const userId = getUserId();\n"
+                    "shopagainAxios.get(`/api/users/${userId}`);\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
+            1,
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
 
     def test_typescript_imported_named_axios_client_uses_export_alias_and_base_path(self) -> None:
         build = _extract_typescript_client_files(

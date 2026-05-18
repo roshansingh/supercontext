@@ -1,9 +1,9 @@
 {
   "entities": {
-    "Endpoint": 12
+    "Endpoint": 11
   },
   "facts": {
-    "CALLS_ENDPOINT": 5,
+    "CALLS_ENDPOINT": 4,
     "EXPOSES_ENDPOINT": 7
   }
 }

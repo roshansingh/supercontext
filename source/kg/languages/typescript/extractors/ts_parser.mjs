@@ -319,7 +319,12 @@ function resolveEndpointExpression(node, sourceFile, bindings) {
       } else if (resolved.kind === "resolved") {
         value += resolved.value;
       } else {
-        value += "{}";
+        return {
+          kind: "unresolved",
+          value: null,
+          raw: rawNodeText(node, sourceFile),
+          reason: resolved.reason ?? "target_dynamic_template_segment",
+        };
       }
       value += span.literal.text;
     }
@@ -373,7 +378,7 @@ function splitResolvedEndpointTarget(value) {
 function resolveEndpointTarget(node, sourceFile, bindings) {
   const expression = resolveEndpointExpression(node, sourceFile, bindings);
   if (expression.kind === "unresolved" || expression.value == null) {
-    return { kind: "unresolved", path: null, host: null, raw_target: expression.raw };
+    return { kind: "unresolved", path: null, host: null, raw_target: expression.raw, reason: expression.reason ?? null };
   }
   const target = splitResolvedEndpointTarget(expression.value);
   if (target.kind === "host_unresolved" || target.kind === "resolved" || target.kind === "external") return target;
@@ -897,7 +902,7 @@ function rowFromTarget(target, method, line, sourceKind) {
     return { external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind };
   }
   if (target.kind === "unresolved") {
-    return { unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind };
+    return { unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null };
   }
   return {
     method: method ?? "ANY",
