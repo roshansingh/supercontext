@@ -87,8 +87,8 @@ class CSharpExtractorTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             caller = entities[calls[0].subject_id]
             callee = entities[calls[0].object_id]
-            self.assertEqual(caller.identity["qualname"], "<module>")
-            self.assertEqual(callee.identity["qualname"], "Worker.Run")
+            self.assertEqual(caller.identity["qualname"], "Demo.Api.<module>")
+            self.assertEqual(callee.identity["qualname"], "Demo.Api.Worker.Run")
 
     def test_reference_type_return_preserves_method_symbol_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -154,6 +154,29 @@ class CSharpExtractorTest(unittest.TestCase):
                 },
                 {("Run/0", "Say/0"), ("Run/0", "Say/1")},
             )
+
+    def test_namespaces_keep_duplicate_type_names_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Workers.cs").write_text(
+                "namespace Alpha { class Worker { public void Run() {} } }\n"
+                "namespace Beta { class Worker { public void Run() {} } }\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            build = CSharpExtractor().extract(repo)
+            symbols = [
+                entity
+                for entity in build.entities
+                if entity.kind == "CodeSymbol"
+            ]
+
+            self.assertIn("Alpha.Worker", {symbol.identity["qualname"] for symbol in symbols})
+            self.assertIn("Beta.Worker", {symbol.identity["qualname"] for symbol in symbols})
+            self.assertIn("Alpha.Worker.Run", {symbol.identity["qualname"] for symbol in symbols})
+            self.assertIn("Beta.Worker.Run", {symbol.identity["qualname"] for symbol in symbols})
+            self.assertEqual(len({symbol.entity_id for symbol in symbols}), len(symbols))
 
 
 if __name__ == "__main__":

@@ -64,20 +64,30 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
     if root.has_error:
         diagnostics.append({"line": root.start_point[0] + 1, "message": "tree-sitter reported parse errors"})
 
-    _collect(root, source, imports, symbols, calls, qualname_prefix="", symbol_key_prefix="")
+    file_scoped_namespace = _file_scoped_namespace(root, source)
+    _collect(
+        root,
+        source,
+        imports,
+        symbols,
+        calls,
+        qualname_prefix=file_scoped_namespace,
+        symbol_key_prefix=file_scoped_namespace,
+    )
     has_module_calls = False
+    module_symbol = f"{file_scoped_namespace}.<module>" if file_scoped_namespace else "<module>"
     for call in calls:
-        if call.get("caller") == "":
-            call["caller"] = "<module>"
-            call["caller_key"] = "<module>"
+        if call.get("caller") in {"", file_scoped_namespace}:
+            call["caller"] = module_symbol
+            call["caller_key"] = module_symbol
             has_module_calls = True
     if has_module_calls:
         symbols.insert(
             0,
             {
-                "name": "<module>",
+                "name": module_symbol,
                 "kind": "module",
-                "key": "<module>",
+                "key": module_symbol,
                 "line": 1,
                 "end_line": root.end_point[0] + 1,
             },
@@ -111,6 +121,18 @@ def _collect(
                     "local_names": [],
                 }
             )
+        return
+
+    if node_type in {"namespace_declaration", "file_scoped_namespace_declaration"}:
+        name = _namespace_name(node, source)
+        if name and node_type == "namespace_declaration":
+            namespace_prefix = f"{qualname_prefix}.{name}" if qualname_prefix else name
+            namespace_key_prefix = f"{symbol_key_prefix}.{name}" if symbol_key_prefix else name
+        else:
+            namespace_prefix = qualname_prefix
+            namespace_key_prefix = symbol_key_prefix
+        for child in node.children:
+            _collect(child, source, imports, symbols, calls, namespace_prefix, namespace_key_prefix)
         return
 
     if node_type in {"class_declaration", "struct_declaration", "interface_declaration", "record_declaration"}:
@@ -180,6 +202,23 @@ def _using_target(node: Any, source: bytes) -> str:
             if found_equals:
                 return result
     return result
+
+
+def _file_scoped_namespace(root: Any, source: bytes) -> str:
+    for child in root.children:
+        if child.type == "file_scoped_namespace_declaration":
+            return _namespace_name(child, source)
+    return ""
+
+
+def _namespace_name(node: Any, source: bytes) -> str:
+    name = node.child_by_field_name("name")
+    if name is not None:
+        return _node_text(name, source)
+    for child in node.children:
+        if child.type in {"qualified_name", "identifier"}:
+            return _node_text(child, source)
+    return ""
 
 
 def _declared_name(node: Any, source: bytes) -> str:

@@ -141,6 +141,7 @@ class CSharpExtractor:
             )
 
         symbols_by_key: dict[str, Entity] = {}
+        symbol_keys_by_id: dict[str, str] = {}
         symbols_by_qualname: dict[str, list[Entity]] = {}
         symbols_by_short: dict[str, list[Entity]] = {}
         symbol_arities: dict[str, int] = {}
@@ -176,6 +177,7 @@ class CSharpExtractor:
             build.evidence.append(self._entity_evidence(repo, symbol_entity, file_path, line, end_line))
             self._add_fact(build, "DEFINED_IN", symbol_entity, module_entity, repo, file_path, line, line)
             symbols_by_key[symbol_key] = symbol_entity
+            symbol_keys_by_id[symbol_entity.entity_id] = symbol_key
             symbols_by_qualname.setdefault(qualname, []).append(symbol_entity)
             short = qualname.rsplit(".", 1)[-1]
             symbols_by_short.setdefault(short, []).append(symbol_entity)
@@ -206,6 +208,10 @@ class CSharpExtractor:
                     for callee in callees
                     if symbol_arities.get(callee.entity_id) == arity
                 ]
+            if len(callees) != 1 and caller_key:
+                scoped_callees = self._scope_candidate_callees(caller_key, short_callee, callees, symbol_keys_by_id, arity)
+                if scoped_callees:
+                    callees = scoped_callees
             if len(callees) != 1:
                 continue
             callee = callees[0]
@@ -223,6 +229,27 @@ class CSharpExtractor:
                 line,
                 qualifier={"call": callee_name},
             )
+
+    def _scope_candidate_callees(
+        self,
+        caller_key: str,
+        short_callee: str,
+        callees: list[Entity],
+        symbol_keys_by_id: dict[str, str],
+        arity: object,
+    ) -> list[Entity]:
+        parent_scope = caller_key.rsplit(".", 1)[0] if "." in caller_key else ""
+        if not parent_scope:
+            return []
+        if isinstance(arity, int) and not isinstance(arity, bool):
+            expected_key = f"{parent_scope}.{short_callee}/{arity}"
+        else:
+            expected_key = f"{parent_scope}.{short_callee}"
+        return [
+            callee
+            for callee in callees
+            if symbol_keys_by_id.get(callee.entity_id) == expected_key
+        ]
 
     def _add_fact(
         self,

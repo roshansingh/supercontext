@@ -78,7 +78,7 @@ class DotnetParserBridgeTest(unittest.TestCase):
             self.assertIn("System", import_targets)
 
             symbol_names = {sym["name"] for sym in entry["symbols"]}
-            self.assertIn("Foo", symbol_names)
+            self.assertIn("Demo.Foo", symbol_names)
             self.assertTrue(any(name.endswith("Bar") for name in symbol_names))
 
     def test_cache_returns_same_object_for_same_repo(self) -> None:
@@ -124,11 +124,11 @@ class DotnetParserBridgeTest(unittest.TestCase):
             parsed = parse_dotnet_repo(repo)
             entry = parsed["Program.cs"]
 
-            self.assertIn("<module>", {sym["name"] for sym in entry["symbols"]})
+            self.assertIn("Demo.Api.<module>", {sym["name"] for sym in entry["symbols"]})
             self.assertTrue(
                 any(
-                    call["caller"] == "<module>"
-                    and call["caller_key"] == "<module>"
+                    call["caller"] == "Demo.Api.<module>"
+                    and call["caller_key"] == "Demo.Api.<module>"
                     and call["name"] == "new Worker().Run"
                     and call["arity"] == 0
                     and call["line"] == 2
@@ -157,6 +157,26 @@ class DotnetParserBridgeTest(unittest.TestCase):
             self.assertIn("Greeter.Value", symbol_names)
             self.assertIn("Result", symbol_names)
             self.assertNotIn("Greeter.Result", symbol_names)
+
+    def test_namespaces_qualify_duplicate_symbol_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Workers.cs").write_text(
+                "namespace Alpha { class Worker { public void Run() {} } }\n"
+                "namespace Beta { class Worker { public void Run() {} } }\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            parsed = parse_dotnet_repo(repo)
+            symbols = parsed["Workers.cs"]["symbols"]
+
+            self.assertIn("Alpha.Worker", {sym["name"] for sym in symbols})
+            self.assertIn("Beta.Worker", {sym["name"] for sym in symbols})
+            self.assertIn("Alpha.Worker.Run", {sym["name"] for sym in symbols})
+            self.assertIn("Beta.Worker.Run", {sym["name"] for sym in symbols})
+            self.assertIn("Alpha.Worker.Run/0", {sym["key"] for sym in symbols})
+            self.assertIn("Beta.Worker.Run/0", {sym["key"] for sym in symbols})
 
     def test_overloaded_methods_have_distinct_symbol_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
