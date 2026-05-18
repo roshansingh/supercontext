@@ -20,7 +20,10 @@ def main() -> None:
         required=True,
         help="Snapshot directory, or fleet directory containing per-repo snapshot subdirectories; repeat as needed",
     )
-    parser.add_argument("--out", help="Output directory for fleet linker artifacts; defaults to <fleet>/_fleet")
+    parser.add_argument(
+        "--out",
+        help="Output directory for fleet linker artifacts; required unless --snapshot-dir points to one fleet directory",
+    )
     parser.add_argument(
         "--tenant",
         help="Tenant id for graph identity; non-empty value overrides snapshot manifest tenant ids",

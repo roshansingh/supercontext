@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import json
 import re
+import subprocess
 import tomllib
 
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
@@ -146,7 +147,7 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
 def default_output_dir(paths: tuple[Path, ...]) -> Path:
     if len(paths) == 1 and not (paths[0].expanduser().resolve() / "manifest.json").exists():
         return paths[0].expanduser().resolve() / "_fleet"
-    raise ValueError("--out is required when --snapshot-dir points directly at one or more snapshots")
+    raise ValueError("--out is required unless --snapshot-dir points to a single fleet directory")
 
 
 def repo_identity(repo: RepoSnapshot, tenant_id: str) -> RepoIdentity:
@@ -193,6 +194,9 @@ def validate_unique_repo_identities(repos: list[RepoSnapshot], tenant_id: str) -
 
 
 def _validate_unique_input_identities(inputs: tuple[LinkerInput, ...]) -> None:
+    tenant_ids = sorted({input_repo.repo_identity.tenant_id for input_repo in inputs})
+    if len(tenant_ids) > 1:
+        raise ValueError(f"Relink snapshots must belong to one tenant. Found tenants: {tenant_ids}")
     paths_by_identity: dict[RepoIdentity, list[str]] = {}
     for input_repo in inputs:
         paths_by_identity.setdefault(input_repo.repo_identity, []).append(str(input_repo.repo.root))
@@ -231,10 +235,11 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
     if not repo_root.exists():
         raise FileNotFoundError(f"{manifest_path}: repo_path does not exist: {repo_root}")
     repo_name = manifest.get("repo_name")
+    owner = manifest.get("owner")
     repo = RepoSnapshot(
         repo_root,
         repo_name if isinstance(repo_name, str) and repo_name else repo_root.name,
-        repo_root.parent.name,
+        owner if isinstance(owner, str) and owner else repo_root.parent.name,
         commit_sha,
         {},
     )
@@ -244,12 +249,21 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
 
 
 def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None) -> str:
-    if tenant_id is not None:
-        return resolve_tenant_id(tenant_id)
     manifest_tenant = manifest.get("tenant_id")
-    if isinstance(manifest_tenant, str) and manifest_tenant.strip():
-        return resolve_tenant_id(manifest_tenant)
-    return resolve_tenant_id(None)
+    resolved_manifest_tenant = (
+        resolve_tenant_id(manifest_tenant)
+        if isinstance(manifest_tenant, str) and manifest_tenant.strip()
+        else resolve_tenant_id(None)
+    )
+    if tenant_id is not None:
+        resolved_override = resolve_tenant_id(tenant_id)
+        if resolved_override != resolved_manifest_tenant:
+            raise ValueError(
+                "relink tenant override must match snapshot tenant_id because entity IDs are tenant-scoped: "
+                f"{resolved_override} != {resolved_manifest_tenant}"
+            )
+        return resolved_override
+    return resolved_manifest_tenant
 
 
 def _entity_from_record(row: JsonObject, path: Path) -> Entity:
@@ -340,6 +354,7 @@ def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity 
 def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
     pyproject = repo.root / "pyproject.toml"
     if pyproject.exists():
+        _validate_manifest_file_matches_snapshot(repo, pyproject)
         try:
             data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError:
@@ -355,6 +370,7 @@ def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
 
     package_json = repo.root / "package.json"
     if package_json.exists():
+        _validate_manifest_file_matches_snapshot(repo, package_json)
         try:
             data = json.loads(package_json.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
@@ -364,6 +380,50 @@ def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
         return package_name, aliases, package_json
 
     return repo.name, {repo.name}, None
+
+
+def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
+    if repo.commit_sha == "working-tree":
+        return
+    current_commit = _git_commit_sha(repo.root)
+    if current_commit != repo.commit_sha:
+        raise ValueError(
+            f"Snapshot commit {repo.commit_sha} does not match current repo commit {current_commit}: {repo.root}"
+        )
+    status = _git_status_porcelain(repo.root, manifest_path)
+    if status:
+        relative = manifest_path.relative_to(repo.root)
+        raise ValueError(f"Package manifest has uncommitted changes relative to snapshot commit: {relative}")
+
+
+def _git_commit_sha(root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("git is required to validate snapshot commit before relink") from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f"Repo path is not a git working copy, cannot validate snapshot commit: {root}") from exc
+    return result.stdout.strip() or "working-tree"
+
+
+def _git_status_porcelain(root: Path, path: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--", str(path.relative_to(root))],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("git is required to validate package manifest cleanliness before relink") from exc
+    except subprocess.CalledProcessError:
+        return ""
+    return result.stdout.strip()
 
 
 def _python_package_roots(data: JsonObject, repo: RepoSnapshot) -> set[str]:
@@ -388,7 +448,11 @@ def _link_external_packages(
     facts: list[Fact] = []
     evidence: list[Evidence] = []
     ambiguous_count = 0
-    packages_by_id = {entity.entity_id: entity for entity in entities if entity.kind == "ExternalPackage"}
+    packages_by_id = {
+        entity.entity_id: entity
+        for entity in entities
+        if entity.kind == "ExternalPackage" and not _is_builtin_package(entity)
+    }
     for package in packages_by_id.values():
         consumer_identities = entity_repo_identities.get(package.entity_id, set())
         candidate_names = _external_package_candidate_names(package)
@@ -440,10 +504,25 @@ def _external_package_candidate_names(package: Entity) -> set[str]:
     properties = package.properties
     identity = package.identity
     return {
-        str(identity.get("name", "")),
-        str(properties.get("import_root", "")),
-        str(properties.get("distribution_name", "")),
-    } - {""}
+        value
+        for value in (
+            _non_empty_string(identity.get("name")),
+            _non_empty_string(properties.get("import_root")),
+            _non_empty_string(properties.get("distribution_name")),
+        )
+        if value is not None
+    }
+
+
+def _is_builtin_package(package: Entity) -> bool:
+    return package.properties.get("category") in {"stdlib", "node_builtin"}
+
+
+def _non_empty_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _matched_name(candidate_names: set[str], provider: PackageProvider) -> str:

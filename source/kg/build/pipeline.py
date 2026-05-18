@@ -24,6 +24,7 @@ def build_kg(
     manifest: JsonObject = {
         "repo_path": str(repo.root),
         "repo_name": repo.name,
+        "owner": repo.owner,
         "tenant_id": resolved_tenant_id,
         "commit_sha": repo.commit_sha,
         "built_at": utc_now_iso(),
