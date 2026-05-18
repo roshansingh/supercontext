@@ -61,9 +61,12 @@ class PythonPackageResolver:
         for manifest_path in manifest_paths:
             if not manifest_path.is_file():
                 raise ValueError(f"Package manifest path is not a file: {manifest_path}")
-            package_name = _declared_package_name(manifest_path)
             if manifest_path.name == "pyproject.toml":
-                aliases.update(_pyproject_package_roots(_read_pyproject(manifest_path), repo))
+                data = _read_pyproject(manifest_path)
+                package_name = _pyproject_package_name(data)
+                aliases.update(_pyproject_package_roots(data, repo))
+            else:
+                package_name = _declared_package_name(manifest_path)
             if not package_name:
                 continue
             aliases.add(package_name)
