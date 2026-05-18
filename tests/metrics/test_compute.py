@@ -36,7 +36,8 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 1.0)
             self.assertEqual(backend.metric_values["M_extractor_opportunity"].state, "n_a")
             self.assertEqual(backend.metric_values["M_silent_gap"].state, "n_a")
-            self.assertEqual(backend.metric_values["M_useful_edge"].state, "partial")
+            self.assertEqual(backend.metric_values["M_useful_edge"].state, "usable")
+            self.assertEqual(backend.metric_values["M_useful_edge"].value, 1.0)
             self.assertEqual(backend.metric_values["M_identity_health"].state, "usable")
             self.assertEqual(backend.metric_values["M_identity_health"].value, 1.0)
 
@@ -200,6 +201,59 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             cell = compute_all(snapshot, expected_repos=1)[0]
 
             self.assertEqual(cell.metric_values["M_inventory"].state, "n_a")
+
+    def test_useful_edge_counts_object_kind_anchors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("from fastapi import FastAPI\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            module = Entity("CodeModule", {"tenant_id": "default", "repo": "repo", "module": "app"})
+            fact = Fact("IMPLEMENTS", module.entity_id, service.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[service, module],
+                facts=[fact],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=service.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "service"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="entity",
+                        target_id=module.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "module"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"fact": "implements"},
+                        bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _cell(compute_all(snapshot, expected_repos=1), "backend")
+
+        self.assertEqual(backend.metric_values["M_useful_edge"].value, 1.0)
 
     def test_custom_config_can_disable_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -554,6 +608,16 @@ def _write_backend_snapshot(
     fact = Fact("IMPLEMENTS", module.entity_id, service.entity_id)
     ungrounded_fact = Fact("DEFINED_IN", symbol.entity_id, module.entity_id)
     evidence = [
+        Evidence(
+            # Service evidence keeps the Service inside scoped_entities so
+            # object-side useful-edge anchors can be counted.
+            target_type="entity",
+            target_id=service.entity_id,
+            derivation_class="deterministic_static",
+            source_system="test",
+            source_ref={"entity": "service"},
+            bytes_ref={"repo": "repo", "commit_sha": "working-tree", "path": "app.py", "line_start": 1, "line_end": 1},
+        ),
         Evidence(
             target_type="entity",
             target_id=module.entity_id,

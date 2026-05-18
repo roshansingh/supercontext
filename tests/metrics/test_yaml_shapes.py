@@ -51,12 +51,17 @@ class MetricsYamlShapeTest(unittest.TestCase):
                 self.assertIsInstance(entry, dict)
                 predicate = entry.get("predicate")
                 subject_kinds = entry.get("subject_kinds")
+                object_kinds = entry.get("object_kinds")
                 self.assertIn(predicate, SUPPORTED_FACT_PREDICATES)
-                self.assertIsInstance(subject_kinds, list)
-                self.assertTrue(subject_kinds)
-                for subject_kind in subject_kinds:
-                    self.assertIsInstance(subject_kind, str)
-                    self.assertTrue(subject_kind)
+                self.assertTrue(subject_kinds or object_kinds)
+                for field_value in (subject_kinds, object_kinds):
+                    if field_value is None:
+                        continue
+                    self.assertIsInstance(field_value, list)
+                    self.assertTrue(field_value)
+                    for entity_kind in field_value:
+                        self.assertIsInstance(entity_kind, str)
+                        self.assertTrue(entity_kind)
         for row in data["adr_followups"]:
             self.assertTrue(row["adr_followup_required"])
             self.assertNotIn(row["predicate"], SUPPORTED_FACT_PREDICATES)
