@@ -18,15 +18,15 @@ Out of scope: Debate 14's metric semantics themselves (those are final).
 
 ## 1. Per-repo determinism — what incremental ingestion preserves
 
-KG row IDs are content-hashed via `stable_hash(...)` over the row's identifying fields (`source/kg/core/models.py:31-33`). Timestamps are not in the hash. So for a given `commit_sha`:
+KG row IDs are content-hashed via `stable_hash(...)` over the row's identifying fields in `source/kg/core/models.py`. Timestamps are not in the hash. So for a given `commit_sha`:
 
 | Row kind | ID derivation | Identical across runs? |
 |---|---|---|
-| `entity_id` | `ent_{stable_hash(kind, identity)}` (`models.py:44-45`) | ✅ yes |
-| `fact_id` | `fact_{stable_hash(predicate, subject_id, object_id, qualifier)}` (`models.py:66-68`) | ✅ yes |
-| `evidence_id` | `ev_{stable_hash(target_type, target_id, source_system, source_ref, bytes_ref)}` (`models.py:87-89`) | ✅ yes |
-| `coverage_id` | `cov_{stable_hash(tenant_id, predicate, scope_ref, source_system)}` (`models.py:106-108`) | ✅ yes |
-| `ingested_at` field value | `utc_now_iso()` per row (`models.py:85`) | ❌ differs per run, but **not part of any hash** |
+| `entity_id` | `ent_{stable_hash(kind, identity)}` in `models.py` | ✅ yes |
+| `fact_id` | `fact_{stable_hash(predicate, subject_id, object_id, qualifier)}` in `models.py` | ✅ yes |
+| `evidence_id` | `ev_{stable_hash(target_type, target_id, source_system, source_ref, bytes_ref)}` in `models.py` | ✅ yes |
+| `coverage_id` | `cov_{stable_hash(tenant_id, predicate, scope_ref, source_system)}` in `models.py` | ✅ yes |
+| `ingested_at` field value | `utc_now_iso()` per row in `models.py` | ❌ differs per run, but **not part of any hash** |
 
 **Consequence:** adding repo #11 to a fleet leaves repos #1–#10's snapshots **bit-identical in IDs**. Re-running `build_kg` on an unchanged repo also produces ID-identical output. The only diffs between runs are `ingested_at` / `checked_at` / `built_at` timestamps, which don't affect KG correctness or downstream metric values (the 9 metrics that don't involve cross-repo state).
 

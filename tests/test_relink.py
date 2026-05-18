@@ -61,6 +61,10 @@ class RelinkOnlyTest(unittest.TestCase):
                 json.dumps({"build_type": "fleet_relink"}) + "\n",
                 encoding="utf-8",
             )
+            (root / "manifest.json").write_text(
+                json.dumps({"build_type": "fleet_relink"}) + "\n",
+                encoding="utf-8",
+            )
 
             self.assertEqual(resolve_snapshot_dirs((root,)), (snapshot.resolve(),))
 
@@ -194,6 +198,18 @@ class RelinkOnlyTest(unittest.TestCase):
             snapshot = root / "snapshots" / "consumer"
             build_kg(repo, snapshot)
             (repo / "package.json").write_text("[]\n", encoding="utf-8")
+
+            manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["provider_count"], 1)
+
+    def test_relink_accepts_malformed_pyproject_tables_as_repo_name_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "pyproject.toml").write_text('[tool]\npoetry = "not-a-table"\n', encoding="utf-8")
 
             manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
 

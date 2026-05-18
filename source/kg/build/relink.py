@@ -148,7 +148,7 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     snapshots: list[Path] = []
     for path in paths:
         root = path.expanduser().resolve()
-        if (root / "manifest.json").exists():
+        if _is_repo_snapshot_dir(root):
             snapshots.append(root)
             continue
         if not root.exists():
@@ -426,11 +426,7 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
             data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError:
             data = {}
-        package_name = str(
-            data.get("tool", {}).get("poetry", {}).get("name")
-            or data.get("project", {}).get("name")
-            or repo.name
-        )
+        package_name = _pyproject_package_name(data) or repo.name
         aliases = {package_name, repo.name}
         aliases.update(_python_package_roots(data, repo))
         return package_name, aliases, pyproject
@@ -519,11 +515,31 @@ def _git_status_porcelain(root: Path, path: Path) -> str:
 
 def _python_package_roots(data: JsonObject, repo: RepoSnapshot) -> set[str]:
     roots = {repo.name}
-    for package in data.get("tool", {}).get("poetry", {}).get("packages", []):
+    tool = data.get("tool") if isinstance(data, dict) else None
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    packages = poetry.get("packages", []) if isinstance(poetry, dict) else []
+    if not isinstance(packages, list):
+        return roots
+    for package in packages:
         include = package.get("include") if isinstance(package, dict) else None
         if include:
             roots.add(str(include).split(".", 1)[0])
     return roots
+
+
+def _pyproject_package_name(data: object) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    tool = data.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    poetry_name = poetry.get("name") if isinstance(poetry, dict) else None
+    if isinstance(poetry_name, str) and poetry_name:
+        return poetry_name
+    project = data.get("project")
+    project_name = project.get("name") if isinstance(project, dict) else None
+    if isinstance(project_name, str) and project_name:
+        return project_name
+    return None
 
 
 def _link_external_packages(
