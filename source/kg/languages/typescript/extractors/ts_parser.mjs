@@ -185,6 +185,9 @@ function collectTopLevelLiteralBindings(sourceFile) {
         }
         bindings.set(name, literal);
       }
+      for (const name of bindings.keys()) {
+        if (statementMutatesIdentifier(statement, name)) invalid.add(name);
+      }
       continue;
     }
     for (const name of bindings.keys()) {

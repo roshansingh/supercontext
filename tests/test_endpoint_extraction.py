@@ -741,6 +741,18 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
 
+    def test_typescript_client_function_body_does_not_use_module_binding_mutated_in_declarator(self) -> None:
+        build = _extract_typescript_client(
+            "let url = '/api/before';\n"
+            "const other = (url = '/api/after');\n"
+            "function load() {\n"
+            "  fetch(url);\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
+
     def test_typescript_client_function_body_resolves_stable_module_binding(self) -> None:
         build = _extract_typescript_client(
             "const url = '/api/module';\n"
