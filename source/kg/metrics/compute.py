@@ -412,8 +412,7 @@ def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _S
         repo = scope_ref.get("repo")
         if not isinstance(repo, str) or repo not in scoped_opportunity.coverage_repos:
             continue
-        path = scope_ref.get("file_path", scope_ref.get("path"))
-        if path != opportunity.path:
+        if not _coverage_scope_matches_path(scope_ref, opportunity.path):
             continue
         line = scope_ref.get("line")
         if line is None:
@@ -423,6 +422,22 @@ def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _S
         if line == opportunity.line:
             return True
     return False
+
+
+def _coverage_scope_matches_path(scope_ref: JsonObject, opportunity_path: str) -> bool:
+    has_path = "file_path" in scope_ref or "path" in scope_ref
+    if has_path:
+        path = scope_ref.get("file_path", scope_ref.get("path"))
+        return isinstance(path, str) and path == opportunity_path
+    path_prefix = scope_ref.get("path_prefix")
+    if path_prefix is None:
+        return True
+    if not isinstance(path_prefix, str) or not path_prefix:
+        return False
+    if path_prefix == ".":
+        return True
+    normalized = path_prefix.rstrip("/")
+    return opportunity_path == normalized or opportunity_path.startswith(f"{normalized}/")
 
 
 def _line_covers(bytes_ref: Any, line: int) -> bool:
