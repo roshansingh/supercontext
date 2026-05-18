@@ -168,8 +168,9 @@ def _validate_metric_row(path: Path, index: int, row: JsonObject) -> None:
         raise ValueError(f"{label} built_at must be a non-empty string")
     if "dimension" not in row:
         raise ValueError(f"{label} missing required field: dimension")
-    if row.get("dimension") is not None and not isinstance(row.get("dimension"), str):
-        raise ValueError(f"{label} dimension must be a string or null")
+    dimension = row.get("dimension")
+    if dimension is not None and (not isinstance(dimension, str) or not dimension):
+        raise ValueError(f"{label} dimension must be a non-empty string or null")
     if row.get("cell_score") is not None:
         _validate_ratio(row.get("cell_score"), f"{label} cell_score")
     metric_values = row.get("metric_values")
@@ -200,7 +201,11 @@ def _validate_metric_row(path: Path, index: int, row: JsonObject) -> None:
     if not isinstance(flags, list) or any(not isinstance(flag, str) for flag in flags):
         raise ValueError(f"{label} contract_flags must be a list of strings")
     commit_sha_set = row.get("commit_sha_set")
-    if not isinstance(commit_sha_set, list) or not commit_sha_set or any(not isinstance(commit, str) for commit in commit_sha_set):
+    if (
+        not isinstance(commit_sha_set, list)
+        or not commit_sha_set
+        or any(not isinstance(commit, str) or not commit for commit in commit_sha_set)
+    ):
         raise ValueError(f"{label} commit_sha_set must be a non-empty list of strings")
 
 

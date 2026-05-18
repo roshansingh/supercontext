@@ -146,6 +146,15 @@ class CoverageReportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing required field: dimension"):
                 write_coverage_report(snapshot, root / "report")
 
+    def test_report_rejects_empty_dimension(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(snapshot, _record(dimension=""))
+
+            with self.assertRaisesRegex(ValueError, "dimension must be a non-empty string or null"):
+                write_coverage_report(snapshot, root / "report")
+
     def test_report_rejects_missing_metric_built_at(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -155,6 +164,17 @@ class CoverageReportTest(unittest.TestCase):
             _write_snapshot(snapshot, record)
 
             with self.assertRaisesRegex(ValueError, "built_at must be a non-empty string"):
+                write_coverage_report(snapshot, root / "report")
+
+    def test_report_rejects_empty_commit_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            record = _record()
+            record["commit_sha_set"] = [""]
+            _write_snapshot(snapshot, record)
+
+            with self.assertRaisesRegex(ValueError, "commit_sha_set must be a non-empty list of strings"):
                 write_coverage_report(snapshot, root / "report")
 
     def test_report_rejects_duplicate_cell_key(self) -> None:
