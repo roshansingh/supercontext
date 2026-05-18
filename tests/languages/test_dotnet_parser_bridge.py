@@ -103,6 +103,27 @@ class DotnetParserBridgeTest(unittest.TestCase):
                 entry["calls"],
             )
 
+    def test_reference_type_return_does_not_replace_method_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Greeter.cs").write_text(
+                "class Greeter {\n"
+                "    public Result DoWork() { return null; }\n"
+                "    public Result Value { get; }\n"
+                "}\n"
+                "class Result {}\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            parsed = parse_dotnet_repo(repo)
+            symbol_names = {sym["name"] for sym in parsed["Greeter.cs"]["symbols"]}
+
+            self.assertIn("Greeter.DoWork", symbol_names)
+            self.assertIn("Greeter.Value", symbol_names)
+            self.assertIn("Result", symbol_names)
+            self.assertNotIn("Greeter.Result", symbol_names)
+
 
 if __name__ == "__main__":
     unittest.main()

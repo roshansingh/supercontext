@@ -90,6 +90,29 @@ class CSharpExtractorTest(unittest.TestCase):
             self.assertEqual(caller.identity["qualname"], "<module>")
             self.assertEqual(callee.identity["qualname"], "Worker.Run")
 
+    def test_reference_type_return_preserves_method_symbol_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Greeter.cs").write_text(
+                "class Greeter {\n"
+                "    public Result DoWork() { return null; }\n"
+                "}\n"
+                "class Result {}\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            build = CSharpExtractor().extract(repo)
+            qualnames = {
+                entity.identity["qualname"]
+                for entity in build.entities
+                if entity.kind == "CodeSymbol"
+            }
+
+            self.assertIn("Greeter.DoWork", qualnames)
+            self.assertIn("Result", qualnames)
+            self.assertNotIn("Greeter.Result", qualnames)
+
 
 if __name__ == "__main__":
     unittest.main()

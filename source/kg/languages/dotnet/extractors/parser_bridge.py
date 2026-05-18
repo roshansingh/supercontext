@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from source.kg.core.models import JsonObject
@@ -170,6 +169,9 @@ def _using_target(node: Any, source: bytes) -> str:
 
 
 def _declared_name(node: Any, source: bytes) -> str:
+    name = node.child_by_field_name("name")
+    if name is not None:
+        return _node_text(name, source)
     for child in node.children:
         if child.type == "identifier":
             return _node_text(child, source)
@@ -177,6 +179,9 @@ def _declared_name(node: Any, source: bytes) -> str:
 
 
 def _invocation_name(node: Any, source: bytes) -> str:
+    function = node.child_by_field_name("function")
+    if function is not None:
+        return _node_text(function, source)
     for child in node.children:
         if child.type in {"identifier", "member_access_expression", "generic_name", "qualified_name"}:
             return _node_text(child, source)
