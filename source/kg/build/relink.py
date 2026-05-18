@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from hashlib import sha256
 from pathlib import Path
 import json
 import re
@@ -368,6 +369,8 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         commit_sha,
         {},
     )
+    _validate_repo_commit_matches_snapshot(repo)
+    _validate_snapshot_package_manifests(repo_root, manifest, manifest_path)
     entities = tuple(
         _entity_from_record(row, root / "entities.jsonl")
         for row in _read_entity_rows(root / "entities.jsonl")
@@ -421,11 +424,41 @@ def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None, entities: t
 
 
 def _read_entity_rows(path: Path) -> tuple[JsonObject, ...]:
+    if not path.is_file():
+        raise ValueError(f"{path}: entities.jsonl must be a JSONL file")
     rows = read_jsonl(path)
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             raise ValueError(f"{path}: row {index + 1} must be a JSON object")
     return tuple(rows)
+
+
+def _validate_snapshot_package_manifests(repo_root: Path, manifest: JsonObject, manifest_path: Path) -> None:
+    raw_fingerprints = manifest.get("package_manifests")
+    if raw_fingerprints is None:
+        return
+    if not isinstance(raw_fingerprints, list):
+        raise ValueError(f"{manifest_path}: package_manifests must be a list when present")
+    for index, raw_fingerprint in enumerate(raw_fingerprints):
+        if not isinstance(raw_fingerprint, dict):
+            raise ValueError(f"{manifest_path}: package_manifests[{index}] must be an object")
+        relative_path = raw_fingerprint.get("path")
+        expected_sha256 = raw_fingerprint.get("sha256")
+        if not isinstance(relative_path, str) or not relative_path:
+            raise ValueError(f"{manifest_path}: package_manifests[{index}].path must be a non-empty string")
+        if Path(relative_path).is_absolute() or ".." in Path(relative_path).parts:
+            raise ValueError(f"{manifest_path}: package_manifests[{index}].path must stay inside repo_path")
+        if not isinstance(expected_sha256, str) or not expected_sha256:
+            raise ValueError(f"{manifest_path}: package_manifests[{index}].sha256 must be a non-empty string")
+        package_manifest = repo_root / relative_path
+        if not package_manifest.is_file():
+            raise ValueError(f"Package manifest recorded in snapshot is not a file: {package_manifest}")
+        actual_sha256 = sha256(package_manifest.read_bytes()).hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise ValueError(
+                "Package manifest content differs from snapshot manifest fingerprint: "
+                f"{package_manifest}"
+            )
 
 
 def _entity_from_record(row: JsonObject, path: Path) -> Entity:

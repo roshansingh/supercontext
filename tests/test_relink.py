@@ -15,6 +15,7 @@ from source.kg.build.pipeline import build_kg
 from source.kg.build.multi_repo import build_multi_kg
 from source.kg.build.relink import default_output_dir, relink_snapshot_dirs, resolve_snapshot_dirs
 from source.kg.core.models import Entity
+from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import read_jsonl
 from source.scripts import relink as relink_cli
 
@@ -509,6 +510,18 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate entity_id"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
+    def test_relink_rejects_entities_jsonl_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (snapshot / "entities.jsonl").unlink()
+            (snapshot / "entities.jsonl").mkdir()
+
+            with self.assertRaisesRegex(ValueError, "entities.jsonl must be a JSONL file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
     def test_relink_skips_collapsed_packages_when_any_source_is_builtin(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -591,40 +604,47 @@ class RelinkOnlyTest(unittest.TestCase):
             root = Path(tmpdir)
             repo = root / "owner-a" / "consumer"
             repo.mkdir(parents=True)
-            (repo / "package.json").write_text('{"name": "consumer"}\n', encoding="utf-8")
-            snapshot = root / "snapshots" / "consumer"
-            build_kg(repo, snapshot)
             (repo / "package.json").write_text("[]\n", encoding="utf-8")
 
-            manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+            package_name, aliases, manifest_path = relink_module._package_metadata(
+                _repo_snapshot(repo),
+                validate_snapshot_manifest=False,
+            )
 
-            self.assertEqual(manifest["provider_count"], 1)
+            self.assertEqual(package_name, "consumer")
+            self.assertEqual(aliases, {"consumer"})
+            self.assertEqual(manifest_path, repo / "package.json")
 
     def test_relink_accepts_non_string_package_json_name_as_repo_name_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "owner-a" / "consumer"
             repo.mkdir(parents=True)
-            (repo / "package.json").write_text('{"name": "consumer"}\n', encoding="utf-8")
-            snapshot = root / "snapshots" / "consumer"
-            build_kg(repo, snapshot)
             (repo / "package.json").write_text('{"name": ["consumer"]}\n', encoding="utf-8")
 
-            manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+            package_name, aliases, manifest_path = relink_module._package_metadata(
+                _repo_snapshot(repo),
+                validate_snapshot_manifest=False,
+            )
 
-            self.assertEqual(manifest["provider_count"], 1)
+            self.assertEqual(package_name, "consumer")
+            self.assertEqual(aliases, {"consumer"})
+            self.assertEqual(manifest_path, repo / "package.json")
 
     def test_relink_accepts_malformed_pyproject_tables_as_repo_name_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
-            snapshot = root / "snapshots" / "consumer"
-            build_kg(repo, snapshot)
             (repo / "pyproject.toml").write_text('[tool]\npoetry = "not-a-table"\n', encoding="utf-8")
 
-            manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+            package_name, aliases, manifest_path = relink_module._package_metadata(
+                _repo_snapshot(repo),
+                validate_snapshot_manifest=False,
+            )
 
-            self.assertEqual(manifest["provider_count"], 1)
+            self.assertEqual(package_name, "consumer")
+            self.assertEqual(aliases, {"consumer"})
+            self.assertEqual(manifest_path, repo / "pyproject.toml")
 
     def test_relink_rejects_pyproject_directory_manifest_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -662,8 +682,8 @@ class RelinkOnlyTest(unittest.TestCase):
             )
             consumer_snapshot = root / "snapshots" / "consumer"
             provider_snapshot = root / "snapshots" / "provider"
-            build_kg(consumer, consumer_snapshot)
-            build_kg(provider, provider_snapshot)
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
             consumer_rows = read_jsonl(consumer_snapshot / "entities.jsonl")
             consumer_rows.append(
                 Entity(
@@ -713,7 +733,25 @@ class RelinkOnlyTest(unittest.TestCase):
             build_kg(repo, snapshot)
             (repo / "pyproject.toml").unlink()
 
-            with self.assertRaisesRegex(ValueError, "Package manifest has uncommitted changes"):
+            with self.assertRaisesRegex(ValueError, "Package manifest recorded in snapshot is not a file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_package_manifest_restored_after_dirty_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            clean_pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
+            _git(repo, "init")
+            _git(repo, "config", "user.email", "test@example.com")
+            _git(repo, "config", "user.name", "Test User")
+            _git(repo, "add", ".")
+            _git(repo, "commit", "-m", "initial")
+            (repo / "pyproject.toml").write_text('[project]\nname = "dirty-package"\n', encoding="utf-8")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "pyproject.toml").write_text(clean_pyproject, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "Package manifest content differs"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_relink_rejects_ignored_package_manifest_added_after_snapshot(self) -> None:
@@ -788,6 +826,10 @@ def _python_repo(path: Path, package_name: str, source: str) -> Path:
     package_dir.mkdir(exist_ok=True)
     (package_dir / "__init__.py").write_text("", encoding="utf-8")
     return path
+
+
+def _repo_snapshot(path: Path) -> RepoSnapshot:
+    return RepoSnapshot(path, path.name, path.parent.name, "working-tree", {})
 
 
 def _git(repo: Path, *args: str) -> None:

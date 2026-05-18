@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from source.kg.core.models import Coverage, JsonObject, utc_now_iso
@@ -31,6 +32,7 @@ def build_kg(
         "extractor": "+".join(extractor_names) if extractor_names else "none",
         "extractors": extractor_names,
         "extractor_errors": build.extractor_errors,
+        "package_manifests": _package_manifest_fingerprints(repo.root),
         "counts": {
             "files_by_language": {
                 language: len(paths) for language, paths in sorted(repo.files_by_language.items())
@@ -102,3 +104,13 @@ def _combined_adapters(*adapter_groups: tuple[Adapter, ...]) -> tuple[Adapter, .
                 raise ValueError(f"Duplicate adapter name: {name}")
             adapters_by_name[name] = adapter
     return validate_adapters(tuple(adapters_by_name.values()))
+
+
+def _package_manifest_fingerprints(root: Path) -> list[JsonObject]:
+    manifests: list[JsonObject] = []
+    for filename in ("pyproject.toml", "package.json"):
+        path = root / filename
+        if not path.is_file():
+            continue
+        manifests.append({"path": filename, "sha256": sha256(path.read_bytes()).hexdigest()})
+    return manifests
