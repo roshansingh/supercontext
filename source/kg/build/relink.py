@@ -18,6 +18,7 @@ from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 LINKER_SOURCE_SYSTEM = "package_linker"
 LINKER_RULE_VERSION = "package-linker-1"
 SNAPSHOT_ARTIFACT_BUILD_TYPES = frozenset(("fleet_relink", "multi_repo", "private_goldset_multi_repo"))
+RELINK_OUTPUT_FILES = frozenset(("cross_repo_links.jsonl", "cross_repo_link_evidence.jsonl", "manifest.json"))
 STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
     ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
 )
@@ -154,7 +155,7 @@ def relink_snapshot_dirs(
 
 
 def _validate_stale_snapshot_outputs(out: Path) -> None:
-    for filename in STALE_SNAPSHOT_OUTPUT_FILES:
+    for filename in (*RELINK_OUTPUT_FILES, *STALE_SNAPSHOT_OUTPUT_FILES):
         stale_path = out / filename
         if stale_path.exists() and not stale_path.is_file():
             raise ValueError(f"Cannot replace stale snapshot artifact because it is not a file: {stale_path}")
@@ -420,8 +421,11 @@ def _entity_from_record(row: JsonObject, path: Path) -> Entity:
         raise ValueError(f"{path}: entity identity must be an object")
     if not isinstance(properties, dict):
         raise ValueError(f"{path}: entity properties must be an object")
-    if canonical_status not in {"canonical", "candidate", "demoted"}:
+    if not isinstance(canonical_status, str) or canonical_status not in {"canonical", "candidate", "demoted"}:
         raise ValueError(f"{path}: entity canonical_status is unsupported: {canonical_status}")
+    category = properties.get("category")
+    if kind == "ExternalPackage" and category is not None and not isinstance(category, str):
+        raise ValueError(f"{path}: ExternalPackage category must be a string when present")
     entity = Entity(kind, identity, properties, canonical_status=canonical_status)
     expected_id = row.get("entity_id")
     if not isinstance(expected_id, str) or not expected_id:
@@ -694,6 +698,7 @@ def _link_external_packages(
             )
         candidate_names = _external_package_candidate_names(package)
         matches_by_consumer: dict[RepoIdentity, set[PackageProvider]] = {}
+        group_ambiguous = False
         for consumer_identity in _sort_repo_identities(consumer_identities):
             consumer_matches = {
                 provider
@@ -704,10 +709,13 @@ def _link_external_packages(
             if not consumer_matches:
                 continue
             if len(consumer_matches) > 1:
-                ambiguous_count += 1
+                group_ambiguous = True
                 continue
             matches_by_consumer[consumer_identity] = consumer_matches
-        if not matches_by_consumer:
+        if group_ambiguous:
+            ambiguous_count += 1
+            continue
+        if not matches_by_consumer or len(matches_by_consumer) != len(consumer_identities):
             continue
         matched_providers = {provider for matches in matches_by_consumer.values() for provider in matches}
         if len(matched_providers) > 1:
@@ -753,7 +761,8 @@ def _external_package_candidate_names(package: Entity) -> set[str]:
 
 
 def _is_builtin_package(package: Entity) -> bool:
-    return package.properties.get("category") in {"stdlib", "node_builtin"}
+    category = package.properties.get("category")
+    return isinstance(category, str) and category in {"stdlib", "node_builtin"}
 
 
 def _non_empty_string(value: object) -> str | None:

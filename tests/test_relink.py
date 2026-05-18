@@ -326,6 +326,18 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "output_dir must not be one of the input snapshot"):
                 relink_snapshot_dirs([snapshot], snapshot)
 
+    def test_relink_rejects_existing_relink_artifact_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            fleet = root / "_fleet"
+            build_kg(repo, snapshot)
+            (fleet / "manifest.json").mkdir(parents=True)
+
+            with self.assertRaisesRegex(ValueError, "not a file"):
+                relink_snapshot_dirs([snapshot], fleet)
+
     def test_relink_cli_reports_missing_out_as_usage_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -369,6 +381,35 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "entity_id must be a non-empty string"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
+    def test_relink_rejects_non_string_entity_canonical_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            rows = read_jsonl(snapshot / "entities.jsonl")
+            rows[0]["canonical_status"] = []
+            _write_jsonl_records(snapshot / "entities.jsonl", rows)
+
+            with self.assertRaisesRegex(ValueError, "canonical_status is unsupported"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_non_string_external_package_category(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import requests\n")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            rows = read_jsonl(snapshot / "entities.jsonl")
+            for row in rows:
+                if row.get("kind") == "ExternalPackage":
+                    row["properties"]["category"] = []
+                    break
+            _write_jsonl_records(snapshot / "entities.jsonl", rows)
+
+            with self.assertRaisesRegex(ValueError, "ExternalPackage category must be a string"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
     def test_relink_rejects_duplicate_entity_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -410,7 +451,7 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(manifest["link_count"], 0)
             self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
 
-    def test_relink_filters_self_links_per_consumer_identity(self) -> None:
+    def test_relink_fails_closed_when_collapsed_package_has_partial_self_link(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             provider = _python_repo(root / "owner-a" / "app", "shared", "")
@@ -431,11 +472,8 @@ class RelinkOnlyTest(unittest.TestCase):
 
             manifest = relink_snapshot_dirs([provider_snapshot, consumer_snapshot], root / "_fleet")
 
-            self.assertGreater(manifest["link_count"], 0)
-            links = read_jsonl(root / "_fleet" / "cross_repo_links.jsonl")
-            repo_link = next(row for row in links if row["predicate"] == "RESOLVES_TO_REPO")
-            consumer_identity = repo_link["qualifier"]["consumer_repo_identity"]
-            self.assertEqual(consumer_identity["owner"], "owner-b")
+            self.assertEqual(manifest["link_count"], 0)
+            self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
 
     def test_relink_fails_closed_on_divergent_collapsed_package_providers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
