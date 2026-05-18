@@ -16,6 +16,7 @@ from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 
 LINKER_SOURCE_SYSTEM = "package_linker"
 LINKER_RULE_VERSION = "package-linker-1"
+SNAPSHOT_ARTIFACT_BUILD_TYPES = frozenset(("fleet_relink", "multi_repo", "private_goldset_multi_repo"))
 STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
     ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
 )
@@ -210,7 +211,7 @@ def _classify_snapshot_manifest(path: Path) -> str | None:
     if not manifest_path.exists():
         return None
     manifest = _read_manifest_object(manifest_path)
-    if manifest.get("build_type") in {"fleet_relink", "multi_repo"}:
+    if manifest.get("build_type") in SNAPSHOT_ARTIFACT_BUILD_TYPES:
         return "artifact"
     if _is_repo_snapshot_manifest(manifest):
         return "repo"
@@ -229,7 +230,7 @@ def _read_manifest_object(path: Path) -> JsonObject:
 
 def _is_repo_snapshot_manifest(manifest: JsonObject) -> bool:
     return (
-        manifest.get("build_type") != "fleet_relink"
+        manifest.get("build_type") not in SNAPSHOT_ARTIFACT_BUILD_TYPES
         and isinstance(manifest.get("repo_path"), str)
         and bool(manifest.get("repo_path"))
         and isinstance(manifest.get("commit_sha"), str)

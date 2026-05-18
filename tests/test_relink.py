@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import os
+import sys
 import tempfile
 import subprocess
 import unittest
@@ -12,6 +14,7 @@ from source.kg.build.pipeline import build_kg
 from source.kg.build.multi_repo import build_multi_kg
 from source.kg.build.relink import default_output_dir, relink_snapshot_dirs, resolve_snapshot_dirs
 from source.kg.core.store import read_jsonl
+from source.scripts import relink as relink_cli
 
 
 class RelinkOnlyTest(unittest.TestCase):
@@ -75,6 +78,8 @@ class RelinkOnlyTest(unittest.TestCase):
             fleet.mkdir()
             combined = root / "combined"
             combined.mkdir()
+            private_combined = root / "private-combined"
+            private_combined.mkdir()
             (snapshot / "manifest.json").write_text(
                 json.dumps({"repo_path": str(snapshot), "commit_sha": "working-tree"}) + "\n",
                 encoding="utf-8",
@@ -89,6 +94,10 @@ class RelinkOnlyTest(unittest.TestCase):
             )
             (combined / "manifest.json").write_text(
                 json.dumps({"build_type": "multi_repo"}) + "\n",
+                encoding="utf-8",
+            )
+            (private_combined / "manifest.json").write_text(
+                json.dumps({"build_type": "private_goldset_multi_repo"}) + "\n",
                 encoding="utf-8",
             )
 
@@ -276,6 +285,22 @@ class RelinkOnlyTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "output_dir must not be one of the input snapshot"):
                 relink_snapshot_dirs([snapshot], snapshot)
+
+    def test_relink_cli_reports_missing_out_as_usage_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            stderr = io.StringIO()
+
+            with patch.object(sys, "argv", ["bettercontext-relink", "--snapshot-dir", str(snapshot)]):
+                with patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        relink_cli.main()
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("--out is required", stderr.getvalue())
 
     def test_relink_rejects_non_object_entity_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

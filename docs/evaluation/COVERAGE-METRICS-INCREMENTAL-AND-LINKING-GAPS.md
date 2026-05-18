@@ -32,7 +32,7 @@ KG row IDs are content-hashed via `stable_hash(...)` over the row's identifying 
 
 ## 2. Where incremental silently breaks — cross-repo linker
 
-`source/kg/build/multi_repo.py` runs a **package linker** after per-repo extraction. The linker produces cross-repo artifacts that depend on the **full set of repos given to it**:
+`source/kg/build/relink.py` owns the **package linker** used by both `build_multi_kg` and `bettercontext-relink`. The linker produces cross-repo artifacts that depend on the **full set of repos given to it**:
 
 - `ExternalPackage` entity dedup across repos
 - `RESOLVES_TO_REPO` facts (e.g., a PyPI distribution imported in repo A maps to repo B if B publishes that distribution)
