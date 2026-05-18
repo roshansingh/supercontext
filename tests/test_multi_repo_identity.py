@@ -57,7 +57,7 @@ class MultiRepoIdentityTest(unittest.TestCase):
                 {"default/local/owner-a/svc", "default/local/owner-b/svc"},
             )
 
-    def test_collapsed_external_package_records_plural_consumer_identities(self) -> None:
+    def test_collapsed_external_package_emits_per_consumer_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             consumer_a = _python_repo(root / "owner-a" / "svc", "consumer-a", "import common_lib\n")

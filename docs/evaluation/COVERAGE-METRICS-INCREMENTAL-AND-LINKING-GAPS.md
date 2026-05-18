@@ -67,7 +67,7 @@ But there's a subtle failure mode the metric **does not distinguish**:
 
 Both produce the same number. A consumer reading `M_cross_repo_linkage = 0.42` cannot tell whether the cause is "improve our resolvers" or "re-run the linker."
 
-**No current metric carries linker-freshness as a separate signal.** Debate 14's `M_freshness` is per-entity (per `evidence.ingested_at`), not per-projection-step. The linker's "last-run" timestamp lives in `manifest.json` `built_at`, which isn't a metric input.
+Current metrics can already emit `linker_stale=true` for `M_cross_repo_linkage` when `--fleet-dir` is supplied, but that signal is still weaker than this contract: it needs the stronger `built_at` plus `repo_commit_fingerprints` check, not only set-shaped commit comparison. Debate 14's `M_freshness` is based on scoped `evidence.ingested_at` rows, not the fleet projection step itself.
 
 ## 4. What we need to make incremental safe
 
@@ -158,6 +158,6 @@ None of these changes the converged metric semantics.
 ## 8. Open questions
 
 - Do we ever need an opt-in compatibility mode that writes cross-repo facts back into per-repo `facts.jsonl`, or is the fleet-level `_fleet/cross_repo_links.jsonl` artifact sufficient for all metric/query consumers?
-- Linker-freshness threshold: strict timestamp/commit-set correctness should be the default. A configurable window (`stale if fleet older than 24h`) is acceptable only as a dashboard warning threshold, not as correctness semantics.
+- Linker-freshness threshold: strict timestamp plus repo-identity/commit fingerprint correctness should be the default. A configurable window (`stale if fleet older than 24h`) is acceptable only as a dashboard warning threshold, not as correctness semantics.
 - Should `M_inventory` also gain a `linker_stale` contract flag, or is the flag specific to M10?
 - Per-file incremental extraction is a separate concern from linker incrementality. Worth a separate doc once it becomes the bottleneck.

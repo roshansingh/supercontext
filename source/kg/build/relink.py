@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import re
 import subprocess
+import tempfile
 import tomllib
 
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
@@ -98,12 +99,6 @@ def relink_snapshot_dirs(
     result = link_external_packages(inputs)
     out.mkdir(parents=True, exist_ok=True)
     _validate_stale_snapshot_outputs(out)
-    _write_jsonl(out / "cross_repo_links.jsonl", (fact.to_record() for fact in result.facts), "fact_id")
-    _write_jsonl(
-        out / "cross_repo_link_evidence.jsonl",
-        (row.to_record() for row in result.evidence),
-        "evidence_id",
-    )
     manifest: JsonObject = {
         "build_type": "fleet_relink",
         "built_at": utc_now_iso(),
@@ -145,8 +140,16 @@ def relink_snapshot_dirs(
             "evidence": len({row.evidence_id for row in result.evidence}),
         },
     }
-    _write_json_file(out / "manifest.json", manifest)
-    _remove_stale_snapshot_outputs(out)
+    with tempfile.TemporaryDirectory(prefix=f".{out.name}.", dir=out.parent) as staging:
+        staged = Path(staging)
+        _write_jsonl(staged / "cross_repo_links.jsonl", (fact.to_record() for fact in result.facts), "fact_id")
+        _write_jsonl(
+            staged / "cross_repo_link_evidence.jsonl",
+            (row.to_record() for row in result.evidence),
+            "evidence_id",
+        )
+        _write_json_file(staged / "manifest.json", manifest)
+        _publish_relink_outputs(out, staged)
     return manifest
 
 
@@ -163,6 +166,33 @@ def _remove_stale_snapshot_outputs(out: Path) -> None:
         stale_path = out / filename
         if stale_path.exists():
             stale_path.unlink()
+
+
+def _publish_relink_outputs(out: Path, staged: Path) -> None:
+    filenames = ("cross_repo_links.jsonl", "cross_repo_link_evidence.jsonl", "manifest.json")
+    backups: dict[str, Path] = {}
+    published: list[str] = []
+    try:
+        for filename in filenames:
+            target = out / filename
+            backup = out / f".{filename}.bak"
+            backup.unlink(missing_ok=True)
+            if target.exists():
+                target.replace(backup)
+                backups[filename] = backup
+            (staged / filename).replace(target)
+            published.append(filename)
+        _remove_stale_snapshot_outputs(out)
+    except Exception:
+        for filename in reversed(published):
+            (out / filename).unlink(missing_ok=True)
+        for filename, backup in backups.items():
+            if backup.exists():
+                backup.replace(out / filename)
+        raise
+    finally:
+        for backup in backups.values():
+            backup.unlink(missing_ok=True)
 
 
 def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
@@ -570,13 +600,7 @@ def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: 
 
 
 def _validate_missing_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
-    _validate_repo_commit_matches_snapshot(repo)
-    if repo.commit_sha == "working-tree":
-        return
-    status = _git_status_porcelain(repo.root, manifest_path)
-    if status:
-        relative = manifest_path.relative_to(repo.root)
-        raise ValueError(f"Package manifest has uncommitted changes relative to snapshot commit: {relative}")
+    _validate_manifest_file_matches_snapshot(repo, manifest_path)
 
 
 def _validate_repo_commit_matches_snapshot(repo: RepoSnapshot) -> None:
