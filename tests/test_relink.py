@@ -335,8 +335,8 @@ class RelinkOnlyTest(unittest.TestCase):
             consumer_snapshot = root / "snapshots" / "consumer"
             provider_snapshot = root / "snapshots" / "provider"
             fleet = root / "snapshots" / "_fleet"
-            build_kg(consumer, consumer_snapshot)
-            build_kg(provider, provider_snapshot)
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
 
             manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], fleet)
 
