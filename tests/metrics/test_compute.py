@@ -196,7 +196,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertEqual(metric.state, "usable")
             self.assertEqual(metric.value, 1.0)
 
-    def test_cross_repo_linkage_stays_partial_when_snapshot_language_resolver_is_missing(self) -> None:
+    def test_cross_repo_linkage_is_usable_for_typescript_after_npm_resolver_lands(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "repo"
@@ -229,8 +229,8 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
 
-            self.assertEqual(metric.state, "partial")
-            self.assertEqual(metric.reason, "package_resolver hooks are not implemented for: typescript")
+            self.assertEqual(metric.state, "usable")
+            self.assertEqual(metric.value, 1.0)
 
     def test_cross_repo_linkage_treats_boolean_language_counts_as_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

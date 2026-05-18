@@ -786,6 +786,46 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(manifest["link_count"], 0)
             self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
 
+    def test_relink_uses_package_json_typescript_package_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _typescript_repo(
+                root / "owner-a" / "consumer",
+                "consumer-package",
+                "import sharedPkg from 'shared-pkg';\n",
+                dependencies={"shared-pkg": "latest"},
+            )
+            provider = _typescript_repo(root / "owner-b" / "provider", "shared-pkg", "")
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
+
+            self.assertGreaterEqual(manifest["link_count"], 1)
+            facts = read_jsonl(root / "_fleet" / "cross_repo_links.jsonl")
+            self.assertIn("RESOLVES_TO_REPO", {row["predicate"] for row in facts})
+
+    def test_relink_uses_scoped_package_json_typescript_package_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _typescript_repo(
+                root / "owner-a" / "consumer",
+                "consumer-package",
+                "import sharedPkg from '@scope/shared';\n",
+                dependencies={"@scope/shared": "latest"},
+            )
+            provider = _typescript_repo(root / "owner-b" / "provider", "@scope/shared", "")
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
+
+            self.assertGreaterEqual(manifest["link_count"], 1)
+
     def test_relink_rejects_deleted_pyproject_before_package_json_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -924,6 +964,16 @@ def _python_repo(path: Path, package_name: str, source: str) -> Path:
     package_dir = path / package_name.replace("-", "_")
     package_dir.mkdir(exist_ok=True)
     (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    return path
+
+
+def _typescript_repo(path: Path, package_name: str, source: str, *, dependencies: dict[str, str] | None = None) -> Path:
+    path.mkdir(parents=True)
+    package_json = {"name": package_name}
+    if dependencies:
+        package_json["dependencies"] = dependencies
+    (path / "package.json").write_text(json.dumps(package_json), encoding="utf-8")
+    (path / "index.ts").write_text(source or "export const value = 1;\n", encoding="utf-8")
     return path
 
 

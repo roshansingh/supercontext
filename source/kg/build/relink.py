@@ -19,6 +19,11 @@ from source.kg.languages.python.package_resolver import (
     PythonPackageMetadata,
     PythonPackageResolver,
 )
+from source.kg.languages.typescript.package_resolver import (
+    TYPESCRIPT_PACKAGE_MANIFESTS,
+    TypeScriptPackageMetadata,
+    TypeScriptPackageResolver,
+)
 
 
 LINKER_SOURCE_SYSTEM = "package_linker"
@@ -610,25 +615,12 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
     if python_metadata is not None:
         return python_metadata.package_name, set(python_metadata.aliases), python_metadata.manifest_path
 
-    package_json = repo.root / "package.json"
-    if package_json.exists():
-        _validate_package_manifest_file(package_json)
-        if validate_snapshot_manifest:
-            _validate_manifest_file_matches_snapshot(repo, package_json)
-        try:
-            data = json.loads(package_json.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
-        raw_name = data.get("name")
-        package_name = raw_name if isinstance(raw_name, str) and raw_name else repo.name
-        aliases = {package_name, repo.name}
-        return package_name, aliases, package_json
+    typescript_metadata = _typescript_package_metadata(repo, validate_snapshot_manifest=validate_snapshot_manifest)
+    if typescript_metadata is not None:
+        return typescript_metadata.package_name, set(typescript_metadata.aliases), typescript_metadata.manifest_path
 
     if validate_snapshot_manifest:
         _validate_repo_commit_matches_snapshot(repo)
-        _validate_missing_manifest_file_matches_snapshot(repo, package_json)
     return repo.name, {repo.name}, None
 
 
@@ -640,6 +632,27 @@ def _python_package_metadata(
     resolver = PythonPackageResolver()
     manifest_paths = set(resolver.manifest_paths(repo))
     for filename in PYTHON_PACKAGE_MANIFESTS:
+        candidate = repo.root / filename
+        if candidate in manifest_paths:
+            _validate_package_manifest_file(candidate)
+            if validate_snapshot_manifest:
+                _validate_manifest_file_matches_snapshot(repo, candidate)
+            continue
+        if validate_snapshot_manifest:
+            _validate_missing_manifest_file_matches_snapshot(repo, candidate)
+    if manifest_paths:
+        return resolver.package_metadata(repo)
+    return None
+
+
+def _typescript_package_metadata(
+    repo: RepoSnapshot,
+    *,
+    validate_snapshot_manifest: bool,
+) -> TypeScriptPackageMetadata | None:
+    resolver = TypeScriptPackageResolver()
+    manifest_paths = set(resolver.manifest_paths(repo))
+    for filename in TYPESCRIPT_PACKAGE_MANIFESTS:
         candidate = repo.root / filename
         if candidate in manifest_paths:
             _validate_package_manifest_file(candidate)
@@ -726,6 +739,7 @@ def _link_external_packages(
     evidence: list[Evidence] = []
     ambiguous_count = 0
     python_resolver = PythonPackageResolver()
+    typescript_resolver = TypeScriptPackageResolver()
     packages_by_id: dict[str, list[Entity]] = {}
     for entity in entities:
         if entity.kind == "ExternalPackage":
@@ -756,6 +770,13 @@ def _link_external_packages(
                     providers,
                     consumer_identity,
                     python_resolver,
+                )
+            if not consumer_matches:
+                consumer_matches = _typescript_resolver_matches(
+                    candidate_names,
+                    providers,
+                    consumer_identity,
+                    typescript_resolver,
                 )
             if not consumer_matches:
                 continue
@@ -827,6 +848,38 @@ def _python_resolver_matches(
 
 def _is_python_package_manifest(path: Path | None) -> bool:
     return path is not None and path.name in PYTHON_PACKAGE_MANIFESTS
+
+
+def _typescript_resolver_matches(
+    candidate_names: set[str],
+    providers: list[PackageProvider],
+    consumer_identity: RepoIdentity,
+    resolver: TypeScriptPackageResolver,
+) -> set[PackageProvider]:
+    typescript_providers = [
+        provider
+        for provider in providers
+        if provider.repo_identity != consumer_identity and _is_typescript_package_manifest(provider.manifest_path)
+    ]
+    if not typescript_providers:
+        return set()
+    matches: set[PackageProvider] = set()
+    target_repos = tuple(provider.repo for provider in typescript_providers)
+    for name in candidate_names:
+        resolved_name = resolver.resolve(name, target_repos)
+        if resolved_name is None:
+            continue
+        normalized_resolved = _normalize_package_name(resolved_name)
+        matches.update(
+            provider
+            for provider in typescript_providers
+            if _normalize_package_name(provider.package_name) == normalized_resolved
+        )
+    return matches if len(matches) == 1 else set()
+
+
+def _is_typescript_package_manifest(path: Path | None) -> bool:
+    return path is not None and path.name in TYPESCRIPT_PACKAGE_MANIFESTS
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:

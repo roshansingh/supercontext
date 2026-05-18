@@ -15,6 +15,7 @@ from source.kg.languages.typescript.extractors.extractor_adapter import TYPESCRI
 from source.kg.languages.typescript.extractors.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
 from source.kg.languages.typescript.files import LANGUAGE_FILES, TypeScriptLanguageFiles
 from source.kg.languages.typescript.opportunities import TypeScriptHttpClientOpportunityDetector
+from source.kg.languages.typescript.package_resolver import TypeScriptPackageResolver
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class TypeScriptLanguageSupport:
         return (TypeScriptHttpClientOpportunityDetector(),)
 
     def package_resolver(self) -> Any | None:
-        return None
+        return TypeScriptPackageResolver()
 
     def dimension_rules(self) -> Mapping[str, Any]:
         return deepcopy(_dimension_rules())

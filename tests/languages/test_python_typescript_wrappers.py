@@ -48,7 +48,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
             [type(detector).__name__ for detector in TYPESCRIPT_SUPPORT.opportunity_detectors()],
             ["TypeScriptHttpClientOpportunityDetector"],
         )
-        self.assertIsNone(TYPESCRIPT_SUPPORT.package_resolver())
+        self.assertEqual(type(TYPESCRIPT_SUPPORT.package_resolver()).__name__, "TypeScriptPackageResolver")
         typescript_rules = TYPESCRIPT_SUPPORT.dimension_rules()
         self.assertEqual(typescript_rules["version"], 1)
         self.assertIn("frontend", {rule["dimension"] for rule in typescript_rules["rules"]})
