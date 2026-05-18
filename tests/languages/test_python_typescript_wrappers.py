@@ -44,7 +44,10 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         )
         self.assertEqual(TYPESCRIPT_SUPPORT.source_roots(_repo_snapshot(), ctx), {"javascript": {"express"}})
         self.assertEqual(TYPESCRIPT_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
-        self.assertEqual(TYPESCRIPT_SUPPORT.opportunity_detectors(), ())
+        self.assertEqual(
+            [type(detector).__name__ for detector in TYPESCRIPT_SUPPORT.opportunity_detectors()],
+            ["TypeScriptHttpClientOpportunityDetector"],
+        )
         self.assertIsNone(TYPESCRIPT_SUPPORT.package_resolver())
         typescript_rules = TYPESCRIPT_SUPPORT.dimension_rules()
         self.assertEqual(typescript_rules["version"], 1)
