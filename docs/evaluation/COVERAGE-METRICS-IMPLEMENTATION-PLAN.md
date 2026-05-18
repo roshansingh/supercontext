@@ -104,7 +104,7 @@ Branched from `main` (not `dotnet-support`). Each PR independently green via `py
 
 Note on numbering drift: the converged plan originally had 12 PRs and treated the linker refactor (PR-8) and the relink CLI (PR-9) as separate. PR #88 landed both as one PR. Current numbering above reflects what actually shipped.
 
-## 5. What's left to land
+## 5. Completed PR slices and parked follow-ups
 
 ### PR-9 (was PR-10) — Python PyPI package resolver
 
