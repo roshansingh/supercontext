@@ -5,10 +5,26 @@ Validation for Debate 1 after PR-1 and PR-2.
 ## Inputs
 
 - Before snapshot: `data/kg_runs/shopagain_latticeai_23_dotnet_resolver_compare_2026-05-18`
-- Before report: `docs/evaluation/runs/shopagain-latticeai-dotnet-resolver-compare-2026-05-18/coverage-run.md`
 - After snapshot: `data/kg_runs/shopagain_latticeai_23_debate1_pr2_2026-05-18`
-- After report: `docs/evaluation/runs/shopagain-latticeai-debate1-pr2-2026-05-18/coverage-run.md`
+- Local before report: `docs/evaluation/runs/shopagain-latticeai-dotnet-resolver-compare-2026-05-18/coverage-run.md`
+- Local after report: `docs/evaluation/runs/shopagain-latticeai-debate1-pr2-2026-05-18/coverage-run.md`
 - Fleet size: 23 LatticeAI repos
+
+The snapshot and report paths above are generated local artifacts and are ignored by git. Regenerate the after report with:
+
+```bash
+python -m source.scripts.coverage_metrics \
+  --snapshot data/kg_runs/shopagain_latticeai_23_debate1_pr2_2026-05-18 \
+  --expected-repos 23 \
+  --config source/kg/metrics/config.yaml
+python -m source.scripts.coverage_report \
+  --snapshot data/kg_runs/shopagain_latticeai_23_debate1_pr2_2026-05-18 \
+  --out docs/evaluation/runs/shopagain-latticeai-debate1-pr2-2026-05-18 \
+  --run-id shopagain-latticeai-debate1-pr2-2026-05-18 \
+  --tenant latticeai \
+  --expected-repos 23 \
+  --metric-config source/kg/metrics/config.yaml
+```
 
 ## Result
 

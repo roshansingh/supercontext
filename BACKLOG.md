@@ -1,7 +1,7 @@
 # SuperContext Backlog
 
 Status: living index of deferred work and open follow-ups across the project.
-Last updated: 2026-05-16.
+Last updated: 2026-05-18.
 
 This file is the single place to scan "what's deferred and why." Per-ADR open-follow-up sections are the authoritative source; this is the index. Refresh when ADRs change.
 
