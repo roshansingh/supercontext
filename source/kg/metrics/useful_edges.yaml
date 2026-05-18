@@ -51,6 +51,8 @@ dimensions:
     - predicate: REFERENCES_ENV_VAR
       subject_kinds: [Service]
   shared-lib:
+    # Shared libraries currently surface through extractor-level code edges.
+    # Keep these until the canonical ontology adds a product-level library edge.
     - predicate: IMPORTS
       subject_kinds: [CodeModule]
     - predicate: CALLS
