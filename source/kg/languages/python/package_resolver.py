@@ -13,6 +13,7 @@ from source.kg.languages.python.normalization.imports import KNOWN_IMPORT_ROOT_D
 
 
 PYTHON_PACKAGE_MANIFESTS = ("pyproject.toml", "setup.cfg", "setup.py")
+_CACHE_MISS = object()
 
 
 @dataclass(frozen=True)
@@ -25,17 +26,31 @@ class PythonPackageMetadata:
 class PythonPackageResolver:
     """Resolve Python import roots against repo package metadata."""
 
+    def __init__(self) -> None:
+        self._manifest_path_cache: dict[RepoSnapshot, Path | None] = {}
+        self._metadata_cache: dict[RepoSnapshot, PythonPackageMetadata] = {}
+
     def manifest_path(self, repo: RepoSnapshot) -> Path | None:
+        cached = self._manifest_path_cache.get(repo, _CACHE_MISS)
+        if cached is not _CACHE_MISS:
+            return cached
         for filename in PYTHON_PACKAGE_MANIFESTS:
             path = repo.root / filename
             if path.exists():
+                self._manifest_path_cache[repo] = path
                 return path
+        self._manifest_path_cache[repo] = None
         return None
 
     def package_metadata(self, repo: RepoSnapshot) -> PythonPackageMetadata:
+        cached = self._metadata_cache.get(repo)
+        if cached is not None:
+            return cached
         manifest_path = self.manifest_path(repo)
         if manifest_path is None:
-            return PythonPackageMetadata(repo.name, frozenset((repo.name,)), None)
+            metadata = PythonPackageMetadata(repo.name, frozenset((repo.name,)), None)
+            self._metadata_cache[repo] = metadata
+            return metadata
         if not manifest_path.is_file():
             raise ValueError(f"Package manifest path is not a file: {manifest_path}")
 
@@ -51,7 +66,9 @@ class PythonPackageResolver:
             package_name = _setup_py_package_name(manifest_path) or repo.name
 
         aliases.add(package_name)
-        return PythonPackageMetadata(package_name, frozenset(alias for alias in aliases if alias), manifest_path)
+        metadata = PythonPackageMetadata(package_name, frozenset(alias for alias in aliases if alias), manifest_path)
+        self._metadata_cache[repo] = metadata
+        return metadata
 
     def resolve(self, import_root: str, target_repos: Iterable[RepoSnapshot]) -> str | None:
         candidates = {_normalize_package_name(name) for name in _import_root_candidates(import_root)}
@@ -67,7 +84,7 @@ class PythonPackageResolver:
 def _read_pyproject(path: Path) -> object:
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return {}
 
 
@@ -106,11 +123,11 @@ def _setup_cfg_package_name(path: Path) -> str | None:
     parser = configparser.ConfigParser()
     try:
         parser.read(path, encoding="utf-8")
+        value = parser.get("metadata", "name", fallback=None)
     except configparser.Error:
         return None
     if not parser.has_section("metadata"):
         return None
-    value = parser.get("metadata", "name", fallback=None)
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
@@ -123,6 +140,7 @@ def _setup_py_package_name(path: Path) -> str | None:
         if not isinstance(node, ast.Call) or not _is_setup_call(node.func):
             continue
         for keyword in node.keywords:
+            # setup.py execution is intentionally unsupported; v1 accepts only static literal names.
             if keyword.arg == "name" and isinstance(keyword.value, ast.Constant):
                 value = keyword.value.value
                 if isinstance(value, str) and value.strip():

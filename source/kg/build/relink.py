@@ -723,6 +723,7 @@ def _link_external_packages(
     facts: list[Fact] = []
     evidence: list[Evidence] = []
     ambiguous_count = 0
+    python_resolver = PythonPackageResolver()
     packages_by_id: dict[str, list[Entity]] = {}
     for entity in entities:
         if entity.kind == "ExternalPackage":
@@ -748,7 +749,12 @@ def _link_external_packages(
                 if provider.repo_identity != consumer_identity
             }
             if not consumer_matches:
-                consumer_matches = _python_resolver_matches(candidate_names, providers, consumer_identity)
+                consumer_matches = _python_resolver_matches(
+                    candidate_names,
+                    providers,
+                    consumer_identity,
+                    python_resolver,
+                )
             if not consumer_matches:
                 continue
             if len(consumer_matches) > 1:
@@ -793,6 +799,7 @@ def _python_resolver_matches(
     candidate_names: set[str],
     providers: list[PackageProvider],
     consumer_identity: RepoIdentity,
+    resolver: PythonPackageResolver,
 ) -> set[PackageProvider]:
     python_providers = [
         provider
@@ -801,10 +808,10 @@ def _python_resolver_matches(
     ]
     if not python_providers:
         return set()
-    resolver = PythonPackageResolver()
     matches: set[PackageProvider] = set()
+    target_repos = tuple(provider.repo for provider in python_providers)
     for name in candidate_names:
-        resolved_name = resolver.resolve(name, tuple(provider.repo for provider in python_providers))
+        resolved_name = resolver.resolve(name, target_repos)
         if resolved_name is None:
             continue
         normalized_resolved = _normalize_package_name(resolved_name)

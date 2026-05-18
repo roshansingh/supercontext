@@ -39,6 +39,16 @@ class PythonPackageResolverTest(unittest.TestCase):
             self.assertEqual(metadata.package_name, "shared-pkg")
             self.assertEqual(metadata.aliases, frozenset({"shared-pkg", "repo"}))
 
+    def test_setup_cfg_interpolation_error_falls_back_to_repo_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "owner" / "repo"
+            repo.mkdir(parents=True)
+            (repo / "setup.cfg").write_text("[metadata]\nname = bad%value\n", encoding="utf-8")
+
+            metadata = PythonPackageResolver().package_metadata(_repo_snapshot(repo))
+
+            self.assertEqual(metadata.package_name, "repo")
+
     def test_setup_py_metadata_uses_literal_setup_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "owner" / "repo"
@@ -57,6 +67,16 @@ class PythonPackageResolverTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Package manifest path is not a file"):
                 PythonPackageResolver().package_metadata(_repo_snapshot(repo))
+
+    def test_pyproject_decode_error_falls_back_to_repo_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "owner" / "repo"
+            repo.mkdir(parents=True)
+            (repo / "pyproject.toml").write_bytes(b"\xff")
+
+            metadata = PythonPackageResolver().package_metadata(_repo_snapshot(repo))
+
+            self.assertEqual(metadata.package_name, "repo")
 
     def test_resolve_uses_known_import_root_distribution_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
