@@ -98,8 +98,15 @@ class DotnetParserBridgeTest(unittest.TestCase):
             entry = parsed["Program.cs"]
 
             self.assertIn("<module>", {sym["name"] for sym in entry["symbols"]})
-            self.assertIn(
-                {"caller": "<module>", "name": "new Worker().Run", "line": 2},
+            self.assertTrue(
+                any(
+                    call["caller"] == "<module>"
+                    and call["caller_key"] == "<module>"
+                    and call["name"] == "new Worker().Run"
+                    and call["arity"] == 0
+                    and call["line"] == 2
+                    for call in entry["calls"]
+                ),
                 entry["calls"],
             )
 
@@ -123,6 +130,39 @@ class DotnetParserBridgeTest(unittest.TestCase):
             self.assertIn("Greeter.Value", symbol_names)
             self.assertIn("Result", symbol_names)
             self.assertNotIn("Greeter.Result", symbol_names)
+
+    def test_overloaded_methods_have_distinct_symbol_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Greeter.cs").write_text(
+                "class Greeter {\n"
+                "    public void Say() {}\n"
+                "    public void Say(string name) {}\n"
+                "    public void Run() { Say(); Say(\"Ada\"); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            parsed = parse_dotnet_repo(repo)
+            entry = parsed["Greeter.cs"]
+            say_symbols = [
+                sym
+                for sym in entry["symbols"]
+                if sym["name"] == "Greeter.Say"
+            ]
+
+            self.assertEqual({sym["key"] for sym in say_symbols}, {"Greeter.Say/0", "Greeter.Say/1"})
+            self.assertEqual({sym["signature"] for sym in say_symbols}, {"Say/0", "Say/1"})
+            self.assertEqual({sym["arity"] for sym in say_symbols}, {0, 1})
+            self.assertEqual(
+                [
+                    (call["caller_key"], call["name"], call["arity"])
+                    for call in entry["calls"]
+                    if call["name"] == "Say"
+                ],
+                [("Greeter.Run/0", "Say", 0), ("Greeter.Run/0", "Say", 1)],
+            )
 
 
 if __name__ == "__main__":

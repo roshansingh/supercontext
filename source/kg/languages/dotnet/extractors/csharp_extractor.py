@@ -140,24 +140,31 @@ class CSharpExtractor:
                 },
             )
 
-        symbols_by_qualname: dict[str, Entity] = {}
+        symbols_by_key: dict[str, Entity] = {}
+        symbols_by_qualname: dict[str, list[Entity]] = {}
         symbols_by_short: dict[str, list[Entity]] = {}
+        symbol_arities: dict[str, int] = {}
         for sym in parsed_file.get("symbols", []):
             qualname = str(sym.get("name", "")).strip()
             if not qualname:
                 continue
             kind = str(sym.get("kind", "symbol"))
+            symbol_key = str(sym.get("key") or qualname).strip()
+            signature = str(sym.get("signature") or "").strip()
             line = int(sym.get("line") or 1)
             end_line = int(sym.get("end_line") or line)
+            identity: JsonObject = {
+                "tenant_id": tenant_id,
+                "repo": repo.name,
+                "module": module_name,
+                "qualname": qualname,
+                "symbol_kind": kind,
+            }
+            if signature:
+                identity["signature"] = signature
             symbol_entity = Entity(
                 kind="CodeSymbol",
-                identity={
-                    "tenant_id": tenant_id,
-                    "repo": repo.name,
-                    "module": module_name,
-                    "qualname": qualname,
-                    "symbol_kind": kind,
-                },
+                identity=identity,
                 properties={
                     "path": str(file_path.relative_to(repo.root)),
                     "line": line,
@@ -168,20 +175,37 @@ class CSharpExtractor:
             build.entities.append(symbol_entity)
             build.evidence.append(self._entity_evidence(repo, symbol_entity, file_path, line, end_line))
             self._add_fact(build, "DEFINED_IN", symbol_entity, module_entity, repo, file_path, line, line)
-            symbols_by_qualname[qualname] = symbol_entity
+            symbols_by_key[symbol_key] = symbol_entity
+            symbols_by_qualname.setdefault(qualname, []).append(symbol_entity)
             short = qualname.rsplit(".", 1)[-1]
             symbols_by_short.setdefault(short, []).append(symbol_entity)
+            arity = sym.get("arity")
+            if isinstance(arity, int) and not isinstance(arity, bool):
+                symbol_arities[symbol_entity.entity_id] = arity
 
         for call in parsed_file.get("calls", []):
             caller_qualname = str(call.get("caller", "")).strip()
+            caller_key = str(call.get("caller_key") or "").strip()
             callee_name = str(call.get("name", "")).strip()
             if not caller_qualname or not callee_name:
                 continue
-            caller = symbols_by_qualname.get(caller_qualname)
+            caller = symbols_by_key.get(caller_key) if caller_key else None
+            if caller is None:
+                caller_candidates = symbols_by_qualname.get(caller_qualname, [])
+                if len(caller_candidates) != 1:
+                    continue
+                caller = caller_candidates[0]
             if caller is None:
                 continue
             short_callee = callee_name.rsplit(".", 1)[-1]
             callees = symbols_by_short.get(short_callee, [])
+            arity = call.get("arity")
+            if isinstance(arity, int) and not isinstance(arity, bool):
+                callees = [
+                    callee
+                    for callee in callees
+                    if symbol_arities.get(callee.entity_id) == arity
+                ]
             if len(callees) != 1:
                 continue
             callee = callees[0]

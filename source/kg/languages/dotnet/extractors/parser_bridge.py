@@ -62,11 +62,12 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
     if root.has_error:
         diagnostics.append({"line": root.start_point[0] + 1, "message": "tree-sitter reported parse errors"})
 
-    _collect(root, source, imports, symbols, calls, qualname_prefix="")
+    _collect(root, source, imports, symbols, calls, qualname_prefix="", symbol_key_prefix="")
     has_module_calls = False
     for call in calls:
         if call.get("caller") == "":
             call["caller"] = "<module>"
+            call["caller_key"] = "<module>"
             has_module_calls = True
     if has_module_calls:
         symbols.insert(
@@ -74,6 +75,7 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
             {
                 "name": "<module>",
                 "kind": "module",
+                "key": "<module>",
                 "line": 1,
                 "end_line": root.end_point[0] + 1,
             },
@@ -93,6 +95,7 @@ def _collect(
     symbols: list[JsonObject],
     calls: list[JsonObject],
     qualname_prefix: str,
+    symbol_key_prefix: str,
 ) -> None:
     node_type = node.type
     if node_type == "using_directive":
@@ -112,32 +115,39 @@ def _collect(
         name = _declared_name(node, source)
         if name:
             qualname = f"{qualname_prefix}.{name}" if qualname_prefix else name
+            symbol_key = f"{symbol_key_prefix}.{name}" if symbol_key_prefix else name
             symbols.append(
                 {
                     "name": qualname,
                     "kind": node_type.replace("_declaration", ""),
+                    "key": symbol_key,
                     "line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
             )
             for child in node.children:
-                _collect(child, source, imports, symbols, calls, qualname_prefix=qualname)
+                _collect(child, source, imports, symbols, calls, qualname, symbol_key)
             return
 
     if node_type in {"method_declaration", "constructor_declaration", "property_declaration"}:
         name = _declared_name(node, source)
         if name:
             qualname = f"{qualname_prefix}.{name}" if qualname_prefix else name
+            signature = _signature(node, name)
+            symbol_key = f"{symbol_key_prefix}.{signature}" if symbol_key_prefix else signature
             symbols.append(
                 {
                     "name": qualname,
                     "kind": node_type.replace("_declaration", ""),
+                    "key": symbol_key,
+                    "signature": signature,
+                    "arity": _parameter_count(node),
                     "line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
             )
             for child in node.children:
-                _collect(child, source, imports, symbols, calls, qualname_prefix=qualname)
+                _collect(child, source, imports, symbols, calls, qualname, symbol_key)
             return
 
     if node_type == "invocation_expression":
@@ -146,13 +156,15 @@ def _collect(
             calls.append(
                 {
                     "caller": qualname_prefix,
+                    "caller_key": symbol_key_prefix,
                     "name": callee,
+                    "arity": _argument_count(node),
                     "line": node.start_point[0] + 1,
                 }
             )
 
     for child in node.children:
-        _collect(child, source, imports, symbols, calls, qualname_prefix)
+        _collect(child, source, imports, symbols, calls, qualname_prefix, symbol_key_prefix)
 
 
 def _using_target(node: Any, source: bytes) -> str:
@@ -186,6 +198,26 @@ def _invocation_name(node: Any, source: bytes) -> str:
         if child.type in {"identifier", "member_access_expression", "generic_name", "qualified_name"}:
             return _node_text(child, source)
     return ""
+
+
+def _signature(node: Any, name: str) -> str:
+    if node.type in {"method_declaration", "constructor_declaration"}:
+        return f"{name}/{_parameter_count(node)}"
+    return name
+
+
+def _parameter_count(node: Any) -> int:
+    parameters = node.child_by_field_name("parameters")
+    if parameters is None:
+        return 0
+    return sum(1 for child in parameters.children if child.type == "parameter")
+
+
+def _argument_count(node: Any) -> int:
+    arguments = node.child_by_field_name("arguments")
+    if arguments is None:
+        return 0
+    return sum(1 for child in arguments.children if child.type == "argument")
 
 
 def _node_text(node: Any, source: bytes) -> str:

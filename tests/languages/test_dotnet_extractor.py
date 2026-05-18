@@ -113,6 +113,48 @@ class CSharpExtractorTest(unittest.TestCase):
             self.assertIn("Result", qualnames)
             self.assertNotIn("Greeter.Result", qualnames)
 
+    def test_overloaded_methods_do_not_collapse_symbol_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Greeter.cs").write_text(
+                "class Greeter {\n"
+                "    public void Say() {}\n"
+                "    public void Say(string name) {}\n"
+                "    public void Run() { Say(); Say(\"Ada\"); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            build = CSharpExtractor().extract(repo)
+            entities = {entity.entity_id: entity for entity in build.entities}
+            say_symbols = [
+                entity
+                for entity in build.entities
+                if entity.kind == "CodeSymbol" and entity.identity["qualname"] == "Greeter.Say"
+            ]
+            calls = [
+                fact
+                for fact in build.facts
+                if fact.predicate == "CALLS"
+            ]
+
+            self.assertEqual(
+                {symbol.identity["signature"] for symbol in say_symbols},
+                {"Say/0", "Say/1"},
+            )
+            self.assertEqual(len({symbol.entity_id for symbol in say_symbols}), 2)
+            self.assertEqual(
+                {
+                    (
+                        entities[fact.subject_id].identity["signature"],
+                        entities[fact.object_id].identity["signature"],
+                    )
+                    for fact in calls
+                },
+                {("Run/0", "Say/0"), ("Run/0", "Say/1")},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
