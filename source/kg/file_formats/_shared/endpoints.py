@@ -374,7 +374,7 @@ def _add_imported_client_endpoint_call(
         )
         return
     if resolved["kind"] == "unresolved" or not isinstance(resolved.get("path"), str):
-        reason = row.get("reason")
+        reason = resolved.get("reason") or row.get("reason")
         _add_endpoint_coverage(
             build,
             repo,
@@ -707,7 +707,11 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
     target_raw = target.get("raw")
     raw_target = target_raw if isinstance(target_raw, str) else ""
     if target_kind == "unresolved" or not isinstance(target_value, str):
-        return {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
+        reason = target.get("reason")
+        resolved: dict[str, object] = {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
+        if isinstance(reason, str):
+            resolved["reason"] = reason
+        return resolved
     target_value = target_value.strip()
     if target_value.startswith("http://") or target_value.startswith("https://") or target_value.startswith("${env:"):
         resolved = _split_resolved_endpoint_target(target_value)

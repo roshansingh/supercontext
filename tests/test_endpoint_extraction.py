@@ -634,6 +634,29 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_host"], 1)
         self.assertEqual(_fact_lines_by_path(build, "CALLS_ENDPOINT", "/api/token/"), [3])
 
+    def test_typescript_imported_axios_client_dynamic_template_reason_is_preserved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api/axiosConfig.tsx": (
+                    "import axios from 'axios';\n"
+                    "const shopagainAxios = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "export default shopagainAxios;\n"
+                ),
+                "src/api/login.api.tsx": (
+                    "import shopagainAxios from './axiosConfig';\n"
+                    "const userId = getUserId();\n"
+                    "shopagainAxios.get(`/api/users/${userId}`);\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
+            1,
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
+
     def test_typescript_imported_named_axios_client_uses_export_alias_and_base_path(self) -> None:
         build = _extract_typescript_client_files(
             {
