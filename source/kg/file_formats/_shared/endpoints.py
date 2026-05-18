@@ -270,11 +270,12 @@ def extract_typescript_client_endpoint_calls(
                 )
                 continue
             if row.get("unresolved") is True:
+                reason = row.get("reason")
                 _add_endpoint_coverage(
                     build,
                     repo,
                     tenant_id,
-                    "unresolved_target",
+                    reason if isinstance(reason, str) else "unresolved_target",
                     scanned.relative_path,
                     line_number,
                     raw_target,
@@ -373,11 +374,12 @@ def _add_imported_client_endpoint_call(
         )
         return
     if resolved["kind"] == "unresolved" or not isinstance(resolved.get("path"), str):
+        reason = row.get("reason")
         _add_endpoint_coverage(
             build,
             repo,
             tenant_id,
-            "unresolved_target",
+            reason if isinstance(reason, str) else "unresolved_target",
             scanned.relative_path,
             line_number,
             raw_target,
