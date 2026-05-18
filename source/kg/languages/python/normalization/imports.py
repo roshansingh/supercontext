@@ -17,7 +17,7 @@ class _DistributionResolution(Enum):
     AMBIGUOUS = "ambiguous"
 
 
-_KNOWN_IMPORT_ROOT_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
+KNOWN_IMPORT_ROOT_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
     "attr": ("attrs",),
     "bs4": ("beautifulsoup4",),
     "cv2": ("opencv-python", "opencv-python-headless", "opencv-contrib-python"),
@@ -190,7 +190,7 @@ class PythonImportNormalizer:
         return None
 
     def _known_distribution_name(self, import_root: str) -> str | _DistributionResolution | None:
-        candidates = _KNOWN_IMPORT_ROOT_DISTRIBUTIONS.get(import_root.lower(), ())
+        candidates = KNOWN_IMPORT_ROOT_DISTRIBUTIONS.get(import_root.lower(), ())
         if not candidates:
             return None
         declared_matches = [

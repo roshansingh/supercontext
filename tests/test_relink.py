@@ -360,6 +360,54 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(manifest["link_count"], 0)
             self.assertEqual(read_jsonl(fleet / "cross_repo_links.jsonl"), [])
 
+    def test_relink_uses_setup_cfg_python_package_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import shared_pkg\n")
+            provider = root / "owner-b" / "provider"
+            provider.mkdir(parents=True)
+            (provider / "setup.cfg").write_text("[metadata]\nname = shared-pkg\n", encoding="utf-8")
+            (provider / "module.py").write_text("", encoding="utf-8")
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            fleet = root / "snapshots" / "_fleet"
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], fleet)
+
+            facts = read_jsonl(fleet / "cross_repo_links.jsonl")
+            self.assertEqual(manifest["link_count"], 2)
+            self.assertEqual({row["predicate"] for row in facts}, {"RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"})
+
+    def test_relink_uses_python_resolver_alias_when_distribution_name_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import sklearn\n")
+            provider = _python_repo(root / "owner-b" / "provider", "scikit-learn", "")
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            fleet = root / "snapshots" / "_fleet"
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
+            rows = read_jsonl(consumer_snapshot / "entities.jsonl")
+            for index, row in enumerate(rows):
+                if row.get("kind") == "ExternalPackage":
+                    identity = dict(row["identity"])
+                    identity["name"] = "sklearn"
+                    properties = dict(row["properties"])
+                    properties["import_root"] = "sklearn"
+                    properties["distribution_name"] = None
+                    rows[index] = Entity("ExternalPackage", identity, properties).to_record()
+                    break
+            _write_jsonl_records(consumer_snapshot / "entities.jsonl", rows)
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], fleet)
+
+            self.assertGreaterEqual(manifest["link_count"], 1)
+            facts = read_jsonl(fleet / "cross_repo_links.jsonl")
+            self.assertIn("RESOLVES_TO_REPO", {row["predicate"] for row in facts})
+
     def test_relink_rejects_repo_commit_that_moved_after_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -784,6 +832,38 @@ class RelinkOnlyTest(unittest.TestCase):
             (repo / "pyproject.toml").mkdir()
 
             with self.assertRaisesRegex(ValueError, "Package manifest path is not a file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_setup_cfg_manifest_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "module.py").write_text("", encoding="utf-8")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "setup.cfg").mkdir()
+
+            with self.assertRaisesRegex(ValueError, "Package manifest path is not a file"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_deleted_setup_cfg_before_package_json_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "setup.cfg").write_text("[metadata]\nname = setup-provider\n", encoding="utf-8")
+            (repo / "module.py").write_text("", encoding="utf-8")
+            _git(repo, "init")
+            _git(repo, "config", "user.email", "test@example.com")
+            _git(repo, "config", "user.name", "Test User")
+            _git(repo, "add", ".")
+            _git(repo, "commit", "-m", "initial")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "setup.cfg").unlink()
+
+            with self.assertRaisesRegex(ValueError, "Package manifest has uncommitted changes"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_build_multi_allows_dirty_package_manifest_for_fresh_build(self) -> None:
