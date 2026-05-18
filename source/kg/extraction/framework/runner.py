@@ -82,6 +82,7 @@ def run_selected_adapters(
             coverage.append(row)
 
     coverage.extend(_unsupported_known_stack_coverage(repo, ctx, capabilities))
+    coverage.extend(_unsupported_language_coverage(repo, ctx))
 
     if strict_extractors and errors:
         raise RuntimeError(_adapter_error_message(repo.name, errors))
@@ -181,6 +182,32 @@ def _adapter_source_system(capability: AdapterCapability | None) -> str:
     if capability is not None and capability.source_system:
         return capability.source_system
     return "extraction_framework"
+
+
+def _unsupported_language_coverage(repo: RepoSnapshot, ctx: ExtractionContext) -> list[Coverage]:
+    rows: list[Coverage] = []
+    for language, paths in sorted(repo.unsupported_files_by_language.items()):
+        if not paths:
+            continue
+        relative_paths = tuple(str(path.relative_to(repo.root)) for path in paths)
+        rows.append(
+            Coverage(
+                tenant_id=ctx.tenant_id,
+                predicate="LANGUAGE_SUPPORT",
+                scope_ref={
+                    "repo": repo.name,
+                    "repo_owner": repo.owner,
+                    "language": language,
+                    "path_prefix": ".",
+                    "reason": "unsupported_language",
+                    "file_count": len(relative_paths),
+                    "sample_paths": list(relative_paths[:10]),
+                },
+                state="uninstrumented",
+                source_system="repo_discovery",
+            )
+        )
+    return rows
 
 
 def _unsupported_known_stack_coverage(

@@ -93,9 +93,10 @@ Read `coverage-run.json` directly. Write a chat-message summary that surfaces th
 
 1. Fleet score (one number)
 2. **Blocking contract flags** — any cell with `linker_stale=true`, or `M_evidence_grounding < 1.0` on surfaced facts, or `M_silent_gap > 0` on safety-critical predicates
-3. Lowest-scoring `(repo, dimension)` cell with the dominant `partial`/`n_a` reason quoted verbatim
-4. Worst metric across the fleet (by value, not by state)
-5. Recommended next PR — exactly one, derived from the decision tree below
+3. Coverage gaps from `coverage_gaps`, especially `unsupported_language`, `no_adapter_for_known_stack`, stale, and partial coverage rows
+4. Lowest-scoring `(repo, dimension)` cell with the dominant `partial`/`n_a` reason quoted verbatim
+5. Worst metric across the fleet (by value, not by state)
+6. Recommended next PR — exactly one, derived from the decision tree below
 
 Stay terse. Do not paginate every cell; the JSON file is authoritative.
 
@@ -123,12 +124,15 @@ Apply in order; first match wins. Output one recommendation only.
 
 1. **Any `linker_stale=true`** → "Run `bettercontext-relink --snapshot-dir <fleet>` against the fleet directory. Re-render."
 2. **`M_evidence_grounding < 1.0` on surfaced facts** → "Fix per-fact citations in the offending adapter at `<adapter-path>`; not a metric problem."
-3. **`M_cross_repo_linkage.state == "partial"` with reason mentioning `package_resolver`** → confirm PRs 9–10 (PyPI/npm resolvers) are merged in current branch; if not, point at them.
-4. **`M_extractor_opportunity.state == "partial"` for a specific predicate × dim** → recommend the next extractor PR per `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md` registry.
-5. **`M_useful_edge.state == "partial"` for a specific dim** → check `source/kg/metrics/useful_edges.yaml` for the dim's allowlist; recommend adding the missing predicate adapter.
-6. **`M_dimension_classification.value < 0.8`** → unclassified LOC; recommend adding a framework signature to `source/kg/languages/<lang>/dimension_rules.yaml`.
-7. **`M_identity_health.value < 0.95`** → likely an entity kind without per-kind URN support; recommend extending `urn_for_kind` in `source/kg/core/models.py`.
-8. **Otherwise** → "No blocking findings. Lowest cell is `<repo>/<dim>` at `<score>`; root cause is `<reason>` (non-blocking)."
+3. **Any `coverage_gaps[].reason == "unsupported_language"`** → "Add language support or an explicit matcher/refusal rule for `<language>`; start with the repos in `coverage_gaps` and the reported sample paths."
+4. **Any `coverage_gaps[].reason == "no_adapter_for_known_stack"`** → "Add or wire the extractor adapter for `<scope_ref.category>` / `<scope_ref.import_root>` in `<language>`."
+5. **Any stale or partial `coverage_gaps[]` row** → "Fix the producer named by `source_system` so this coverage row becomes fresh and fully instrumented, preserving the reported `scope_ref`."
+6. **`M_cross_repo_linkage.state == "partial"` with reason mentioning `package_resolver`** → confirm PRs 9–10 (PyPI/npm resolvers) are merged in current branch; if not, point at them.
+7. **`M_extractor_opportunity.state == "partial"` for a specific predicate × dim** → recommend the next extractor PR per `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md` registry.
+8. **`M_useful_edge.state == "partial"` for a specific dim** → check `source/kg/metrics/useful_edges.yaml` for the dim's allowlist; recommend adding the missing predicate adapter.
+9. **`M_dimension_classification.value < 0.8`** → unclassified LOC; recommend adding a framework signature to `source/kg/languages/<lang>/dimension_rules.yaml`.
+10. **`M_identity_health.value < 0.95`** → likely an entity kind without per-kind URN support; recommend extending `urn_for_kind` in `source/kg/core/models.py`.
+11. **Otherwise** → "No blocking findings. Lowest cell is `<repo>/<dim>` at `<score>`; root cause is `<reason>` (non-blocking)."
 
 ## Output shape — `coverage-run.json` (excerpt)
 
@@ -136,9 +140,19 @@ Apply in order; first match wins. Output one recommendation only.
 {
   "run_id": "fleet-2026-05-18",
   "tenant": "mercury-ml",
-  "fleet_score": 0.71,
-  "expected_repos": 12,
-  "indexed_repos": 11,
+  "repo_count_expected": 12,
+  "repo_count_indexed": 11,
+  "summary": {"fleet_score": 0.71, "coverage_gap_count": 1},
+  "coverage_gaps": [
+    {
+      "repo": "team-api",
+      "language": "java",
+      "predicate": "LANGUAGE_SUPPORT",
+      "state": "uninstrumented",
+      "reason": "unsupported_language",
+      "file_count": 4
+    }
+  ],
   "cells": [
     {
       "repo": "team-api",
@@ -146,7 +160,7 @@ Apply in order; first match wins. Output one recommendation only.
       "cell_score": 0.68,
       "contract_flags": ["linker_stale"],
       "commit_sha_set": ["abc123..."],
-      "metric_values": {
+      "metrics": {
         "M_cross_repo_linkage": {"value": 0.42, "state": "partial", "reason": "package_resolver() returns None for Python"},
         ...
       }
@@ -155,7 +169,7 @@ Apply in order; first match wins. Output one recommendation only.
 }
 ```
 
-The chat summary should NOT enumerate all `metric_values`. Quote 2–3 dominant `partial`/`n_a` reasons.
+The chat summary should NOT enumerate all per-cell `metrics`. Quote 2–3 dominant `partial`/`n_a` reasons.
 
 ## Skill is over when
 

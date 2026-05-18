@@ -54,6 +54,12 @@ python3 .codex/scripts/request_claude_pre_pr_review.py --base main
 
 The helper invokes Claude Code CLI in non-interactive review mode, includes the branch diff against `main`, includes any uncommitted working-tree diff, tells Claude not to edit files, and writes the markdown review under `docs/reviews/`. If the helper reports that `claude` is missing or unauthenticated, stop and report that blocker instead of creating the PR.
 
+When invoking Claude directly with `claude -p`, unset Anthropic API key environment variables in that command so Claude uses the locally authenticated Claude Code session:
+
+```bash
+env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude -p "<prompt>"
+```
+
 Read the generated review file. It must follow the helper's embedded format: metadata, verdict, summary, what works, real issues, questions or assumptions, pass conditions, and final verdict. For every finding, explicitly decide `accept`, `deny`, or `act`.
 
 - `accept` / `act`: make the fix, add a regression test when behavior changes, rerun checks, and commit.

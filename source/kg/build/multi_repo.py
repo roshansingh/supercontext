@@ -63,6 +63,7 @@ def build_multi_kg(
         "extractor_errors": build.extractor_errors,
         "counts": {
             "files_by_language": _files_by_language_counts(repos),
+            "unsupported_files_by_language": _unsupported_files_by_language_counts(repos),
             "entities": len({entity.entity_id for entity in build.entities}),
             "facts": len({fact.fact_id for fact in build.facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
@@ -133,6 +134,14 @@ def _files_by_language_counts(repos: list[RepoSnapshot]) -> JsonObject:
     counts: dict[str, int] = {}
     for repo in repos:
         for language, paths in repo.files_by_language.items():
+            counts[language] = counts.get(language, 0) + len(paths)
+    return dict(sorted(counts.items()))
+
+
+def _unsupported_files_by_language_counts(repos: list[RepoSnapshot]) -> JsonObject:
+    counts: dict[str, int] = {}
+    for repo in repos:
+        for language, paths in repo.unsupported_files_by_language.items():
             counts[language] = counts.get(language, 0) + len(paths)
     return dict(sorted(counts.items()))
 

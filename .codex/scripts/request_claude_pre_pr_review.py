@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -128,6 +129,9 @@ Uncommitted working-tree diff:
 
 
 def _run_claude(prompt: str, model: str, max_budget_usd: str, timeout_seconds: int) -> str:
+    env = os.environ.copy()
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_AUTH_TOKEN", None)
     try:
         result = subprocess.run(
             [
@@ -143,6 +147,7 @@ def _run_claude(prompt: str, model: str, max_budget_usd: str, timeout_seconds: i
             input=prompt,
             capture_output=True,
             check=True,
+            env=env,
             text=True,
             timeout=timeout_seconds,
         )

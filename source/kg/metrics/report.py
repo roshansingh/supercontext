@@ -38,10 +38,12 @@ def write_coverage_report(
         raise ValueError("expected_repos must be positive when provided")
     manifest = _read_manifest(snapshot)
     metrics = _read_metrics(snapshot)
+    coverage = _read_coverage(snapshot)
     payload = build_coverage_report_payload(
         snapshot,
         manifest,
         metrics,
+        coverage,
         run_id=run_id,
         expected_repos=expected_repos,
         tenant=tenant,
@@ -60,6 +62,7 @@ def build_coverage_report_payload(
     snapshot_dir: Path,
     manifest: JsonObject,
     metrics: tuple[JsonObject, ...],
+    coverage: tuple[JsonObject, ...] = (),
     *,
     run_id: str | None = None,
     expected_repos: int | None = None,
@@ -72,6 +75,7 @@ def build_coverage_report_payload(
             key=lambda cell: (str(cell["repo"]), str(cell["dimension"] or "")),
         )
     )
+    coverage_gaps = _coverage_gaps(manifest, coverage)
     return {
         "schema_version": 1,
         "run_id": run_id or snapshot_dir.name,
@@ -82,7 +86,8 @@ def build_coverage_report_payload(
         "metric_config": metric_config,
         "repo_count_expected": expected_repos,
         "repo_count_indexed": _repo_count(manifest),
-        "summary": _summary(cells),
+        "summary": _summary(cells, coverage_gaps),
+        "coverage_gaps": coverage_gaps,
         "cells": list(cells),
     }
 
@@ -117,6 +122,23 @@ def render_coverage_report_markdown(payload: JsonObject) -> str:
     lines.extend(["", "## Lowest Repo Coverage", "", "| repo | avg_cell_score | cells | flags |", "|---|---:|---:|---:|"])
     for row in summary["repos_with_lowest_coverage"]:
         lines.append(f"| `{_markdown_code(row['repo'])}` | {_format_score(row['avg_cell_score'])} | {row['cell_count']} | {row['flag_count']} |")
+    lines.extend(
+        [
+            "",
+            "## Coverage Gaps",
+            "",
+            "| repo | owner | language | predicate | state | reason | files | details |",
+            "|---|---|---|---|---|---|---:|---|",
+        ]
+    )
+    for row in payload["coverage_gaps"]:
+        lines.append(
+            f"| `{_markdown_code(row['repo'])}` | `{_markdown_code(row['repo_owner'] or '-')}` | "
+            f"`{_markdown_code(row['language'] or '-')}` | "
+            f"`{_markdown_code(row['predicate'])}` | `{_markdown_code(row['state'])}` | "
+            f"`{_markdown_code(row['reason'] or '-')}` | {row['file_count']} | "
+            f"`{_markdown_code(_coverage_gap_details(row))}` |"
+        )
     lines.extend(["", "## Cells", "", "| repo | dimension | cell_score | flags |", "|---|---|---:|---:|"])
     for cell in payload["cells"]:
         lines.append(
@@ -158,6 +180,21 @@ def _read_metrics(snapshot: Path) -> tuple[JsonObject, ...]:
         seen.add(key)
         metrics.append(row)
     return tuple(metrics)
+
+
+def _read_coverage(snapshot: Path) -> tuple[JsonObject, ...]:
+    path = snapshot / "coverage.jsonl"
+    if not path.exists():
+        return ()
+    if not path.is_file():
+        raise FileNotFoundError(f"Coverage file is not a file: {path}")
+    rows = read_jsonl(path)
+    coverage: list[JsonObject] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: row {index + 1} must be a JSON object")
+        coverage.append(row)
+    return tuple(coverage)
 
 
 def _validate_metric_row(path: Path, index: int, row: JsonObject) -> None:
@@ -227,16 +264,147 @@ def _cell_payload(row: JsonObject) -> JsonObject:
     }
 
 
-def _summary(cells: tuple[JsonObject, ...]) -> JsonObject:
+def _summary(cells: tuple[JsonObject, ...], coverage_gaps: list[JsonObject]) -> JsonObject:
     return {
         "fleet_score": _average(_numeric_values(cell.get("cell_score") for cell in cells)),
         "cell_count": len(cells),
         "scored_cell_count": len(_numeric_values(cell.get("cell_score") for cell in cells)),
         "flag_count": sum(len(cell["contract_flags"]) for cell in cells),
+        "coverage_gap_count": len(coverage_gaps),
         "worst_metrics": _worst_metrics(cells),
         "worst_dimensions": _worst_groups(cells, "dimension"),
         "repos_with_lowest_coverage": _worst_groups(cells, "repo"),
     }
+
+
+def _coverage_gaps(manifest: JsonObject, coverage: tuple[JsonObject, ...]) -> list[JsonObject]:
+    gaps = [_coverage_gap_payload(row) for row in coverage if _is_gap_coverage(row)]
+    gaps.extend(_manifest_unsupported_language_gaps(manifest, gaps))
+    return sorted(
+        gaps,
+        key=lambda row: (
+            str(row["repo"]),
+            str(row["language"] or ""),
+            str(row["predicate"]),
+            str(row["reason"] or ""),
+        ),
+    )
+
+
+def _is_gap_coverage(row: JsonObject) -> bool:
+    return row.get("state") in {"uninstrumented", "partially_instrumented", "stale"}
+
+
+def _coverage_gap_payload(row: JsonObject) -> JsonObject:
+    scope_ref = row.get("scope_ref")
+    if not isinstance(scope_ref, dict):
+        scope_ref = {}
+    file_count = scope_ref.get("file_count")
+    return {
+        "repo": scope_ref.get("repo") if isinstance(scope_ref.get("repo"), str) else "-",
+        "repo_owner": scope_ref.get("repo_owner") if isinstance(scope_ref.get("repo_owner"), str) else None,
+        "language": scope_ref.get("language") if isinstance(scope_ref.get("language"), str) else None,
+        "predicate": row.get("predicate") if isinstance(row.get("predicate"), str) else "-",
+        "state": row.get("state") if isinstance(row.get("state"), str) else "-",
+        "reason": scope_ref.get("reason") if isinstance(scope_ref.get("reason"), str) else None,
+        "file_count": file_count if isinstance(file_count, int) and not isinstance(file_count, bool) and file_count >= 0 else 0,
+        "sample_paths": scope_ref.get("sample_paths") if _is_string_list(scope_ref.get("sample_paths")) else [],
+        "scope_ref": dict(scope_ref),
+        "source_system": row.get("source_system") if isinstance(row.get("source_system"), str) else None,
+    }
+
+
+def _manifest_unsupported_language_gaps(manifest: JsonObject, existing_gaps: list[JsonObject]) -> list[JsonObject]:
+    if isinstance(manifest.get("repos"), list):
+        return []
+    counts = manifest.get("counts")
+    if not isinstance(counts, dict):
+        return []
+    unsupported = counts.get("unsupported_files_by_language")
+    if not isinstance(unsupported, dict):
+        return []
+    repo_name = _manifest_repo_label(manifest)
+    if repo_name is None:
+        return []
+    repo_owner = manifest.get("owner") if isinstance(manifest.get("owner"), str) and manifest.get("owner") else None
+    seen = {
+        (str(row["repo"]), row["language"], row["reason"])
+        for row in existing_gaps
+        if row.get("reason") == "unsupported_language"
+    }
+    gaps: list[JsonObject] = []
+    for language, count in sorted(unsupported.items()):
+        if (
+            not isinstance(language, str)
+            or not language
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count <= 0
+        ):
+            continue
+        key = (repo_name, language, "unsupported_language")
+        if key in seen:
+            continue
+        gaps.append(
+            {
+                "repo": repo_name,
+                "repo_owner": repo_owner,
+                "language": language,
+                "predicate": "LANGUAGE_SUPPORT",
+                "state": "uninstrumented",
+                "reason": "unsupported_language",
+                "file_count": count,
+                "sample_paths": [],
+                "scope_ref": {
+                    "repo": repo_name,
+                    "repo_owner": repo_owner,
+                    "language": language,
+                    "path_prefix": ".",
+                    "reason": "unsupported_language",
+                    "file_count": count,
+                    "sample_paths": [],
+                },
+                "source_system": "manifest",
+            }
+        )
+    return gaps
+
+
+def _manifest_repo_label(manifest: JsonObject) -> str | None:
+    repo_name = manifest.get("repo_name")
+    if isinstance(repo_name, str) and repo_name:
+        return repo_name
+    return None
+
+
+def _is_string_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _coverage_gap_details(row: JsonObject) -> str:
+    scope_ref = row.get("scope_ref")
+    if not isinstance(scope_ref, dict):
+        return "-"
+    skipped = {"repo", "repo_owner", "language", "reason", "file_count", "sample_paths"}
+    parts = [
+        f"{key}={_scope_value(value)}"
+        for key, value in sorted(scope_ref.items())
+        if key not in skipped and _scope_value(value)
+    ]
+    sample_paths = row.get("sample_paths")
+    if _is_string_list(sample_paths) and sample_paths:
+        parts.append("samples=" + ",".join(sample_paths[:3]))
+    return "; ".join(parts) if parts else "-"
+
+
+def _scope_value(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return str(value)
+    return ""
 
 
 def _worst_metrics(cells: tuple[JsonObject, ...]) -> list[JsonObject]:
@@ -358,7 +526,7 @@ def _format_score(value: object) -> str:
 
 
 def _markdown_code(value: object) -> str:
-    text = str(value)
+    text = " ".join(str(value).split())
     return text.replace("|", "\\|").replace("`", "'")
 
 
