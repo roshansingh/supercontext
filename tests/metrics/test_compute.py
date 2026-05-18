@@ -202,7 +202,7 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             self.assertEqual(cell.metric_values["M_inventory"].state, "n_a")
 
-    def test_useful_edge_counts_object_kind_anchors_without_entity_evidence(self) -> None:
+    def test_useful_edge_counts_object_anchor_without_object_entity_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "repo"
