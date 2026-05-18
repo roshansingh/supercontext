@@ -380,6 +380,25 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(manifest["link_count"], 2)
             self.assertEqual({row["predicate"] for row in facts}, {"RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"})
 
+    def test_relink_uses_setup_cfg_when_pyproject_has_no_package_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import shared_pkg\n")
+            provider = root / "owner-b" / "provider"
+            provider.mkdir(parents=True)
+            (provider / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
+            (provider / "setup.cfg").write_text("[metadata]\nname = shared-pkg\n", encoding="utf-8")
+            (provider / "module.py").write_text("", encoding="utf-8")
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            fleet = root / "snapshots" / "_fleet"
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], fleet)
+
+            self.assertEqual(manifest["link_count"], 2)
+
     def test_relink_uses_python_resolver_alias_when_distribution_name_is_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

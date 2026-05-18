@@ -638,16 +638,18 @@ def _python_package_metadata(
     validate_snapshot_manifest: bool,
 ) -> PythonPackageMetadata | None:
     resolver = PythonPackageResolver()
-    manifest_path = resolver.manifest_path(repo)
+    manifest_paths = set(resolver.manifest_paths(repo))
     for filename in PYTHON_PACKAGE_MANIFESTS:
         candidate = repo.root / filename
-        if candidate == manifest_path:
+        if candidate in manifest_paths:
             _validate_package_manifest_file(candidate)
             if validate_snapshot_manifest:
                 _validate_manifest_file_matches_snapshot(repo, candidate)
-            return resolver.package_metadata(repo)
+            continue
         if validate_snapshot_manifest:
             _validate_missing_manifest_file_matches_snapshot(repo, candidate)
+    if manifest_paths:
+        return resolver.package_metadata(repo)
     return None
 
 

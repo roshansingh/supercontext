@@ -27,46 +27,51 @@ class PythonPackageResolver:
     """Resolve Python import roots against repo package metadata."""
 
     def __init__(self) -> None:
-        self._manifest_path_cache: dict[RepoSnapshot, Path | None] = {}
+        self._manifest_paths_cache: dict[RepoSnapshot, tuple[Path, ...]] = {}
         self._metadata_cache: dict[RepoSnapshot, PythonPackageMetadata] = {}
 
     def manifest_path(self, repo: RepoSnapshot) -> Path | None:
-        cached = self._manifest_path_cache.get(repo, _CACHE_MISS)
+        paths = self.manifest_paths(repo)
+        return paths[0] if paths else None
+
+    def manifest_paths(self, repo: RepoSnapshot) -> tuple[Path, ...]:
+        cached = self._manifest_paths_cache.get(repo, _CACHE_MISS)
         if cached is not _CACHE_MISS:
             return cached
+        paths: list[Path] = []
         for filename in PYTHON_PACKAGE_MANIFESTS:
             path = repo.root / filename
             if path.exists():
-                self._manifest_path_cache[repo] = path
-                return path
-        self._manifest_path_cache[repo] = None
-        return None
+                paths.append(path)
+        result = tuple(paths)
+        self._manifest_paths_cache[repo] = result
+        return result
 
     def package_metadata(self, repo: RepoSnapshot) -> PythonPackageMetadata:
         cached = self._metadata_cache.get(repo)
         if cached is not None:
             return cached
-        manifest_path = self.manifest_path(repo)
-        if manifest_path is None:
+        manifest_paths = self.manifest_paths(repo)
+        if not manifest_paths:
             metadata = PythonPackageMetadata(repo.name, frozenset((repo.name,)), None)
             self._metadata_cache[repo] = metadata
             return metadata
-        if not manifest_path.is_file():
-            raise ValueError(f"Package manifest path is not a file: {manifest_path}")
 
-        package_name = repo.name
         aliases = {repo.name}
-        if manifest_path.name == "pyproject.toml":
-            data = _read_pyproject(manifest_path)
-            package_name = _pyproject_package_name(data) or repo.name
-            aliases.update(_pyproject_package_roots(data, repo))
-        elif manifest_path.name == "setup.cfg":
-            package_name = _setup_cfg_package_name(manifest_path) or repo.name
-        elif manifest_path.name == "setup.py":
-            package_name = _setup_py_package_name(manifest_path) or repo.name
+        for manifest_path in manifest_paths:
+            if not manifest_path.is_file():
+                raise ValueError(f"Package manifest path is not a file: {manifest_path}")
+            package_name = _declared_package_name(manifest_path)
+            if manifest_path.name == "pyproject.toml":
+                aliases.update(_pyproject_package_roots(_read_pyproject(manifest_path), repo))
+            if not package_name:
+                continue
+            aliases.add(package_name)
+            metadata = PythonPackageMetadata(package_name, frozenset(alias for alias in aliases if alias), manifest_path)
+            self._metadata_cache[repo] = metadata
+            return metadata
 
-        aliases.add(package_name)
-        metadata = PythonPackageMetadata(package_name, frozenset(alias for alias in aliases if alias), manifest_path)
+        metadata = PythonPackageMetadata(repo.name, frozenset(alias for alias in aliases if alias), manifest_paths[0])
         self._metadata_cache[repo] = metadata
         return metadata
 
@@ -86,6 +91,16 @@ def _read_pyproject(path: Path) -> object:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return {}
+
+
+def _declared_package_name(path: Path) -> str | None:
+    if path.name == "pyproject.toml":
+        return _pyproject_package_name(_read_pyproject(path))
+    if path.name == "setup.cfg":
+        return _setup_cfg_package_name(path)
+    if path.name == "setup.py":
+        return _setup_py_package_name(path)
+    return None
 
 
 def _pyproject_package_name(data: object) -> str | None:
