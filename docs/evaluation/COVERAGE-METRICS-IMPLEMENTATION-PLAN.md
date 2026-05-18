@@ -1,6 +1,6 @@
 # Coverage Metrics — Implementation Plan (Debate-19 contract)
 
-**Status:** in flight — 9 PRs merged to `main`; PR-10 next as of 2026-05-18
+**Status:** in flight — 9 PRs merged to `main`; PR-10 implementation in progress as of 2026-05-18
 **Source:** Debate 19 (`debates/` was local-gitignored and is no longer present; this doc captures the converged contract)
 **Related docs:**
 - `docs/evaluation/claude-kg-coverage-metrices.md` + `docs/evaluation/codex-kg-coverage-metrices.md` — parallel research inputs (Debate-14 inputs)
@@ -99,7 +99,7 @@ Branched from `main` (not `dotnet-support`). Each PR independently green via `py
 | PR-7 | `useful_edges.yaml` per-dim content; linker predicates marked `source: linker` | ✅ merged | PR #87 (`debate19-pr7-useful-edge-config`) |
 | PR-8 | Extract linker into `source/kg/build/relink.py` + `bettercontext-relink` CLI + `_fleet/` artifacts + `linker_stale` flag | ✅ merged | PR #88 (`debate19-pr8-relink-only`) — bundles the original PR-8 refactor + PR-9 CLI |
 | **PR-9** | Python PyPI package resolver | ✅ merged | PR #89 (`debate19-pr9-python-package-resolver`) — was PR-10 in the original plan |
-| **PR-10** | TS npm package resolver | **⏳ not started** | (was PR-11 in the original plan) |
+| **PR-10** | TS npm package resolver | **🚧 in progress** | `debate19-pr10-typescript-package-resolver` (was PR-11 in the original plan) |
 | **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | **⏳ not started** | (was PR-12) |
 
 Note on numbering drift: the converged plan originally had 12 PRs and treated the linker refactor (PR-8) and the relink CLI (PR-9) as separate. PR #88 landed both as one PR. Current numbering above reflects what actually shipped, with 2 PRs still pending.
