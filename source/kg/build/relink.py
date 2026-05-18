@@ -11,7 +11,7 @@ import tomllib
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import read_jsonl
-from source.kg.core.tenant import resolve_tenant_id
+from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 
 
 LINKER_SOURCE_SYSTEM = "package_linker"
@@ -327,12 +327,12 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         commit_sha,
         {},
     )
-    resolved_tenant = _snapshot_tenant_id(manifest, tenant_id)
     entities = tuple(
         _entity_from_record(row, root / "entities.jsonl")
         for row in _read_entity_rows(root / "entities.jsonl")
     )
     _validate_unique_entity_ids(entities, root / "entities.jsonl")
+    resolved_tenant = _snapshot_tenant_id(manifest, tenant_id, entities)
     return LinkerInput(
         repo=repo,
         repo_identity=repo_identity(repo, resolved_tenant),
@@ -342,14 +342,22 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
     )
 
 
-def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None) -> str:
+def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None, entities: tuple[Entity, ...]) -> str:
     manifest_tenant = manifest.get("tenant_id")
     if "tenant_id" in manifest:
         if not isinstance(manifest_tenant, str) or not manifest_tenant.strip():
             raise ValueError("snapshot manifest tenant_id must be a non-empty string when present")
         resolved_manifest_tenant = resolve_tenant_id(manifest_tenant)
     else:
-        resolved_manifest_tenant = resolve_tenant_id(None)
+        entity_tenants = {
+            value.strip()
+            for entity in entities
+            for value in (entity.identity.get("tenant_id"),)
+            if isinstance(value, str) and value.strip()
+        }
+        if len(entity_tenants) > 1:
+            raise ValueError(f"Snapshot entities contain multiple tenant_id values: {sorted(entity_tenants)}")
+        resolved_manifest_tenant = next(iter(entity_tenants), DEFAULT_TENANT_ID)
     if tenant_id is not None:
         resolved_override = resolve_tenant_id(tenant_id)
         if resolved_override != resolved_manifest_tenant:
@@ -427,6 +435,11 @@ def _package_providers(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> l
         entities = list(input_repo.entities)
         repo_entity = _select_repo_entity(entities, input_repo.repo_identity)
         if repo_entity is None:
+            if input_repo.validate_package_manifests:
+                raise ValueError(
+                    "Snapshot manifest repo identity does not match a Repo entity in entities.jsonl: "
+                    f"{repo_identity_key(input_repo.repo_identity)}"
+                )
             continue
         service_entities = [entity for entity in entities if entity.kind == "Service"]
         package_name, aliases, manifest_path = _package_metadata(
@@ -625,25 +638,25 @@ def _link_external_packages(
         package = package_group[0]
         consumer_identities = entity_repo_identities.get(package.entity_id, set())
         candidate_names = _external_package_candidate_names(package)
-        matches = {
-            provider
-            for name in candidate_names
-            for provider in provider_index.get(_normalize_package_name(name), [])
-            if not _is_self_link(provider, package, consumer_identities)
-        }
+        matches: dict[PackageProvider, set[RepoIdentity]] = {}
+        for name in candidate_names:
+            for provider in provider_index.get(_normalize_package_name(name), []):
+                link_consumer_identities = _linkable_consumer_identities(provider, package, consumer_identities)
+                if link_consumer_identities:
+                    matches.setdefault(provider, set()).update(link_consumer_identities)
         if not matches:
             continue
         if len(matches) > 1:
             ambiguous_count += 1
             continue
-        provider = next(iter(matches))
+        provider, link_consumer_identities = next(iter(matches.items()))
         matched_name = _matched_name(candidate_names, provider)
         package_facts = [
             Fact(
                 predicate="RESOLVES_TO_REPO",
                 subject_id=package.entity_id,
                 object_id=provider.repo_entity_id,
-                qualifier=_link_qualifier(package, provider, matched_name, consumer_identities),
+                qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
             )
         ]
         if provider.service_entity_id is not None:
@@ -652,21 +665,25 @@ def _link_external_packages(
                     predicate="RESOLVES_TO_SERVICE",
                     subject_id=package.entity_id,
                     object_id=provider.service_entity_id,
-                    qualifier=_link_qualifier(package, provider, matched_name, consumer_identities),
+                    qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
                 )
             )
         facts.extend(package_facts)
-        evidence.extend(_link_evidence(package, provider, package_facts, consumer_identities))
+        evidence.extend(_link_evidence(package, provider, package_facts, link_consumer_identities))
     return facts, evidence, ambiguous_count
 
 
-def _is_self_link(provider: PackageProvider, package: Entity, consumer_identities: set[RepoIdentity]) -> bool:
+def _linkable_consumer_identities(
+    provider: PackageProvider,
+    package: Entity,
+    consumer_identities: set[RepoIdentity],
+) -> set[RepoIdentity]:
     if not consumer_identities:
         raise ValueError(
             "ExternalPackage entity missing repo identity tracking: "
             f"entity_id={package.entity_id}, identity={package.identity}"
         )
-    return provider.repo_identity in consumer_identities
+    return consumer_identities - {provider.repo_identity}
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:

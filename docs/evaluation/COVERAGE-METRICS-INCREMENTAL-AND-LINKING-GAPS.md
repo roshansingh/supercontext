@@ -78,7 +78,7 @@ Three components, ordered by dependency:
 Concrete proposal:
 
 - **New CLI**: `bettercontext-relink --snapshot-dir <fleet-dir>`
-- **Behavior**: reads each repo's existing `entities.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/multi_repo.py`; writes fleet-level linker output next to the per-repo snapshots:
+- **Behavior**: reads each repo's existing `entities.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/relink.py`; writes fleet-level linker output next to the per-repo snapshots:
   - `_fleet/cross_repo_links.jsonl` for linker facts such as `RESOLVES_TO_REPO`
   - `_fleet/cross_repo_link_evidence.jsonl` for linker evidence
   - `_fleet/manifest.json` with linker `built_at`, `source_system`, `rule_version`, `repo_commit_fingerprints`, informational `repo_commit_sha_set`, `provider_count`, `link_count`, and `ambiguous_package_count`
@@ -141,19 +141,18 @@ Without `bettercontext-relink`, the org's choice today is:
 
 Debate 14 §"Final converged metric matrix" treats per-repo and fleet metrics as a projection over the JSONL union (plan rows #6, #11, #13). It does not specify whether the JSONL union is the result of (a) one batched build or (b) incremental builds + a re-linked union. That ambiguity is what this doc closes.
 
-The 11 converged metrics remain unchanged. Three minor additions integrate cleanly:
+The 11 converged metrics remain unchanged. The relink-only entry point has landed; two remaining additions make the metric output trustworthy when the fleet was built incrementally:
 
 - **Plan row #11 (`compute.py`)** — also reads `manifest.json:built_at` and `commit_sha` from each per-repo snapshot plus `_fleet/manifest.json:built_at` and `repo_commit_fingerprints`; computes `linker_stale = fleet.built_at < max(repo.built_at) OR repo_commit_fingerprints mismatch`, and attaches it as a contract flag to M_cross_repo_linkage when true
-- **Plan row #17 (BACKLOG)** — add a row: "Relink-only entry point — `bettercontext-relink --snapshot-dir`. Needed for incremental ingestion correctness. Triggered when a second repo is added to an existing fleet without a re-extraction window."
-- **New plan row (post-Debate-14 follow-up PR)** — `source/kg/build/relink.py` extracting the linker step from `multi_repo.py` so both `build_multi_kg` and the new CLI invoke the same code path. `build_multi_kg` may continue writing a combined snapshot; `relink.py` should additionally support fleet-level link artifacts for incremental snapshot directories.
+- **Metrics/query consumer integration** — readers that need current cross-repo links must merge the fleet-level `_fleet/cross_repo_links.jsonl` projection instead of reading only a per-repo snapshot's stale local `facts.jsonl`.
 
-None of these changes the converged metric semantics. They make the metric output trustworthy when the fleet was built incrementally.
+None of these changes the converged metric semantics.
 
 ## 7. BACKLOG additions to file
 
 | Row | When triggered |
 |---|---|
-| Relink-only entry point (`bettercontext-relink --snapshot-dir`) — extract linker step from `source/kg/build/multi_repo.py` into a standalone `source/kg/build/relink.py`; both `build_multi_kg` and the new CLI invoke the same code path; relink writes fleet-level `_fleet/cross_repo_links.jsonl`, `_fleet/cross_repo_link_evidence.jsonl`, and `_fleet/manifest.json` by default | When second repo is added to an existing fleet OR when M_cross_repo_linkage starts being reported externally |
+| Metrics/query reader merge of `_fleet/cross_repo_links.jsonl` and `_fleet/cross_repo_link_evidence.jsonl` | When per-repo snapshots are queried or scored after incremental relink |
 | Linker-freshness contract flag on M_cross_repo_linkage — `linker_stale` flag derived from manifest `built_at` comparison plus `_fleet/manifest.json.repo_commit_fingerprints` equality | Lands with the Debate-14 metric implementation PR (cheap addition to `compute.py`) |
 | Metric output persistence — `metrics.jsonl` per snapshot; delta mode `--compare snapshotA snapshotB` | When an org dashboard or run-history feature is requested |
 | Per-file incremental extraction — `build_kg --incremental --since-commit <sha>` rebuilds only files changed in the diff | When fleet repos exceed sizes where full per-repo rebuild on each commit becomes the bottleneck |

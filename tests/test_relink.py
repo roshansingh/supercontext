@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.build.pipeline import build_kg
 from source.kg.build.multi_repo import build_multi_kg
@@ -23,10 +25,10 @@ class RelinkOnlyTest(unittest.TestCase):
             fleet = root / "snapshots" / "_fleet"
             combined = root / "combined"
 
-            build_kg(consumer, consumer_snapshot)
-            build_kg(provider, provider_snapshot)
+            build_kg(consumer, consumer_snapshot, tenant_id="default")
+            build_kg(provider, provider_snapshot, tenant_id="default")
             relink_manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], fleet)
-            build_multi_kg([consumer, provider], combined)
+            build_multi_kg([consumer, provider], combined, tenant_id="default")
 
             relink_facts = _records_by_id(read_jsonl(fleet / "cross_repo_links.jsonl"), "fact_id")
             batch_facts = _records_by_id(
@@ -52,7 +54,7 @@ class RelinkOnlyTest(unittest.TestCase):
             repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
             snapshot = root / "snapshots" / "consumer"
             fleet = root / "snapshots" / "_fleet"
-            build_kg(repo, snapshot)
+            build_kg(repo, snapshot, tenant_id="default")
             fleet.mkdir(parents=True)
             for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl"):
                 (fleet / filename).write_text('{"stale": true}\n', encoding="utf-8")
@@ -139,7 +141,7 @@ class RelinkOnlyTest(unittest.TestCase):
             root = Path(tmpdir)
             repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
             snapshot = root / "snapshots" / "consumer"
-            build_kg(repo, snapshot)
+            build_kg(repo, snapshot, tenant_id="default")
 
             with self.assertRaisesRegex(ValueError, "tenant override must match snapshot tenant_id"):
                 relink_snapshot_dirs([snapshot], root / "_fleet", tenant_id="other-tenant")
@@ -169,6 +171,36 @@ class RelinkOnlyTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "tenant_id must be a non-empty string"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_infers_missing_manifest_tenant_from_entities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot, tenant_id="snapshot-tenant")
+            manifest_path = snapshot / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("tenant_id", None)
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"SUPERCONTEXT_TENANT_ID": "ambient-tenant"}):
+                relink_manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+
+            self.assertEqual(relink_manifest["tenant_id"], "snapshot-tenant")
+
+    def test_relink_rejects_manifest_repo_identity_without_matching_entity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            manifest_path = snapshot / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["owner"] = "wrong-owner"
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "does not match a Repo entity"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_relink_does_not_link_stdlib_imports_to_same_named_repos(self) -> None:
@@ -312,6 +344,33 @@ class RelinkOnlyTest(unittest.TestCase):
 
             self.assertEqual(manifest["link_count"], 0)
             self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
+
+    def test_relink_filters_self_links_per_consumer_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            provider = _python_repo(root / "owner-a" / "app", "shared", "")
+            consumer = _python_repo(root / "owner-b" / "app", "consumer-package", "import shared\n")
+            provider_snapshot = root / "snapshots" / "provider"
+            consumer_snapshot = root / "snapshots" / "consumer"
+            build_kg(provider, provider_snapshot)
+            build_kg(consumer, consumer_snapshot)
+            consumer_rows = read_jsonl(consumer_snapshot / "entities.jsonl")
+            provider_rows = read_jsonl(provider_snapshot / "entities.jsonl")
+            shared_package = next(
+                row
+                for row in consumer_rows
+                if row.get("kind") == "ExternalPackage" and row.get("identity", {}).get("name") == "shared"
+            )
+            provider_rows.append(dict(shared_package))
+            _write_jsonl_records(provider_snapshot / "entities.jsonl", provider_rows)
+
+            manifest = relink_snapshot_dirs([provider_snapshot, consumer_snapshot], root / "_fleet")
+
+            self.assertGreater(manifest["link_count"], 0)
+            links = read_jsonl(root / "_fleet" / "cross_repo_links.jsonl")
+            repo_link = next(row for row in links if row["predicate"] == "RESOLVES_TO_REPO")
+            consumer_identity = repo_link["qualifier"]["consumer_repo_identity"]
+            self.assertEqual(consumer_identity["owner"], "owner-b")
 
     def test_relink_accepts_non_object_package_json_as_repo_name_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
