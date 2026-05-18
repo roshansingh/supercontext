@@ -11,7 +11,7 @@ import json
 import yaml
 
 from source.kg.core.models import JsonObject
-from source.kg.core.repo_source import discover_repo
+from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import read_jsonl
 from source.kg.extraction.framework.allowlists import SUPPORTED_FACT_PREDICATES
 from source.kg.metrics.config import MetricsConfig, load_metrics_config
@@ -71,6 +71,12 @@ class _ManifestRepoRef:
     commit_sha: str
 
 
+@dataclass(frozen=True)
+class _DiscoveredRepoRef:
+    manifest_ref: _ManifestRepoRef
+    repo: RepoSnapshot
+
+
 def compute_all(
     snapshot_dir: str | Path,
     *,
@@ -82,13 +88,14 @@ def compute_all(
         raise ValueError("expected_repos must be positive when provided")
     snapshot = _read_snapshot(Path(snapshot_dir))
     config = load_metrics_config(Path(config_path) if config_path is not None else None)
-    assignments = _dimension_assignments(snapshot)
+    discovered_repos = _discover_manifest_repos(snapshot.manifest)
+    assignments = _dimension_assignments(discovered_repos)
     has_assignments = bool(assignments)
     cells = assignments or (DimensionAssignment("unknown", ".", tuple(), "no-dimension-detected", "1"),)
     repo_name = _repo_name(snapshot.manifest)
     commit_sha_set = _commit_sha_set(snapshot.manifest)
     opportunities = (
-        _snapshot_opportunities(snapshot)
+        _snapshot_opportunities(discovered_repos)
         if OPPORTUNITY_METRICS.intersection(config.enabled_metrics)
         else ()
     )
@@ -156,12 +163,9 @@ def _read_jsonl_if_exists(path: Path) -> list[JsonObject]:
     return rows
 
 
-def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ...]:
-    # PR-1 derives dimensions from the current repo_path working tree because
-    # snapshots do not persist dimension tags yet. Debate 19 PR-3 moves
-    # dimension tags into coverage rows during ingestion.
-    assignments: list[DimensionAssignment] = []
-    for repo_ref in _manifest_repo_refs(snapshot.manifest):
+def _discover_manifest_repos(manifest: JsonObject) -> tuple[_DiscoveredRepoRef, ...]:
+    discovered: list[_DiscoveredRepoRef] = []
+    for repo_ref in _manifest_repo_refs(manifest):
         root = Path(repo_ref.path).expanduser()
         if not root.exists():
             continue
@@ -169,9 +173,20 @@ def _dimension_assignments(snapshot: _Snapshot) -> tuple[DimensionAssignment, ..
             repo = discover_repo(root)
         except OSError:
             continue
+        discovered.append(_DiscoveredRepoRef(repo_ref, repo))
+    return tuple(discovered)
+
+
+def _dimension_assignments(discovered_repos: tuple[_DiscoveredRepoRef, ...]) -> tuple[DimensionAssignment, ...]:
+    # PR-1 derives dimensions from the current repo_path working tree because
+    # snapshots do not persist dimension tags yet. Debate 19 PR-3 moves
+    # dimension tags into coverage rows during ingestion.
+    assignments: list[DimensionAssignment] = []
+    for discovered in discovered_repos:
+        repo_ref = discovered.manifest_ref
         assignments.extend(
             _qualify_assignment_files(assignment, repo_ref.identity_keys, repo_ref.commit_sha)
-            for assignment in classify_repo(repo)
+            for assignment in classify_repo(discovered.repo)
         )
     return _merge_assignments(assignments)
 
@@ -401,7 +416,11 @@ def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _S
         if path != opportunity.path:
             continue
         line = scope_ref.get("line")
-        if line is None or line == opportunity.line:
+        if line is None:
+            return True
+        if isinstance(line, bool) or not isinstance(line, int):
+            continue
+        if line == opportunity.line:
             return True
     return False
 
@@ -655,19 +674,13 @@ def _merge_assignments(assignments: list[DimensionAssignment]) -> tuple[Dimensio
     )
 
 
-def _snapshot_opportunities(snapshot: _Snapshot) -> tuple[_ScopedOpportunity, ...]:
+def _snapshot_opportunities(discovered_repos: tuple[_DiscoveredRepoRef, ...]) -> tuple[_ScopedOpportunity, ...]:
     opportunities: list[_ScopedOpportunity] = []
-    for repo_ref in _manifest_repo_refs(snapshot.manifest):
-        root = Path(repo_ref.path).expanduser()
-        if not root.exists():
-            continue
-        try:
-            repo = discover_repo(root)
-        except OSError:
-            continue
+    for discovered in discovered_repos:
+        repo_ref = discovered.manifest_ref
         for language in _registered_languages():
             for detector in language.opportunity_detectors():
-                for opportunity in detector.detect(repo):
+                for opportunity in detector.detect(discovered.repo):
                     opportunities.append(
                         _ScopedOpportunity(
                             opportunity=opportunity,

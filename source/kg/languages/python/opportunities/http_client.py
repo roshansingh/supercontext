@@ -206,15 +206,6 @@ class _ScopeScanner:
             self._bind_target(statement.target, scope, client_module)
         elif isinstance(statement, ast.AugAssign):
             self._bind_target(statement.target, scope, None)
-        elif isinstance(statement, (ast.For, ast.AsyncFor)):
-            self._bind_target(statement.target, scope, None)
-        elif isinstance(statement, (ast.With, ast.AsyncWith)):
-            for item in statement.items:
-                if item.optional_vars is not None:
-                    client_module = _client_factory_module(item.context_expr, scope)
-                    self._bind_target(item.optional_vars, scope, client_module)
-        elif isinstance(statement, ast.ExceptHandler) and statement.name:
-            scope.shadow(statement.name)
 
     def _bind_target(self, target: ast.AST, scope: _Scope, client_module: str | None) -> None:
         for name in _target_names(target):
