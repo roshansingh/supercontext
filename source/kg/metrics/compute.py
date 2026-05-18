@@ -412,6 +412,8 @@ def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _S
         repo = scope_ref.get("repo")
         if not isinstance(repo, str) or repo not in scoped_opportunity.coverage_repos:
             continue
+        if not _coverage_scope_matches_language(scope_ref, opportunity.language_or_format):
+            continue
         if not _coverage_scope_matches_path(scope_ref, opportunity.path):
             continue
         line = scope_ref.get("line")
@@ -438,6 +440,15 @@ def _coverage_scope_matches_path(scope_ref: JsonObject, opportunity_path: str) -
         return True
     normalized = path_prefix.rstrip("/")
     return opportunity_path == normalized or opportunity_path.startswith(f"{normalized}/")
+
+
+def _coverage_scope_matches_language(scope_ref: JsonObject, opportunity_language: str) -> bool:
+    language = scope_ref.get("language")
+    if language is None:
+        return True
+    if not isinstance(language, str) or not language:
+        return False
+    return opportunity_language in {part.strip() for part in language.split("/") if part.strip()}
 
 
 def _line_covers(bytes_ref: Any, line: int) -> bool:

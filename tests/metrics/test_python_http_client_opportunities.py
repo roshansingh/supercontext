@@ -329,6 +329,48 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
         self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 0.0)
         self.assertEqual(backend.metric_values["M_silent_gap"].value, 0.0)
 
+    def test_repo_level_coverage_from_other_language_does_not_cover_python_opportunity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname = 'repo'\ndependencies = ['fastapi', 'requests']\n",
+                encoding="utf-8",
+            )
+            (repo / "app.py").write_text("import requests\nrequests.get('/health')\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            JsonlKgStore(snapshot).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[
+                    Coverage(
+                        tenant_id="default",
+                        predicate="CALLS_ENDPOINT",
+                        scope_ref={
+                            "repo": "repo",
+                            "language": "javascript/typescript",
+                            "reason": "explicit_repo_level_coverage",
+                        },
+                        state="partially_instrumented",
+                        source_system="test",
+                    )
+                ],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            backend = _backend_cell(compute_all(snapshot, expected_repos=1))
+
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 0.0)
+        self.assertEqual(backend.metric_values["M_silent_gap"].value, 1.0)
+
     def test_metrics_discover_repo_once_for_dimensions_and_opportunities(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
