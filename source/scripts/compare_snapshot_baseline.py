@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from source.kg.core.models import JsonObject
-from source.scripts.capture_snapshot_baseline import BASELINE_VERSION, capture_snapshot_baseline
+from source.scripts.capture_snapshot_baseline import (
+    BASELINE_VERSION,
+    NORMALIZED_COVERAGE_REASONS,
+    capture_snapshot_baseline,
+)
 
 
 COMPARED_SECTIONS = (
@@ -120,7 +124,21 @@ def load_baseline(path: Path) -> JsonObject:
     if not isinstance(baseline, dict):
         raise ValueError(f"{path} must contain a JSON object")
     _validate_baseline(baseline, str(path))
+    _normalize_loaded_baseline(baseline)
     return baseline
+
+
+def _normalize_loaded_baseline(baseline: JsonObject) -> None:
+    coverage_counts = baseline.get("coverage_reason_counts")
+    if not isinstance(coverage_counts, dict):
+        return
+    normalized: dict[str, int] = {}
+    for reason, count in coverage_counts.items():
+        if not isinstance(reason, str) or not _is_int_count(count):
+            continue
+        normalized_reason = NORMALIZED_COVERAGE_REASONS.get(reason, reason)
+        normalized[normalized_reason] = normalized.get(normalized_reason, 0) + count
+    baseline["coverage_reason_counts"] = normalized
 
 
 def _validate_baseline(baseline: JsonObject, label: str) -> None:

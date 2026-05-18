@@ -51,6 +51,18 @@ function bindingNames(name) {
   return [];
 }
 
+function isFunctionBoundary(node) {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  );
+}
+
 function collectImports(sourceFile) {
   const imports = [];
   for (const statement of sourceFile.statements) {
@@ -151,6 +163,12 @@ function rawNodeText(node, sourceFile) {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
+function expressionResult(kind, value, raw, resolutionKind = null) {
+  const result = { kind, value, raw };
+  if (resolutionKind != null) result.resolution_kind = resolutionKind;
+  return result;
+}
+
 function collectTopLevelLiteralBindings(sourceFile) {
   const bindings = new Map();
   const invalid = new Set();
@@ -167,15 +185,13 @@ function collectTopLevelLiteralBindings(sourceFile) {
         }
         bindings.set(name, literal);
       }
+      for (const name of bindings.keys()) {
+        if (statementMutatesIdentifier(statement, name)) invalid.add(name);
+      }
       continue;
     }
-    if (
-      ts.isExpressionStatement(statement) &&
-      ts.isBinaryExpression(statement.expression) &&
-      ASSIGNMENT_OPERATORS.has(statement.expression.operatorToken.kind) &&
-      ts.isIdentifier(statement.expression.left)
-    ) {
-      invalid.add(statement.expression.left.text);
+    for (const name of bindings.keys()) {
+      if (statementMutatesIdentifier(statement, name)) invalid.add(name);
     }
   }
   for (const name of invalid) bindings.delete(name);
@@ -243,11 +259,7 @@ function identifierIsLocallyShadowed(useNode, targetName, sourceFile) {
   let current = useNode.parent;
   while (current && current !== sourceFile) {
     if (
-      (ts.isFunctionDeclaration(current) ||
-        ts.isFunctionExpression(current) ||
-        ts.isArrowFunction(current) ||
-        ts.isMethodDeclaration(current) ||
-        ts.isConstructorDeclaration(current)) &&
+      isFunctionBoundary(current) &&
       parametersDeclareName(current, targetName)
     ) {
       return true;
@@ -262,8 +274,279 @@ function identifierIsLocallyShadowed(useNode, targetName, sourceFile) {
   return false;
 }
 
-function identifierIsShadowed(useNode, targetName, sourceFile) {
-  return sourceFileImportDeclaresName(sourceFile, targetName) || identifierIsLocallyShadowed(useNode, targetName, sourceFile);
+function nodeHasWithAncestor(node, sourceFile) {
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if (ts.isWithStatement(current)) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function statementListForContainer(container) {
+  if (ts.isSourceFile(container) || ts.isBlock(container) || ts.isCaseClause(container) || ts.isDefaultClause(container)) {
+    return Array.from(container.statements ?? []);
+  }
+  return [];
+}
+
+function scopeContainersForUse(node, sourceFile) {
+  const containers = [];
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if ((ts.isBlock(current) || ts.isSourceFile(current) || ts.isCaseClause(current) || ts.isDefaultClause(current)) && !containers.includes(current)) {
+      containers.push(current);
+    }
+    if (isFunctionBoundary(current)) {
+      break;
+    }
+    current = current.parent;
+  }
+  if (!containers.includes(sourceFile)) containers.push(sourceFile);
+  return containers;
+}
+
+function parameterShadowsUse(node, targetName, sourceFile) {
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if (isFunctionBoundary(current) && parametersDeclareName(current, targetName)) {
+      return true;
+    }
+    if (isFunctionBoundary(current)) {
+      break;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function loopInitializerShadowsUse(node, targetName, sourceFile) {
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if (ts.isForStatement(current) && forInitializerDeclaresName(current.initializer, targetName)) return true;
+    if ((ts.isForOfStatement(current) || ts.isForInStatement(current)) && forInOfInitializerDeclaresName(current.initializer, targetName)) return true;
+    if (isFunctionBoundary(current)) {
+      break;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function catchClauseShadowsUse(node, targetName, sourceFile) {
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if (ts.isCatchClause(current) && current.variableDeclaration && declaresNameInBindingName(current.variableDeclaration.name, targetName)) {
+      return true;
+    }
+    if (isFunctionBoundary(current)) {
+      break;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function statementDeclaresAnyName(statement, targetName) {
+  const variableDeclaration = directVariableDeclaration(statement, targetName);
+  return Boolean(variableDeclaration) || nonVariableStatementDeclaresName(statement, targetName);
+}
+
+function switchCaseBlockShadowsUse(node, targetName, sourceFile) {
+  let current = node.parent;
+  let activeClause = null;
+  while (current && current !== sourceFile) {
+    if (ts.isCaseClause(current) || ts.isDefaultClause(current)) activeClause = current;
+    if (ts.isCaseBlock(current)) {
+      for (const clause of current.clauses) {
+        if (clause === activeClause) continue;
+        for (const statement of clause.statements ?? []) {
+          if (statementDeclaresAnyName(statement, targetName)) return true;
+        }
+      }
+      return false;
+    }
+    if (isFunctionBoundary(current)) break;
+    current = current.parent;
+  }
+  return false;
+}
+
+function nodeIsInsideFunction(node, sourceFile) {
+  let current = node.parent;
+  while (current && current !== sourceFile) {
+    if (isFunctionBoundary(current)) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function assignmentTargetMutatesIdentifier(node, targetName) {
+  if (ts.isIdentifier(node)) return node.text === targetName;
+  if (ts.isParenthesizedExpression(node)) return assignmentTargetMutatesIdentifier(node.expression, targetName);
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.some((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) return property.name.text === targetName;
+      if (ts.isPropertyAssignment(property)) return assignmentTargetMutatesIdentifier(property.initializer, targetName);
+      return false;
+    });
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements.some((element) => assignmentTargetMutatesIdentifier(element, targetName));
+  }
+  return false;
+}
+
+function expressionMutatesIdentifier(expression, targetName) {
+  if (ts.isBinaryExpression(expression) && ASSIGNMENT_OPERATORS.has(expression.operatorToken.kind)) {
+    return assignmentTargetMutatesIdentifier(expression.left, targetName);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
+    (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
+    ts.isIdentifier(expression.operand)
+  ) {
+    return expression.operand.text === targetName;
+  }
+  return false;
+}
+
+function statementMutatesIdentifier(statement, targetName) {
+  let mutated = false;
+  function visit(node) {
+    if (mutated) return;
+    if (node !== statement && isFunctionBoundary(node)) return;
+    if (expressionMutatesIdentifier(node, targetName)) {
+      mutated = true;
+      return;
+    }
+    node.forEachChild(visit);
+  }
+  visit(statement);
+  return mutated;
+}
+
+function directVariableDeclaration(statement, targetName) {
+  if (!ts.isVariableStatement(statement)) return null;
+  let found = null;
+  for (const declaration of statement.declarationList.declarations) {
+    if (!declaresNameInBindingName(declaration.name, targetName)) continue;
+    if (found != null) return { ambiguous: true, declaration: null };
+    found = declaration;
+  }
+  return found == null ? null : { ambiguous: false, declaration: found };
+}
+
+function nonVariableStatementDeclaresName(statement, targetName) {
+  return (
+    ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name?.text === targetName)
+  );
+}
+
+function containerHasPriorLiteralDeclaration(container, targetName, sourceFile, useStart) {
+  for (const statement of statementListForContainer(container)) {
+    if (statement.getStart(sourceFile) >= useStart) continue;
+    const declarationMatch = directVariableDeclaration(statement, targetName);
+    if (!declarationMatch || declarationMatch.ambiguous || !declarationMatch.declaration) continue;
+    if (!ts.isIdentifier(declarationMatch.declaration.name) || declarationMatch.declaration.initializer == null) continue;
+    if (stringLiteralValue(declarationMatch.declaration.initializer) != null) return true;
+  }
+  return false;
+}
+
+function hasOuterResolvableDeclaration(containers, currentIndex, targetName, sourceFile, useStart, bindings) {
+  if (bindings.has(targetName)) return true;
+  for (let index = currentIndex + 1; index < containers.length; index += 1) {
+    if (containerHasPriorLiteralDeclaration(containers[index], targetName, sourceFile, useStart)) return true;
+  }
+  return false;
+}
+
+function resolveIdentifierInContainer(targetName, container, containerIndex, containers, sourceFile, bindings, useStart, resolvingNames) {
+  let declaration = null;
+  let sawFutureDeclaration = false;
+  let sawDynamicDeclaration = false;
+  for (const statement of statementListForContainer(container)) {
+    const statementStart = statement.getStart(sourceFile);
+    const declarationMatch = directVariableDeclaration(statement, targetName);
+    const declarationStart = declarationMatch?.declaration?.getStart(sourceFile) ?? null;
+    if (declarationMatch && (statementStart >= useStart || (declarationStart != null && declarationStart >= useStart))) {
+      sawFutureDeclaration = true;
+      continue;
+    }
+    if (statementStart >= useStart) continue;
+    if (declarationMatch) {
+      if (declarationMatch.ambiguous || declaration != null) {
+        return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_shadowed_binding" } };
+      }
+      declaration = declarationMatch.declaration;
+      if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) sawDynamicDeclaration = true;
+      if (statementMutatesIdentifier(statement, targetName)) {
+        return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_reassigned_binding" } };
+      }
+      continue;
+    }
+    if (nonVariableStatementDeclaresName(statement, targetName)) {
+      return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_shadowed_binding" } };
+    }
+    if (statementMutatesIdentifier(statement, targetName)) {
+      return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_reassigned_binding" } };
+    }
+  }
+  if (declaration != null && ts.isIdentifier(declaration.name) && declaration.initializer != null) {
+    if (resolvingNames.has(targetName)) return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName } };
+    resolvingNames.add(targetName);
+    const resolved = resolveEndpointExpression(declaration.initializer, sourceFile, bindings, resolvingNames);
+    resolvingNames.delete(targetName);
+    if (resolved.kind === "resolved" || resolved.kind === "env") {
+      return { status: "resolved", result: expressionResult(resolved.kind, resolved.value, targetName, "local_var") };
+    }
+    const reason =
+      resolved.reason ??
+      (hasOuterResolvableDeclaration(containers, containerIndex, targetName, sourceFile, useStart, bindings)
+        ? "target_shadowed_binding"
+        : null);
+    return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason } };
+  }
+  if (sawDynamicDeclaration || sawFutureDeclaration) {
+    return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName, reason: "target_shadowed_binding" } };
+  }
+  return { status: "none", result: null };
+}
+
+function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames) {
+  const targetName = node.text;
+  const useStart = node.getStart(sourceFile);
+  if (nodeHasWithAncestor(node, sourceFile)) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "with_block_present" };
+  }
+  const containers = scopeContainersForUse(node, sourceFile);
+  const insideFunction = nodeIsInsideFunction(node, sourceFile);
+  const hasLexicalShadow =
+    parameterShadowsUse(node, targetName, sourceFile) ||
+    loopInitializerShadowsUse(node, targetName, sourceFile) ||
+    catchClauseShadowsUse(node, targetName, sourceFile) ||
+    switchCaseBlockShadowsUse(node, targetName, sourceFile);
+  for (let index = 0; index < containers.length; index += 1) {
+    if (ts.isSourceFile(containers[index])) {
+      if (insideFunction) continue;
+      if (hasLexicalShadow) {
+        return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
+      }
+    }
+    const resolved = resolveIdentifierInContainer(targetName, containers[index], index, containers, sourceFile, bindings, useStart, resolvingNames);
+    if (resolved.status !== "none") return resolved.result;
+  }
+  if (hasLexicalShadow) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
+  }
+  if (sourceFileImportDeclaresName(sourceFile, targetName)) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
+  }
+  if (bindings.has(targetName)) return expressionResult("resolved", bindings.get(targetName), targetName, "module_var");
+  return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile) };
 }
 
 function envPlaceholderFromAccess(node) {
@@ -297,22 +580,19 @@ function envPlaceholderFromAccess(node) {
   return null;
 }
 
-function resolveEndpointExpression(node, sourceFile, bindings) {
+function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = new Set()) {
   const literal = stringLiteralValue(node);
-  if (literal != null) return { kind: "resolved", value: literal, raw: literal };
+  if (literal != null) return expressionResult("resolved", literal, literal, "literal");
   const env = envPlaceholderFromAccess(node);
   if (env != null) return { kind: "env", value: env, raw: rawNodeText(node, sourceFile) };
   if (ts.isIdentifier(node)) {
-    if (!bindings.has(node.text) || identifierIsShadowed(node, node.text, sourceFile)) {
-      return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile) };
-    }
-    return { kind: "resolved", value: bindings.get(node.text), raw: node.text };
+    return resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames);
   }
   if (ts.isTemplateExpression(node)) {
     let value = node.head.text;
     let hostUnresolved = false;
     for (const span of node.templateSpans) {
-      const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings);
+      const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames);
       if (resolved.kind === "env") {
         value += resolved.value;
         hostUnresolved = true;
@@ -323,23 +603,22 @@ function resolveEndpointExpression(node, sourceFile, bindings) {
           kind: "unresolved",
           value: null,
           raw: rawNodeText(node, sourceFile),
-          reason: resolved.reason ?? "target_dynamic_template_segment",
+          reason: "target_dynamic_template_segment",
         };
       }
       value += span.literal.text;
     }
-    return { kind: hostUnresolved ? "env" : "resolved", value, raw: rawNodeText(node, sourceFile) };
+    return expressionResult(hostUnresolved ? "env" : "resolved", value, rawNodeText(node, sourceFile), "template");
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = resolveEndpointExpression(node.left, sourceFile, bindings);
-    const right = resolveEndpointExpression(node.right, sourceFile, bindings);
+    const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames);
+    const right = resolveEndpointExpression(node.right, sourceFile, bindings, resolvingNames);
     if ((left.kind === "resolved" || left.kind === "env") && (right.kind === "resolved" || right.kind === "env")) {
-      return {
-        kind: left.kind === "env" || right.kind === "env" ? "env" : "resolved",
-        value: `${left.value}${right.value}`,
-        raw: rawNodeText(node, sourceFile),
-      };
+      return expressionResult(left.kind === "env" || right.kind === "env" ? "env" : "resolved", `${left.value}${right.value}`, rawNodeText(node, sourceFile), "concat");
     }
+  }
+  if (ts.isCallExpression(node)) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
   }
   return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile) };
 }
@@ -366,6 +645,8 @@ function splitResolvedEndpointTarget(value) {
           path: trimmed.slice(pathStart) || "/",
           host: trimmed.slice(0, hostEnd + 1),
           raw_target: trimmed,
+          reason: "host_env_backed",
+          host_resolution_kind: "env_backed_unresolved",
         };
       }
     }
@@ -381,6 +662,7 @@ function resolveEndpointTarget(node, sourceFile, bindings) {
     return { kind: "unresolved", path: null, host: null, raw_target: expression.raw, reason: expression.reason ?? null };
   }
   const target = splitResolvedEndpointTarget(expression.value);
+  target.resolution_kind = expression.resolution_kind ?? null;
   if (target.kind === "host_unresolved" || target.kind === "resolved" || target.kind === "external") return target;
   return { kind: "unresolved", path: null, host: null, raw_target: expression.raw };
 }
@@ -894,6 +1176,7 @@ function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpr
   const baseValue = String(baseUrlExpression.value).trim();
   const combined = `${baseValue.replace(/\/+$/, "")}/${targetValue.replace(/^\/+/, "")}`;
   const resolved = splitResolvedEndpointTarget(combined);
+  resolved.resolution_kind = target.resolution_kind ?? null;
   return resolved.kind === "unresolved" ? { kind: "unresolved", path: null, host: null, raw_target: target.raw } : resolved;
 }
 
@@ -912,6 +1195,9 @@ function rowFromTarget(target, method, line, sourceKind) {
     line,
     source_kind: sourceKind,
     confidence: target.kind === "host_unresolved" ? "host_unresolved_path_resolved" : null,
+    reason: target.reason ?? null,
+    resolution_kind: target.resolution_kind ?? null,
+    host_resolution_kind: target.host_resolution_kind ?? null,
   };
 }
 

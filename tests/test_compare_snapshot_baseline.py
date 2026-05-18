@@ -70,14 +70,20 @@ class SnapshotBaselineTest(unittest.TestCase):
             _write_jsonl(snapshot / "evidence.jsonl", [])
             _write_jsonl(
                 snapshot / "coverage.jsonl",
-                [{"scope_ref": {"reason": "parser_backed_js_ts_route_extraction_partial_express_only"}}],
+                [
+                    {"scope_ref": {"reason": "parser_backed_js_ts_route_extraction_partial_express_only"}},
+                    {"scope_ref": {"reason": "unresolved_host"}},
+                ],
             )
 
             baseline = capture_snapshot_baseline(snapshot, name="fixture")
 
         self.assertEqual(
             baseline["coverage_reason_counts"],
-            {"parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 1},
+            {
+                "host_env_backed": 1,
+                "parser_backed_js_ts_route_extraction_partial_express_fastify_koa_only": 1,
+            },
         )
 
     def test_compare_snapshot_baseline_reports_distribution_drift(self) -> None:
@@ -186,6 +192,16 @@ class SnapshotBaselineTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "fact_predicate_counts.CALLS"):
                 load_baseline(path)
+
+    def test_load_baseline_normalizes_legacy_coverage_reason_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "baseline.json"
+            baseline = _baseline(coverage_counts={"host_env_backed": 2, "unresolved_host": 3})
+            _write_json(path, baseline)
+
+            loaded = load_baseline(path)
+
+        self.assertEqual(loaded["coverage_reason_counts"], {"host_env_backed": 5})
 
     def test_compare_snapshot_baseline_treats_boolean_actual_counts_as_invalid(self) -> None:
         expected = _baseline(fact_counts={"CALLS": 1})

@@ -9,7 +9,7 @@
     "python_syntax_error": 1,
     "unknown": 61,
     "unknown_attribute_root": 6,
-    "unresolved_host": 456,
+    "host_env_backed": 456,
     "unresolved_target": 53
   },
   "entity_kind_counts": {
