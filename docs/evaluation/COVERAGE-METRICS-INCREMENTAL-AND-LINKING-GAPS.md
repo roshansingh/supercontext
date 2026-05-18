@@ -100,15 +100,14 @@ Concrete proposal:
 
 This is additive to Debate 14's metric set — no new metric, just a flag on the existing one. Lands cheaply with the metric aggregator.
 
-### 4.3 Metric output persistence (operational ergonomics)
+### 4.3 Metric output persistence (already implemented)
 
-Concrete proposal:
+Current behavior:
 
 - `bettercontext-coverage-metrics` writes `metrics.jsonl` (one record per metric per cell) next to `entities.jsonl` etc.
-- Each metric run records its `commit_sha_set` (sha per repo it aggregated) so historical comparisons can detect "snapshot drift" vs "extractor change"
 - Delta mode: `bettercontext-coverage-metrics --compare snapshotA snapshotB` emits Δ per metric per cell
 
-Without persistence, every metric query recomputes from JSONL. Fine for v1; needed for any production org dashboard.
+Remaining relink-specific work is not persistence itself; it is making persisted M_cross_repo_linkage consume the fleet relink projection and record fingerprint-aware linker freshness.
 
 ## 5. Correct incremental ingestion flow (after the proposed changes)
 
@@ -154,7 +153,6 @@ None of these changes the converged metric semantics.
 |---|---|
 | Metrics/query reader merge of `_fleet/cross_repo_links.jsonl` and `_fleet/cross_repo_link_evidence.jsonl` | When per-repo snapshots are queried or scored after incremental relink |
 | Linker-freshness contract flag on M_cross_repo_linkage — `linker_stale` flag derived from manifest `built_at` comparison plus `_fleet/manifest.json.repo_commit_fingerprints` equality | Lands with the Debate-14 metric implementation PR (cheap addition to `compute.py`) |
-| Metric output persistence — `metrics.jsonl` per snapshot; delta mode `--compare snapshotA snapshotB` | When an org dashboard or run-history feature is requested |
 | Per-file incremental extraction — `build_kg --incremental --since-commit <sha>` rebuilds only files changed in the diff | When fleet repos exceed sizes where full per-repo rebuild on each commit becomes the bottleneck |
 
 ## 8. Open questions
