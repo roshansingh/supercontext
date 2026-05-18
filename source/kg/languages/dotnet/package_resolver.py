@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fnmatch
+import os
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -41,14 +43,7 @@ class DotnetPackageResolver:
         cached = self._manifest_paths_cache.get(repo, _CACHE_MISS)
         if cached is not _CACHE_MISS:
             return cached
-        paths = tuple(
-            sorted(
-                path
-                for pattern in DOTNET_PACKAGE_MANIFESTS
-                for path in repo.root.rglob(pattern)
-                if not any(part in DOTNET_PACKAGE_IGNORED_DIRS for part in path.relative_to(repo.root).parts)
-            )
-        )
+        paths = tuple(iter_dotnet_package_manifest_paths(repo.root))
         self._manifest_paths_cache[repo] = paths
         return paths
 
@@ -121,6 +116,29 @@ def _csproj_metadata(path: Path) -> _DotnetProjectMetadata:
         if values:
             return _DotnetProjectMetadata(sorted(values)[0], frozenset(aliases))
     return _DotnetProjectMetadata(path.stem, frozenset(aliases))
+
+
+def iter_dotnet_package_manifest_paths(root: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for current_root, dirnames, filenames in os.walk(root):
+        current_path = Path(current_root)
+        kept_dirnames: list[str] = []
+        for dirname in sorted(dirnames):
+            if dirname in DOTNET_PACKAGE_IGNORED_DIRS:
+                continue
+            if _is_dotnet_manifest_filename(dirname):
+                paths.append(current_path / dirname)
+                continue
+            kept_dirnames.append(dirname)
+        dirnames[:] = kept_dirnames
+        for filename in sorted(filenames):
+            if _is_dotnet_manifest_filename(filename):
+                paths.append(current_path / filename)
+    return tuple(paths)
+
+
+def _is_dotnet_manifest_filename(filename: str) -> bool:
+    return any(fnmatch.fnmatchcase(filename, pattern) for pattern in DOTNET_PACKAGE_MANIFESTS)
 
 
 def _local_name(tag: str) -> str:
