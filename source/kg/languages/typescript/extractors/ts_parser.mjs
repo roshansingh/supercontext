@@ -347,6 +347,31 @@ function catchClauseShadowsUse(node, targetName, sourceFile) {
   return false;
 }
 
+function statementDeclaresAnyName(statement, targetName) {
+  const variableDeclaration = directVariableDeclaration(statement, targetName);
+  return Boolean(variableDeclaration) || nonVariableStatementDeclaresName(statement, targetName);
+}
+
+function switchCaseBlockShadowsUse(node, targetName, sourceFile) {
+  let current = node.parent;
+  let activeClause = null;
+  while (current && current !== sourceFile) {
+    if (ts.isCaseClause(current) || ts.isDefaultClause(current)) activeClause = current;
+    if (ts.isCaseBlock(current)) {
+      for (const clause of current.clauses) {
+        if (clause === activeClause) continue;
+        for (const statement of clause.statements ?? []) {
+          if (statementDeclaresAnyName(statement, targetName)) return true;
+        }
+      }
+      return false;
+    }
+    if (isFunctionBoundary(current)) break;
+    current = current.parent;
+  }
+  return false;
+}
+
 function nodeIsInsideFunction(node, sourceFile) {
   let current = node.parent;
   while (current && current !== sourceFile) {
@@ -502,7 +527,8 @@ function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames) {
   const hasLexicalShadow =
     parameterShadowsUse(node, targetName, sourceFile) ||
     loopInitializerShadowsUse(node, targetName, sourceFile) ||
-    catchClauseShadowsUse(node, targetName, sourceFile);
+    catchClauseShadowsUse(node, targetName, sourceFile) ||
+    switchCaseBlockShadowsUse(node, targetName, sourceFile);
   for (let index = 0; index < containers.length; index += 1) {
     if (ts.isSourceFile(containers[index])) {
       if (insideFunction) continue;

@@ -657,6 +657,23 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/default"][0]["resolution_kind"], "local_var")
         self.assertFalse(_call_site_coverage(build))
 
+    def test_typescript_client_switch_sibling_clause_declaration_blocks_module_fallback(self) -> None:
+        build = _extract_typescript_client(
+            "const url = '/api/module';\n"
+            "function load(kind) {\n"
+            "  switch (kind) {\n"
+            "    case 'declared':\n"
+            "      const url = '/api/case';\n"
+            "      break;\n"
+            "    case 'used':\n"
+            "      fetch(url);\n"
+            "  }\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+
     def test_typescript_client_local_url_reassignment_is_source_ordered(self) -> None:
         build = _extract_typescript_client(
             "function load() {\n"
