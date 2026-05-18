@@ -616,7 +616,6 @@ class RelinkOnlyTest(unittest.TestCase):
             root = Path(tmpdir)
             repo = root / "owner-a" / "consumer"
             repo.mkdir(parents=True)
-            (repo / "module.py").write_text("", encoding="utf-8")
             snapshot = root / "snapshots" / "consumer"
             build_kg(repo, snapshot)
             (repo / "package.json").mkdir()
@@ -627,8 +626,9 @@ class RelinkOnlyTest(unittest.TestCase):
     def test_relink_ignores_non_string_poetry_include_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import true\n")
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
             provider = _python_repo(root / "owner-b" / "provider", "provider-package", "")
+            # Intentional malformed Poetry config: include must be a string package root.
             (provider / "pyproject.toml").write_text(
                 '[project]\nname = "provider-package"\n[tool.poetry]\npackages = [{ include = true }]\n',
                 encoding="utf-8",
@@ -637,6 +637,18 @@ class RelinkOnlyTest(unittest.TestCase):
             provider_snapshot = root / "snapshots" / "provider"
             build_kg(consumer, consumer_snapshot)
             build_kg(provider, provider_snapshot)
+            consumer_rows = read_jsonl(consumer_snapshot / "entities.jsonl")
+            consumer_rows.append(
+                Entity(
+                    kind="ExternalPackage",
+                    # Keep literal "true": prior buggy alias logic coerced include=true to "True"
+                    # and could incorrectly resolve this package name. Non-string include
+                    # values are now ignored, so this package should remain unresolved.
+                    identity={"tenant_id": "default", "repo": "consumer-package", "name": "true"},
+                    properties={"category": "third_party", "import_root": "true", "distribution_name": "true"},
+                ).to_record()
+            )
+            _write_jsonl_records(consumer_snapshot / "entities.jsonl", consumer_rows)
 
             manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
 
