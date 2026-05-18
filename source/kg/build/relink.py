@@ -160,29 +160,22 @@ def _validate_stale_snapshot_outputs(out: Path) -> None:
             raise ValueError(f"Cannot replace stale snapshot artifact because it is not a file: {stale_path}")
 
 
-def _remove_stale_snapshot_outputs(out: Path) -> None:
-    _validate_stale_snapshot_outputs(out)
-    for filename in STALE_SNAPSHOT_OUTPUT_FILES:
-        stale_path = out / filename
-        if stale_path.exists():
-            stale_path.unlink()
-
-
 def _publish_relink_outputs(out: Path, staged: Path) -> None:
     filenames = ("cross_repo_links.jsonl", "cross_repo_link_evidence.jsonl", "manifest.json")
     backups: dict[str, Path] = {}
     published: list[str] = []
     try:
-        for filename in filenames:
+        for filename in (*filenames, *sorted(STALE_SNAPSHOT_OUTPUT_FILES)):
             target = out / filename
             backup = out / f".{filename}.bak"
             backup.unlink(missing_ok=True)
             if target.exists():
                 target.replace(backup)
                 backups[filename] = backup
+        for filename in filenames:
+            target = out / filename
             (staged / filename).replace(target)
             published.append(filename)
-        _remove_stale_snapshot_outputs(out)
     except Exception:
         for filename in reversed(published):
             (out / filename).unlink(missing_ok=True)
@@ -700,42 +693,48 @@ def _link_external_packages(
                 f"entity_id={package.entity_id}, identity={package.identity}"
             )
         candidate_names = _external_package_candidate_names(package)
+        matches_by_consumer: dict[RepoIdentity, set[PackageProvider]] = {}
         for consumer_identity in _sort_repo_identities(consumer_identities):
-            matches = {
+            consumer_matches = {
                 provider
                 for name in candidate_names
                 for provider in provider_index.get(_normalize_package_name(name), [])
                 if provider.repo_identity != consumer_identity
             }
-            if not matches:
+            if not consumer_matches:
                 continue
-            if len(matches) > 1:
+            if len(consumer_matches) > 1:
                 ambiguous_count += 1
                 continue
-            provider = next(iter(matches))
-            matched_name = _matched_name(candidate_names, provider)
-            link_consumer_identities = {consumer_identity}
-            package_facts = [
+            matches_by_consumer[consumer_identity] = consumer_matches
+        if not matches_by_consumer:
+            continue
+        matched_providers = {provider for matches in matches_by_consumer.values() for provider in matches}
+        if len(matched_providers) > 1:
+            ambiguous_count += 1
+            continue
+        provider = next(iter(matched_providers))
+        matched_name = _matched_name(candidate_names, provider)
+        link_consumer_identities = set(matches_by_consumer)
+        package_facts = [
+            Fact(
+                predicate="RESOLVES_TO_REPO",
+                subject_id=package.entity_id,
+                object_id=provider.repo_entity_id,
+                qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
+            )
+        ]
+        if provider.service_entity_id is not None:
+            package_facts.append(
                 Fact(
-                    predicate="RESOLVES_TO_REPO",
+                    predicate="RESOLVES_TO_SERVICE",
                     subject_id=package.entity_id,
-                    object_id=provider.repo_entity_id,
+                    object_id=provider.service_entity_id,
                     qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
                 )
-            ]
-            if provider.service_entity_id is not None:
-                package_facts.append(
-                    Fact(
-                        predicate="RESOLVES_TO_SERVICE",
-                        subject_id=package.entity_id,
-                        object_id=provider.service_entity_id,
-                        qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
-                    )
-                )
-            facts.extend(package_facts)
-            evidence.extend(
-                _link_evidence(package, provider, package_facts, link_consumer_identities)
             )
+        facts.extend(package_facts)
+        evidence.extend(_link_evidence(package, provider, package_facts, link_consumer_identities))
     return facts, evidence, ambiguous_count
 
 

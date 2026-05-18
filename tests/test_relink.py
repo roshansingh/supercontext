@@ -437,7 +437,7 @@ class RelinkOnlyTest(unittest.TestCase):
             consumer_identity = repo_link["qualifier"]["consumer_repo_identity"]
             self.assertEqual(consumer_identity["owner"], "owner-b")
 
-    def test_relink_resolves_each_consumer_before_ambiguous_provider_check(self) -> None:
+    def test_relink_fails_closed_on_divergent_collapsed_package_providers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             provider_a = _python_repo(root / "owner-a" / "app", "shared", "")
@@ -458,16 +458,9 @@ class RelinkOnlyTest(unittest.TestCase):
 
             manifest = relink_snapshot_dirs([snapshot_a, snapshot_b], root / "_fleet")
 
-            self.assertGreater(manifest["link_count"], 0)
-            repo_links = [
-                row for row in read_jsonl(root / "_fleet" / "cross_repo_links.jsonl")
-                if row["predicate"] == "RESOLVES_TO_REPO"
-            ]
-            self.assertEqual(len(repo_links), 2)
-            self.assertEqual(
-                {row["qualifier"]["consumer_repo_identity"]["owner"] for row in repo_links},
-                {"owner-a", "owner-b"},
-            )
+            self.assertEqual(manifest["link_count"], 0)
+            self.assertEqual(manifest["ambiguous_package_count"], 1)
+            self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
 
     def test_relink_accepts_non_object_package_json_as_repo_name_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
