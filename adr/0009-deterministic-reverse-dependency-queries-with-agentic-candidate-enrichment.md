@@ -192,7 +192,7 @@ Explicitly out of v1:
 - Agent SDK as the default impact engine
 - promoting Agent SDK candidate impacts without deterministic corroboration
 
-## Implementation Status (v0, 2026-05-08)
+## Implementation Status (as of 2026-05-16)
 
 This ADR is partially implemented in the local KG harness.
 

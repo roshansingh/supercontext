@@ -22,9 +22,16 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         )
         self.assertEqual(PYTHON_SUPPORT.source_roots(_repo_snapshot(), ctx), {"python": {"flask"}})
         self.assertEqual(PYTHON_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
-        self.assertEqual(PYTHON_SUPPORT.opportunity_detectors(), ())
-        self.assertIsNone(PYTHON_SUPPORT.package_resolver())
-        self.assertEqual(PYTHON_SUPPORT.dimension_rules(), {})
+        self.assertEqual(
+            [type(detector).__name__ for detector in PYTHON_SUPPORT.opportunity_detectors()],
+            ["HttpClientOpportunityDetector"],
+        )
+        self.assertEqual(type(PYTHON_SUPPORT.package_resolver()).__name__, "PythonPackageResolver")
+        python_rules = PYTHON_SUPPORT.dimension_rules()
+        self.assertEqual(python_rules["version"], 1)
+        self.assertIn("backend", {rule["dimension"] for rule in python_rules["rules"]})
+        python_rules["rules"].clear()
+        self.assertTrue(PYTHON_SUPPORT.dimension_rules()["rules"])
         self.assertEqual(PYTHON_SUPPORT.useful_edges(), {})
 
     def test_typescript_wrapper_exposes_existing_adapter_names_and_javascript_roots(self) -> None:
@@ -37,9 +44,16 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         )
         self.assertEqual(TYPESCRIPT_SUPPORT.source_roots(_repo_snapshot(), ctx), {"javascript": {"express"}})
         self.assertEqual(TYPESCRIPT_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
-        self.assertEqual(TYPESCRIPT_SUPPORT.opportunity_detectors(), ())
-        self.assertIsNone(TYPESCRIPT_SUPPORT.package_resolver())
-        self.assertEqual(TYPESCRIPT_SUPPORT.dimension_rules(), {})
+        self.assertEqual(
+            [type(detector).__name__ for detector in TYPESCRIPT_SUPPORT.opportunity_detectors()],
+            ["TypeScriptHttpClientOpportunityDetector"],
+        )
+        self.assertEqual(type(TYPESCRIPT_SUPPORT.package_resolver()).__name__, "TypeScriptPackageResolver")
+        typescript_rules = TYPESCRIPT_SUPPORT.dimension_rules()
+        self.assertEqual(typescript_rules["version"], 1)
+        self.assertIn("frontend", {rule["dimension"] for rule in typescript_rules["rules"]})
+        typescript_rules["rules"].clear()
+        self.assertTrue(TYPESCRIPT_SUPPORT.dimension_rules()["rules"])
         self.assertEqual(TYPESCRIPT_SUPPORT.useful_edges(), {})
 
     def test_typescript_matcher_preserves_declaration_file_exclusion(self) -> None:

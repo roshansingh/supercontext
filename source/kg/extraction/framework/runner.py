@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
@@ -12,6 +13,7 @@ from source.kg.extraction.framework.allowlists import (
     SUPPORTED_FACT_PREDICATES,
 )
 from source.kg.extraction.framework.known_stacks import KNOWN_STACK_CATEGORY_PREDICATE
+from source.kg.metrics.dimension import normalize_package_name
 
 
 @dataclass(frozen=True)
@@ -188,12 +190,14 @@ def _unsupported_known_stack_coverage(
 ) -> list[Coverage]:
     supported_tags = {tag for capability in capabilities for tag in capability.framework_tags}
     known_stacks_by_language: dict[str, dict[str, str]] = {}
-    for language_support in _registered_languages():
+    registered_languages = _registered_languages()
+    for language_support in registered_languages:
         for language, stacks in language_support.known_stacks().items():
             known_stacks_by_language.setdefault(language, {}).update(stacks)
+    dimension_scopes = _known_stack_dimension_scopes(registered_languages)
 
     rows: list[Coverage] = []
-    for language_support in _registered_languages():
+    for language_support in registered_languages:
         for language, import_roots in language_support.source_roots(repo, ctx).items():
             rows.extend(
                 _known_stack_rows_for_roots(
@@ -201,6 +205,7 @@ def _unsupported_known_stack_coverage(
                     ctx,
                     supported_tags,
                     known_stacks_by_language,
+                    dimension_scopes,
                     language,
                     import_roots,
                 )
@@ -213,6 +218,7 @@ def _known_stack_rows_for_roots(
     ctx: ExtractionContext,
     supported_tags: set[str],
     known_stacks_by_language: dict[str, dict[str, str]],
+    dimension_scopes: dict[tuple[str, str], JsonObject],
     language: str,
     import_roots: set[str],
 ) -> list[Coverage]:
@@ -224,22 +230,58 @@ def _known_stack_rows_for_roots(
         predicate = KNOWN_STACK_CATEGORY_PREDICATE.get(category)
         if predicate is None:
             continue
+        scope_ref = {
+            "repo": repo.name,
+            "language": language,
+            "import_root": import_root,
+            "category": category,
+            "reason": "no_adapter_for_known_stack",
+        }
+        scope_ref.update(dimension_scopes.get((language, normalize_package_name(import_root)), {}))
         rows.append(
             Coverage(
                 tenant_id=ctx.tenant_id,
                 predicate=predicate,
-                scope_ref={
-                    "repo": repo.name,
-                    "language": language,
-                    "import_root": import_root,
-                    "category": category,
-                    "reason": "no_adapter_for_known_stack",
-                },
+                scope_ref=scope_ref,
                 state="uninstrumented",
                 source_system="extraction_framework",
             )
         )
     return rows
+
+
+def _known_stack_dimension_scopes(registered_languages: tuple[Any, ...]) -> dict[tuple[str, str], JsonObject]:
+    dimension_languages = tuple(
+        language_support
+        for language_support in registered_languages
+        if callable(getattr(language_support, "dimension_rules", None))
+    )
+    scopes: dict[tuple[str, str], JsonObject] = {}
+    for language_support in dimension_languages:
+        language_names = (language_support.name, *getattr(language_support, "aliases", ()))
+        rules_doc = language_support.dimension_rules()
+        rules = rules_doc.get("rules", ()) if isinstance(rules_doc, Mapping) else ()
+        for rule in rules:
+            if not isinstance(rule, Mapping):
+                continue
+            dimension = rule.get("dimension")
+            if not isinstance(dimension, str):
+                continue
+            scope = {"dimension": dimension}
+            for stack_name in _dimension_rule_stack_names(rule):
+                for language_name in language_names:
+                    scopes.setdefault((language_name, stack_name), scope)
+    return scopes
+
+
+def _dimension_rule_stack_names(rule: Mapping[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for field in ("imports", "packages"):
+        values = rule.get(field, ())
+        if not isinstance(values, Iterable) or isinstance(values, (str, bytes)):
+            continue
+        names.update(normalize_package_name(value) for value in values if isinstance(value, str))
+    return names - {""}
 
 
 def _registered_languages():

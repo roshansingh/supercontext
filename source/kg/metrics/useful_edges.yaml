@@ -1,0 +1,106 @@
+dimensions:
+  backend:
+    - predicate: IMPLEMENTS
+      object_kinds: [Service]
+    - predicate: EXPOSES_ENDPOINT
+      subject_kinds: [Service]
+    - predicate: CALLS_ENDPOINT
+      subject_kinds: [Service]
+    - predicate: REFERENCES_DOMAIN
+      subject_kinds: [Service]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+    - predicate: REFERENCES_EVENT_CHANNEL
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: PRODUCES_EVENT
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: CONSUMES_EVENT
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+  frontend:
+    - predicate: IMPLEMENTS
+      object_kinds: [Service]
+    - predicate: CALLS_ENDPOINT
+      subject_kinds: [Service]
+    - predicate: REFERENCES_DOMAIN
+      subject_kinds: [Service]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+  ai-ml:
+    - predicate: IMPLEMENTS
+      object_kinds: [Service]
+    - predicate: CALLS_ENDPOINT
+      subject_kinds: [Service]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+    - predicate: REFERENCES_EVENT_CHANNEL
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: PRODUCES_EVENT
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: CONSUMES_EVENT
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+  iac:
+    - predicate: REFERENCES_DOMAIN
+      subject_kinds: [Service]
+      object_kinds: [Domain]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+    - predicate: ROUTES_DOMAIN_TO_DEPLOY
+      subject_kinds: [Domain]
+  data-pipeline:
+    - predicate: IMPLEMENTS
+      object_kinds: [Service]
+    - predicate: REFERENCES_EVENT_CHANNEL
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: PRODUCES_EVENT
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: CONSUMES_EVENT
+      subject_kinds: [Service]
+      object_kinds: [EventChannel]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+  shared-lib:
+    # Shared libraries currently surface through extractor-level code edges.
+    # Keep these until the canonical ontology adds a product-level library edge.
+    - predicate: IMPORTS
+      subject_kinds: [CodeModule]
+    - predicate: CALLS
+      subject_kinds: [CodeSymbol]
+      object_kinds: [CodeSymbol]
+  mobile:
+    - predicate: IMPLEMENTS
+      object_kinds: [Service]
+    - predicate: CALLS_ENDPOINT
+      subject_kinds: [Service]
+    - predicate: REFERENCES_DOMAIN
+      subject_kinds: [Service]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+  cli-tool:
+    - predicate: IMPLEMENTS
+      object_kinds: [Service]
+    - predicate: CALLS_ENDPOINT
+      subject_kinds: [Service]
+    - predicate: REFERENCES_ENV_VAR
+      subject_kinds: [Service]
+  docs:
+    - predicate: DOCUMENTS_ENDPOINT
+      subject_kinds: [Service]
+
+adr_followups:
+  - predicate: DEPLOYS_VIA_CONFIG
+    dimension: iac
+    adr_followup_required: true
+  - predicate: PROVIDES_RESOURCE
+    dimension: iac
+    adr_followup_required: true
+  - predicate: DEPENDS_ON_MODULE
+    dimension: iac
+    adr_followup_required: true

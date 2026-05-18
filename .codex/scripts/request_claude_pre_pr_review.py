@@ -60,7 +60,7 @@ Task:
 - Do not edit files. Return markdown only.
 - For each finding, include severity, file/path, evidence from the diff, and a concrete fix.
 - If no findings, say so and list residual risks.
-- Write the review in the same structure used by existing docs/reviews/PR-*-REVIEW.md files.
+- Write the review using the required output format below.
 
 Required output format:
 

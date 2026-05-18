@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-04-30
 - **Authors:** Roshan Singh, Maruti Agarwal
-- **Supersedes:** `claude-ontology-prior-art-research.md` and `codex-ontology-prior-art-research.md` as decision inputs
+- **Supersedes:** prior paired ontology prior-art research notes as decision inputs
 - **Binding ADR:** `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
 - **Debate transcript:** `debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md`
 
@@ -380,8 +380,6 @@ Per `PLATFORM-PRD.md` §11 (Phase 3) and `ADR-0004`'s candidate / enrichment sid
 
 ## Historical inputs
 
-- [`claude-ontology-prior-art-research.md`](./claude-ontology-prior-art-research.md)
-- [`codex-ontology-prior-art-research.md`](./codex-ontology-prior-art-research.md)
-- [`../debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md`](../debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md)
+The paired ontology prior-art research notes were consolidated into this recommendation. Read this document and the linked debate as the surviving decision history:
 
-Read those as research and debate history, not as open decisions.
+- [`../debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md`](../debates/2-2026-04-30-define-the-final-v1-canonical-ontology-f.md)

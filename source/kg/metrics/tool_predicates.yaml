@@ -1,0 +1,48 @@
+tools:
+  search_services:
+    subject_kinds:
+      - Service
+    predicates:
+      - DEFINED_IN
+      - IMPLEMENTS
+  get_service_brief:
+    subject_kinds:
+      - Service
+    predicates:
+      - EXPOSES_ENDPOINT
+      - CALLS_ENDPOINT
+      - DOCUMENTS_ENDPOINT
+      - REFERENCES_EVENT_CHANNEL
+      - CONSUMES_EVENT
+      - PRODUCES_EVENT
+      - ROUTES_DOMAIN_TO_DEPLOY
+  find_callers:
+    subject_kinds:
+      - CodeSymbol
+    predicates:
+      - CALLS
+  find_callees:
+    subject_kinds:
+      - CodeSymbol
+    predicates:
+      - CALLS
+  get_event_consumers:
+    subject_kinds:
+      - EventChannel
+    predicates:
+      - CONSUMES_EVENT
+  get_event_producers:
+    subject_kinds:
+      - EventChannel
+    predicates:
+      - PRODUCES_EVENT
+  blast_radius:
+    subject_kinds:
+      - CodeSymbol
+    predicates:
+      - CALLS
+  deploy_blockers_for:
+    subject_kinds:
+      - Service
+    predicates:
+      - ROUTES_DOMAIN_TO_DEPLOY

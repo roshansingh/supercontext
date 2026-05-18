@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -8,10 +9,13 @@ from typing import Any
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
+from source.kg.languages._shared.dimension_rules_loader import load_dimension_rules
 from source.kg.languages.known_stacks import load_known_stacks
 from source.kg.languages.python.extractors.extractor_adapter import PYTHON_AST_ADAPTER
 from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
+from source.kg.languages.python.opportunities import HttpClientOpportunityDetector
+from source.kg.languages.python.package_resolver import PythonPackageResolver
 
 
 @dataclass(frozen=True)
@@ -44,13 +48,13 @@ class PythonLanguageSupport:
         return {}
 
     def opportunity_detectors(self) -> tuple[Any, ...]:
-        return ()
+        return (HttpClientOpportunityDetector(),)
 
     def package_resolver(self) -> Any | None:
-        return None
+        return PythonPackageResolver()
 
     def dimension_rules(self) -> Mapping[str, Any]:
-        return {}
+        return deepcopy(_dimension_rules())
 
     def useful_edges(self) -> Mapping[str, Any]:
         return {}
@@ -69,3 +73,8 @@ LANGUAGE_SUPPORT = PythonLanguageSupport()
 def _known_stack_imports() -> dict[str, str]:
     # Static package metadata: read once per process and return copies above.
     return load_known_stacks(Path(__file__).with_name("known_stacks.yaml"))
+
+
+@cache
+def _dimension_rules() -> Mapping[str, Any]:
+    return load_dimension_rules(Path(__file__).with_name("dimension_rules.yaml"))
