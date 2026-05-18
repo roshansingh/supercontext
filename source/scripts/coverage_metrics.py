@@ -6,10 +6,9 @@ from pathlib import Path
 
 from source.kg.core.models import JsonObject, utc_now_iso
 from source.kg.core.store import read_jsonl
+from source.kg.metrics.constants import METRICS_FILENAME
 from source.kg.metrics import compute_all
 from source.kg.metrics.types import METRIC_STATES, CellMetrics
-
-METRICS_FILENAME = "metrics.jsonl"
 
 
 def main(argv: list[str] | None = None) -> int:
