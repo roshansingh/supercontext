@@ -10,9 +10,41 @@ Validation for Debate 1 after PR-1 and PR-2.
 - Local after report: `docs/evaluation/runs/shopagain-latticeai-debate1-pr2-2026-05-18/coverage-run.md`
 - Fleet size: 23 LatticeAI repos
 
-The snapshot and report paths above are generated local artifacts and are ignored by git. Regenerate the after report with:
+The snapshot and report paths above are generated local artifacts and are ignored by git. Regenerate the after snapshot and report with local LatticeAI checkouts:
 
 ```bash
+repos=(
+  ShopAgainMobile
+  ansible-playbooks
+  apidocs
+  highagency-terraform
+  highagencyadmin
+  highagencyapi
+  highagencyui
+  hipo-drf-exceptions
+  latticeai-terraform
+  mercury_api
+  mercury_campaign_messages
+  mercury_classifiers
+  mercury_ml
+  mercury_ml_api
+  mercury_ops_ui
+  mercury_tracking
+  mercury_ui
+  mercury_webextractor
+  mercury_webhooks
+  mercury_websocket
+  shopagain-chat-widget
+  shopagain_api_docs
+  woocommerce-plugin
+)
+repo_args=()
+for repo in "${repos[@]}"; do
+  repo_args+=(--repo "/Users/maruti/work/orgs/latticeai/${repo}")
+done
+python -m source.scripts.build_multi_kg \
+  "${repo_args[@]}" \
+  --out data/kg_runs/shopagain_latticeai_23_debate1_pr2_2026-05-18
 python -m source.scripts.coverage_metrics \
   --snapshot data/kg_runs/shopagain_latticeai_23_debate1_pr2_2026-05-18 \
   --expected-repos 23 \
