@@ -44,13 +44,13 @@ If the linker is run over `{1..10}` and later a snapshot for repo 11 is added wi
 - Repos 1–10's imports of packages exported by repo 11 → **unresolved** (snapshots 1–10 still hold the linker's view from when only 1–10 existed)
 - `ExternalPackage` dedup may miss the repo-11-published package, double-counting it as an external
 
-There is **no `relink-only` entry point in the current code**. `build_multi_kg` runs extraction + linker as one batch. To refresh just the linker, the workaround is to re-run `build_multi_kg`, which re-extracts everything. That defeats the point of incremental.
+This PR adds a `bettercontext-relink` entry point so the linker can be refreshed without re-running extraction. Before this command existed, the only workaround was to re-run `build_multi_kg`, which re-extracts everything and defeats the point of incremental ingestion.
 
 Current storage shape matters here:
 
 - `build_multi_kg(...)` writes one combined snapshot through `JsonlKgStore(output_dir).write(...)` (`source/kg/build/multi_repo.py:54-100`), not one mutable snapshot per input repo.
 - The combined manifest stores `built_at`, repo list, and linker counts (`source/kg/build/multi_repo.py:64-91`), while `JsonlKgStore.write(...)` writes only `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` in that one output directory (`source/kg/core/store.py:14-28`).
-- The CLI wrapper `source/scripts/build_multi_kg.py:9-21` only accepts repeated `--repo` inputs and one `--out` directory. There is no CLI or store abstraction today for "read N existing per-repo snapshots and refresh only their cross-repo links."
+- The CLI wrapper `source/scripts/build_multi_kg.py:9-21` accepts repeated `--repo` inputs and one `--out` directory for from-source builds. The relink-only path is now owned by `source/scripts/relink.py`.
 
 **Design implication:** relink-only should introduce an explicit fleet-level artifact instead of mutating per-repo JSONL files by default. Mutating per-repo `facts.jsonl` would mix repo-local extraction output with a fleet projection and make the same repo snapshot differ depending on which fleet it was linked in.
 
@@ -94,7 +94,7 @@ Concrete proposal:
 
 - Per-fleet check: `linker_built_at >= max(per_repo.built_at)` ⇒ fresh; else stale
 - Missing or unparsable per-repo/fleet `built_at` ⇒ stale with `linker_freshness_unknown=true`
-- `repo_commit_sha_set` in `_fleet/manifest.json` must equal the set of repo commit SHAs being aggregated; mismatch ⇒ stale even if timestamps look fresh
+- `_fleet/manifest.json.repo_commit_fingerprints` must equal the per-repo identity + commit entries being aggregated; mismatch ⇒ stale even if timestamps look fresh. The older `repo_commit_sha_set` is informational only because duplicate SHAs and `working-tree` snapshots can collapse.
 - Stale linker → M_cross_repo_linkage is reported with a contract flag `linker_stale=true` (same shape as Debate 14's existing tool/predicate contract flags on M_evidence_grounding / M_meta_coverage / M_silent_gap)
 - Consumers reading M10 always see the flag; can distinguish "improve resolvers" from "re-run linker"
 
@@ -122,13 +122,12 @@ bettercontext-build-kg --repo /work/team-new --out data/kg_runs/team-new
 
 # Refresh the cross-repo linker only — re-extraction skipped
 bettercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
-# proposed; not yet implemented
 
 # Re-aggregate metrics — pure projection, always safe
-bettercontext-coverage-metrics --snapshot-dir data/kg_runs/
+bettercontext-coverage-metrics --snapshot data/kg_runs/_fleet --fleet-dir data/kg_runs/_fleet
 
 # Result identical (modulo timestamps) to a from-scratch:
-#   bettercontext-build-multi-kg --repos data/kg_runs/* --out data/kg_runs/_fleet
+#   bettercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/_fleet
 ```
 
 Without `bettercontext-relink`, the org's choice today is:

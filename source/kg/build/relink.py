@@ -46,6 +46,7 @@ class LinkerInput:
     repo_identity: RepoIdentity
     entities: tuple[Entity, ...]
     validate_package_manifests: bool = False
+    snapshot_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,9 @@ def relink_snapshot_dirs(
 
     result = link_external_packages(inputs)
     out = Path(output_dir).expanduser().resolve()
+    input_dirs = {input_repo.snapshot_dir for input_repo in inputs if input_repo.snapshot_dir is not None}
+    if out in input_dirs:
+        raise ValueError(f"relink output_dir must not be one of the input snapshot directories: {out}")
     out.mkdir(parents=True, exist_ok=True)
     _write_jsonl(out / "cross_repo_links.jsonl", (fact.to_record() for fact in result.facts), "fact_id")
     _write_jsonl(
@@ -112,6 +116,22 @@ def relink_snapshot_dirs(
             for input_repo in inputs
         ],
         "repo_commit_sha_set": sorted({input_repo.repo.commit_sha for input_repo in inputs}),
+        "repo_commit_fingerprints": [
+            {
+                "repo_identity": input_repo.repo_identity.to_json(),
+                "commit_sha": input_repo.repo.commit_sha,
+            }
+            for input_repo in sorted(
+                inputs,
+                key=lambda value: (
+                    value.repo_identity.tenant_id,
+                    value.repo_identity.host,
+                    value.repo_identity.owner,
+                    value.repo_identity.name,
+                    value.repo.commit_sha,
+                ),
+            )
+        ],
         "provider_count": len(result.providers),
         "link_count": len(result.facts),
         "ambiguous_package_count": result.ambiguous_package_count,
@@ -248,12 +268,16 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         {},
     )
     resolved_tenant = _snapshot_tenant_id(manifest, tenant_id)
-    entities = tuple(_entity_from_record(row, root / "entities.jsonl") for row in read_jsonl(root / "entities.jsonl"))
+    entities = tuple(
+        _entity_from_record(row, root / "entities.jsonl")
+        for row in _read_entity_rows(root / "entities.jsonl")
+    )
     return LinkerInput(
         repo=repo,
         repo_identity=repo_identity(repo, resolved_tenant),
         entities=entities,
         validate_package_manifests=True,
+        snapshot_dir=root,
     )
 
 
@@ -273,6 +297,14 @@ def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None) -> str:
             )
         return resolved_override
     return resolved_manifest_tenant
+
+
+def _read_entity_rows(path: Path) -> tuple[JsonObject, ...]:
+    rows = read_jsonl(path)
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: row {index + 1} must be a JSON object")
+    return tuple(rows)
 
 
 def _entity_from_record(row: JsonObject, path: Path) -> Entity:
@@ -298,15 +330,18 @@ def _entity_from_record(row: JsonObject, path: Path) -> Entity:
 def _write_jsonl(path: Path, records: Iterable[JsonObject], key: str) -> None:
     seen: set[str] = set()
     tmp_path = path.with_name(f".{path.name}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            record_key = str(record[key])
-            if record_key in seen:
-                tmp_path.unlink(missing_ok=True)
-                raise ValueError(f"{path}: duplicate {key}: {record_key}")
-            seen.add(record_key)
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
-    tmp_path.replace(path)
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                record_key = str(record[key])
+                if record_key in seen:
+                    raise ValueError(f"{path}: duplicate {key}: {record_key}")
+                seen.add(record_key)
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _package_providers(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> list[PackageProvider]:
@@ -385,6 +420,8 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
         return package_name, aliases, pyproject
 
     package_json = repo.root / "package.json"
+    if validate_snapshot_manifest:
+        _validate_missing_manifest_file_matches_snapshot(repo, pyproject)
     if package_json.exists():
         if validate_snapshot_manifest:
             _validate_manifest_file_matches_snapshot(repo, package_json)
@@ -392,16 +429,27 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
             data = json.loads(package_json.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             data = {}
+        if not isinstance(data, dict):
+            data = {}
         package_name = str(data.get("name") or repo.name)
         aliases = {package_name, repo.name, _unscoped_package_name(package_name)}
         return package_name, aliases, package_json
 
     if validate_snapshot_manifest:
         _validate_repo_commit_matches_snapshot(repo)
+        _validate_missing_manifest_file_matches_snapshot(repo, package_json)
     return repo.name, {repo.name}, None
 
 
 def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
+    _validate_repo_commit_matches_snapshot(repo)
+    status = _git_status_porcelain(repo.root, manifest_path)
+    if status:
+        relative = manifest_path.relative_to(repo.root)
+        raise ValueError(f"Package manifest has uncommitted changes relative to snapshot commit: {relative}")
+
+
+def _validate_missing_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
     _validate_repo_commit_matches_snapshot(repo)
     status = _git_status_porcelain(repo.root, manifest_path)
     if status:

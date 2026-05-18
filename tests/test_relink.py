@@ -41,6 +41,7 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertEqual(relink_manifest["link_count"], len(batch_facts))
             self.assertEqual(relink_manifest["tenant_id"], "default")
             self.assertEqual(relink_manifest["repo_commit_sha_set"], ["working-tree"])
+            self.assertEqual(len(relink_manifest["repo_commit_fingerprints"]), 2)
             evidence = read_jsonl(fleet / "cross_repo_link_evidence.jsonl")
             self.assertEqual({row["target_id"] for row in evidence}, set(relink_facts))
             self.assertEqual({row["source_system"] for row in evidence}, {"package_linker"})
@@ -154,6 +155,59 @@ class RelinkOnlyTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "repo_path must be a directory"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_output_dir_that_is_input_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+
+            with self.assertRaisesRegex(ValueError, "output_dir must not be one of the input snapshot"):
+                relink_snapshot_dirs([snapshot], snapshot)
+
+    def test_relink_rejects_non_object_entity_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            with (snapshot / "entities.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write("[]\n")
+
+            with self.assertRaisesRegex(ValueError, "row .* must be a JSON object"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_accepts_non_object_package_json_as_repo_name_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "package.json").write_text('{"name": "consumer"}\n', encoding="utf-8")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "package.json").write_text("[]\n", encoding="utf-8")
+
+            manifest = relink_snapshot_dirs([snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["provider_count"], 1)
+
+    def test_relink_rejects_deleted_pyproject_before_package_json_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            (repo / "package.json").write_text('{"name": "consumer-package"}\n', encoding="utf-8")
+            _git(repo, "init")
+            _git(repo, "config", "user.email", "test@example.com")
+            _git(repo, "config", "user.name", "Test User")
+            _git(repo, "add", ".")
+            _git(repo, "commit", "-m", "initial")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            (repo / "pyproject.toml").unlink()
+
+            with self.assertRaisesRegex(ValueError, "Package manifest has uncommitted changes"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_build_multi_allows_dirty_package_manifest_for_fresh_build(self) -> None:
