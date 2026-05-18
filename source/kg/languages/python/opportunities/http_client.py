@@ -101,18 +101,23 @@ class _ScopeScanner:
             return ()
         return tuple(self._scan_statements(tree.body, _Scope()))
 
-    def _scan_statements(self, statements: list[ast.stmt], scope: _Scope) -> list[Opportunity]:
+    def _scan_statements(
+        self,
+        statements: list[ast.stmt],
+        scope: _Scope,
+        function_parent_scope: _Scope | None = None,
+    ) -> list[Opportunity]:
         opportunities: list[Opportunity] = []
         for statement in statements:
             if isinstance(statement, (ast.Import, ast.ImportFrom)):
                 self._bind_import(statement, scope)
                 continue
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                opportunities.extend(self._scan_function(statement, scope))
+                opportunities.extend(self._scan_function(statement, function_parent_scope or scope))
                 scope.shadow(statement.name)
                 continue
             if isinstance(statement, ast.ClassDef):
-                opportunities.extend(self._scan_class(statement, scope))
+                opportunities.extend(self._scan_class(statement, scope, function_parent_scope or scope))
                 scope.shadow(statement.name)
                 continue
             if isinstance(statement, (ast.With, ast.AsyncWith)):
@@ -120,33 +125,33 @@ class _ScopeScanner:
                     opportunities.extend(self._opportunities_in_node(item.context_expr, scope))
                     if item.optional_vars is not None:
                         self._bind_target(item.optional_vars, scope, _client_factory_module(item.context_expr, scope))
-                opportunities.extend(self._scan_statements(statement.body, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
                 continue
             if isinstance(statement, (ast.For, ast.AsyncFor)):
                 opportunities.extend(self._opportunities_in_node(statement.iter, scope))
                 self._bind_target(statement.target, scope, None)
-                opportunities.extend(self._scan_statements(statement.body, scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
                 continue
             if isinstance(statement, ast.If):
                 opportunities.extend(self._opportunities_in_node(statement.test, scope))
-                opportunities.extend(self._scan_statements(statement.body, scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
                 continue
             if isinstance(statement, ast.While):
                 opportunities.extend(self._opportunities_in_node(statement.test, scope))
-                opportunities.extend(self._scan_statements(statement.body, scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
                 continue
             if isinstance(statement, ast.Try):
-                opportunities.extend(self._scan_statements(statement.body, scope))
+                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
                 for handler in statement.handlers:
                     if handler.type is not None:
                         opportunities.extend(self._opportunities_in_node(handler.type, scope))
                     handler_scope = scope.child({handler.name} if handler.name else ())
-                    opportunities.extend(self._scan_statements(handler.body, handler_scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope))
-                opportunities.extend(self._scan_statements(statement.finalbody, scope))
+                    opportunities.extend(self._scan_statements(handler.body, handler_scope, function_parent_scope))
+                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
+                opportunities.extend(self._scan_statements(statement.finalbody, scope, function_parent_scope))
                 continue
             if isinstance(statement, ast.Match):
                 opportunities.extend(self._opportunities_in_node(statement.subject, scope))
@@ -154,7 +159,7 @@ class _ScopeScanner:
                     case_scope = scope.child(_pattern_names(case.pattern))
                     if case.guard is not None:
                         opportunities.extend(self._opportunities_in_node(case.guard, case_scope))
-                    opportunities.extend(self._scan_statements(case.body, case_scope))
+                    opportunities.extend(self._scan_statements(case.body, case_scope, function_parent_scope))
                 continue
             opportunities.extend(self._opportunities_in_node(statement, scope))
             self._bind_statement_targets(statement, scope)
@@ -171,12 +176,12 @@ class _ScopeScanner:
         opportunities.extend(self._scan_statements(node.body, child_scope))
         return opportunities
 
-    def _scan_class(self, node: ast.ClassDef, parent_scope: _Scope) -> list[Opportunity]:
+    def _scan_class(self, node: ast.ClassDef, eval_scope: _Scope, function_parent_scope: _Scope) -> list[Opportunity]:
         opportunities: list[Opportunity] = []
         for expr in (*node.decorator_list, *node.bases, *node.keywords):
-            opportunities.extend(self._opportunities_in_node(expr, parent_scope))
-        child_scope = parent_scope.child(())
-        opportunities.extend(self._scan_statements(node.body, child_scope))
+            opportunities.extend(self._opportunities_in_node(expr, eval_scope))
+        child_scope = eval_scope.child(())
+        opportunities.extend(self._scan_statements(node.body, child_scope, function_parent_scope))
         return opportunities
 
     def _bind_import(self, node: ast.Import | ast.ImportFrom, scope: _Scope) -> None:

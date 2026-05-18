@@ -71,6 +71,26 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
         self.assertEqual([row.source_kind for row in opportunities], ["requests.get"])
         self.assertEqual([row.line for row in opportunities], [8])
 
+    def test_detector_does_not_treat_class_body_bindings_as_method_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "app.py"
+            app.write_text(
+                "import requests\n"
+                "class Client:\n"
+                "    import requests as class_requests\n"
+                "    def call(self):\n"
+                "        class_requests.get('/not-method-scope')\n"
+                "        requests.get('/global')\n",
+                encoding="utf-8",
+            )
+            repo = discover_repo(root)
+
+            opportunities = HttpClientOpportunityDetector().detect(repo)
+
+        self.assertEqual([row.source_kind for row in opportunities], ["requests.get"])
+        self.assertEqual([row.line for row in opportunities], [6])
+
     def test_python_language_exposes_http_client_opportunity_detector(self) -> None:
         detectors = PYTHON_SUPPORT.opportunity_detectors()
 

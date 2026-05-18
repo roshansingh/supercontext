@@ -55,6 +55,8 @@ class _MetricContext:
     scoped_facts: tuple[JsonObject, ...]
     scoped_evidence: tuple[JsonObject, ...]
     scoped_opportunities: tuple["_ScopedOpportunity", ...]
+    fact_evidence_by_predicate: dict[str, tuple[JsonObject, ...]]
+    coverage_by_predicate: dict[str, tuple[JsonObject, ...]]
 
 
 @dataclass(frozen=True)
@@ -233,6 +235,8 @@ def _build_context(
         for opportunity in opportunities
         if dimension_files is None or opportunity.scope_keys.intersection(dimension_files)
     )
+    fact_evidence_by_predicate = _fact_evidence_by_predicate(scoped_facts, evidence)
+    coverage_by_predicate = _rows_by_predicate(snapshot.coverage)
     return _MetricContext(
         snapshot=snapshot,
         config=config,
@@ -244,6 +248,8 @@ def _build_context(
         scoped_facts=scoped_facts,
         scoped_evidence=evidence,
         scoped_opportunities=scoped_opportunities,
+        fact_evidence_by_predicate=fact_evidence_by_predicate,
+        coverage_by_predicate=coverage_by_predicate,
     )
 
 
@@ -381,16 +387,7 @@ def _m_evidence_grounding(context: _MetricContext) -> MetricValue:
 
 def _fact_covers_opportunity(context: _MetricContext, scoped_opportunity: _ScopedOpportunity) -> bool:
     opportunity = scoped_opportunity.opportunity
-    fact_ids = {
-        str(fact.get("fact_id"))
-        for fact in context.scoped_facts
-        if fact.get("predicate") == opportunity.predicate
-    }
-    if not fact_ids:
-        return False
-    for row in context.scoped_evidence:
-        if row.get("target_type") != "fact" or str(row.get("target_id")) not in fact_ids:
-            continue
+    for row in context.fact_evidence_by_predicate.get(opportunity.predicate, ()):
         bytes_ref = row.get("bytes_ref")
         if _bytes_ref_scope_key(bytes_ref) not in scoped_opportunity.scope_keys:
             continue
@@ -401,9 +398,7 @@ def _fact_covers_opportunity(context: _MetricContext, scoped_opportunity: _Scope
 
 def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _ScopedOpportunity) -> bool:
     opportunity = scoped_opportunity.opportunity
-    for row in context.snapshot.coverage:
-        if row.get("predicate") != opportunity.predicate:
-            continue
+    for row in context.coverage_by_predicate.get(opportunity.predicate, ()):
         # M_silent_gap measures absence of graph facts and absence of explicit
         # coverage. An uninstrumented row is a loud refusal, not a silent gap.
         scope_ref = row.get("scope_ref")
@@ -424,6 +419,35 @@ def _coverage_covers_opportunity(context: _MetricContext, scoped_opportunity: _S
         if line == opportunity.line:
             return True
     return False
+
+
+def _fact_evidence_by_predicate(
+    scoped_facts: tuple[JsonObject, ...],
+    scoped_evidence: tuple[JsonObject, ...],
+) -> dict[str, tuple[JsonObject, ...]]:
+    predicate_by_fact_id = {
+        str(fact.get("fact_id")): str(fact.get("predicate"))
+        for fact in scoped_facts
+        if isinstance(fact.get("predicate"), str)
+    }
+    rows_by_predicate: dict[str, list[JsonObject]] = {}
+    for row in scoped_evidence:
+        if row.get("target_type") != "fact":
+            continue
+        predicate = predicate_by_fact_id.get(str(row.get("target_id")))
+        if predicate is None:
+            continue
+        rows_by_predicate.setdefault(predicate, []).append(row)
+    return {predicate: tuple(rows) for predicate, rows in rows_by_predicate.items()}
+
+
+def _rows_by_predicate(rows: tuple[JsonObject, ...]) -> dict[str, tuple[JsonObject, ...]]:
+    rows_by_predicate: dict[str, list[JsonObject]] = {}
+    for row in rows:
+        predicate = row.get("predicate")
+        if isinstance(predicate, str):
+            rows_by_predicate.setdefault(predicate, []).append(row)
+    return {predicate: tuple(predicate_rows) for predicate, predicate_rows in rows_by_predicate.items()}
 
 
 def _coverage_scope_matches_path(scope_ref: JsonObject, opportunity_path: str) -> bool:
