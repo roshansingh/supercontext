@@ -67,6 +67,8 @@ class CoverageReportTest(unittest.TestCase):
             self.assertEqual(payload["summary"]["repos_with_lowest_coverage"][0]["repo"], "web")
             self.assertEqual(payload["summary"]["worst_dimensions"][0]["dimension"], "frontend")
             self.assertEqual(payload["summary"]["worst_metrics"][0]["metric"], "M_silent_gap")
+            self.assertEqual(payload["summary"]["coverage_gap_count"], 0)
+            self.assertEqual(payload["coverage_gaps"], [])
             self.assertEqual(len(payload["cells"]), 2)
             self.assertIn("# Coverage Run: shopagain-latticeai-2026-05-18", markdown)
             self.assertIn("| `web` | `frontend` | 0.300 | 1 |", markdown)
@@ -105,6 +107,17 @@ class CoverageReportTest(unittest.TestCase):
 
             with self.assertRaisesRegex(FileNotFoundError, "run coverage_metrics first"):
                 write_coverage_report(snapshot, Path(tmpdir) / "report")
+
+    def test_report_rejects_coverage_directory_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(snapshot, _record())
+            (snapshot / "coverage.jsonl").unlink()
+            (snapshot / "coverage.jsonl").mkdir()
+
+            with self.assertRaisesRegex(FileNotFoundError, "Coverage file is not a file"):
+                write_coverage_report(snapshot, root / "report")
 
     def test_report_counts_scalar_repo_count_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -205,8 +218,260 @@ class CoverageReportTest(unittest.TestCase):
 
         self.assertIn("must be a positive integer", stderr.getvalue())
 
+    def test_report_surfaces_unsupported_language_coverage_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(),
+                coverage_records=[
+                    {
+                        "coverage_id": "cov_java",
+                        "tenant_id": "default",
+                        "predicate": "LANGUAGE_SUPPORT",
+                        "state": "uninstrumented",
+                        "source_system": "repo_discovery",
+                        "checked_at": "2026-05-18T00:00:00+00:00",
+                        "scope_ref": {
+                            "repo": "orders",
+                            "language": "java",
+                            "reason": "unsupported_language",
+                            "file_count": 2,
+                            "sample_paths": ["src/Main.java", "src/Api.java"],
+                        },
+                    }
+                ],
+            )
 
-def _write_snapshot(snapshot: Path, *records: dict, manifest: dict | None = None) -> None:
+            report = write_coverage_report(snapshot, root / "report")
+            markdown = (root / "report" / REPORT_MARKDOWN_FILENAME).read_text(encoding="utf-8")
+
+            self.assertEqual(report.payload["summary"]["coverage_gap_count"], 1)
+            self.assertEqual(
+                report.payload["coverage_gaps"][0],
+                {
+                    "repo": "orders",
+                    "repo_owner": None,
+                    "language": "java",
+                    "predicate": "LANGUAGE_SUPPORT",
+                    "state": "uninstrumented",
+                    "reason": "unsupported_language",
+                    "file_count": 2,
+                    "sample_paths": ["src/Main.java", "src/Api.java"],
+                    "scope_ref": {
+                        "repo": "orders",
+                        "language": "java",
+                        "reason": "unsupported_language",
+                        "file_count": 2,
+                        "sample_paths": ["src/Main.java", "src/Api.java"],
+                    },
+                    "source_system": "repo_discovery",
+                },
+            )
+            self.assertIn("## Coverage Gaps", markdown)
+            self.assertIn(
+                "| `orders` | `-` | `java` | `LANGUAGE_SUPPORT` | `uninstrumented` | `unsupported_language` | 2 | "
+                "`samples=src/Main.java,src/Api.java` |",
+                markdown,
+            )
+
+    def test_markdown_coverage_gaps_include_scope_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(),
+                coverage_records=[
+                    {
+                        "coverage_id": "cov_stack",
+                        "tenant_id": "default",
+                        "predicate": "EXPOSES_ENDPOINT",
+                        "state": "uninstrumented",
+                        "source_system": "extraction_framework",
+                        "checked_at": "2026-05-18T00:00:00+00:00",
+                        "scope_ref": {
+                            "repo": "orders",
+                            "language": "python",
+                            "reason": "no_adapter_for_known_stack",
+                            "import_root": "django",
+                            "category": "web_framework",
+                        },
+                    }
+                ],
+            )
+
+            write_coverage_report(snapshot, root / "report")
+            markdown = (root / "report" / REPORT_MARKDOWN_FILENAME).read_text(encoding="utf-8")
+
+            self.assertIn(
+                "| `orders` | `-` | `python` | `EXPOSES_ENDPOINT` | `uninstrumented` | "
+                "`no_adapter_for_known_stack` | 0 | `category=web_framework; import_root=django` |",
+                markdown,
+            )
+
+    def test_markdown_coverage_gap_details_do_not_break_table_on_newlines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(),
+                coverage_records=[
+                    {
+                        "coverage_id": "cov_error",
+                        "tenant_id": "default",
+                        "predicate": "PARSES",
+                        "state": "uninstrumented",
+                        "source_system": "extraction_framework",
+                        "checked_at": "2026-05-18T00:00:00+00:00",
+                        "scope_ref": {
+                            "repo": "orders",
+                            "reason": "adapter_error",
+                            "message": "first line\nsecond | line",
+                        },
+                    }
+                ],
+            )
+
+            write_coverage_report(snapshot, root / "report")
+            markdown = (root / "report" / REPORT_MARKDOWN_FILENAME).read_text(encoding="utf-8")
+
+            self.assertIn("`message=first line second \\| line`", markdown)
+            self.assertNotIn("first line\nsecond", markdown)
+
+    def test_multi_repo_report_does_not_duplicate_unsupported_manifest_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(),
+                manifest={
+                    "build_type": "multi_repo",
+                    "repo_count": 2,
+                    "repos": [
+                        {"repo_path": str(root / "first"), "repo_name": "first", "owner": "org", "commit_sha": "a"},
+                        {"repo_path": str(root / "second"), "repo_name": "second", "owner": "org", "commit_sha": "b"},
+                    ],
+                    "counts": {"files_by_language": {}, "unsupported_files_by_language": {"java": 1}},
+                },
+                coverage_records=[
+                    {
+                        "coverage_id": "cov_java",
+                        "tenant_id": "default",
+                        "predicate": "LANGUAGE_SUPPORT",
+                        "state": "uninstrumented",
+                        "source_system": "repo_discovery",
+                        "checked_at": "2026-05-18T00:00:00+00:00",
+                        "scope_ref": {
+                            "repo": "first",
+                            "language": "java",
+                            "reason": "unsupported_language",
+                            "file_count": 1,
+                            "sample_paths": ["Main.java"],
+                        },
+                    }
+                ],
+            )
+
+            report = write_coverage_report(snapshot, root / "report")
+
+            self.assertEqual(len(report.payload["coverage_gaps"]), 1)
+            self.assertEqual(report.payload["coverage_gaps"][0]["repo"], "first")
+
+    def test_single_repo_report_does_not_duplicate_unsupported_manifest_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(repo="orders"),
+                manifest={
+                    "repo_path": str(root / "orders"),
+                    "repo_name": "orders",
+                    "owner": "shopagain",
+                    "commit_sha": "abc",
+                    "counts": {"files_by_language": {}, "unsupported_files_by_language": {"java": 2}},
+                },
+                coverage_records=[
+                    {
+                        "coverage_id": "cov_java",
+                        "tenant_id": "default",
+                        "predicate": "LANGUAGE_SUPPORT",
+                        "state": "uninstrumented",
+                        "source_system": "repo_discovery",
+                        "checked_at": "2026-05-18T00:00:00+00:00",
+                        "scope_ref": {
+                            "repo": "orders",
+                            "language": "java",
+                            "reason": "unsupported_language",
+                            "file_count": 2,
+                            "sample_paths": ["src/Main.java", "src/Api.java"],
+                        },
+                    }
+                ],
+            )
+
+            report = write_coverage_report(snapshot, root / "report")
+
+            self.assertEqual(len(report.payload["coverage_gaps"]), 1)
+            self.assertEqual(report.payload["coverage_gaps"][0]["repo"], "orders")
+
+    def test_report_skips_manifest_unsupported_gap_when_single_repo_name_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(),
+                manifest={"counts": {"files_by_language": {}, "unsupported_files_by_language": {"java": 2}}},
+            )
+
+            report = write_coverage_report(snapshot, root / "report")
+
+            self.assertEqual(report.payload["coverage_gaps"], [])
+
+    def test_manifest_unsupported_gap_scope_ref_matches_coverage_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "snapshot"
+            _write_snapshot(
+                snapshot,
+                _record(repo="orders"),
+                manifest={
+                    "repo_path": str(root / "orders"),
+                    "repo_name": "orders",
+                    "owner": "shopagain",
+                    "commit_sha": "abc",
+                    "counts": {"files_by_language": {}, "unsupported_files_by_language": {"java": 2}},
+                },
+            )
+
+            report = write_coverage_report(snapshot, root / "report")
+
+            self.assertEqual(
+                report.payload["coverage_gaps"][0]["scope_ref"],
+                {
+                    "repo": "orders",
+                    "repo_owner": "shopagain",
+                    "language": "java",
+                    "path_prefix": ".",
+                    "reason": "unsupported_language",
+                    "file_count": 2,
+                    "sample_paths": [],
+                },
+            )
+            self.assertEqual(report.payload["coverage_gaps"][0]["repo_owner"], "shopagain")
+
+
+def _write_snapshot(
+    snapshot: Path,
+    *records: dict,
+    manifest: dict | None = None,
+    coverage_records: list[dict] | None = None,
+) -> None:
     repo = snapshot.parent / "repo"
     repo.mkdir(exist_ok=True)
     snapshot.mkdir()
@@ -227,6 +492,9 @@ def _write_snapshot(snapshot: Path, *records: dict, manifest: dict | None = None
     )
     with (snapshot / METRICS_FILENAME).open("w", encoding="utf-8") as handle:
         for record in records:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    with (snapshot / "coverage.jsonl").open("w", encoding="utf-8") as handle:
+        for record in coverage_records or []:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
     self_check = read_jsonl(snapshot / METRICS_FILENAME)
     if len(self_check) != len(records):

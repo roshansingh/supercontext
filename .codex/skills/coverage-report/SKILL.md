@@ -58,6 +58,7 @@ Report:
 - lowest repo coverage
 - weakest dimensions
 - worst metrics
+- coverage gaps from `coverage_gaps` (unsupported languages, uninstrumented stacks, stale/partial coverage)
 - `partial` / `n_a` reasons and contract flags
 - narrow next PR recommendation
 

@@ -82,6 +82,7 @@ Before creating a PR for the first time, after coding is finished, tests pass, a
 
 - Run `python3 .codex/scripts/request_claude_pre_pr_review.py --base main` yourself.
 - The helper must run Claude Code CLI non-interactively, review the current branch against `main`, include any uncommitted working-tree diff, forbid edits, and write the review under `docs/reviews/`.
+- When invoking Claude directly with `claude -p`, unset Anthropic API key environment variables in that command so Claude uses the locally authenticated Claude Code session, for example: `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude -p "<prompt>"`.
 - If the helper reports that `claude` is missing or unauthenticated, stop and report that blocker instead of creating the PR.
 - The generated review must follow the helper's embedded format: metadata, verdict, summary, what works, real issues, questions or assumptions, pass conditions, and final verdict.
 - For each Claude finding, make an explicit decision: `accept`, `deny`, or `act`.

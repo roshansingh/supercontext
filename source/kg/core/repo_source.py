@@ -8,6 +8,7 @@ from types import MappingProxyType
 
 from source.kg.languages.file_matchers import REGISTERED_LANGUAGE_FILES
 from source.kg.languages.types import LanguageFileMatcher
+from source.kg.languages.unsupported import unsupported_files_by_language
 
 
 IGNORED_DIRS = {
@@ -35,6 +36,7 @@ class RepoSnapshot:
     owner: str
     commit_sha: str
     files_by_language: Mapping[str, tuple[Path, ...]]
+    unsupported_files_by_language: Mapping[str, tuple[Path, ...]]
 
     def __init__(
         self,
@@ -43,6 +45,7 @@ class RepoSnapshot:
         owner: str,
         commit_sha: str,
         files_by_language: Mapping[str, tuple[Path, ...]],
+        unsupported_files_by_language: Mapping[str, tuple[Path, ...]] | None = None,
     ) -> None:
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
@@ -52,6 +55,13 @@ class RepoSnapshot:
             self,
             "files_by_language",
             MappingProxyType({language: tuple(paths) for language, paths in files_by_language.items()}),
+        )
+        object.__setattr__(
+            self,
+            "unsupported_files_by_language",
+            MappingProxyType(
+                {language: tuple(paths) for language, paths in (unsupported_files_by_language or {}).items()}
+            ),
         )
 
     def __hash__(self) -> int:
@@ -82,12 +92,19 @@ def discover_repo(
         raise FileNotFoundError(f"Repo path does not exist: {root}")
 
     files_by_language = _files_by_language(root, language_files)
+    source_files = tuple(path for paths in files_by_language.values() for path in paths)
     return RepoSnapshot(
         root=root,
         name=root.name,
         owner=root.parent.name,
         commit_sha=_git_commit_sha(root),
         files_by_language=files_by_language,
+        unsupported_files_by_language=unsupported_files_by_language(
+            root,
+            source_files=source_files,
+            language_files=language_files,
+            ignored_dirs=frozenset(IGNORED_DIRS),
+        ),
     )
 
 

@@ -37,6 +37,9 @@ def build_kg(
             "files_by_language": {
                 language: len(paths) for language, paths in sorted(repo.files_by_language.items())
             },
+            "unsupported_files_by_language": {
+                language: len(paths) for language, paths in sorted(repo.unsupported_files_by_language.items())
+            },
             "entities": len({entity.entity_id for entity in build.entities}),
             "facts": len({fact.fact_id for fact in build.facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
