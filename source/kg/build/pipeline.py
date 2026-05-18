@@ -10,7 +10,7 @@ from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework import Adapter, ExtractionContext
 from source.kg.extraction.framework.registry import validate_adapters
-from source.kg.languages.dotnet.package_resolver import DOTNET_PACKAGE_IGNORED_DIRS
+from source.kg.languages.dotnet.package_resolver import DOTNET_PACKAGE_IGNORED_DIRS, DOTNET_PACKAGE_MANIFESTS
 
 
 def build_kg(
@@ -117,7 +117,14 @@ def _package_manifest_fingerprints(root: Path) -> list[JsonObject]:
         if not path.is_file():
             continue
         manifests.append({"path": filename, "sha256": sha256(path.read_bytes()).hexdigest()})
-    for path in sorted(root.rglob("*.csproj")):
+    if manifests:
+        return manifests
+    dotnet_manifest_paths = {
+        path
+        for pattern in DOTNET_PACKAGE_MANIFESTS
+        for path in root.rglob(pattern)
+    }
+    for path in sorted(dotnet_manifest_paths):
         relative_path = path.relative_to(root)
         if any(part in DOTNET_PACKAGE_IGNORED_DIRS for part in relative_path.parts) or not path.is_file():
             continue

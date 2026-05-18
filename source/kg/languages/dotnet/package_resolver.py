@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -43,7 +44,8 @@ class DotnetPackageResolver:
         paths = tuple(
             sorted(
                 path
-                for path in repo.root.rglob("*.csproj")
+                for pattern in DOTNET_PACKAGE_MANIFESTS
+                for path in repo.root.rglob(pattern)
                 if not any(part in DOTNET_PACKAGE_IGNORED_DIRS for part in path.relative_to(repo.root).parts)
             )
         )

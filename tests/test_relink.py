@@ -886,6 +886,21 @@ class RelinkOnlyTest(unittest.TestCase):
                 ["Provider.csproj"],
             )
 
+    def test_build_kg_skips_dotnet_fingerprints_when_higher_precedence_manifest_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "provider"
+            repo.mkdir(parents=True)
+            (repo / "pyproject.toml").write_text("[project]\nname = \"provider\"\n", encoding="utf-8")
+            (repo / "Provider.csproj").write_text("<Project />\n", encoding="utf-8")
+
+            manifest = build_kg(repo, root / "snapshot", tenant_id="default")
+
+            self.assertEqual(
+                [row["path"] for row in manifest["package_manifests"]],
+                ["pyproject.toml"],
+            )
+
     def test_relink_fails_closed_on_ambiguous_dotnet_namespace_providers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
