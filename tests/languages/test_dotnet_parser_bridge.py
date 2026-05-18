@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from source.kg.core.repo_source import discover_repo
+from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.languages.dotnet.extractors.parser_bridge import _parse_dotnet_repo_uncached
 from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
 
 
@@ -19,6 +21,31 @@ def _dotnet_dependencies_available() -> bool:
 
 
 DOTNET_AVAILABLE = _dotnet_dependencies_available()
+
+
+class DotnetParserBridgeDependencyTest(unittest.TestCase):
+    def test_missing_dependency_error_mentions_dotnet_extra(self) -> None:
+        repo = RepoSnapshot(
+            root=Path("/tmp/bettercontext-dotnet-missing-deps"),
+            name="repo",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"dotnet": ()},
+        )
+
+        original_import = __import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "tree_sitter":
+                raise ImportError("missing tree_sitter")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            with self.assertRaises(RuntimeError) as raised:
+                _parse_dotnet_repo_uncached(repo)
+        message = str(raised.exception)
+        self.assertIn("pip install -e", message)
+        self.assertIn("bettercontext[dotnet]", message)
 
 
 @unittest.skipIf(not DOTNET_AVAILABLE, "tree-sitter and tree-sitter-c-sharp not installed; install with pip install -e '.[dotnet]'")

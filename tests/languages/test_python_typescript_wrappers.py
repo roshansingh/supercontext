@@ -81,6 +81,11 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertTrue(DOTNET_SUPPORT.dimension_rules()["rules"])
         self.assertEqual(DOTNET_SUPPORT.useful_edges(), {})
 
+    def test_dotnet_matcher_excludes_build_output_dirs(self) -> None:
+        self.assertTrue(DOTNET_SUPPORT.matches_file(Path("src/Program.cs")))
+        self.assertFalse(DOTNET_SUPPORT.matches_file(Path("obj/Debug/net8.0/Generated.cs")))
+        self.assertFalse(DOTNET_SUPPORT.matches_file(Path("bin/Debug/net8.0/Generated.cs")))
+
     def test_repo_discovery_populates_generic_language_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
