@@ -1,6 +1,6 @@
 # Coverage Metrics — Implementation Plan (Debate-19 contract)
 
-**Status:** in flight — 10 PRs merged to `main`; PR-11 BACKLOG-only slice in progress as of 2026-05-18
+**Status:** complete — 11 PRs merged to `main` as of 2026-05-18
 **Source:** Debate 19 (`debates/` was local-gitignored and is no longer present; this doc captures the converged contract)
 **Related docs:**
 - `docs/evaluation/claude-kg-coverage-metrices.md` + `docs/evaluation/codex-kg-coverage-metrices.md` — parallel research inputs (Debate-14 inputs)
@@ -100,7 +100,7 @@ Branched from `main` (not `dotnet-support`). Each PR independently green via `py
 | PR-8 | Extract linker into `source/kg/build/relink.py` + `bettercontext-relink` CLI + `_fleet/` artifacts + `linker_stale` flag | ✅ merged | PR #88 (`debate19-pr8-relink-only`) — bundles the original PR-8 refactor + PR-9 CLI |
 | **PR-9** | Python PyPI package resolver | ✅ merged | PR #89 (`debate19-pr9-python-package-resolver`) — was PR-10 in the original plan |
 | **PR-10** | TS npm package resolver | ✅ merged | PR #90 (`debate19-pr10-typescript-package-resolver`) — was PR-11 in the original plan |
-| **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | **🚧 in progress** | `debate19-pr11-backlog-followups` (was PR-12) |
+| **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | ✅ merged | PR #91 (`debate19-pr11-backlog-followups`) — was PR-12 |
 
 Note on numbering drift: the converged plan originally had 12 PRs and treated the linker refactor (PR-8) and the relink CLI (PR-9) as separate. PR #88 landed both as one PR. Current numbering above reflects what actually shipped, with 2 PRs still pending.
 
@@ -216,6 +216,23 @@ Evaluation movement:
 | Org dashboard / metric run history — `metrics.jsonl` accumulation + visualization | When customer-facing reporting becomes a feature requirement |
 
 No code changes in PR-11; pure tracked-deferral housekeeping.
+
+### PR-11 implementation result
+
+Merged as PR #91 on 2026-05-18.
+
+Files changed:
+- `BACKLOG.md`
+- `docs/evaluation/COVERAGE-METRICS-IMPLEMENTATION-PLAN.md`
+
+Verification:
+- `.venv/bin/python -m compileall -q source`
+- `.venv/bin/python -m unittest discover -s tests`
+- CI `test` check passed on PR #91
+
+Reviewer loop:
+- Claude pre-PR review approved; ownership wording was adjusted after verifying ADR-0006 already includes canonical `OWNS`.
+- Copilot review completed on current head `2c42d4cae133` with zero actionable feedback.
 
 ## 6. Verification gates
 
