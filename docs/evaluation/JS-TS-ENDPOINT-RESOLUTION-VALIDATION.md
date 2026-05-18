@@ -54,6 +54,8 @@ python -m source.scripts.coverage_report \
 
 This debate improved response quality more than raw coverage. The old extractor counted many unsafe JS/TS calls as endpoint facts; the new extractor refuses those cases and explains why. That drops `M_extractor_opportunity` because the metric currently rewards emitted facts, even when the old facts were less trustworthy.
 
+`M_silent_gap` stays flat because these rows were already represented in the opportunity/gap surface; this debate changed unsafe facts and generic reasons into typed coverage reasons, not the silent-gap denominator.
+
 Non-`mercury_ui` validation did move: `ShopAgainMobile`, `highagencyui`, and `mercury_api` now show specific dynamic-template/helper/reassignment reasons instead of generic unresolved rows or unsafe facts.
 
 ## Cross-File Decision
@@ -66,5 +68,7 @@ The remaining largest gaps are not primarily imported constants:
 - `host_env_backed`: 211
 - `target_helper_call_deferred`: 39
 - `unresolved_target`: 13
+
+The `host_env_backed` value here is the same after-value from the result table, not a separate sub-bucket.
 
 The next useful debate should focus on general, non-repo-specific handling for dynamic route/template parameters and env-host/base-client provenance, not cross-file constants.
