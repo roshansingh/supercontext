@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from source.kg.build import relink as relink_module
 from source.kg.build.pipeline import build_kg
 from source.kg.build.multi_repo import build_multi_kg
 from source.kg.build.relink import default_output_dir, relink_snapshot_dirs, resolve_snapshot_dirs
@@ -360,6 +361,17 @@ class RelinkOnlyTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "does not match current repo commit"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_git_commit_sha_reports_missing_git(self) -> None:
+        with patch("source.kg.build.relink.subprocess.run", side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(RuntimeError, "git is required"):
+                relink_module._git_commit_sha(Path("/tmp/repo"))
+
+    def test_git_commit_sha_reports_non_git_working_copy(self) -> None:
+        error = subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"])
+        with patch("source.kg.build.relink.subprocess.run", side_effect=error):
+            with self.assertRaisesRegex(ValueError, "not a git working copy"):
+                relink_module._git_commit_sha(Path("/tmp/repo"))
 
     def test_relink_rejects_manifest_repo_path_that_is_not_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
