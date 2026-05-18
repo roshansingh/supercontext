@@ -8,7 +8,7 @@ from pathlib import Path
 
 from source.kg.build.pipeline import build_kg
 from source.kg.build.multi_repo import build_multi_kg
-from source.kg.build.relink import relink_snapshot_dirs, resolve_snapshot_dirs
+from source.kg.build.relink import default_output_dir, relink_snapshot_dirs, resolve_snapshot_dirs
 from source.kg.core.store import read_jsonl
 
 
@@ -67,6 +67,7 @@ class RelinkOnlyTest(unittest.TestCase):
             )
 
             self.assertEqual(resolve_snapshot_dirs((root,)), (snapshot.resolve(),))
+            self.assertEqual(default_output_dir((root,)), root.resolve() / "_fleet")
 
     def test_relink_rejects_duplicate_repo_identity_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

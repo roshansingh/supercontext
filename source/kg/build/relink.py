@@ -163,7 +163,7 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
 
 
 def default_output_dir(paths: tuple[Path, ...]) -> Path:
-    if len(paths) == 1 and not (paths[0].expanduser().resolve() / "manifest.json").exists():
+    if len(paths) == 1 and not _is_repo_snapshot_dir(paths[0].expanduser().resolve()):
         return paths[0].expanduser().resolve() / "_fleet"
     raise ValueError("--out is required unless --snapshot-dir points to a single fleet directory")
 

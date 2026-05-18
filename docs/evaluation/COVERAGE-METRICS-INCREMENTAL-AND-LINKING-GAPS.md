@@ -28,7 +28,7 @@ KG row IDs are content-hashed via `stable_hash(...)` over the row's identifying 
 | `coverage_id` | `cov_{stable_hash(tenant_id, predicate, scope_ref, source_system)}` in `models.py` | ✅ yes |
 | `ingested_at` field value | `utc_now_iso()` per row in `models.py` | ❌ differs per run, but **not part of any hash** |
 
-**Consequence:** adding repo #11 to a fleet leaves repos #1–#10's snapshots **bit-identical in IDs**. Re-running `build_kg` on an unchanged repo also produces ID-identical output. The only diffs between runs are `ingested_at` / `checked_at` / `built_at` timestamps, which don't affect KG correctness or downstream metric values (the 9 metrics that don't involve cross-repo state).
+**Consequence:** adding repo #11 to a fleet leaves repos #1–#10's snapshots **bit-identical in IDs**. Re-running `build_kg` on an unchanged repo also produces ID-identical output. The remaining timestamp diffs (`ingested_at`, `checked_at`, `built_at`) do not affect KG identity or graph topology; they can affect freshness-window metrics such as `M_freshness`.
 
 ## 2. Where incremental silently breaks — cross-repo linker
 
@@ -78,7 +78,7 @@ Three components, ordered by dependency:
 Concrete proposal:
 
 - **New CLI**: `bettercontext-relink --snapshot-dir <fleet-dir>` (or flag `bettercontext-build-multi-kg --relink-only`)
-- **Behavior**: reads each repo's existing `entities.jsonl` + `facts.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/multi_repo.py`; writes fleet-level linker output next to the per-repo snapshots:
+- **Behavior**: reads each repo's existing `entities.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/multi_repo.py`; writes fleet-level linker output next to the per-repo snapshots:
   - `_fleet/cross_repo_links.jsonl` for linker facts such as `RESOLVES_TO_REPO`
   - `_fleet/cross_repo_link_evidence.jsonl` for linker evidence
   - `_fleet/manifest.json` with linker `built_at`, `source_system`, `rule_version`, `repo_commit_sha_set`, `provider_count`, `link_count`, and `ambiguous_package_count`
@@ -152,7 +152,7 @@ None of these changes the converged metric semantics. They make the metric outpu
 | Row | When triggered |
 |---|---|
 | Relink-only entry point (`bettercontext-relink --snapshot-dir`) — extract linker step from `source/kg/build/multi_repo.py` into a standalone `source/kg/build/relink.py`; both `build_multi_kg` and the new CLI invoke the same code path; relink writes fleet-level `_fleet/cross_repo_links.jsonl`, `_fleet/cross_repo_link_evidence.jsonl`, and `_fleet/manifest.json` by default | When second repo is added to an existing fleet OR when M_cross_repo_linkage starts being reported externally |
-| Linker-freshness contract flag on M_cross_repo_linkage — `linker_stale` flag derived from manifest `built_at` comparison plus `_fleet/manifest.json.repo_commit_sha_set` equality | Lands with the Debate-14 metric implementation PR (cheap addition to `compute.py`) |
+| Linker-freshness contract flag on M_cross_repo_linkage — `linker_stale` flag derived from manifest `built_at` comparison plus `_fleet/manifest.json.repo_commit_fingerprints` equality | Lands with the Debate-14 metric implementation PR (cheap addition to `compute.py`) |
 | Metric output persistence — `metrics.jsonl` per snapshot; delta mode `--compare snapshotA snapshotB` | When an org dashboard or run-history feature is requested |
 | Per-file incremental extraction — `build_kg --incremental --since-commit <sha>` rebuilds only files changed in the diff | When fleet repos exceed sizes where full per-repo rebuild on each commit becomes the bottleneck |
 
