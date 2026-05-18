@@ -40,6 +40,7 @@ Format: `Item | Source | Trigger to revisit`.
 | Terraform broader IaC predicates — `DEPLOYS_VIA_CONFIG`, `PROVIDES_RESOURCE`, `DEPENDS_ON_MODULE` require ADR-0006 ratification before extractor emission | Debate 19 PR-11 parked follow-up | When Helm, Kubernetes, Terraform module, or Pulumi semantics become product-critical |
 | Per-file incremental extraction — `build_kg --incremental --since-commit <sha>` rebuilds only files changed in the diff | Debate 19 PR-11 parked follow-up | When fleet repos exceed sizes where full per-repo rebuild on each commit becomes the bottleneck |
 | Org dashboard / metric run history — persist and visualize `metrics.jsonl` across runs | Debate 19 PR-11 parked follow-up | When customer-facing coverage reporting becomes a feature requirement |
+| Cross-file imported-constant JS/TS endpoint resolution — deferred after Debate 1 validation; remaining LatticeAI 23-repo gaps are dominated by dynamic templates, env-host provenance, and helper-call targets, not imported constants | docs/evaluation/JS-TS-ENDPOINT-RESOLUTION-VALIDATION.md | Revisit after a focused debate on dynamic route/template params and env-host/base-client provenance |
 
 ## Per-ADR open follow-ups
 
