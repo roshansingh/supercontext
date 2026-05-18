@@ -256,11 +256,7 @@ function identifierIsLocallyShadowed(useNode, targetName, sourceFile) {
   let current = useNode.parent;
   while (current && current !== sourceFile) {
     if (
-      (ts.isFunctionDeclaration(current) ||
-        ts.isFunctionExpression(current) ||
-        ts.isArrowFunction(current) ||
-        ts.isMethodDeclaration(current) ||
-        ts.isConstructorDeclaration(current)) &&
+      isFunctionBoundary(current) &&
       parametersDeclareName(current, targetName)
     ) {
       return true;

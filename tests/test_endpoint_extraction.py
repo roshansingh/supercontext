@@ -904,6 +904,27 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
         self.assertEqual(_fact_lines_by_path(build, "CALLS_ENDPOINT", "/api/token/"), [3])
 
+    def test_typescript_imported_default_axios_client_setter_parameter_shadows_receiver(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api/axiosConfig.tsx": (
+                    "import axios from 'axios';\n"
+                    "export default axios.create({ baseURL: '/api' });\n"
+                ),
+                "src/users.ts": (
+                    "import api from './api/axiosConfig';\n"
+                    "class Users {\n"
+                    "  set endpoint(api) {\n"
+                    "    api.get('/users');\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertFalse(_call_site_coverage(build))
+
     def test_typescript_imported_axios_client_dynamic_template_reason_is_preserved(self) -> None:
         build = _extract_typescript_client_files(
             {
