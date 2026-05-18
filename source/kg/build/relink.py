@@ -16,7 +16,9 @@ from source.kg.core.tenant import resolve_tenant_id
 
 LINKER_SOURCE_SYSTEM = "package_linker"
 LINKER_RULE_VERSION = "package-linker-1"
-STALE_SNAPSHOT_OUTPUT_FILES = frozenset(("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl"))
+STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
+    ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
+)
 
 
 @dataclass(frozen=True)
@@ -166,7 +168,15 @@ def resolve_snapshot_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
             raise FileNotFoundError(f"Snapshot directory does not exist: {root}")
         if not root.is_dir():
             raise NotADirectoryError(f"Snapshot path must be a directory: {root}")
-        children = sorted(child for child in root.iterdir() if child.is_dir() and _is_repo_snapshot_dir(child))
+        children = []
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            manifest_kind = _classify_snapshot_manifest(child)
+            if manifest_kind == "repo":
+                children.append(child)
+            elif manifest_kind == "invalid":
+                raise ValueError(f"{child / 'manifest.json'}: manifest is not a valid repo snapshot")
         if not children:
             raise FileNotFoundError(f"No snapshot manifests found under: {root}")
         snapshots.extend(children)
@@ -186,15 +196,38 @@ def _is_repo_snapshot_dir(path: Path) -> bool:
     if not manifest_path.exists():
         return False
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        manifest = _read_manifest_object(manifest_path)
+    except ValueError:
         return False
-    if not isinstance(manifest, dict):
-        return False
+    return _is_repo_snapshot_manifest(manifest)
+
+
+def _classify_snapshot_manifest(path: Path) -> str | None:
+    manifest_path = path / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    manifest = _read_manifest_object(manifest_path)
     if manifest.get("build_type") == "fleet_relink":
-        return False
+        return "fleet"
+    if _is_repo_snapshot_manifest(manifest):
+        return "repo"
+    return "invalid"
+
+
+def _read_manifest_object(path: Path) -> JsonObject:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return manifest
+
+
+def _is_repo_snapshot_manifest(manifest: JsonObject) -> bool:
     return (
-        isinstance(manifest.get("repo_path"), str)
+        manifest.get("build_type") != "fleet_relink"
+        and isinstance(manifest.get("repo_path"), str)
         and bool(manifest.get("repo_path"))
         and isinstance(manifest.get("commit_sha"), str)
         and bool(manifest.get("commit_sha"))
@@ -269,12 +302,7 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
     manifest_path = root / "manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Snapshot manifest does not exist: {manifest_path}")
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{manifest_path} is not valid JSON: {exc}") from exc
-    if not isinstance(manifest, dict):
-        raise ValueError(f"{manifest_path} must contain a JSON object")
+    manifest = _read_manifest_object(manifest_path)
     repo_path = manifest.get("repo_path")
     commit_sha = manifest.get("commit_sha")
     if not isinstance(repo_path, str) or not repo_path:
@@ -301,6 +329,7 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         _entity_from_record(row, root / "entities.jsonl")
         for row in _read_entity_rows(root / "entities.jsonl")
     )
+    _validate_unique_entity_ids(entities, root / "entities.jsonl")
     return LinkerInput(
         repo=repo,
         repo_identity=repo_identity(repo, resolved_tenant),
@@ -356,6 +385,18 @@ def _entity_from_record(row: JsonObject, path: Path) -> Entity:
     if expected_id != entity.entity_id:
         raise ValueError(f"{path}: entity_id does not match kind and identity: {expected_id}")
     return entity
+
+
+def _validate_unique_entity_ids(entities: tuple[Entity, ...], path: Path) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for entity in entities:
+        if entity.entity_id in seen:
+            duplicates.add(entity.entity_id)
+        seen.add(entity.entity_id)
+    if duplicates:
+        duplicate_list = ", ".join(sorted(duplicates))
+        raise ValueError(f"{path}: duplicate entity_id values: {duplicate_list}")
 
 
 def _write_jsonl(path: Path, records: Iterable[JsonObject], key: str) -> None:
@@ -570,12 +611,14 @@ def _link_external_packages(
     facts: list[Fact] = []
     evidence: list[Evidence] = []
     ambiguous_count = 0
-    packages_by_id = {
-        entity.entity_id: entity
-        for entity in entities
-        if entity.kind == "ExternalPackage" and not _is_builtin_package(entity)
-    }
-    for package in packages_by_id.values():
+    packages_by_id: dict[str, list[Entity]] = {}
+    for entity in entities:
+        if entity.kind == "ExternalPackage":
+            packages_by_id.setdefault(entity.entity_id, []).append(entity)
+    for package_group in packages_by_id.values():
+        if any(_is_builtin_package(package) for package in package_group):
+            continue
+        package = package_group[0]
         consumer_identities = entity_repo_identities.get(package.entity_id, set())
         candidate_names = _external_package_candidate_names(package)
         matches = {

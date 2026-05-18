@@ -54,14 +54,14 @@ class RelinkOnlyTest(unittest.TestCase):
             fleet = root / "snapshots" / "_fleet"
             build_kg(repo, snapshot)
             fleet.mkdir(parents=True)
-            for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl"):
+            for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl"):
                 (fleet / filename).write_text('{"stale": true}\n', encoding="utf-8")
 
             relink_snapshot_dirs([snapshot], fleet)
 
             self.assertTrue((fleet / "cross_repo_links.jsonl").exists())
             self.assertTrue((fleet / "cross_repo_link_evidence.jsonl").exists())
-            for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl"):
+            for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl"):
                 self.assertFalse((fleet / filename).exists())
 
     def test_resolve_snapshot_dirs_expands_fleet_directory(self) -> None:
@@ -95,6 +95,16 @@ class RelinkOnlyTest(unittest.TestCase):
 
             with self.assertRaisesRegex(NotADirectoryError, "Snapshot path must be a directory"):
                 resolve_snapshot_dirs((snapshot_arg,))
+
+    def test_resolve_snapshot_dirs_rejects_malformed_child_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "repo-a"
+            snapshot.mkdir()
+            (snapshot / "manifest.json").write_text("{not-json}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "not valid JSON"):
+                resolve_snapshot_dirs((root,))
 
     def test_relink_rejects_duplicate_repo_identity_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -232,6 +242,47 @@ class RelinkOnlyTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "entity_id must be a non-empty string"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
+    def test_relink_rejects_duplicate_entity_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            rows = read_jsonl(snapshot / "entities.jsonl")
+            rows.append(dict(rows[0]))
+            _write_jsonl_records(snapshot / "entities.jsonl", rows)
+
+            with self.assertRaisesRegex(ValueError, "duplicate entity_id"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_skips_collapsed_packages_when_any_source_is_builtin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            stdlib_consumer = _python_repo(root / "owner-a" / "app", "stdlib-consumer", "import json\n")
+            third_party_consumer = _python_repo(
+                root / "owner-b" / "app",
+                "third-party-consumer",
+                "import json\n",
+            )
+            provider = _python_repo(root / "owner-c" / "json", "json", "")
+            stdlib_snapshot = root / "snapshots" / "stdlib"
+            third_party_snapshot = root / "snapshots" / "third-party"
+            provider_snapshot = root / "snapshots" / "provider"
+            build_kg(stdlib_consumer, stdlib_snapshot)
+            build_kg(third_party_consumer, third_party_snapshot)
+            build_kg(provider, provider_snapshot)
+            rows = read_jsonl(third_party_snapshot / "entities.jsonl")
+            for row in rows:
+                if row.get("kind") == "ExternalPackage" and row.get("identity", {}).get("name") == "json":
+                    row["properties"]["category"] = "third_party"
+                    row["properties"]["distribution_name"] = "json"
+            _write_jsonl_records(third_party_snapshot / "entities.jsonl", rows)
+
+            manifest = relink_snapshot_dirs([stdlib_snapshot, third_party_snapshot, provider_snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["link_count"], 0)
+            self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
+
     def test_relink_accepts_non_object_package_json_as_repo_name_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -298,6 +349,12 @@ class RelinkOnlyTest(unittest.TestCase):
 
 def _records_by_id(rows: list[dict], key: str) -> dict[str, dict]:
     return {str(row[key]): row for row in rows}
+
+
+def _write_jsonl_records(path: Path, rows: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def _python_repo(path: Path, package_name: str, source: str) -> Path:

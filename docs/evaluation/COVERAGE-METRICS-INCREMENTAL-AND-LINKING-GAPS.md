@@ -123,10 +123,10 @@ bettercontext-build-kg --repo /work/team-new --out data/kg_runs/team-new
 # Refresh the cross-repo linker only — re-extraction skipped
 bettercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
 
-# Re-aggregate metrics for a repo or combined snapshot.
-# Current code can use --fleet-dir for linker freshness; the follow-up metrics reader
-# must also merge _fleet/cross_repo_links.jsonl before M_cross_repo_linkage is complete.
-bettercontext-coverage-metrics --snapshot data/kg_runs/team-new --fleet-dir data/kg_runs
+# Re-aggregate metrics from a combined snapshot today.
+# Per-repo snapshots plus --fleet-dir need the follow-up fingerprint-aware metrics reader
+# that merges _fleet/cross_repo_links.jsonl before M_cross_repo_linkage is complete.
+bettercontext-coverage-metrics --snapshot data/kg_runs/combined
 
 # Relinked cross-repo link facts/evidence should match the linker slice from a from-source build:
 #   bettercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/_fleet
