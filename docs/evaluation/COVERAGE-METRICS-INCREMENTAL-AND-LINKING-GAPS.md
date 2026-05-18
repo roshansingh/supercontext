@@ -77,7 +77,7 @@ Three components, ordered by dependency:
 
 Concrete proposal:
 
-- **New CLI**: `bettercontext-relink --snapshot-dir <fleet-dir>` (or flag `bettercontext-build-multi-kg --relink-only`)
+- **New CLI**: `bettercontext-relink --snapshot-dir <fleet-dir>`
 - **Behavior**: reads each repo's existing `entities.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/multi_repo.py`; writes fleet-level linker output next to the per-repo snapshots:
   - `_fleet/cross_repo_links.jsonl` for linker facts such as `RESOLVES_TO_REPO`
   - `_fleet/cross_repo_link_evidence.jsonl` for linker evidence

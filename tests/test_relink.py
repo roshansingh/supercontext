@@ -71,6 +71,8 @@ class RelinkOnlyTest(unittest.TestCase):
             fleet = root / "links"
             snapshot.mkdir()
             fleet.mkdir()
+            combined = root / "combined"
+            combined.mkdir()
             (snapshot / "manifest.json").write_text(
                 json.dumps({"repo_path": str(snapshot), "commit_sha": "working-tree"}) + "\n",
                 encoding="utf-8",
@@ -81,6 +83,10 @@ class RelinkOnlyTest(unittest.TestCase):
             )
             (root / "manifest.json").write_text(
                 json.dumps({"build_type": "fleet_relink"}) + "\n",
+                encoding="utf-8",
+            )
+            (combined / "manifest.json").write_text(
+                json.dumps({"build_type": "multi_repo"}) + "\n",
                 encoding="utf-8",
             )
 

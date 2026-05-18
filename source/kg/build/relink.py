@@ -210,8 +210,8 @@ def _classify_snapshot_manifest(path: Path) -> str | None:
     if not manifest_path.exists():
         return None
     manifest = _read_manifest_object(manifest_path)
-    if manifest.get("build_type") == "fleet_relink":
-        return "fleet"
+    if manifest.get("build_type") in {"fleet_relink", "multi_repo"}:
+        return "artifact"
     if _is_repo_snapshot_manifest(manifest):
         return "repo"
     return "invalid"
