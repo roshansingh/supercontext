@@ -160,6 +160,114 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             self.assertGreaterEqual({cell.dimension for cell in cells}, {"backend", "frontend"})
 
+    def test_cross_repo_linkage_is_usable_when_snapshot_languages_have_resolvers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared_pkg"},
+                properties={"category": "third_party", "import_root": "shared_pkg", "distribution_name": "shared-pkg"},
+            )
+            provider = Entity(
+                "Repo",
+                {"tenant_id": "default", "host": "local", "owner": "owner", "name": "shared"},
+            )
+            link = Fact("RESOLVES_TO_REPO", package.entity_id, provider.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[package, provider],
+                facts=[link],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "usable")
+            self.assertEqual(metric.value, 1.0)
+
+    def test_cross_repo_linkage_stays_partial_when_snapshot_language_resolver_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "index.ts").write_text("import sharedPkg from 'shared-pkg';\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared-pkg"},
+                properties={"category": "third_party", "import_root": "shared-pkg", "distribution_name": "shared-pkg"},
+            )
+            provider = Entity(
+                "Repo",
+                {"tenant_id": "default", "host": "local", "owner": "owner", "name": "shared"},
+            )
+            link = Fact("RESOLVES_TO_REPO", package.entity_id, provider.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[package, provider],
+                facts=[link],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "partial")
+            self.assertEqual(metric.reason, "package_resolver hooks are not implemented for: typescript")
+
+    def test_cross_repo_linkage_treats_boolean_language_counts_as_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "app.py").write_text("import fastapi\n", encoding="utf-8")
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared_pkg"},
+                properties={"category": "third_party", "import_root": "shared_pkg", "distribution_name": "shared-pkg"},
+            )
+            provider = Entity(
+                "Repo",
+                {"tenant_id": "default", "host": "local", "owner": "owner", "name": "shared"},
+            )
+            link = Fact("RESOLVES_TO_REPO", package.entity_id, provider.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[package, provider],
+                facts=[link],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": True}},
+                },
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "partial")
+            self.assertEqual(metric.reason, "package_resolver language coverage is unknown")
+
     def test_inventory_fails_closed_on_malformed_repo_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

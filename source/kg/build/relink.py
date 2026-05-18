@@ -8,13 +8,17 @@ import json
 import re
 import subprocess
 import tempfile
-import tomllib
 
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import read_jsonl
 from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS
+from source.kg.languages.python.package_resolver import (
+    PYTHON_PACKAGE_MANIFESTS,
+    PythonPackageMetadata,
+    PythonPackageResolver,
+)
 
 
 LINKER_SOURCE_SYSTEM = "package_linker"
@@ -602,23 +606,11 @@ def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity 
 
 
 def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -> tuple[str, set[str], Path | None]:
-    pyproject = repo.root / "pyproject.toml"
-    if pyproject.exists():
-        _validate_package_manifest_file(pyproject)
-        if validate_snapshot_manifest:
-            _validate_manifest_file_matches_snapshot(repo, pyproject)
-        try:
-            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError:
-            data = {}
-        package_name = _pyproject_package_name(data) or repo.name
-        aliases = {package_name, repo.name}
-        aliases.update(_python_package_roots(data, repo))
-        return package_name, aliases, pyproject
+    python_metadata = _python_package_metadata(repo, validate_snapshot_manifest=validate_snapshot_manifest)
+    if python_metadata is not None:
+        return python_metadata.package_name, set(python_metadata.aliases), python_metadata.manifest_path
 
     package_json = repo.root / "package.json"
-    if validate_snapshot_manifest:
-        _validate_missing_manifest_file_matches_snapshot(repo, pyproject)
     if package_json.exists():
         _validate_package_manifest_file(package_json)
         if validate_snapshot_manifest:
@@ -638,6 +630,27 @@ def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -
         _validate_repo_commit_matches_snapshot(repo)
         _validate_missing_manifest_file_matches_snapshot(repo, package_json)
     return repo.name, {repo.name}, None
+
+
+def _python_package_metadata(
+    repo: RepoSnapshot,
+    *,
+    validate_snapshot_manifest: bool,
+) -> PythonPackageMetadata | None:
+    resolver = PythonPackageResolver()
+    manifest_paths = set(resolver.manifest_paths(repo))
+    for filename in PYTHON_PACKAGE_MANIFESTS:
+        candidate = repo.root / filename
+        if candidate in manifest_paths:
+            _validate_package_manifest_file(candidate)
+            if validate_snapshot_manifest:
+                _validate_manifest_file_matches_snapshot(repo, candidate)
+            continue
+        if validate_snapshot_manifest:
+            _validate_missing_manifest_file_matches_snapshot(repo, candidate)
+    if manifest_paths:
+        return resolver.package_metadata(repo)
+    return None
 
 
 def _validate_package_manifest_file(path: Path) -> None:
@@ -699,35 +712,6 @@ def _git_status_porcelain(root: Path, path: Path) -> str:
     return result.stdout.strip()
 
 
-def _python_package_roots(data: JsonObject, repo: RepoSnapshot) -> set[str]:
-    roots = {repo.name}
-    tool = data.get("tool") if isinstance(data, dict) else None
-    poetry = tool.get("poetry") if isinstance(tool, dict) else None
-    packages = poetry.get("packages", []) if isinstance(poetry, dict) else []
-    if not isinstance(packages, list):
-        return roots
-    for package in packages:
-        include = package.get("include") if isinstance(package, dict) else None
-        if isinstance(include, str) and include:
-            roots.add(include.split(".", 1)[0])
-    return roots
-
-
-def _pyproject_package_name(data: object) -> str | None:
-    if not isinstance(data, dict):
-        return None
-    tool = data.get("tool")
-    poetry = tool.get("poetry") if isinstance(tool, dict) else None
-    poetry_name = poetry.get("name") if isinstance(poetry, dict) else None
-    if isinstance(poetry_name, str) and poetry_name:
-        return poetry_name
-    project = data.get("project")
-    project_name = project.get("name") if isinstance(project, dict) else None
-    if isinstance(project_name, str) and project_name:
-        return project_name
-    return None
-
-
 def _link_external_packages(
     entities: list[Entity],
     providers: list[PackageProvider],
@@ -741,6 +725,7 @@ def _link_external_packages(
     facts: list[Fact] = []
     evidence: list[Evidence] = []
     ambiguous_count = 0
+    python_resolver = PythonPackageResolver()
     packages_by_id: dict[str, list[Entity]] = {}
     for entity in entities:
         if entity.kind == "ExternalPackage":
@@ -765,6 +750,13 @@ def _link_external_packages(
                 for provider in provider_index.get(_normalize_package_name(name), [])
                 if provider.repo_identity != consumer_identity
             }
+            if not consumer_matches:
+                consumer_matches = _python_resolver_matches(
+                    candidate_names,
+                    providers,
+                    consumer_identity,
+                    python_resolver,
+                )
             if not consumer_matches:
                 continue
             if len(consumer_matches) > 1:
@@ -803,6 +795,38 @@ def _link_external_packages(
         facts.extend(package_facts)
         evidence.extend(_link_evidence(package, provider, package_facts, link_consumer_identities))
     return facts, evidence, ambiguous_count
+
+
+def _python_resolver_matches(
+    candidate_names: set[str],
+    providers: list[PackageProvider],
+    consumer_identity: RepoIdentity,
+    resolver: PythonPackageResolver,
+) -> set[PackageProvider]:
+    python_providers = [
+        provider
+        for provider in providers
+        if provider.repo_identity != consumer_identity and _is_python_package_manifest(provider.manifest_path)
+    ]
+    if not python_providers:
+        return set()
+    matches: set[PackageProvider] = set()
+    target_repos = tuple(provider.repo for provider in python_providers)
+    for name in candidate_names:
+        resolved_name = resolver.resolve(name, target_repos)
+        if resolved_name is None:
+            continue
+        normalized_resolved = _normalize_package_name(resolved_name)
+        matches.update(
+            provider
+            for provider in python_providers
+            if _normalize_package_name(provider.package_name) == normalized_resolved
+        )
+    return matches if len(matches) == 1 else set()
+
+
+def _is_python_package_manifest(path: Path | None) -> bool:
+    return path is not None and path.name in PYTHON_PACKAGE_MANIFESTS
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:

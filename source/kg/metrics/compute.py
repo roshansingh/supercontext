@@ -596,7 +596,38 @@ def _m_cross_repo_linkage(context: _MetricContext, *, fleet_dir: Path | None) ->
     reason = _linker_stale_reason(context.snapshot, fleet_dir)
     if reason:
         return MetricValue(value, "partial", reason)
-    return MetricValue(value, "partial", "package_resolver hooks are not implemented yet")
+    resolver_reason = _package_resolver_gap_reason(context.snapshot.manifest)
+    if resolver_reason:
+        return MetricValue(value, "partial", resolver_reason)
+    return MetricValue(value, "usable")
+
+
+def _package_resolver_gap_reason(manifest: JsonObject) -> str | None:
+    languages = _manifest_source_languages(manifest)
+    if not languages:
+        return "package_resolver language coverage is unknown"
+    missing = []
+    for language in _registered_languages():
+        language_names = {language.name, *language.aliases}
+        if languages.intersection(language_names) and language.package_resolver() is None:
+            missing.append(language.name)
+    if missing:
+        return "package_resolver hooks are not implemented for: " + ", ".join(sorted(missing))
+    return None
+
+
+def _manifest_source_languages(manifest: JsonObject) -> set[str]:
+    counts = manifest.get("counts")
+    if not isinstance(counts, dict):
+        return set()
+    files_by_language = counts.get("files_by_language")
+    if not isinstance(files_by_language, dict):
+        return set()
+    return {
+        language
+        for language, count in files_by_language.items()
+        if isinstance(language, str) and isinstance(count, int) and not isinstance(count, bool) and count > 0
+    }
 
 
 def _m_identity_health(context: _MetricContext) -> MetricValue:

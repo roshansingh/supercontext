@@ -15,6 +15,7 @@ from source.kg.languages.python.extractors.extractor_adapter import PYTHON_AST_A
 from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
 from source.kg.languages.python.opportunities import HttpClientOpportunityDetector
+from source.kg.languages.python.package_resolver import PythonPackageResolver
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class PythonLanguageSupport:
         return (HttpClientOpportunityDetector(),)
 
     def package_resolver(self) -> Any | None:
-        return None
+        return PythonPackageResolver()
 
     def dimension_rules(self) -> Mapping[str, Any]:
         return deepcopy(_dimension_rules())
