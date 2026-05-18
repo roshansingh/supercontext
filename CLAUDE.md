@@ -36,6 +36,32 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/<name> blast-radius <s
 
 Snapshots write `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` under the `--out` directory.
 
+## Coverage metrics and reports
+
+Use the deterministic coverage pipeline for repo or fleet coverage questions; do not hand-summarize KG coverage from ad hoc file inspection. Claude should use the project-local coverage-report skill when asked to run, summarize, compare, or interpret coverage metrics, but the CLI outputs remain the source of truth.
+
+Build or refresh the snapshot first:
+
+```bash
+python -m source.scripts.build_kg --repo <repo-path> --out <snapshot-dir>
+python -m source.scripts.build_multi_kg --repo <repo-1> --repo <repo-2> --out <snapshot-dir>
+```
+
+Then compute metrics and render the standard report:
+
+```bash
+python -m source.scripts.coverage_metrics --snapshot <snapshot-dir> --expected-repos <N>
+python -m source.scripts.coverage_report \
+  --snapshot <snapshot-dir> \
+  --out docs/evaluation/runs/<run-id> \
+  --run-id <run-id> \
+  --tenant <tenant-or-org> \
+  --expected-repos <N> \
+  --metric-config source/kg/metrics/config.yaml
+```
+
+`coverage_metrics` writes `<snapshot-dir>/metrics.jsonl`. `coverage_report` writes `coverage-run.json` and `coverage-run.md` under `docs/evaluation/runs/<run-id>/`. Treat all three as generated artifacts: never hand-edit metric values, reasons, scores, or contract flags. For fleet reports, pass a stable `--run-id`, the tenant/org label, and `--expected-repos` whenever the expected repo count is known.
+
 LLM enrichment is not part of the default KG build path. If used: `source.kg.integrations.llm.LightLlmClient` reads `OPENAI_API_KEY`, defaults to `gpt-4.1-mini`, override with `SUPERCONTEXT_LLM_MODEL`.
 
 ## Repository layout

@@ -38,6 +38,32 @@ python -m source.scripts.query_kg --snapshot data/kg_runs/true_loop find-callers
 
 Runs smoke queries against a generated snapshot.
 
+## Coverage Metrics & Reports
+
+Use the deterministic coverage pipeline for repo or fleet coverage questions; do not hand-summarize KG coverage from ad hoc file inspection. Codex should use the project-local `.codex/skills/coverage-report` skill when asked to run, summarize, compare, or interpret coverage metrics.
+
+Build or refresh the snapshot first:
+
+```bash
+python -m source.scripts.build_kg --repo <repo-path> --out <snapshot-dir>
+python -m source.scripts.build_multi_kg --repo <repo-1> --repo <repo-2> --out <snapshot-dir>
+```
+
+Then compute metrics and render the standard report:
+
+```bash
+python -m source.scripts.coverage_metrics --snapshot <snapshot-dir> --expected-repos <N>
+python -m source.scripts.coverage_report \
+  --snapshot <snapshot-dir> \
+  --out docs/evaluation/runs/<run-id> \
+  --run-id <run-id> \
+  --tenant <tenant-or-org> \
+  --expected-repos <N> \
+  --metric-config source/kg/metrics/config.yaml
+```
+
+`coverage_metrics` writes `<snapshot-dir>/metrics.jsonl`. `coverage_report` writes `coverage-run.json` and `coverage-run.md` under `docs/evaluation/runs/<run-id>/`. Treat all three as generated artifacts: never hand-edit metric values, reasons, scores, or contract flags. For fleet reports, pass a stable `--run-id`, the tenant/org label, and `--expected-repos` whenever the expected repo count is known.
+
 ## Coding Style & Naming Conventions
 
 Prefer small, language-scoped modules over large generic scripts. Keep deterministic extraction and normalization separate. Use descriptive names such as `PythonAstExtractor`, `TypeScriptCompilerApiExtractor`, and `normalize_import`. Python code should follow standard 4-space indentation and type hints where useful. Avoid LLM calls in default extraction paths; if enrichment is added, route it through `source.kg.integrations.llm.LightLlmClient`.
