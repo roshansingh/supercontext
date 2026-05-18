@@ -13,6 +13,7 @@ Validation for Debate 1 after PR-1 and PR-2.
 The snapshot and report paths above are generated local artifacts and are ignored by git. Regenerate the after snapshot and report with local LatticeAI checkouts:
 
 ```bash
+: "${LATTICEAI_ROOT:?set LATTICEAI_ROOT to the directory containing the 23 LatticeAI repo checkouts}"
 repos=(
   ShopAgainMobile
   ansible-playbooks
@@ -40,7 +41,7 @@ repos=(
 )
 repo_args=()
 for repo in "${repos[@]}"; do
-  repo_args+=(--repo "/Users/maruti/work/orgs/latticeai/${repo}")
+  repo_args+=(--repo "${LATTICEAI_ROOT}/${repo}")
 done
 python -m source.scripts.build_multi_kg \
   "${repo_args[@]}" \
