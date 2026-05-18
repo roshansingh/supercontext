@@ -23,7 +23,17 @@ bettercontext-query-kg --snapshot ./data/kg_runs/example summary
 bettercontext-query-kg --snapshot ./data/kg_runs/example top-dependencies --limit 10
 ```
 
-Build a multi-repo snapshot when repos depend on each other through package manifests:
+## Build A KG
+
+Build one repo:
+
+```bash
+bettercontext-build-kg \
+  --repo /path/to/repo \
+  --out ./data/kg_runs/example
+```
+
+Build multiple repos when repos depend on each other through package manifests:
 
 ```bash
 bettercontext-build-multi-kg \
@@ -31,6 +41,47 @@ bettercontext-build-multi-kg \
   --repo /path/to/service-b \
   --out ./data/kg_runs/example_org
 ```
+
+Use `--strict-extractors` when extractor failures should fail the build.
+
+## Query A KG
+
+Run common direct queries against a snapshot:
+
+```bash
+bettercontext-query-kg --snapshot ./data/kg_runs/example summary
+bettercontext-query-kg --snapshot ./data/kg_runs/example top-dependencies --limit 10
+bettercontext-query-kg --snapshot ./data/kg_runs/example modules-importing pandas --limit 5
+bettercontext-query-kg --snapshot ./data/kg_runs/example find-callers load_model --limit 5
+bettercontext-query-kg --snapshot ./data/kg_runs/example endpoints --path /api/token --limit 20
+```
+
+Run multi-repo queries against a multi-repo snapshot:
+
+```bash
+bettercontext-query-kg --snapshot ./data/kg_runs/example_org cross-repo-links --limit 10
+bettercontext-query-kg --snapshot ./data/kg_runs/example_org repo-dependencies service-b --limit 10
+```
+
+## Generate Coverage Reports
+
+Compute coverage metrics, then render the stable JSON and Markdown report:
+
+```bash
+python -m source.scripts.coverage_metrics \
+  --snapshot ./data/kg_runs/example_org \
+  --expected-repos 2
+
+python -m source.scripts.coverage_report \
+  --snapshot ./data/kg_runs/example_org \
+  --out docs/evaluation/runs/example-org \
+  --run-id example-org \
+  --tenant example \
+  --expected-repos 2 \
+  --metric-config source/kg/metrics/config.yaml
+```
+
+Read `coverage-run.md` for the human report and `coverage-run.json` for the machine-readable report.
 
 Run the local MCP v0 server over an existing snapshot:
 
