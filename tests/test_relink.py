@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import subprocess
 import unittest
@@ -38,6 +39,7 @@ class RelinkOnlyTest(unittest.TestCase):
             )
             self.assertEqual(relink_facts, batch_facts)
             self.assertEqual(relink_manifest["link_count"], len(batch_facts))
+            self.assertEqual(relink_manifest["tenant_id"], "default")
             self.assertEqual(relink_manifest["repo_commit_sha_set"], ["working-tree"])
             evidence = read_jsonl(fleet / "cross_repo_link_evidence.jsonl")
             self.assertEqual({row["target_id"] for row in evidence}, set(relink_facts))
@@ -139,6 +141,40 @@ class RelinkOnlyTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "does not match current repo commit"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_manifest_repo_path_that_is_not_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot)
+            manifest_path = snapshot / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["repo_path"] = str(repo / "pyproject.toml")
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "repo_path must be a directory"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_build_multi_allows_dirty_package_manifest_for_fresh_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import shared_provider\n")
+            provider = _python_repo(root / "owner-b" / "provider", "shared_provider", "")
+            _git(provider, "init")
+            _git(provider, "config", "user.email", "test@example.com")
+            _git(provider, "config", "user.name", "Test User")
+            _git(provider, "add", ".")
+            _git(provider, "commit", "-m", "initial")
+            (provider / "pyproject.toml").write_text(
+                '[project]\nname = "shared_provider"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            out = root / "combined"
+
+            manifest = build_multi_kg([consumer, provider], out)
+
+            self.assertGreater(manifest["linker"]["link_count"], 0)
 
 
 def _records_by_id(rows: list[dict], key: str) -> dict[str, dict]:

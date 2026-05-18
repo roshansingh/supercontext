@@ -45,6 +45,7 @@ class LinkerInput:
     repo: RepoSnapshot
     repo_identity: RepoIdentity
     entities: tuple[Entity, ...]
+    validate_package_manifests: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ def relink_snapshot_dirs(
     manifest: JsonObject = {
         "build_type": "fleet_relink",
         "built_at": utc_now_iso(),
+        "tenant_id": inputs[0].repo_identity.tenant_id,
         "source_system": LINKER_SOURCE_SYSTEM,
         "rule_version": LINKER_RULE_VERSION,
         "repo_count": len(inputs),
@@ -234,6 +236,8 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
     repo_root = Path(repo_path).expanduser().resolve()
     if not repo_root.exists():
         raise FileNotFoundError(f"{manifest_path}: repo_path does not exist: {repo_root}")
+    if not repo_root.is_dir():
+        raise ValueError(f"{manifest_path}: repo_path must be a directory: {repo_root}")
     repo_name = manifest.get("repo_name")
     owner = manifest.get("owner")
     repo = RepoSnapshot(
@@ -245,7 +249,12 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
     )
     resolved_tenant = _snapshot_tenant_id(manifest, tenant_id)
     entities = tuple(_entity_from_record(row, root / "entities.jsonl") for row in read_jsonl(root / "entities.jsonl"))
-    return LinkerInput(repo=repo, repo_identity=repo_identity(repo, resolved_tenant), entities=entities)
+    return LinkerInput(
+        repo=repo,
+        repo_identity=repo_identity(repo, resolved_tenant),
+        entities=entities,
+        validate_package_manifests=True,
+    )
 
 
 def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None) -> str:
@@ -288,13 +297,16 @@ def _entity_from_record(row: JsonObject, path: Path) -> Entity:
 
 def _write_jsonl(path: Path, records: Iterable[JsonObject], key: str) -> None:
     seen: set[str] = set()
-    with path.open("w", encoding="utf-8") as handle:
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
         for record in records:
             record_key = str(record[key])
             if record_key in seen:
+                tmp_path.unlink(missing_ok=True)
                 raise ValueError(f"{path}: duplicate {key}: {record_key}")
             seen.add(record_key)
             handle.write(json.dumps(record, sort_keys=True) + "\n")
+    tmp_path.replace(path)
 
 
 def _package_providers(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> list[PackageProvider]:
@@ -306,7 +318,10 @@ def _package_providers(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> l
         if repo_entity is None:
             continue
         service_entities = [entity for entity in entities if entity.kind == "Service"]
-        package_name, aliases, manifest_path = _package_metadata(repo)
+        package_name, aliases, manifest_path = _package_metadata(
+            repo,
+            validate_snapshot_manifest=input_repo.validate_package_manifests,
+        )
         service_entity = _select_service_entity(service_entities, aliases)
         providers.append(
             PackageProvider(
@@ -351,10 +366,11 @@ def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity 
     return matches[0] if len(matches) == 1 else None
 
 
-def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
+def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -> tuple[str, set[str], Path | None]:
     pyproject = repo.root / "pyproject.toml"
     if pyproject.exists():
-        _validate_manifest_file_matches_snapshot(repo, pyproject)
+        if validate_snapshot_manifest:
+            _validate_manifest_file_matches_snapshot(repo, pyproject)
         try:
             data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError:
@@ -370,7 +386,8 @@ def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
 
     package_json = repo.root / "package.json"
     if package_json.exists():
-        _validate_manifest_file_matches_snapshot(repo, package_json)
+        if validate_snapshot_manifest:
+            _validate_manifest_file_matches_snapshot(repo, package_json)
         try:
             data = json.loads(package_json.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
@@ -379,10 +396,20 @@ def _package_metadata(repo: RepoSnapshot) -> tuple[str, set[str], Path | None]:
         aliases = {package_name, repo.name, _unscoped_package_name(package_name)}
         return package_name, aliases, package_json
 
+    if validate_snapshot_manifest:
+        _validate_repo_commit_matches_snapshot(repo)
     return repo.name, {repo.name}, None
 
 
 def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
+    _validate_repo_commit_matches_snapshot(repo)
+    status = _git_status_porcelain(repo.root, manifest_path)
+    if status:
+        relative = manifest_path.relative_to(repo.root)
+        raise ValueError(f"Package manifest has uncommitted changes relative to snapshot commit: {relative}")
+
+
+def _validate_repo_commit_matches_snapshot(repo: RepoSnapshot) -> None:
     if repo.commit_sha == "working-tree":
         return
     current_commit = _git_commit_sha(repo.root)
@@ -390,10 +417,6 @@ def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: 
         raise ValueError(
             f"Snapshot commit {repo.commit_sha} does not match current repo commit {current_commit}: {repo.root}"
         )
-    status = _git_status_porcelain(repo.root, manifest_path)
-    if status:
-        relative = manifest_path.relative_to(repo.root)
-        raise ValueError(f"Package manifest has uncommitted changes relative to snapshot commit: {relative}")
 
 
 def _git_commit_sha(root: Path) -> str:

@@ -26,7 +26,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--tenant",
-        help="Tenant id for graph identity; non-empty value overrides snapshot manifest tenant ids",
+        help="Tenant id to validate against snapshot manifests; it must match because entity IDs are tenant-scoped",
     )
     args = parser.parse_args()
 

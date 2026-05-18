@@ -1,6 +1,6 @@
 # Coverage Metrics — Incremental Ingestion + Cross-Repo Linking Gaps
 
-**Status:** open follow-up to Debate 14 (`debates/14-2026-05-15-finalize-complete-rkg-coverage-metric-ma.md`)
+**Status:** open follow-up to Debate 14. The debate transcript is a local agent-debate artifact, not a committed repository file.
 **Date:** 2026-05-17
 
 ## Why this doc exists
