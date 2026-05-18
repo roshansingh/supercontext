@@ -70,8 +70,8 @@ class MultiRepoIdentityTest(unittest.TestCase):
             resolve_facts = [
                 row for row in read_jsonl(out / "facts.jsonl") if row["predicate"] == "RESOLVES_TO_REPO"
             ]
-            self.assertEqual(len(resolve_facts), 1)
-            identities = resolve_facts[0]["qualifier"]["consumer_repo_identities"]
+            self.assertEqual(len(resolve_facts), 2)
+            identities = [row["qualifier"]["consumer_repo_identity"] for row in resolve_facts]
             self.assertEqual(
                 {(row["tenant_id"], row["host"], row["owner"], row["name"]) for row in identities},
                 {("default", "local", "owner-a", "svc"), ("default", "local", "owner-b", "svc")},

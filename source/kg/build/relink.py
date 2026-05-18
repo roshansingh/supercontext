@@ -97,7 +97,7 @@ def relink_snapshot_dirs(
 
     result = link_external_packages(inputs)
     out.mkdir(parents=True, exist_ok=True)
-    _remove_stale_snapshot_outputs(out)
+    _validate_stale_snapshot_outputs(out)
     _write_jsonl(out / "cross_repo_links.jsonl", (fact.to_record() for fact in result.facts), "fact_id")
     _write_jsonl(
         out / "cross_repo_link_evidence.jsonl",
@@ -145,16 +145,23 @@ def relink_snapshot_dirs(
             "evidence": len({row.evidence_id for row in result.evidence}),
         },
     }
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_file(out / "manifest.json", manifest)
+    _remove_stale_snapshot_outputs(out)
     return manifest
 
 
+def _validate_stale_snapshot_outputs(out: Path) -> None:
+    for filename in STALE_SNAPSHOT_OUTPUT_FILES:
+        stale_path = out / filename
+        if stale_path.exists() and not stale_path.is_file():
+            raise ValueError(f"Cannot replace stale snapshot artifact because it is not a file: {stale_path}")
+
+
 def _remove_stale_snapshot_outputs(out: Path) -> None:
+    _validate_stale_snapshot_outputs(out)
     for filename in STALE_SNAPSHOT_OUTPUT_FILES:
         stale_path = out / filename
         if stale_path.exists():
-            if not stale_path.is_file():
-                raise ValueError(f"Cannot replace stale snapshot artifact because it is not a file: {stale_path}")
             stale_path.unlink()
 
 
@@ -334,6 +341,7 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
     )
     _validate_unique_entity_ids(entities, root / "entities.jsonl")
     resolved_tenant = _snapshot_tenant_id(manifest, tenant_id, entities)
+    _validate_entity_tenants(entities, resolved_tenant, root / "entities.jsonl")
     return LinkerInput(
         repo=repo,
         repo_identity=repo_identity(repo, resolved_tenant),
@@ -412,6 +420,20 @@ def _validate_unique_entity_ids(entities: tuple[Entity, ...], path: Path) -> Non
         raise ValueError(f"{path}: duplicate entity_id values: {duplicate_list}")
 
 
+def _validate_entity_tenants(entities: tuple[Entity, ...], tenant_id: str, path: Path) -> None:
+    mismatches: list[str] = []
+    for entity in entities:
+        entity_tenant = entity.identity.get("tenant_id")
+        if entity_tenant is None:
+            continue
+        if not isinstance(entity_tenant, str) or not entity_tenant.strip():
+            raise ValueError(f"{path}: entity tenant_id must be a non-empty string when present")
+        if entity_tenant.strip() != tenant_id:
+            mismatches.append(f"{entity.kind}:{entity.entity_id}:{entity_tenant.strip()}")
+    if mismatches:
+        raise ValueError(f"{path}: entity tenant_id values do not match snapshot tenant_id {tenant_id}: {mismatches}")
+
+
 def _write_jsonl(path: Path, records: Iterable[JsonObject], key: str) -> None:
     seen: set[str] = set()
     tmp_path = path.with_name(f".{path.name}.tmp")
@@ -423,6 +445,16 @@ def _write_jsonl(path: Path, records: Iterable[JsonObject], key: str) -> None:
                     raise ValueError(f"{path}: duplicate {key}: {record_key}")
                 seen.add(record_key)
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _write_json_file(path: Path, record: JsonObject) -> None:
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         tmp_path.replace(path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
@@ -638,53 +670,49 @@ def _link_external_packages(
             continue
         package = package_group[0]
         consumer_identities = entity_repo_identities.get(package.entity_id, set())
-        candidate_names = _external_package_candidate_names(package)
-        matches: dict[PackageProvider, set[RepoIdentity]] = {}
-        for name in candidate_names:
-            for provider in provider_index.get(_normalize_package_name(name), []):
-                link_consumer_identities = _linkable_consumer_identities(provider, package, consumer_identities)
-                if link_consumer_identities:
-                    matches.setdefault(provider, set()).update(link_consumer_identities)
-        if not matches:
-            continue
-        if len(matches) > 1:
-            ambiguous_count += 1
-            continue
-        provider, link_consumer_identities = next(iter(matches.items()))
-        matched_name = _matched_name(candidate_names, provider)
-        package_facts = [
-            Fact(
-                predicate="RESOLVES_TO_REPO",
-                subject_id=package.entity_id,
-                object_id=provider.repo_entity_id,
-                qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
+        if not consumer_identities:
+            raise ValueError(
+                "ExternalPackage entity missing repo identity tracking: "
+                f"entity_id={package.entity_id}, identity={package.identity}"
             )
-        ]
-        if provider.service_entity_id is not None:
-            package_facts.append(
+        candidate_names = _external_package_candidate_names(package)
+        for consumer_identity in _sort_repo_identities(consumer_identities):
+            matches = {
+                provider
+                for name in candidate_names
+                for provider in provider_index.get(_normalize_package_name(name), [])
+                if provider.repo_identity != consumer_identity
+            }
+            if not matches:
+                continue
+            if len(matches) > 1:
+                ambiguous_count += 1
+                continue
+            provider = next(iter(matches))
+            matched_name = _matched_name(candidate_names, provider)
+            link_consumer_identities = {consumer_identity}
+            package_facts = [
                 Fact(
-                    predicate="RESOLVES_TO_SERVICE",
+                    predicate="RESOLVES_TO_REPO",
                     subject_id=package.entity_id,
-                    object_id=provider.service_entity_id,
+                    object_id=provider.repo_entity_id,
                     qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
                 )
+            ]
+            if provider.service_entity_id is not None:
+                package_facts.append(
+                    Fact(
+                        predicate="RESOLVES_TO_SERVICE",
+                        subject_id=package.entity_id,
+                        object_id=provider.service_entity_id,
+                        qualifier=_link_qualifier(package, provider, matched_name, link_consumer_identities),
+                    )
+                )
+            facts.extend(package_facts)
+            evidence.extend(
+                _link_evidence(package, provider, package_facts, link_consumer_identities)
             )
-        facts.extend(package_facts)
-        evidence.extend(_link_evidence(package, provider, package_facts, link_consumer_identities))
     return facts, evidence, ambiguous_count
-
-
-def _linkable_consumer_identities(
-    provider: PackageProvider,
-    package: Entity,
-    consumer_identities: set[RepoIdentity],
-) -> set[RepoIdentity]:
-    if not consumer_identities:
-        raise ValueError(
-            "ExternalPackage entity missing repo identity tracking: "
-            f"entity_id={package.entity_id}, identity={package.identity}"
-        )
-    return consumer_identities - {provider.repo_identity}
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:

@@ -13,6 +13,7 @@ from unittest.mock import patch
 from source.kg.build.pipeline import build_kg
 from source.kg.build.multi_repo import build_multi_kg
 from source.kg.build.relink import default_output_dir, relink_snapshot_dirs, resolve_snapshot_dirs
+from source.kg.core.models import Entity
 from source.kg.core.store import read_jsonl
 from source.scripts import relink as relink_cli
 
@@ -68,6 +69,23 @@ class RelinkOnlyTest(unittest.TestCase):
             self.assertTrue((fleet / "cross_repo_link_evidence.jsonl").exists())
             for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl"):
                 self.assertFalse((fleet / filename).exists())
+
+    def test_relink_keeps_stale_snapshot_artifacts_when_new_write_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "")
+            snapshot = root / "snapshots" / "consumer"
+            fleet = root / "snapshots" / "_fleet"
+            build_kg(repo, snapshot)
+            fleet.mkdir(parents=True)
+            stale_entities = fleet / "entities.jsonl"
+            stale_entities.write_text('{"stale": true}\n', encoding="utf-8")
+
+            with patch("source.kg.build.relink._write_jsonl", side_effect=OSError("disk full")):
+                with self.assertRaisesRegex(OSError, "disk full"):
+                    relink_snapshot_dirs([snapshot], fleet)
+
+            self.assertTrue(stale_entities.exists())
 
     def test_resolve_snapshot_dirs_expands_fleet_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,6 +198,28 @@ class RelinkOnlyTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "tenant_id must be a non-empty string"):
+                relink_snapshot_dirs([snapshot], root / "_fleet")
+
+    def test_relink_rejects_entity_tenant_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = _python_repo(root / "owner-a" / "consumer", "consumer-package", "import requests\n")
+            snapshot = root / "snapshots" / "consumer"
+            build_kg(repo, snapshot, tenant_id="default")
+            rows = read_jsonl(snapshot / "entities.jsonl")
+            for index, row in enumerate(rows):
+                if row.get("kind") == "ExternalPackage":
+                    identity = dict(row["identity"])
+                    identity["tenant_id"] = "other-tenant"
+                    rows[index] = Entity(
+                        kind="ExternalPackage",
+                        identity=identity,
+                        properties=row["properties"],
+                    ).to_record()
+                    break
+            _write_jsonl_records(snapshot / "entities.jsonl", rows)
+
+            with self.assertRaisesRegex(ValueError, "entity tenant_id values do not match"):
                 relink_snapshot_dirs([snapshot], root / "_fleet")
 
     def test_relink_infers_missing_manifest_tenant_from_entities(self) -> None:
@@ -396,6 +436,38 @@ class RelinkOnlyTest(unittest.TestCase):
             repo_link = next(row for row in links if row["predicate"] == "RESOLVES_TO_REPO")
             consumer_identity = repo_link["qualifier"]["consumer_repo_identity"]
             self.assertEqual(consumer_identity["owner"], "owner-b")
+
+    def test_relink_resolves_each_consumer_before_ambiguous_provider_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            provider_a = _python_repo(root / "owner-a" / "app", "shared", "")
+            provider_b = _python_repo(root / "owner-b" / "app", "shared", "")
+            snapshot_a = root / "snapshots" / "a"
+            snapshot_b = root / "snapshots" / "b"
+            build_kg(provider_a, snapshot_a, tenant_id="default")
+            build_kg(provider_b, snapshot_b, tenant_id="default")
+            shared_external = Entity(
+                kind="ExternalPackage",
+                identity={"tenant_id": "default", "repo": "app", "name": "shared"},
+                properties={"category": "third_party", "import_root": "shared", "distribution_name": "shared"},
+            ).to_record()
+            for snapshot in (snapshot_a, snapshot_b):
+                rows = read_jsonl(snapshot / "entities.jsonl")
+                rows.append(dict(shared_external))
+                _write_jsonl_records(snapshot / "entities.jsonl", rows)
+
+            manifest = relink_snapshot_dirs([snapshot_a, snapshot_b], root / "_fleet")
+
+            self.assertGreater(manifest["link_count"], 0)
+            repo_links = [
+                row for row in read_jsonl(root / "_fleet" / "cross_repo_links.jsonl")
+                if row["predicate"] == "RESOLVES_TO_REPO"
+            ]
+            self.assertEqual(len(repo_links), 2)
+            self.assertEqual(
+                {row["qualifier"]["consumer_repo_identity"]["owner"] for row in repo_links},
+                {"owner-a", "owner-b"},
+            )
 
     def test_relink_accepts_non_object_package_json_as_repo_name_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
