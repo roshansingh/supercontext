@@ -8,6 +8,7 @@ import unittest
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.languages.dotnet.language import LANGUAGE_SUPPORT as DOTNET_SUPPORT
+from source.kg.languages.dotnet.package_resolver import DotnetPackageResolver
 from source.kg.languages.python.language import LANGUAGE_SUPPORT as PYTHON_SUPPORT
 from source.kg.languages.typescript.language import LANGUAGE_SUPPORT as TYPESCRIPT_SUPPORT
 
@@ -73,7 +74,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertEqual(DOTNET_SUPPORT.source_roots(_repo_snapshot(), ctx), {"dotnet": {"Microsoft.AspNetCore.Mvc"}})
         self.assertEqual(DOTNET_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
         self.assertEqual(DOTNET_SUPPORT.opportunity_detectors(), ())
-        self.assertIsNone(DOTNET_SUPPORT.package_resolver())
+        self.assertIsInstance(DOTNET_SUPPORT.package_resolver(), DotnetPackageResolver)
         dotnet_rules = DOTNET_SUPPORT.dimension_rules()
         self.assertEqual(dotnet_rules["version"], 1)
         self.assertIn("backend", {rule["dimension"] for rule in dotnet_rules["rules"]})

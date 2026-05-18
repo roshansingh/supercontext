@@ -826,6 +826,105 @@ class RelinkOnlyTest(unittest.TestCase):
 
             self.assertGreaterEqual(manifest["link_count"], 1)
 
+    def test_relink_uses_dotnet_csproj_namespace_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = root / "owner-a" / "consumer"
+            provider = root / "owner-b" / "provider"
+            consumer.mkdir(parents=True)
+            provider.mkdir(parents=True)
+            (provider / "Provider.csproj").write_text(
+                "<Project><PropertyGroup><RootNamespace>Acme.Shared</RootNamespace></PropertyGroup></Project>\n",
+                encoding="utf-8",
+            )
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_snapshot = root / "snapshots" / "provider"
+            _write_relink_snapshot(
+                consumer_snapshot,
+                consumer,
+                [
+                    _repo_entity(consumer),
+                    Entity(
+                        kind="ExternalPackage",
+                        identity={"tenant_id": "default", "repo": "consumer", "name": "Acme.Shared.Models"},
+                        properties={"category": "unknown", "import_root": "Acme.Shared.Models"},
+                    ),
+                ],
+            )
+            _write_relink_snapshot(
+                provider_snapshot,
+                provider,
+                [
+                    _repo_entity(provider),
+                    Entity(
+                        kind="Service",
+                        identity={"tenant_id": "default", "namespace": "default", "repo": "provider", "slug": "provider"},
+                    ),
+                ],
+            )
+
+            manifest = relink_snapshot_dirs([consumer_snapshot, provider_snapshot], root / "_fleet")
+
+            self.assertEqual(manifest["link_count"], 2)
+            facts = read_jsonl(root / "_fleet" / "cross_repo_links.jsonl")
+            self.assertEqual({row["predicate"] for row in facts}, {"RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"})
+
+    def test_build_kg_fingerprints_dotnet_csproj_package_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner-a" / "provider"
+            repo.mkdir(parents=True)
+            (repo / "Provider.csproj").write_text("<Project />\n", encoding="utf-8")
+            generated = repo / "obj" / "Debug" / "Generated.csproj"
+            generated.parent.mkdir(parents=True)
+            generated.write_text("<Project />\n", encoding="utf-8")
+
+            manifest = build_kg(repo, root / "snapshot", tenant_id="default")
+
+            self.assertEqual(
+                [row["path"] for row in manifest["package_manifests"]],
+                ["Provider.csproj"],
+            )
+
+    def test_relink_fails_closed_on_ambiguous_dotnet_namespace_providers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer = root / "owner-a" / "consumer"
+            provider_a = root / "owner-b" / "provider-a"
+            provider_b = root / "owner-c" / "provider-b"
+            for repo in (consumer, provider_a, provider_b):
+                repo.mkdir(parents=True)
+            for provider in (provider_a, provider_b):
+                (provider / "Provider.csproj").write_text(
+                    "<Project><PropertyGroup><RootNamespace>Acme.Shared</RootNamespace></PropertyGroup></Project>\n",
+                    encoding="utf-8",
+                )
+            consumer_snapshot = root / "snapshots" / "consumer"
+            provider_a_snapshot = root / "snapshots" / "provider-a"
+            provider_b_snapshot = root / "snapshots" / "provider-b"
+            _write_relink_snapshot(
+                consumer_snapshot,
+                consumer,
+                [
+                    _repo_entity(consumer),
+                    Entity(
+                        kind="ExternalPackage",
+                        identity={"tenant_id": "default", "repo": "consumer", "name": "Acme.Shared.Models"},
+                        properties={"category": "unknown", "import_root": "Acme.Shared.Models"},
+                    ),
+                ],
+            )
+            _write_relink_snapshot(provider_a_snapshot, provider_a, [_repo_entity(provider_a)])
+            _write_relink_snapshot(provider_b_snapshot, provider_b, [_repo_entity(provider_b)])
+
+            manifest = relink_snapshot_dirs(
+                [consumer_snapshot, provider_a_snapshot, provider_b_snapshot],
+                root / "_fleet",
+            )
+
+            self.assertEqual(manifest["link_count"], 0)
+            self.assertEqual(read_jsonl(root / "_fleet" / "cross_repo_links.jsonl"), [])
+
     def test_relink_rejects_deleted_pyproject_before_package_json_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -954,6 +1053,32 @@ def _write_jsonl_records(path: Path, rows: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _write_relink_snapshot(snapshot: Path, repo: Path, entities: list[Entity]) -> None:
+    snapshot.mkdir(parents=True)
+    (snapshot / "manifest.json").write_text(
+        json.dumps(
+            {
+                "repo_path": str(repo),
+                "repo_name": repo.name,
+                "owner": repo.parent.name,
+                "commit_sha": "working-tree",
+                "tenant_id": "default",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_jsonl_records(snapshot / "entities.jsonl", [entity.to_record() for entity in entities])
+
+
+def _repo_entity(repo: Path) -> Entity:
+    return Entity(
+        kind="Repo",
+        identity={"tenant_id": "default", "host": "local", "owner": repo.parent.name, "name": repo.name},
+    )
 
 
 def _python_repo(path: Path, package_name: str, source: str) -> Path:
