@@ -199,6 +199,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
                         {"classification_id": "b", "entity_id": "ent_b", "package_name": "react", "bucket": "consumer_manifest_external", "reason": "registry dependency has no matching fleet provider"},
                         {"classification_id": "c", "entity_id": "ent_c", "package_name": "local-missing", "bucket": "consumer_manifest_external", "reason": "human wording can change", "spec_form": "file_path"},
                         {"classification_id": "d", "entity_id": "ent_d", "package_name": "malformed", "bucket": "consumer_manifest_external", "spec_form": ["file_path"]},
+                        {"classification_id": "e", "entity_id": "ent_e", "package_name": "bad-bucket", "bucket": ["consumer_manifest_external"]},
                     )
                 )
                 + "\n",

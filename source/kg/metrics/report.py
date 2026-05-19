@@ -325,6 +325,8 @@ def _package_classification_summary(rows: tuple[JsonObject, ...]) -> JsonObject:
     non_actionable: dict[str, int] = {}
     for row in rows:
         bucket = row.get("bucket")
+        if not isinstance(bucket, str):
+            continue
         if bucket not in {"builtin_or_stdlib", "consumer_manifest_external"}:
             continue
         if _classification_actionable_reason(row) is not None:
