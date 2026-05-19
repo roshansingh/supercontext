@@ -77,13 +77,18 @@ class RepoIdentityLinkageTest(unittest.TestCase):
                     LinkerInput(
                         repo=_repo_snapshot(provider),
                         repo_identity=_repo_identity(provider),
-                        entities=(_repo_entity(provider),),
+                        entities=(_repo_entity(provider), _service_entity(provider)),
                     ),
                 )
             )
 
-        self.assertEqual([(fact.predicate, fact.qualifier["rule"]) for fact in result.facts], [("RESOLVES_TO_REPO", "manifest_target_repo_match")])
+        self.assertEqual(
+            [(fact.predicate, fact.qualifier["rule"]) for fact in result.facts],
+            [("RESOLVES_TO_REPO", "manifest_target_repo_match")],
+        )
         self.assertEqual(result.facts[0].object_id, _repo_entity(provider).entity_id)
+        self.assertEqual(result.evidence[0].bytes_ref["commit_sha"], "working-tree")
+        self.assertEqual(result.evidence[0].bytes_ref["path"], "package.json")
         self.assertEqual(result.package_classifications[0]["bucket"], "candidate_internal")
         self.assertEqual(result.package_classifications[0]["reason"], "consumer manifest dependency target matches exactly one fleet repo")
 
@@ -193,6 +198,32 @@ class RepoIdentityLinkageTest(unittest.TestCase):
         self.assertEqual(len(result.evidence), 2)
         self.assertEqual({row.source_ref["consumer_repo_identity"]["owner"] for row in result.evidence}, {"owner-a", "owner-b"})
 
+    def test_partial_manifest_target_multi_consumer_does_not_leak_dependency_qualifier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer_a = root / "owner-a" / "app"
+            consumer_b = root / "owner-b" / "app"
+            provider = root / "shared-org" / "provider"
+            for path in (consumer_a, consumer_b, provider):
+                path.mkdir(parents=True)
+            (consumer_a / "package.json").write_text(
+                json.dumps({"dependencies": {"shared": f"file:{_relative_path(consumer_a, provider)}"}}),
+                encoding="utf-8",
+            )
+            (provider / "package.json").write_text(json.dumps({"name": "shared"}), encoding="utf-8")
+
+            result = link_external_packages(
+                (
+                    LinkerInput(_repo_snapshot(consumer_a), _repo_identity(consumer_a), (_repo_entity(consumer_a), _external_package("app", "shared"))),
+                    LinkerInput(_repo_snapshot(consumer_b), _repo_identity(consumer_b), (_repo_entity(consumer_b), _external_package("app", "shared"))),
+                    LinkerInput(_repo_snapshot(provider), _repo_identity(provider), (_repo_entity(provider),)),
+                )
+            )
+
+        self.assertEqual(len(result.facts), 1)
+        self.assertEqual(result.facts[0].qualifier["rule"], "unique_normalized_package_name_match")
+        self.assertNotIn("dependency_target_url", result.facts[0].qualifier)
+
 
 def _repo_snapshot(path: Path) -> RepoSnapshot:
     return RepoSnapshot(path, path.name, path.parent.name, "working-tree", {})
@@ -206,6 +237,13 @@ def _repo_entity(path: Path) -> Entity:
     return Entity(
         kind="Repo",
         identity={"tenant_id": "default", "host": "local", "owner": path.parent.name, "name": path.name},
+    )
+
+
+def _service_entity(path: Path) -> Entity:
+    return Entity(
+        kind="Service",
+        identity={"tenant_id": "default", "namespace": path.parent.name, "repo": path.name, "slug": path.name},
     )
 
 

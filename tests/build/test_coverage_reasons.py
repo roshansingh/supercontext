@@ -5,9 +5,11 @@ import json
 import tempfile
 import unittest
 
+from source.kg.build import relink as relink_module
 from source.kg.build.relink import LinkerInput, RepoIdentity, link_external_packages
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
+from source.kg.languages.types import ConsumerManifestIssue
 from source.kg.metrics.report import write_coverage_report
 
 
@@ -93,6 +95,29 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
         self.assertEqual(len(result.coverage), 1)
         self.assertEqual(result.coverage[0].scope_ref["reason"], "cross_repo_dependency_manifest_unreadable")
         self.assertEqual(result.coverage[0].scope_ref["language"], "typescript")
+
+    def test_manifest_unreadable_coverage_is_visible_when_issue_path_has_no_repo_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "org" / "consumer"
+            repo.mkdir(parents=True)
+
+            coverage = relink_module._package_linkage_coverage(
+                (LinkerInput(_repo_snapshot(repo), _repo_identity(repo), (_repo_entity(repo),)),),
+                (),
+                (
+                    ConsumerManifestIssue(
+                        reason="cross_repo_dependency_manifest_unreadable",
+                        manifest_path=root / "outside" / "package.json",
+                        message="cannot read",
+                        language="typescript",
+                    ),
+                ),
+            )
+
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(coverage[0].scope_ref["repo"], "-")
+        self.assertEqual(coverage[0].scope_ref["reason"], "cross_repo_dependency_manifest_unreadable")
 
     def test_report_includes_actionable_reasons_and_aggregate_non_actionable_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
