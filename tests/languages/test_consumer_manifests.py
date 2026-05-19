@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from pathlib import Path
+import json
+import tempfile
+import unittest
+
+from source.kg.core.repo_source import RepoSnapshot
+from source.kg.languages.dotnet.consumer_manifest import DotnetConsumerManifestExtractor
+from source.kg.languages.python.consumer_manifest import PythonConsumerManifestExtractor
+from source.kg.languages.typescript.consumer_manifest import TypeScriptConsumerManifestExtractor
+
+
+class ConsumerManifestExtractorTest(unittest.TestCase):
+    def test_typescript_package_json_dependency_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "package.json").write_text(
+                json.dumps(
+                    {
+                        "dependencies": {
+                            "@acme/shared": "workspace:*",
+                            "@acme/client": "git+https://github.com/acme/client.git",
+                            "local-lib": "file:../local-lib",
+                            "linked-lib": "link:../linked-lib",
+                            "react": "^18.2.0",
+                        },
+                        "devDependencies": {"vite": "^5.0.0"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = TypeScriptConsumerManifestExtractor().extract(_repo(root))
+
+        by_name = {dependency.declared_name: dependency for dependency in result.dependencies}
+        self.assertEqual(by_name["@acme/shared"].spec_form, "workspace")
+        self.assertEqual(by_name["@acme/client"].spec_form, "git_url")
+        self.assertEqual(by_name["local-lib"].spec_form, "file_path")
+        self.assertEqual(by_name["local-lib"].target_url, "../local-lib")
+        self.assertEqual(by_name["linked-lib"].spec_form, "file_path")
+        self.assertEqual(by_name["react"].spec_form, "registry")
+        self.assertEqual(by_name["vite"].dependency_kind, "devDependencies")
+        self.assertEqual(result.issues, ())
+
+    def test_typescript_malformed_package_json_reports_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "package.json").write_text("{not-json}\n", encoding="utf-8")
+
+            result = TypeScriptConsumerManifestExtractor().extract(_repo(root))
+
+        self.assertEqual(result.dependencies, ())
+        self.assertEqual(result.issues[0].reason, "cross_repo_dependency_manifest_unreadable")
+        self.assertEqual(result.issues[0].language, "typescript")
+
+    def test_python_pyproject_and_requirements_dependency_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "\n".join(
+                    (
+                        "[project]",
+                        'dependencies = ["requests>=2", "shared @ git+https://github.com/acme/shared.git"]',
+                        "[tool.poetry.dependencies]",
+                        'python = "^3.12"',
+                        'local-lib = { path = "../local-lib" }',
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "requirements.txt").write_text(
+                "git+https://github.com/acme/client.git#egg=client-lib\n"
+                "-e ../editable#egg=editable-lib\n"
+                "--index-url=https://packages.example/simple\n"
+                "-c constraints.txt\n",
+                encoding="utf-8",
+            )
+
+            result = PythonConsumerManifestExtractor().extract(_repo(root))
+
+        by_name = {dependency.declared_name: dependency for dependency in result.dependencies}
+        self.assertEqual(by_name["requests"].spec_form, "registry")
+        self.assertEqual(by_name["shared"].spec_form, "git_url")
+        self.assertEqual(by_name["local-lib"].spec_form, "file_path")
+        self.assertEqual(by_name["client-lib"].spec_form, "git_url")
+        self.assertEqual(by_name["editable-lib"].spec_form, "file_path")
+        self.assertNotIn("-c", by_name)
+        self.assertNotIn("--index-url", by_name)
+        self.assertNotIn("python", by_name)
+        self.assertEqual(result.issues, ())
+
+    def test_python_malformed_pyproject_reports_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project\n", encoding="utf-8")
+
+            result = PythonConsumerManifestExtractor().extract(_repo(root))
+
+        self.assertEqual(result.dependencies, ())
+        self.assertEqual(result.issues[0].reason, "cross_repo_dependency_manifest_unreadable")
+        self.assertEqual(result.issues[0].language, "python")
+
+    def test_dotnet_csproj_dependency_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "App.csproj").write_text(
+                """
+<Project>
+  <ItemGroup>
+    <ProjectReference Include="..\\Shared\\Shared.csproj" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+</Project>
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = DotnetConsumerManifestExtractor().extract(_repo(root))
+
+        by_name = {dependency.declared_name: dependency for dependency in result.dependencies}
+        self.assertEqual(by_name["Shared"].spec_form, "file_path")
+        self.assertEqual(by_name["Shared"].target_url, "..\\Shared\\Shared.csproj")
+        self.assertEqual(by_name["Newtonsoft.Json"].spec_form, "registry")
+        self.assertEqual(by_name["Newtonsoft.Json"].declared_version, "13.0.3")
+        self.assertEqual(result.issues, ())
+
+    def test_dotnet_malformed_csproj_reports_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "App.csproj").write_text("<Project>\n", encoding="utf-8")
+
+            result = DotnetConsumerManifestExtractor().extract(_repo(root))
+
+        self.assertEqual(result.dependencies, ())
+        self.assertEqual(result.issues[0].reason, "cross_repo_dependency_manifest_unreadable")
+        self.assertEqual(result.issues[0].language, "dotnet")
+
+
+def _repo(path: Path) -> RepoSnapshot:
+    return RepoSnapshot(path, path.name, path.parent.name, "working-tree", {})
+
+
+if __name__ == "__main__":
+    unittest.main()

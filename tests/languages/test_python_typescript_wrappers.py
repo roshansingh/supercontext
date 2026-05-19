@@ -8,8 +8,11 @@ import unittest
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.languages.dotnet.language import LANGUAGE_SUPPORT as DOTNET_SUPPORT
+from source.kg.languages.dotnet.consumer_manifest import DotnetConsumerManifestExtractor
 from source.kg.languages.dotnet.package_resolver import DotnetPackageResolver
+from source.kg.languages.python.consumer_manifest import PythonConsumerManifestExtractor
 from source.kg.languages.python.language import LANGUAGE_SUPPORT as PYTHON_SUPPORT
+from source.kg.languages.typescript.consumer_manifest import TypeScriptConsumerManifestExtractor
 from source.kg.languages.typescript.language import LANGUAGE_SUPPORT as TYPESCRIPT_SUPPORT
 
 
@@ -29,6 +32,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
             ["HttpClientOpportunityDetector"],
         )
         self.assertEqual(type(PYTHON_SUPPORT.package_resolver()).__name__, "PythonPackageResolver")
+        self.assertIsInstance(PYTHON_SUPPORT.consumer_manifest_extractor(), PythonConsumerManifestExtractor)
         python_rules = PYTHON_SUPPORT.dimension_rules()
         self.assertEqual(python_rules["version"], 1)
         self.assertIn("backend", {rule["dimension"] for rule in python_rules["rules"]})
@@ -51,6 +55,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
             ["TypeScriptHttpClientOpportunityDetector"],
         )
         self.assertEqual(type(TYPESCRIPT_SUPPORT.package_resolver()).__name__, "TypeScriptPackageResolver")
+        self.assertIsInstance(TYPESCRIPT_SUPPORT.consumer_manifest_extractor(), TypeScriptConsumerManifestExtractor)
         typescript_rules = TYPESCRIPT_SUPPORT.dimension_rules()
         self.assertEqual(typescript_rules["version"], 1)
         self.assertIn("frontend", {rule["dimension"] for rule in typescript_rules["rules"]})
@@ -75,6 +80,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
         self.assertEqual(DOTNET_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})
         self.assertEqual(DOTNET_SUPPORT.opportunity_detectors(), ())
         self.assertIsInstance(DOTNET_SUPPORT.package_resolver(), DotnetPackageResolver)
+        self.assertIsInstance(DOTNET_SUPPORT.consumer_manifest_extractor(), DotnetConsumerManifestExtractor)
         dotnet_rules = DOTNET_SUPPORT.dimension_rules()
         self.assertEqual(dotnet_rules["version"], 1)
         self.assertIn("backend", {rule["dimension"] for rule in dotnet_rules["rules"]})

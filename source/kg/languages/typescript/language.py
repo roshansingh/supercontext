@@ -11,7 +11,8 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._shared.dimension_rules_loader import load_dimension_rules
 from source.kg.languages.known_stacks import load_known_stacks
-from source.kg.languages.types import PackageResolver
+from source.kg.languages.types import ConsumerManifestExtractor, PackageResolver
+from source.kg.languages.typescript.consumer_manifest import TypeScriptConsumerManifestExtractor
 from source.kg.languages.typescript.extractors.extractor_adapter import TYPESCRIPT_COMPILER_API_ADAPTER
 from source.kg.languages.typescript.extractors.typescript_express_routes import TYPESCRIPT_EXPRESS_ROUTES_ADAPTER
 from source.kg.languages.typescript.files import LANGUAGE_FILES, TypeScriptLanguageFiles
@@ -53,6 +54,9 @@ class TypeScriptLanguageSupport:
 
     def package_resolver(self) -> PackageResolver | None:
         return TypeScriptPackageResolver()
+
+    def consumer_manifest_extractor(self) -> ConsumerManifestExtractor | None:
+        return TypeScriptConsumerManifestExtractor()
 
     def dimension_rules(self) -> Mapping[str, Any]:
         return deepcopy(_dimension_rules())

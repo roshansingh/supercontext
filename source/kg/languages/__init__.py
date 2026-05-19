@@ -68,6 +68,7 @@ def _validate_language(language: LanguageSupport) -> None:
         "parse_repo",
         "opportunity_detectors",
         "package_resolver",
+        "consumer_manifest_extractor",
         "dimension_rules",
         "useful_edges",
         "adapters",
