@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import json
 import tempfile
@@ -269,7 +270,7 @@ def _package_provider(path: Path, identity: RepoIdentity, package_name: str) -> 
 
 
 def _relative_path(source: Path, target: Path) -> str:
-    return str(Path("..") / ".." / target.parent.name / target.name)
+    return Path(os.path.relpath(target, source)).as_posix()
 
 
 if __name__ == "__main__":

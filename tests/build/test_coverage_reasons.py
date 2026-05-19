@@ -198,6 +198,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
                         {"classification_id": "a", "entity_id": "ent_a", "package_name": "fs", "bucket": "builtin_or_stdlib"},
                         {"classification_id": "b", "entity_id": "ent_b", "package_name": "react", "bucket": "consumer_manifest_external", "reason": "registry dependency has no matching fleet provider"},
                         {"classification_id": "c", "entity_id": "ent_c", "package_name": "local-missing", "bucket": "consumer_manifest_external", "reason": "human wording can change", "spec_form": "file_path"},
+                        {"classification_id": "d", "entity_id": "ent_d", "package_name": "malformed", "bucket": "consumer_manifest_external", "spec_form": ["file_path"]},
                     )
                 )
                 + "\n",
@@ -210,7 +211,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
         self.assertEqual(report.payload["coverage_gaps"][0]["reason"], "cross_repo_dependency_no_provider")
         self.assertEqual(
             report.payload["package_classification_summary"]["non_actionable_bucket_counts"],
-            {"builtin_or_stdlib": 1, "consumer_manifest_external": 1},
+            {"builtin_or_stdlib": 1, "consumer_manifest_external": 2},
         )
         self.assertEqual(
             report.payload["package_classification_summary"]["actionable_reason_counts"],

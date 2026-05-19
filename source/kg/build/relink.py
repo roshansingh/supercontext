@@ -951,9 +951,13 @@ def _coverage_reason_for_classification(row: JsonObject) -> str | None:
         return "cross_repo_dependency_ambiguous_provider"
     if bucket == "unknown":
         return "cross_repo_dependency_unknown_category"
-    if bucket == "consumer_manifest_external" and row.get("spec_form") in {"workspace", "file_path", "git_url"}:
+    if bucket == "consumer_manifest_external" and _is_internal_path_spec_form(row.get("spec_form")):
         return "cross_repo_dependency_no_provider"
     return None
+
+
+def _is_internal_path_spec_form(value: object) -> bool:
+    return isinstance(value, str) and value in {"workspace", "file_path", "git_url"}
 
 
 def _dedupe_coverage(rows: list[Coverage]) -> tuple[Coverage, ...]:
