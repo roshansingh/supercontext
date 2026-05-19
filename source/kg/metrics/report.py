@@ -39,11 +39,13 @@ def write_coverage_report(
     manifest = _read_manifest(snapshot)
     metrics = _read_metrics(snapshot)
     coverage = _read_coverage(snapshot)
+    package_classifications = _read_package_classifications(snapshot)
     payload = build_coverage_report_payload(
         snapshot,
         manifest,
         metrics,
         coverage,
+        package_classifications,
         run_id=run_id,
         expected_repos=expected_repos,
         tenant=tenant,
@@ -63,6 +65,7 @@ def build_coverage_report_payload(
     manifest: JsonObject,
     metrics: tuple[JsonObject, ...],
     coverage: tuple[JsonObject, ...] = (),
+    package_classifications: tuple[JsonObject, ...] = (),
     *,
     run_id: str | None = None,
     expected_repos: int | None = None,
@@ -87,6 +90,7 @@ def build_coverage_report_payload(
         "repo_count_expected": expected_repos,
         "repo_count_indexed": _repo_count(manifest),
         "summary": _summary(cells, coverage_gaps),
+        "package_classification_summary": _package_classification_summary(package_classifications),
         "coverage_gaps": coverage_gaps,
         "cells": list(cells),
     }
@@ -139,6 +143,16 @@ def render_coverage_report_markdown(payload: JsonObject) -> str:
             f"`{_markdown_code(row['reason'] or '-')}` | {row['file_count']} | "
             f"`{_markdown_code(_coverage_gap_details(row))}` |"
         )
+    package_summary = payload["package_classification_summary"]
+    lines.extend(["", "## Package Classification Summary", "", "### Buckets", "", "| bucket | count |", "|---|---:|"])
+    for bucket, count in package_summary["bucket_counts"].items():
+        lines.append(f"| `{_markdown_code(bucket)}` | {count} |")
+    lines.extend(["", "### Actionable Reasons", "", "| actionable_reason | count |", "|---|---:|"])
+    for reason, count in package_summary["actionable_reason_counts"].items():
+        lines.append(f"| `{_markdown_code(reason)}` | {count} |")
+    lines.extend(["", "### Non-Actionable Buckets", "", "| non_actionable_bucket | count |", "|---|---:|"])
+    for bucket, count in package_summary["non_actionable_bucket_counts"].items():
+        lines.append(f"| `{_markdown_code(bucket)}` | {count} |")
     lines.extend(["", "## Cells", "", "| repo | dimension | cell_score | flags |", "|---|---|---:|---:|"])
     for cell in payload["cells"]:
         lines.append(
@@ -183,11 +197,16 @@ def _read_metrics(snapshot: Path) -> tuple[JsonObject, ...]:
 
 
 def _read_coverage(snapshot: Path) -> tuple[JsonObject, ...]:
-    path = snapshot / "coverage.jsonl"
+    rows = [*list(_read_coverage_file(snapshot / "coverage.jsonl"))]
+    rows.extend(_read_coverage_file(snapshot / "cross_repo_package_coverage.jsonl"))
+    return tuple(rows)
+
+
+def _read_coverage_file(path: Path) -> tuple[JsonObject, ...]:
     if not path.exists():
         return ()
     if not path.is_file():
-        raise FileNotFoundError(f"Coverage file is not a file: {path}")
+        raise ValueError(f"Coverage file is not a regular file: {path}")
     rows = read_jsonl(path)
     coverage: list[JsonObject] = []
     for index, row in enumerate(rows):
@@ -195,6 +214,22 @@ def _read_coverage(snapshot: Path) -> tuple[JsonObject, ...]:
             raise ValueError(f"{path}: row {index + 1} must be a JSON object")
         coverage.append(row)
     return tuple(coverage)
+
+
+def _read_package_classifications(snapshot: Path) -> tuple[JsonObject, ...]:
+    relink_path = snapshot / "cross_repo_package_classifications.jsonl"
+    path = relink_path if relink_path.exists() else snapshot / "package_classifications.jsonl"
+    if not path.exists():
+        return ()
+    if not path.is_file():
+        raise ValueError(f"Package classification file is not a regular file: {path}")
+    rows = read_jsonl(path)
+    result: list[JsonObject] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: row {index + 1} must be a JSON object")
+        result.append(row)
+    return tuple(result)
 
 
 def _validate_metric_row(path: Path, index: int, row: JsonObject) -> None:
@@ -275,6 +310,49 @@ def _summary(cells: tuple[JsonObject, ...], coverage_gaps: list[JsonObject]) -> 
         "worst_dimensions": _worst_groups(cells, "dimension"),
         "repos_with_lowest_coverage": _worst_groups(cells, "repo"),
     }
+
+
+def _package_classification_summary(rows: tuple[JsonObject, ...]) -> JsonObject:
+    bucket_counts: dict[str, int] = {}
+    actionable_reason_counts: dict[str, int] = {}
+    for row in rows:
+        bucket = row.get("bucket")
+        if isinstance(bucket, str) and bucket:
+            bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+        reason = _classification_actionable_reason(row)
+        if reason is not None:
+            actionable_reason_counts[reason] = actionable_reason_counts.get(reason, 0) + 1
+    non_actionable: dict[str, int] = {}
+    for row in rows:
+        bucket = row.get("bucket")
+        if not isinstance(bucket, str):
+            continue
+        if bucket not in {"builtin_or_stdlib", "consumer_manifest_external"}:
+            continue
+        if _classification_actionable_reason(row) is not None:
+            continue
+        non_actionable[str(bucket)] = non_actionable.get(str(bucket), 0) + 1
+    return {
+        "total": len(rows),
+        "bucket_counts": dict(sorted(bucket_counts.items())),
+        "non_actionable_bucket_counts": dict(sorted(non_actionable.items())),
+        "actionable_reason_counts": dict(sorted(actionable_reason_counts.items())),
+    }
+
+
+def _classification_actionable_reason(row: JsonObject) -> str | None:
+    bucket = row.get("bucket")
+    if bucket == "candidate_internal_ambiguous":
+        return "cross_repo_dependency_ambiguous_provider"
+    if bucket == "unknown":
+        return "cross_repo_dependency_unknown_category"
+    if bucket == "consumer_manifest_external" and _is_internal_path_spec_form(row.get("spec_form")):
+        return "cross_repo_dependency_no_provider"
+    return None
+
+
+def _is_internal_path_spec_form(value: object) -> bool:
+    return isinstance(value, str) and value in {"workspace", "file_path", "git_url"}
 
 
 def _coverage_gaps(manifest: JsonObject, coverage: tuple[JsonObject, ...]) -> list[JsonObject]:

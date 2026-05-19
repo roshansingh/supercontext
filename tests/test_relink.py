@@ -69,6 +69,8 @@ class RelinkOnlyTest(unittest.TestCase):
 
             self.assertTrue((fleet / "cross_repo_links.jsonl").exists())
             self.assertTrue((fleet / "cross_repo_link_evidence.jsonl").exists())
+            self.assertTrue((fleet / "cross_repo_package_coverage.jsonl").exists())
+            self.assertEqual(read_jsonl(fleet / "cross_repo_package_coverage.jsonl"), [])
             for filename in ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl"):
                 self.assertFalse((fleet / filename).exists())
 

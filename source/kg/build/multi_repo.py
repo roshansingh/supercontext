@@ -121,6 +121,7 @@ def build_multi(
     link_result = relink.link_external_packages(linker_inputs)
     facts.extend(link_result.facts)
     evidence.extend(link_result.evidence)
+    coverage.extend(link_result.coverage)
     return MultiRepoBuild(
         entities=entities,
         facts=facts,
