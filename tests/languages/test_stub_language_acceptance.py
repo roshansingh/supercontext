@@ -182,6 +182,9 @@ def _language_py(files_module: str) -> str:
             def package_resolver(self):
                 return None
 
+            def consumer_manifest_extractor(self):
+                return None
+
             def dimension_rules(self):
                 return {{}}
 

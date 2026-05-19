@@ -10,11 +10,12 @@ from typing import Any
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._shared.dimension_rules_loader import load_dimension_rules
+from source.kg.languages.dotnet.consumer_manifest import DotnetConsumerManifestExtractor
 from source.kg.languages.dotnet.extractors.extractor_adapter import DOTNET_CSHARP_BRIDGE_ADAPTER
 from source.kg.languages.dotnet.files import LANGUAGE_FILES, DotnetLanguageFiles
 from source.kg.languages.dotnet.package_resolver import DotnetPackageResolver
 from source.kg.languages.known_stacks import load_known_stacks
-from source.kg.languages.types import PackageResolver
+from source.kg.languages.types import ConsumerManifestExtractor, PackageResolver
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,9 @@ class DotnetLanguageSupport:
 
     def package_resolver(self) -> PackageResolver | None:
         return DotnetPackageResolver()
+
+    def consumer_manifest_extractor(self) -> ConsumerManifestExtractor | None:
+        return DotnetConsumerManifestExtractor()
 
     def dimension_rules(self) -> Mapping[str, Any]:
         return deepcopy(_dimension_rules())

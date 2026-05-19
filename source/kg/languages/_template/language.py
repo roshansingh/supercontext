@@ -7,7 +7,7 @@ from typing import Any
 
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._template.files import LANGUAGE_FILES, TemplateLanguageFiles
-from source.kg.languages.types import PackageResolver
+from source.kg.languages.types import ConsumerManifestExtractor, PackageResolver
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,9 @@ class TemplateLanguageSupport:
         return ()
 
     def package_resolver(self) -> PackageResolver | None:
+        return None
+
+    def consumer_manifest_extractor(self) -> ConsumerManifestExtractor | None:
         return None
 
     def dimension_rules(self) -> Mapping[str, Any]:

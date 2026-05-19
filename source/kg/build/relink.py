@@ -15,7 +15,12 @@ from source.kg.core.store import read_jsonl
 from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS
 from source.kg.languages import REGISTERED_LANGUAGES
-from source.kg.languages.types import PackageMetadata, PackageResolver
+from source.kg.languages.types import (
+    ConsumerDependency,
+    ConsumerManifestIssue,
+    PackageMetadata,
+    PackageResolver,
+)
 
 
 LINKER_SOURCE_SYSTEM = "package_linker"
@@ -67,6 +72,8 @@ class LinkerResult:
     evidence: tuple[Evidence, ...]
     providers: tuple[PackageProvider, ...]
     ambiguous_package_count: int
+    consumer_dependencies: tuple[ConsumerDependency, ...] = ()
+    consumer_manifest_issues: tuple[ConsumerManifestIssue, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -83,7 +90,14 @@ class _PackageMetadataSelection:
     resolver_language: str | None
 
 
+@dataclass(frozen=True)
+class _ConsumerManifestCollection:
+    dependencies: tuple[ConsumerDependency, ...]
+    issues: tuple[ConsumerManifestIssue, ...]
+
+
 def link_external_packages(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> LinkerResult:
+    consumer_manifests = _collect_consumer_manifest_results(inputs)
     providers = _package_providers(inputs)
     entity_repo_identities: dict[str, set[RepoIdentity]] = {}
     entities: list[Entity] = []
@@ -99,6 +113,8 @@ def link_external_packages(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) 
         evidence=tuple(link_evidence),
         providers=tuple(providers),
         ambiguous_package_count=ambiguous_count,
+        consumer_dependencies=consumer_manifests.dependencies,
+        consumer_manifest_issues=consumer_manifests.issues,
     )
 
 
@@ -156,6 +172,8 @@ def relink_snapshot_dirs(
         "provider_count": len(result.providers),
         "link_count": len(result.facts),
         "ambiguous_package_count": result.ambiguous_package_count,
+        "consumer_dependency_count": len(result.consumer_dependencies),
+        "consumer_manifest_issue_count": len(result.consumer_manifest_issues),
         "counts": {
             "facts": len({fact.fact_id for fact in result.facts}),
             "evidence": len({row.evidence_id for row in result.evidence}),
@@ -700,6 +718,26 @@ def _package_resolvers_in_precedence_order() -> tuple[_RegisteredPackageResolver
             continue
         resolvers.append(_RegisteredPackageResolver(language.name, resolver))
     return tuple(resolvers)
+
+
+def _collect_consumer_manifest_results(
+    inputs: list[LinkerInput] | tuple[LinkerInput, ...],
+) -> _ConsumerManifestCollection:
+    dependencies: list[ConsumerDependency] = []
+    issues: list[ConsumerManifestIssue] = []
+    for input_repo in inputs:
+        # PR-2 collects manifest evidence in memory for PR-1 classification.
+        # Relink snapshots do not yet persist per-repo language dimensions, so
+        # extractors fail closed on absent manifests; persisted dependency JSONL
+        # and coverage rows land with the classifier.
+        for language in REGISTERED_LANGUAGES:
+            extractor = language.consumer_manifest_extractor()
+            if extractor is None:
+                continue
+            result = extractor.extract(input_repo.repo)
+            dependencies.extend(result.dependencies)
+            issues.extend(result.issues)
+    return _ConsumerManifestCollection(tuple(dependencies), tuple(issues))
 
 
 def _validate_package_manifest_file(path: Path) -> None:

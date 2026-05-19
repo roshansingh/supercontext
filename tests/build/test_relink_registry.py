@@ -69,6 +69,31 @@ class RelinkRegistryTest(unittest.TestCase):
 
         self.assertEqual({fact.predicate for fact in result.facts}, {"RESOLVES_TO_REPO"})
 
+    def test_relink_collects_consumer_manifest_results_from_registered_languages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "owner" / "consumer"
+            repo.mkdir(parents=True)
+            (repo / "package.json").write_text(
+                json.dumps({"dependencies": {"@acme/shared": "workspace:*"}}),
+                encoding="utf-8",
+            )
+
+            result = link_external_packages(
+                (
+                    LinkerInput(
+                        repo=_repo_snapshot(repo),
+                        repo_identity=_repo_identity(repo),
+                        entities=(_repo_entity(repo),),
+                    ),
+                )
+            )
+
+        self.assertEqual(result.consumer_manifest_issues, ())
+        self.assertEqual(
+            [(dependency.declared_name, dependency.spec_form) for dependency in result.consumer_dependencies],
+            [("@acme/shared", "workspace")],
+        )
+
 
 @dataclass(frozen=True)
 class _StubPackageMetadata:
@@ -120,6 +145,9 @@ class _StubLanguageSupport:
 
     def package_resolver(self) -> _StubPackageResolver:
         return _StubPackageResolver()
+
+    def consumer_manifest_extractor(self):
+        return None
 
     def dimension_rules(self):
         return {}
