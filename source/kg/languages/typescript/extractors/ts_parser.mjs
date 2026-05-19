@@ -169,6 +169,37 @@ function expressionResult(kind, value, raw, resolutionKind = null) {
   return result;
 }
 
+function routeParamNameFromExpression(node) {
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) return node.argumentExpression.text;
+  return null;
+}
+
+function isSafeRouteParamName(name) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set(values));
+}
+
+function hasSafeTemplatePathFrame(value) {
+  if (value.startsWith("/")) return true;
+  if (!value.startsWith("${env:")) return false;
+  const hostEnd = value.indexOf("}");
+  return hostEnd >= 0 && value.slice(hostEnd + 1).startsWith("/");
+}
+
+function templateParameterizationFailure(value, followingText, hasMoreSpans) {
+  if (value.length === 0 || !hasSafeTemplatePathFrame(value)) return "template_dynamic_host_position";
+  if (!value.endsWith("/")) return "template_dynamic_composite_segment";
+  if (followingText.length === 0) return hasMoreSpans ? "template_dynamic_composite_segment" : null;
+  return followingText.startsWith("/") || followingText.startsWith("?") || followingText.startsWith("#")
+    ? null
+    : "template_dynamic_composite_segment";
+}
+
 function collectTopLevelLiteralBindings(sourceFile) {
   const bindings = new Map();
   const invalid = new Set();
@@ -591,7 +622,9 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
   if (ts.isTemplateExpression(node)) {
     let value = node.head.text;
     let hostUnresolved = false;
-    for (const span of node.templateSpans) {
+    const routeParams = [];
+    for (let index = 0; index < node.templateSpans.length; index += 1) {
+      const span = node.templateSpans[index];
       const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames);
       if (resolved.kind === "env") {
         value += resolved.value;
@@ -599,16 +632,32 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
       } else if (resolved.kind === "resolved") {
         value += resolved.value;
       } else {
-        return {
-          kind: "unresolved",
-          value: null,
-          raw: rawNodeText(node, sourceFile),
-          reason: "target_dynamic_template_segment",
-        };
+        const paramName = routeParamNameFromExpression(span.expression);
+        if (paramName == null || !isSafeRouteParamName(paramName)) {
+          return {
+            kind: "unresolved",
+            value: null,
+            raw: rawNodeText(node, sourceFile),
+            reason: "template_dynamic_expression_unsafe",
+          };
+        }
+        const reason = templateParameterizationFailure(value, span.literal.text, index < node.templateSpans.length - 1);
+        if (reason != null) {
+          return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason };
+        }
+        value += `{${paramName}}`;
+        routeParams.push(paramName);
       }
       value += span.literal.text;
     }
-    return expressionResult(hostUnresolved ? "env" : "resolved", value, rawNodeText(node, sourceFile), "template");
+    const result = expressionResult(
+      hostUnresolved ? "env" : "resolved",
+      value,
+      rawNodeText(node, sourceFile),
+      routeParams.length > 0 ? "template_parameterized" : "template"
+    );
+    if (routeParams.length > 0) result.route_params = uniqueStrings(routeParams);
+    return result;
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames);
@@ -663,6 +712,7 @@ function resolveEndpointTarget(node, sourceFile, bindings) {
   }
   const target = splitResolvedEndpointTarget(expression.value);
   target.resolution_kind = expression.resolution_kind ?? null;
+  if (Array.isArray(expression.route_params)) target.route_params = expression.route_params;
   if (target.kind === "host_unresolved" || target.kind === "resolved" || target.kind === "external") return target;
   return { kind: "unresolved", path: null, host: null, raw_target: expression.raw };
 }
@@ -1177,6 +1227,7 @@ function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpr
   const combined = `${baseValue.replace(/\/+$/, "")}/${targetValue.replace(/^\/+/, "")}`;
   const resolved = splitResolvedEndpointTarget(combined);
   resolved.resolution_kind = target.resolution_kind ?? null;
+  if (Array.isArray(target.route_params)) resolved.route_params = target.route_params;
   return resolved.kind === "unresolved" ? { kind: "unresolved", path: null, host: null, raw_target: target.raw } : resolved;
 }
 
@@ -1198,6 +1249,7 @@ function rowFromTarget(target, method, line, sourceKind) {
     reason: target.reason ?? null,
     resolution_kind: target.resolution_kind ?? null,
     host_resolution_kind: target.host_resolution_kind ?? null,
+    route_params: Array.isArray(target.route_params) ? target.route_params : null,
   };
 }
 
