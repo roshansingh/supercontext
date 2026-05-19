@@ -340,14 +340,11 @@ def _package_classification_summary(rows: tuple[JsonObject, ...]) -> JsonObject:
 
 def _classification_actionable_reason(row: JsonObject) -> str | None:
     bucket = row.get("bucket")
-    reason = row.get("reason")
     if bucket == "candidate_internal_ambiguous":
         return "cross_repo_dependency_ambiguous_provider"
     if bucket == "unknown":
         return "cross_repo_dependency_unknown_category"
-    if bucket == "consumer_manifest_external" and isinstance(reason, str) and reason.startswith(
-        "path, workspace, or git dependency"
-    ):
+    if bucket == "consumer_manifest_external" and row.get("spec_form") in {"workspace", "file_path", "git_url"}:
         return "cross_repo_dependency_no_provider"
     return None
 

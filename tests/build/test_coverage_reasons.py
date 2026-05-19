@@ -7,7 +7,7 @@ import unittest
 
 from source.kg.build import relink as relink_module
 from source.kg.build.relink import LinkerInput, RepoIdentity, link_external_packages
-from source.kg.core.models import Entity
+from source.kg.core.models import Coverage, Entity
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.types import ConsumerManifestIssue
 from source.kg.metrics.report import write_coverage_report
@@ -74,6 +74,8 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
         self.assertEqual(reasons["code-only"], "cross_repo_dependency_unknown_category")
         self.assertNotIn("react", reasons)
         self.assertNotIn("fs", reasons)
+        local_missing = next(row for row in result.package_classifications if row["package_name"] == "local-missing")
+        self.assertEqual(local_missing["spec_form"], "file_path")
 
     def test_linker_emits_manifest_unreadable_coverage_reason(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -118,6 +120,28 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
         self.assertEqual(len(coverage), 1)
         self.assertEqual(coverage[0].scope_ref["repo"], "-")
         self.assertEqual(coverage[0].scope_ref["reason"], "cross_repo_dependency_manifest_unreadable")
+
+    def test_coverage_dedupe_ignores_generated_checked_at(self) -> None:
+        first = Coverage(
+            tenant_id="default",
+            predicate="RESOLVES_TO_REPO",
+            scope_ref={"repo": "consumer", "reason": "cross_repo_dependency_unknown_category"},
+            state="partially_instrumented",
+            source_system="package_linker",
+            checked_at="2026-05-19T00:00:00+00:00",
+        )
+        second = Coverage(
+            tenant_id="default",
+            predicate="RESOLVES_TO_REPO",
+            scope_ref={"repo": "consumer", "reason": "cross_repo_dependency_unknown_category"},
+            state="partially_instrumented",
+            source_system="package_linker",
+            checked_at="2026-05-19T00:00:01+00:00",
+        )
+
+        deduped = relink_module._dedupe_coverage([first, second])
+
+        self.assertEqual(deduped, (second,))
 
     def test_report_includes_actionable_reasons_and_aggregate_non_actionable_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,7 +197,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
                     for row in (
                         {"classification_id": "a", "entity_id": "ent_a", "package_name": "fs", "bucket": "builtin_or_stdlib"},
                         {"classification_id": "b", "entity_id": "ent_b", "package_name": "react", "bucket": "consumer_manifest_external", "reason": "registry dependency has no matching fleet provider"},
-                        {"classification_id": "c", "entity_id": "ent_c", "package_name": "local-missing", "bucket": "consumer_manifest_external", "reason": "path, workspace, or git dependency has no matching fleet provider; treating as out-of-fleet"},
+                        {"classification_id": "c", "entity_id": "ent_c", "package_name": "local-missing", "bucket": "consumer_manifest_external", "reason": "human wording can change", "spec_form": "file_path"},
                     )
                 )
                 + "\n",

@@ -810,6 +810,7 @@ def _classify_external_packages(
         reason = "code import has no matching consumer manifest dependency"
         manifest_path = None
         line_number = None
+        spec_form = None
         if _is_builtin_package(entity):
             bucket = "builtin_or_stdlib"
             reason = "extractor classified package as builtin or stdlib"
@@ -819,6 +820,7 @@ def _classify_external_packages(
         elif dependency is not None:
             manifest_path = str(dependency.manifest_path)
             line_number = dependency.line_number
+            spec_form = dependency.spec_form
             target_match = _manifest_target_repo_identity(dependency, consumer_identity, inputs)
             provider_matches = {
                 identity
@@ -863,6 +865,7 @@ def _classify_external_packages(
                 "manifest_path": manifest_path,
                 "line_number": line_number,
                 "language": _language_from_manifest_path(Path(manifest_path)) if manifest_path else None,
+                "spec_form": spec_form,
             }
         )
     return _dedupe_package_classifications(classifications)
@@ -944,14 +947,11 @@ def _package_linkage_coverage(
 
 def _coverage_reason_for_classification(row: JsonObject) -> str | None:
     bucket = row.get("bucket")
-    reason = row.get("reason")
     if bucket == "candidate_internal_ambiguous":
         return "cross_repo_dependency_ambiguous_provider"
     if bucket == "unknown":
         return "cross_repo_dependency_unknown_category"
-    if bucket == "consumer_manifest_external" and isinstance(reason, str) and reason.startswith(
-        "path, workspace, or git dependency"
-    ):
+    if bucket == "consumer_manifest_external" and row.get("spec_form") in {"workspace", "file_path", "git_url"}:
         return "cross_repo_dependency_no_provider"
     return None
 
@@ -960,10 +960,16 @@ def _dedupe_coverage(rows: list[Coverage]) -> tuple[Coverage, ...]:
     rows_by_id: dict[str, Coverage] = {}
     for row in rows:
         previous = rows_by_id.get(row.coverage_id)
-        if previous is not None and previous != row:
+        if previous is not None and _coverage_without_checked_at(previous) != _coverage_without_checked_at(row):
             raise ValueError(f"Conflicting coverage rows for coverage_id: {row.coverage_id}")
         rows_by_id[row.coverage_id] = row
     return tuple(rows_by_id.values())
+
+
+def _coverage_without_checked_at(row: Coverage) -> JsonObject:
+    record = row.to_record()
+    record.pop("checked_at", None)
+    return record
 
 
 def _consumer_identity_for_path(
