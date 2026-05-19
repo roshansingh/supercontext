@@ -971,17 +971,275 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 2)
 
-    def test_typescript_client_helper_call_target_is_classified_as_deferred(self) -> None:
+    def test_typescript_client_direct_return_helper_call_resolves(self) -> None:
         build = _extract_typescript_client(
-            "function getUrl(path) { return path; }\n"
-            "fetch(getUrl('/api/helper'));\n"
+            "function getUrl(path) { return '/api/' + path; }\n"
+            "fetch(getUrl('helper'));\n"
+            "const BASE = '/v1';\n"
+            "function withBase(path) { return BASE + path; }\n"
+            "fetch(withBase('/items'));\n"
+            "function overloaded(path: string): string;\n"
+            "function overloaded(path) { return '/overloaded/' + path; }\n"
+            "fetch(overloaded('item'));\n"
+            "function scoped(p) { return '/scoped/' + p; }\n"
+            "function unrelated() { var scoped = () => '/changed'; }\n"
+            "fetch(scoped('helper'));\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/helper": {"ANY"},
+                "/v1/items": {"ANY"},
+                "/overloaded/item": {"ANY"},
+                "/scoped/helper": {"ANY"},
+            },
+        )
+        self.assertEqual(qualifiers_by_path["/api/helper"][0]["resolution_kind"], "helper_inline")
+        self.assertEqual(qualifiers_by_path["/v1/items"][0]["resolution_kind"], "helper_inline")
+        self.assertEqual(qualifiers_by_path["/overloaded/item"][0]["resolution_kind"], "helper_inline")
+        self.assertEqual(qualifiers_by_path["/scoped/helper"][0]["resolution_kind"], "helper_inline")
+
+    def test_typescript_client_helper_call_fail_closed_shapes(self) -> None:
+        build = _extract_typescript_client(
+            "function branch(p) { if (p) return '/a'; return '/b'; }\n"
+            "fetch(branch('x'));\n"
+            "function multi(p) { let x = '/a' + p; return x; }\n"
+            "fetch(multi('y'));\n"
+            "function reassigned(p) { return '/a/' + p; }\n"
+            "reassigned = () => '/changed';\n"
+            "fetch(reassigned('z'));\n"
+            "function unresolved(p) { return '/api/' + p; }\n"
+            "fetch(unresolved(getId()));\n"
+            "function selfCall(p) { return selfCall(p); }\n"
+            "fetch(selfCall('loop'));\n"
+            "function rest(...parts) { return '/api/' + parts; }\n"
+            "fetch(rest('a', 'b'));\n"
+            "function nestedVar(p) { return '/api/' + p; }\n"
+            "if (cond) { var nestedVar = () => '/changed'; }\n"
+            "fetch(nestedVar('shadowed'));\n"
+            "function getUrl(p) { return '/api/' + p; }\n"
+            "function load(getUrl) { fetch(getUrl('shadowed')); }\n"
         )
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
-        self.assertEqual(
-            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"],
-            1,
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 6)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_reassigned"], 2)
+
+    def test_typescript_client_helper_inline_preserves_env_host_metadata(self) -> None:
+        build = _extract_typescript_client(
+            "function makeUrl(path) { return import.meta.env.VITE_API_ROOT + path; }\n"
+            "fetch(makeUrl('/api/helper-env'));\n"
+            "function userPath() { return `/users/${userId}`; }\n"
+            "fetch(userPath());\n"
+            "function campaignPath(path) { return '/api' + path; }\n"
+            "fetch(campaignPath(`/campaigns/${campaignId}`));\n"
         )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {"/api/helper-env": {"ANY"}, "/users/{userId}": {"ANY"}, "/api/campaigns/{campaignId}": {"ANY"}},
+        )
+        self.assertEqual(qualifiers_by_path["/api/helper-env"][0]["resolution_kind"], "helper_inline")
+        self.assertEqual(qualifiers_by_path["/api/helper-env"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(qualifiers_by_path["/users/{userId}"][0]["resolution_kind"], "helper_inline")
+        self.assertEqual(qualifiers_by_path["/users/{userId}"][0]["route_params"], ["userId"])
+        self.assertEqual(qualifiers_by_path["/api/campaigns/{campaignId}"][0]["route_params"], ["campaignId"])
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["VITE_API_ROOT"])
+
+    def test_typescript_client_url_constructor_to_string_resolves_narrow_shape(self) -> None:
+        build = _extract_typescript_client(
+            "const apiBase = 'https://example.com';\n"
+            "const versionBase = 'https://example.com/v1/';\n"
+            "const rootedBase = 'https://example.com/v1';\n"
+            "fetch(new URL('/api/items', apiBase).toString());\n"
+            "fetch(new URL('relative-items', versionBase).toString());\n"
+            "fetch(new URL('/api/rooted', rootedBase).toString());\n"
+            "fetch(new URL(`/api/campaigns/${campaignId}`, apiBase).toString());\n"
+            "fetch(new URL('/api/env-items', import.meta.env.VITE_API_ROOT).toString());\n"
+            "fetch(new URL('HTTPS://other.example/api/external', apiBase).toString());\n"
+            "fetch(new URL('//other.example/api/scheme-relative', apiBase).toString());\n"
+            "fetch(new URL('ftp://other.example/api/ftp', apiBase).toString());\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/items": {"ANY"},
+                "/v1/relative-items": {"ANY"},
+                "/api/rooted": {"ANY"},
+                "/api/campaigns/{campaignId}": {"ANY"},
+                "/api/env-items": {"ANY"},
+            },
+        )
+        self.assertEqual(qualifiers_by_path["/api/items"][0]["resolution_kind"], "url_constructor")
+        self.assertEqual(qualifiers_by_path["/v1/relative-items"][0]["resolution_kind"], "url_constructor")
+        self.assertEqual(qualifiers_by_path["/api/rooted"][0]["resolution_kind"], "url_constructor")
+        self.assertEqual(qualifiers_by_path["/api/campaigns/{campaignId}"][0]["route_params"], ["campaignId"])
+        self.assertEqual(qualifiers_by_path["/api/env-items"][0]["resolution_kind"], "url_constructor")
+        self.assertEqual(qualifiers_by_path["/api/env-items"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["VITE_API_ROOT"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 3)
+
+    def test_typescript_client_url_constructor_env_base_path_uses_absolute_path(self) -> None:
+        build = _extract_typescript_client(
+            "const apiBase = import.meta.env.VITE_API_ROOT + '/v1';\n"
+            "fetch(new URL('/api/env-rooted', apiBase).toString());\n"
+            "const schemeBase = import.meta.env.SCHEME + '://example.com';\n"
+            "fetch(new URL('/api/scheme-env', schemeBase).toString());\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/env-rooted": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/env-rooted"][0]["resolution_kind"], "url_constructor")
+        self.assertEqual(qualifiers_by_path["/api/env-rooted"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["VITE_API_ROOT"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
+    def test_typescript_client_url_constructor_fails_when_url_is_module_shadowed(self) -> None:
+        build = _extract_typescript_client(
+            "const apiBase = 'https://example.com';\n"
+            "fetch(new URL('/api/shadowed', apiBase).toString());\n"
+            "enum URL {}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
+    def test_typescript_client_url_constructor_fails_when_url_is_later_block_shadowed(self) -> None:
+        for declaration in ("const URL = makeUrl;", "var URL = makeUrl;", "class URL {}"):
+            with self.subTest(declaration=declaration):
+                build = _extract_typescript_client(
+                    "const apiBase = 'https://example.com';\n"
+                    "function load() {\n"
+                    "  fetch(new URL('/api/block-shadowed', apiBase).toString());\n"
+                    f"  {declaration}\n"
+                    "}\n"
+                )
+
+                self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+                self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
+    def test_typescript_client_url_constructor_fails_when_url_is_control_flow_shadowed(self) -> None:
+        cases = {
+            "catch_binding": (
+                "const apiBase = 'https://example.com';\n"
+                "try { throw makeUrl; } catch (URL) {\n"
+                "  fetch(new URL('/api/catch-shadowed', apiBase).toString());\n"
+                "}\n"
+            ),
+            "for_initializer": (
+                "const apiBase = 'https://example.com';\n"
+                "for (let URL = makeUrl; ready; ready = false) {\n"
+                "  fetch(new URL('/api/for-shadowed', apiBase).toString());\n"
+                "}\n"
+            ),
+            "for_of_initializer": (
+                "const apiBase = 'https://example.com';\n"
+                "for (const URL of urls) {\n"
+                "  fetch(new URL('/api/for-of-shadowed', apiBase).toString());\n"
+                "}\n"
+            ),
+            "for_in_initializer": (
+                "const apiBase = 'https://example.com';\n"
+                "for (let URL in urls) {\n"
+                "  fetch(new URL('/api/for-in-shadowed', apiBase).toString());\n"
+                "}\n"
+            ),
+            "module_nested_var": (
+                "const apiBase = 'https://example.com';\n"
+                "fetch(new URL('/api/module-var-shadowed', apiBase).toString());\n"
+                "if (cond) { var URL = makeUrl; }\n"
+            ),
+            "function_nested_var": (
+                "const apiBase = 'https://example.com';\n"
+                "function load() {\n"
+                "  fetch(new URL('/api/function-var-shadowed', apiBase).toString());\n"
+                "  if (cond) { var URL = makeUrl; }\n"
+                "}\n"
+            ),
+            "namespace_nested_var_inside_namespace": (
+                "namespace Local {\n"
+                "  const apiBase = 'https://example.com';\n"
+                "  fetch(new URL('/api/namespace-shadowed', apiBase).toString());\n"
+                "  if (cond) { var URL = makeUrl; }\n"
+                "}\n"
+            ),
+        }
+        for case_name, source in cases.items():
+            with self.subTest(case_name=case_name):
+                build = _extract_typescript_client(source)
+
+                self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+                self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
+    def test_typescript_client_url_constructor_ignores_type_only_url_import(self) -> None:
+        build = _extract_typescript_client(
+            "import type { URL } from './types';\n"
+            "const apiBase = 'https://example.com';\n"
+            "fetch(new URL('/api/type-only', apiBase).toString());\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/type-only": {"ANY"}})
+        self.assertEqual(qualifiers_by_path["/api/type-only"][0]["resolution_kind"], "url_constructor")
+
+    def test_typescript_client_url_constructor_ignores_non_runtime_url_declarations(self) -> None:
+        cases = {
+            "import_type_equals": (
+                "import type URL = require('./types');\n"
+                "const apiBase = 'https://example.com';\n"
+                "fetch(new URL('/api/import-type-equals', apiBase).toString());\n",
+                "/api/import-type-equals",
+            ),
+            "declare_var": (
+                "declare var URL: unknown;\n"
+                "const apiBase = 'https://example.com';\n"
+                "fetch(new URL('/api/declare-var', apiBase).toString());\n",
+                "/api/declare-var",
+            ),
+            "declare_const": (
+                "declare const URL: unknown;\n"
+                "const apiBase = 'https://example.com';\n"
+                "fetch(new URL('/api/declare-const', apiBase).toString());\n",
+                "/api/declare-const",
+            ),
+            "namespace_local_var": (
+                "namespace Local { var URL = makeUrl; }\n"
+                "const apiBase = 'https://example.com';\n"
+                "fetch(new URL('/api/namespace-local', apiBase).toString());\n",
+                "/api/namespace-local",
+            ),
+            "block_declare_const": (
+                "if (cond) {\n"
+                "  declare const URL: unknown;\n"
+                "  const apiBase = 'https://example.com';\n"
+                "  fetch(new URL('/api/block-declare-const', apiBase).toString());\n"
+                "}\n",
+                "/api/block-declare-const",
+            ),
+        }
+        for case_name, (source, expected_path) in cases.items():
+            with self.subTest(case_name=case_name):
+                build = _extract_typescript_client(source)
+                calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+                qualifiers_by_path = _qualifiers_by_path(calls)
+
+                self.assertEqual(_methods_by_path(calls), {expected_path: {"ANY"}})
+                self.assertEqual(qualifiers_by_path[expected_path][0]["resolution_kind"], "url_constructor")
 
     def test_typescript_client_with_block_fails_closed(self) -> None:
         build = _extract_typescript_client("with (obj) { fetch(path); }\n")
