@@ -821,7 +821,7 @@ def _classify_external_packages(
             else:
                 bucket = "unknown"
                 reason = "consumer manifest dependency has unknown spec form"
-        package_name = next(iter(sorted(candidate_names)), str(entity.identity.get("name", "")))
+        package_name = _non_empty_string(entity.identity.get("name")) or next(iter(sorted(candidate_names)), "")
         classification_id = _package_classification_id(entity, consumer_identity, bucket)
         classifications.append(
             {
