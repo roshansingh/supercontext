@@ -34,7 +34,7 @@ def normalize_git_url(url: str) -> RepoIdentity | None:
     if host is None or len(parts) < 2:
         return None
     owner = "/".join(parts[:-1])
-    name = _strip_repo_suffix(parts[-1])
+    name = parts[-1]
     if not owner or not name:
         return None
     return RepoIdentity(DEFAULT_TENANT_ID, host, owner, name)
