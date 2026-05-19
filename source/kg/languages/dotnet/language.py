@@ -14,6 +14,7 @@ from source.kg.languages.dotnet.extractors.extractor_adapter import DOTNET_CSHAR
 from source.kg.languages.dotnet.files import LANGUAGE_FILES, DotnetLanguageFiles
 from source.kg.languages.dotnet.package_resolver import DotnetPackageResolver
 from source.kg.languages.known_stacks import load_known_stacks
+from source.kg.languages.types import PackageResolver
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class DotnetLanguageSupport:
     def opportunity_detectors(self) -> tuple[Any, ...]:
         return ()
 
-    def package_resolver(self) -> Any | None:
+    def package_resolver(self) -> PackageResolver | None:
         return DotnetPackageResolver()
 
     def dimension_rules(self) -> Mapping[str, Any]:

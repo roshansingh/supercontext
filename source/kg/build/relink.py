@@ -14,20 +14,8 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import read_jsonl
 from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS
-from source.kg.languages.python.package_resolver import (
-    PYTHON_PACKAGE_MANIFESTS,
-    PythonPackageMetadata,
-    PythonPackageResolver,
-)
-from source.kg.languages.dotnet.package_resolver import (
-    DotnetPackageMetadata,
-    DotnetPackageResolver,
-)
-from source.kg.languages.typescript.package_resolver import (
-    TYPESCRIPT_PACKAGE_MANIFESTS,
-    TypeScriptPackageMetadata,
-    TypeScriptPackageResolver,
-)
+from source.kg.languages import REGISTERED_LANGUAGES
+from source.kg.languages.types import PackageMetadata, PackageResolver
 
 
 LINKER_SOURCE_SYSTEM = "package_linker"
@@ -38,6 +26,7 @@ STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
     ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
 )
 TENANT_SCOPED_ENTITY_KINDS = SUPPORTED_ENTITY_KINDS
+_PACKAGE_RESOLVER_LANGUAGE_PRECEDENCE = ("python", "typescript", "dotnet")
 
 
 @dataclass(frozen=True)
@@ -58,6 +47,7 @@ class PackageProvider:
     package_name: str
     aliases: tuple[str, ...]
     manifest_path: Path | None
+    resolver_language: str | None
     repo_entity_id: str
     service_entity_id: str | None
 
@@ -77,6 +67,20 @@ class LinkerResult:
     evidence: tuple[Evidence, ...]
     providers: tuple[PackageProvider, ...]
     ambiguous_package_count: int
+
+
+@dataclass(frozen=True)
+class _RegisteredPackageResolver:
+    language_name: str
+    resolver: PackageResolver
+
+
+@dataclass(frozen=True)
+class _PackageMetadataSelection:
+    package_name: str
+    aliases: frozenset[str]
+    manifest_path: Path | None
+    resolver_language: str | None
 
 
 def link_external_packages(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> LinkerResult:
@@ -566,18 +570,19 @@ def _package_providers(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) -> l
                 )
             continue
         service_entities = [entity for entity in entities if entity.kind == "Service"]
-        package_name, aliases, manifest_path = _package_metadata(
+        package_selection = _package_metadata_selection(
             repo,
             validate_snapshot_manifest=input_repo.validate_package_manifests,
         )
-        service_entity = _select_service_entity(service_entities, aliases)
+        service_entity = _select_service_entity(service_entities, package_selection.aliases)
         providers.append(
             PackageProvider(
                 repo=repo,
                 repo_identity=input_repo.repo_identity,
-                package_name=package_name,
-                aliases=tuple(sorted({alias for alias in aliases if alias})),
-                manifest_path=manifest_path,
+                package_name=package_selection.package_name,
+                aliases=tuple(sorted({alias for alias in package_selection.aliases if alias})),
+                manifest_path=package_selection.manifest_path,
+                resolver_language=package_selection.resolver_language,
                 repo_entity_id=repo_entity.entity_id,
                 service_entity_id=service_entity.entity_id if service_entity else None,
             )
@@ -599,7 +604,7 @@ def _select_repo_entity(entities: list[Entity], identity: RepoIdentity) -> Entit
     return matches[0] if len(matches) == 1 else None
 
 
-def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity | None:
+def _select_service_entity(services: list[Entity], aliases: Iterable[str]) -> Entity | None:
     services_by_id = {service.entity_id: service for service in services}
     unique_services = list(services_by_id.values())
     if len(unique_services) == 1:
@@ -615,80 +620,86 @@ def _select_service_entity(services: list[Entity], aliases: set[str]) -> Entity 
 
 
 def _package_metadata(repo: RepoSnapshot, *, validate_snapshot_manifest: bool) -> tuple[str, set[str], Path | None]:
-    python_metadata = _python_package_metadata(repo, validate_snapshot_manifest=validate_snapshot_manifest)
-    if python_metadata is not None:
-        return python_metadata.package_name, set(python_metadata.aliases), python_metadata.manifest_path
+    selection = _package_metadata_selection(repo, validate_snapshot_manifest=validate_snapshot_manifest)
+    return selection.package_name, set(selection.aliases), selection.manifest_path
 
-    typescript_metadata = _typescript_package_metadata(repo, validate_snapshot_manifest=validate_snapshot_manifest)
-    if typescript_metadata is not None:
-        return typescript_metadata.package_name, set(typescript_metadata.aliases), typescript_metadata.manifest_path
 
-    dotnet_metadata = _dotnet_package_metadata(repo, validate_snapshot_manifest=validate_snapshot_manifest)
-    if dotnet_metadata is not None:
-        # Existing precedence is preserved for mixed repos: Python, then JS/TS, then .NET.
-        return dotnet_metadata.package_name, set(dotnet_metadata.aliases), dotnet_metadata.manifest_path
-
+def _package_metadata_selection(
+    repo: RepoSnapshot,
+    *,
+    validate_snapshot_manifest: bool,
+) -> _PackageMetadataSelection:
+    for registered in _package_resolvers_in_precedence_order():
+        metadata = _resolver_package_metadata(
+            repo,
+            registered,
+            validate_snapshot_manifest=validate_snapshot_manifest,
+        )
+        if metadata is None:
+            continue
+        return _PackageMetadataSelection(
+            metadata.package_name,
+            frozenset(metadata.aliases),
+            metadata.manifest_path,
+            registered.language_name,
+        )
     if validate_snapshot_manifest:
         _validate_repo_commit_matches_snapshot(repo)
-    return repo.name, {repo.name}, None
+    return _PackageMetadataSelection(repo.name, frozenset((repo.name,)), None, None)
 
 
-def _python_package_metadata(
+def _resolver_package_metadata(
     repo: RepoSnapshot,
+    registered: _RegisteredPackageResolver,
     *,
     validate_snapshot_manifest: bool,
-) -> PythonPackageMetadata | None:
-    resolver = PythonPackageResolver()
-    manifest_paths = set(resolver.manifest_paths(repo))
-    for filename in PYTHON_PACKAGE_MANIFESTS:
-        candidate = repo.root / filename
-        if candidate in manifest_paths:
+) -> PackageMetadata | None:
+    resolver = registered.resolver
+    manifest_paths = tuple(resolver.manifest_paths(repo))
+    manifest_path_set = set(manifest_paths)
+    candidate_paths = _ordered_unique_paths(
+        (*_resolver_manifest_candidate_paths(repo, resolver), *manifest_paths)
+    )
+    for candidate in candidate_paths:
+        if candidate in manifest_path_set:
             _validate_package_manifest_file(candidate)
             if validate_snapshot_manifest:
                 _validate_manifest_file_matches_snapshot(repo, candidate)
             continue
-        if validate_snapshot_manifest:
-            _validate_missing_manifest_file_matches_snapshot(repo, candidate)
-    if manifest_paths:
-        return resolver.package_metadata(repo)
-    return None
-
-
-def _typescript_package_metadata(
-    repo: RepoSnapshot,
-    *,
-    validate_snapshot_manifest: bool,
-) -> TypeScriptPackageMetadata | None:
-    resolver = TypeScriptPackageResolver()
-    manifest_paths = set(resolver.manifest_paths(repo))
-    for filename in TYPESCRIPT_PACKAGE_MANIFESTS:
-        candidate = repo.root / filename
-        if candidate in manifest_paths:
-            _validate_package_manifest_file(candidate)
-            if validate_snapshot_manifest:
-                _validate_manifest_file_matches_snapshot(repo, candidate)
-            continue
-        if validate_snapshot_manifest:
-            _validate_missing_manifest_file_matches_snapshot(repo, candidate)
-    if manifest_paths:
-        return resolver.package_metadata(repo)
-    return None
-
-
-def _dotnet_package_metadata(
-    repo: RepoSnapshot,
-    *,
-    validate_snapshot_manifest: bool,
-) -> DotnetPackageMetadata | None:
-    resolver = DotnetPackageResolver()
-    manifest_paths = resolver.manifest_paths(repo)
-    for candidate in manifest_paths:
-        _validate_package_manifest_file(candidate)
         if validate_snapshot_manifest:
             _validate_manifest_file_matches_snapshot(repo, candidate)
-    if manifest_paths:
+    if manifest_path_set:
         return resolver.package_metadata(repo)
     return None
+
+
+def _resolver_manifest_candidate_paths(repo: RepoSnapshot, resolver: PackageResolver) -> tuple[Path, ...]:
+    raw_filenames = getattr(resolver, "manifest_filenames", ())
+    if not isinstance(raw_filenames, tuple) or not all(isinstance(filename, str) for filename in raw_filenames):
+        raise ValueError(f"{type(resolver).__name__}.manifest_filenames must be tuple[str, ...] when present")
+    return tuple(repo.root / filename for filename in raw_filenames)
+
+
+def _ordered_unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    return tuple(dict.fromkeys(paths))
+
+
+def _package_resolvers_in_precedence_order() -> tuple[_RegisteredPackageResolver, ...]:
+    languages_by_name = {language.name: language for language in REGISTERED_LANGUAGES}
+    ordered_languages = []
+    for language_name in _PACKAGE_RESOLVER_LANGUAGE_PRECEDENCE:
+        language = languages_by_name.pop(language_name, None)
+        if language is not None:
+            ordered_languages.append(language)
+    ordered_languages.extend(language for language in REGISTERED_LANGUAGES if language.name in languages_by_name)
+
+    resolvers: list[_RegisteredPackageResolver] = []
+    for language in ordered_languages:
+        resolver = language.package_resolver()
+        if resolver is None:
+            continue
+        resolvers.append(_RegisteredPackageResolver(language.name, resolver))
+    return tuple(resolvers)
 
 
 def _validate_package_manifest_file(path: Path) -> None:
@@ -704,10 +715,6 @@ def _validate_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: 
     if status:
         relative = manifest_path.relative_to(repo.root)
         raise ValueError(f"Package manifest has uncommitted changes relative to snapshot commit: {relative}")
-
-
-def _validate_missing_manifest_file_matches_snapshot(repo: RepoSnapshot, manifest_path: Path) -> None:
-    _validate_manifest_file_matches_snapshot(repo, manifest_path)
 
 
 def _validate_repo_commit_matches_snapshot(repo: RepoSnapshot) -> None:
@@ -763,9 +770,7 @@ def _link_external_packages(
     facts: list[Fact] = []
     evidence: list[Evidence] = []
     ambiguous_count = 0
-    python_resolver = PythonPackageResolver()
-    typescript_resolver = TypeScriptPackageResolver()
-    dotnet_resolver = DotnetPackageResolver()
+    registered_resolvers = _package_resolvers_in_precedence_order()
     packages_by_id: dict[str, list[Entity]] = {}
     for entity in entities:
         if entity.kind == "ExternalPackage":
@@ -790,26 +795,14 @@ def _link_external_packages(
                 for provider in provider_index.get(_normalize_package_name(name), [])
                 if provider.repo_identity != consumer_identity
             }
-            if not consumer_matches:
-                consumer_matches = _python_resolver_matches(
+            for registered_resolver in registered_resolvers:
+                if consumer_matches:
+                    break
+                consumer_matches = _resolver_matches(
                     candidate_names,
                     providers,
                     consumer_identity,
-                    python_resolver,
-                )
-            if not consumer_matches:
-                consumer_matches = _typescript_resolver_matches(
-                    candidate_names,
-                    providers,
-                    consumer_identity,
-                    typescript_resolver,
-                )
-            if not consumer_matches:
-                consumer_matches = _dotnet_resolver_matches(
-                    candidate_names,
-                    providers,
-                    consumer_identity,
-                    dotnet_resolver,
+                    registered_resolver,
                 )
             if not consumer_matches:
                 continue
@@ -851,100 +844,32 @@ def _link_external_packages(
     return facts, evidence, ambiguous_count
 
 
-def _python_resolver_matches(
+def _resolver_matches(
     candidate_names: set[str],
     providers: list[PackageProvider],
     consumer_identity: RepoIdentity,
-    resolver: PythonPackageResolver,
+    registered: _RegisteredPackageResolver,
 ) -> set[PackageProvider]:
-    python_providers = [
+    resolver_providers = [
         provider
         for provider in providers
-        if provider.repo_identity != consumer_identity and _is_python_package_manifest(provider.manifest_path)
+        if provider.repo_identity != consumer_identity and provider.resolver_language == registered.language_name
     ]
-    if not python_providers:
+    if not resolver_providers:
         return set()
     matches: set[PackageProvider] = set()
-    target_repos = tuple(provider.repo for provider in python_providers)
+    target_repos = tuple(provider.repo for provider in resolver_providers)
     for name in candidate_names:
-        resolved_name = resolver.resolve(name, target_repos)
+        resolved_name = registered.resolver.resolve(name, target_repos)
         if resolved_name is None:
             continue
         normalized_resolved = _normalize_package_name(resolved_name)
         matches.update(
             provider
-            for provider in python_providers
+            for provider in resolver_providers
             if _normalize_package_name(provider.package_name) == normalized_resolved
         )
     return matches if len(matches) == 1 else set()
-
-
-def _is_python_package_manifest(path: Path | None) -> bool:
-    return path is not None and path.name in PYTHON_PACKAGE_MANIFESTS
-
-
-def _typescript_resolver_matches(
-    candidate_names: set[str],
-    providers: list[PackageProvider],
-    consumer_identity: RepoIdentity,
-    resolver: TypeScriptPackageResolver,
-) -> set[PackageProvider]:
-    typescript_providers = [
-        provider
-        for provider in providers
-        if provider.repo_identity != consumer_identity and _is_typescript_package_manifest(provider.manifest_path)
-    ]
-    if not typescript_providers:
-        return set()
-    matches: set[PackageProvider] = set()
-    target_repos = tuple(provider.repo for provider in typescript_providers)
-    for name in candidate_names:
-        resolved_name = resolver.resolve(name, target_repos)
-        if resolved_name is None:
-            continue
-        normalized_resolved = _normalize_package_name(resolved_name)
-        matches.update(
-            provider
-            for provider in typescript_providers
-            if _normalize_package_name(provider.package_name) == normalized_resolved
-        )
-    return matches if len(matches) == 1 else set()
-
-
-def _is_typescript_package_manifest(path: Path | None) -> bool:
-    return path is not None and path.name in TYPESCRIPT_PACKAGE_MANIFESTS
-
-
-def _dotnet_resolver_matches(
-    candidate_names: set[str],
-    providers: list[PackageProvider],
-    consumer_identity: RepoIdentity,
-    resolver: DotnetPackageResolver,
-) -> set[PackageProvider]:
-    dotnet_providers = [
-        provider
-        for provider in providers
-        if provider.repo_identity != consumer_identity and _is_dotnet_package_manifest(provider.manifest_path)
-    ]
-    if not dotnet_providers:
-        return set()
-    matches: set[PackageProvider] = set()
-    target_repos = tuple(provider.repo for provider in dotnet_providers)
-    for name in candidate_names:
-        resolved_name = resolver.resolve(name, target_repos)
-        if resolved_name is None:
-            continue
-        normalized_resolved = _normalize_package_name(resolved_name)
-        matches.update(
-            provider
-            for provider in dotnet_providers
-            if _normalize_package_name(provider.package_name) == normalized_resolved
-        )
-    return matches if len(matches) == 1 else set()
-
-
-def _is_dotnet_package_manifest(path: Path | None) -> bool:
-    return path is not None and path.suffix == ".csproj"
 
 
 def _external_package_candidate_names(package: Entity) -> set[str]:

@@ -23,6 +23,8 @@ class TypeScriptPackageMetadata:
 class TypeScriptPackageResolver:
     """Resolve JS/TS import roots against npm package metadata."""
 
+    manifest_filenames = TYPESCRIPT_PACKAGE_MANIFESTS
+
     def __init__(self) -> None:
         self._manifest_paths_cache: dict[RepoSnapshot, tuple[Path, ...]] = {}
         self._metadata_cache: dict[RepoSnapshot, TypeScriptPackageMetadata] = {}
