@@ -116,7 +116,7 @@ class CoverageReportTest(unittest.TestCase):
             (snapshot / "coverage.jsonl").unlink()
             (snapshot / "coverage.jsonl").mkdir()
 
-            with self.assertRaisesRegex(FileNotFoundError, "Coverage file is not a file"):
+            with self.assertRaisesRegex(ValueError, "Coverage file is not a regular file"):
                 write_coverage_report(snapshot, root / "report")
 
     def test_report_counts_scalar_repo_count_manifest(self) -> None:
