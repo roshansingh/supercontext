@@ -691,6 +691,57 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
 
+    def test_typescript_configured_axios_module_path_root_chains_resolve_source_order(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const api = axios.create({ baseURL: process.env.API_HOST });\n"
+            "const root = 'audience/';\n"
+            "const listRoot = root + 'list/';\n"
+            "const detailRoot = `${listRoot}detail/`;\n"
+            "const parenRoot = (`${listRoot}paren/`);\n"
+            "api.get(`${root}${id}/`);\n"
+            "api.get(`${listRoot}${id}/`);\n"
+            "api.get(`${detailRoot}${id}/`);\n"
+            "api.get(`${parenRoot}${id}/`);\n"
+            "let reassigned = 'safe/';\n"
+            "reassigned = 'changed/';\n"
+            "const reassignedChild = reassigned + 'child/';\n"
+            "api.get(`${reassigned}${id}/`);\n"
+            "api.get(`${reassignedChild}${id}/`);\n"
+            "const conditional = isAdmin ? 'admin/' : 'user/';\n"
+            "api.get(`${conditional}${id}/`);\n"
+            "const earlyRef = lateRoot + 'x/';\n"
+            "const lateRoot = 'late/';\n"
+            "api.get(`${earlyRef}${id}/`);\n"
+            "const duplicate = makeRoot();\n"
+            "const duplicate = 'duplicate/';\n"
+            "api.get(`${duplicate}${id}/`);\n"
+            "declare const declaredRoot: string;\n"
+            "const declaredRoot = 'declared/';\n"
+            "api.get(`${declaredRoot}${id}/`);\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/audience/{id}/": {"GET"},
+                "/audience/list/{id}/": {"GET"},
+                "/audience/list/detail/{id}/": {"GET"},
+                "/audience/list/paren/{id}/": {"GET"},
+                "/declared/{id}/": {"GET"},
+            },
+        )
+        self.assertEqual(qualifiers_by_path["/audience/{id}/"][0]["route_params"], ["id"])
+        self.assertEqual(qualifiers_by_path["/audience/list/{id}/"][0]["route_params"], ["id"])
+        self.assertEqual(qualifiers_by_path["/audience/list/detail/{id}/"][0]["route_params"], ["id"])
+        self.assertEqual(qualifiers_by_path["/audience/list/paren/{id}/"][0]["route_params"], ["id"])
+        self.assertEqual(qualifiers_by_path["/declared/{id}/"][0]["route_params"], ["id"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 5)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 5)
+
     def test_typescript_client_env_host_emits_endpoint_env_var_references(self) -> None:
         build = _extract_typescript_client(
             "import axios from 'axios';\n"

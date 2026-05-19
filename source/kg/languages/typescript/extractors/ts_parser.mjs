@@ -204,29 +204,67 @@ function templateParameterizationFailure(value, followingText, hasMoreSpans, opt
     : "template_dynamic_composite_segment";
 }
 
+function topLevelLiteralBindingValue(node, bindings, invalid, depth = 0) {
+  if (depth > 32) return null;
+  const literal = stringLiteralValue(node);
+  if (literal != null) return literal;
+  if (node.kind === ts.SyntaxKind.ParenthesizedExpression && node.expression) {
+    return topLevelLiteralBindingValue(node.expression, bindings, invalid, depth + 1);
+  }
+  if (ts.isIdentifier(node)) return !invalid.has(node.text) && bindings.has(node.text) ? bindings.get(node.text) : null;
+  if (ts.isTemplateExpression(node)) {
+    let value = node.head.text;
+    for (const span of node.templateSpans) {
+      const resolved = topLevelLiteralBindingValue(span.expression, bindings, invalid, depth + 1);
+      if (resolved == null) return null;
+      value += resolved;
+      value += span.literal.text;
+    }
+    return value;
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = topLevelLiteralBindingValue(node.left, bindings, invalid, depth + 1);
+    const right = topLevelLiteralBindingValue(node.right, bindings, invalid, depth + 1);
+    return left != null && right != null ? `${left}${right}` : null;
+  }
+  return null;
+}
+
 function collectTopLevelLiteralBindings(sourceFile) {
   const bindings = new Map();
   const invalid = new Set();
+  const declared = new Set();
   for (const statement of sourceFile.statements) {
     if (ts.isVariableStatement(statement)) {
+      if (nodeHasDeclareModifier(statement)) continue;
       for (const declaration of statement.declarationList.declarations) {
         if (!ts.isIdentifier(declaration.name)) continue;
         const name = declaration.name.text;
-        if (bindings.has(name)) invalid.add(name);
-        const literal = declaration.initializer ? stringLiteralValue(declaration.initializer) : null;
-        if (literal == null) {
+        if (declared.has(name)) {
           invalid.add(name);
+          bindings.delete(name);
+        }
+        declared.add(name);
+        const literal = declaration.initializer ? topLevelLiteralBindingValue(declaration.initializer, bindings, invalid) : null;
+        if (literal == null || invalid.has(name)) {
+          // Unsupported initializers are skipped; duplicate poisoning is tracked by declared.
           continue;
         }
         bindings.set(name, literal);
       }
       for (const name of bindings.keys()) {
-        if (statementMutatesIdentifier(statement, name)) invalid.add(name);
+        if (statementMutatesIdentifier(statement, name)) {
+          invalid.add(name);
+          bindings.delete(name);
+        }
       }
       continue;
     }
     for (const name of bindings.keys()) {
-      if (statementMutatesIdentifier(statement, name)) invalid.add(name);
+      if (statementMutatesIdentifier(statement, name)) {
+        invalid.add(name);
+        bindings.delete(name);
+      }
     }
   }
   for (const name of invalid) bindings.delete(name);
@@ -941,6 +979,12 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
   if (literal != null) return expressionResult("resolved", literal, literal, "literal");
   const env = envPlaceholderFromAccess(node);
   if (env != null) return { kind: "env", value: env.placeholder, raw: rawNodeText(node, sourceFile), env_names: [env.name] };
+  if (node.kind === ts.SyntaxKind.ParenthesizedExpression && node.expression) {
+    return copyExpressionWithRaw(
+      resolveEndpointExpression(node.expression, sourceFile, bindings, resolvingNames, parameterBindings, options),
+      rawNodeText(node, sourceFile)
+    );
+  }
   if (ts.isIdentifier(node)) {
     if (parameterBindings?.has(node.text)) return copyExpressionWithRaw(parameterBindings.get(node.text), node.text);
     return resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames, options);
