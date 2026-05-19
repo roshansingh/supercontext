@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -226,6 +227,302 @@ class CoverageMetricsComputeTest(unittest.TestCase):
                     "counts": {"files_by_language": {"typescript": 1}},
                 },
             )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "usable")
+            self.assertEqual(metric.value, 1.0)
+
+    def test_cross_repo_linkage_uses_candidate_internal_classification_denominator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            internal_package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared-pkg"},
+                properties={"category": "third_party", "import_root": "shared-pkg"},
+            )
+            third_party_package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "react"},
+                properties={"category": "third_party", "import_root": "react"},
+            )
+            provider = Entity(
+                "Repo",
+                {"tenant_id": "default", "host": "local", "owner": "owner", "name": "shared"},
+            )
+            link = Fact("RESOLVES_TO_REPO", internal_package.entity_id, provider.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[internal_package, third_party_package, provider],
+                facts=[link],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [
+                    {
+                        "classification_id": "pkgclass:internal",
+                        "entity_id": internal_package.entity_id,
+                        "bucket": "candidate_internal",
+                    },
+                    {
+                        "classification_id": "pkgclass:external",
+                        "entity_id": third_party_package.entity_id,
+                        "bucket": "consumer_manifest_external",
+                    },
+                ],
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "usable")
+            self.assertEqual(metric.value, 1.0)
+
+    def test_cross_repo_linkage_returns_na_when_classification_has_no_internal_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "react"},
+                properties={"category": "third_party", "import_root": "react"},
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[package],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [
+                    {
+                        "classification_id": "pkgclass:external",
+                        "entity_id": package.entity_id,
+                        "bucket": "consumer_manifest_external",
+                    },
+                ],
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "n_a")
+            self.assertEqual(metric.reason, "no candidate internal package dependencies")
+
+    def test_cross_repo_linkage_marks_ambiguous_candidates_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared-pkg"},
+                properties={"category": "third_party", "import_root": "shared-pkg"},
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[package],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [
+                    {
+                        "classification_id": "pkgclass:ambiguous",
+                        "entity_id": package.entity_id,
+                        "bucket": "candidate_internal_ambiguous",
+                    },
+                ],
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "partial")
+            self.assertEqual(metric.value, 0.0)
+            self.assertEqual(
+                metric.reason,
+                "1 ambiguous candidate internal package dependencies count as unresolved",
+            )
+
+    def test_cross_repo_linkage_does_not_mark_resolved_ambiguous_candidates_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared-pkg"},
+                properties={"category": "third_party", "import_root": "shared-pkg"},
+            )
+            provider = Entity(
+                "Repo",
+                {"tenant_id": "default", "host": "local", "owner": "owner", "name": "shared"},
+            )
+            link = Fact("RESOLVES_TO_REPO", package.entity_id, provider.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[package, provider],
+                facts=[link],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [
+                    {
+                        "classification_id": "pkgclass:ambiguous",
+                        "entity_id": package.entity_id,
+                        "bucket": "candidate_internal_ambiguous",
+                    },
+                ],
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "usable")
+            self.assertEqual(metric.value, 1.0)
+
+    def test_cross_repo_linkage_rejects_malformed_package_classification_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "react"},
+                properties={"category": "third_party", "import_root": "react"},
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[package],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [{"classification_id": "pkgclass:bad", "entity_id": package.entity_id, "bucket": "surprise"}],
+            )
+
+            with self.assertRaisesRegex(ValueError, "bucket is unsupported"):
+                compute_all(snapshot, expected_repos=1)
+
+    def test_cross_repo_linkage_rejects_padded_package_classification_entity_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "react"},
+                properties={"category": "third_party", "import_root": "react"},
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[package],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [
+                    {
+                        "classification_id": "pkgclass:padded",
+                        "entity_id": f" {package.entity_id} ",
+                        "bucket": "candidate_internal",
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(ValueError, "entity_id must not be padded"):
+                compute_all(snapshot, expected_repos=1)
+
+    def test_cross_repo_linkage_prefers_relink_classifications_when_both_artifacts_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "shared-pkg"},
+                properties={"category": "third_party", "import_root": "shared-pkg"},
+            )
+            provider = Entity(
+                "Repo",
+                {"tenant_id": "default", "host": "local", "owner": "owner", "name": "shared"},
+            )
+            link = Fact("RESOLVES_TO_REPO", package.entity_id, provider.entity_id)
+            JsonlKgStore(snapshot).write(
+                entities=[package, provider],
+                facts=[link],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"typescript": 1}},
+                },
+            )
+            row = {
+                "classification_id": "pkgclass:same",
+                "entity_id": package.entity_id,
+                "bucket": "candidate_internal",
+            }
+            _write_jsonl(snapshot / "package_classifications.jsonl", [row])
+            _write_jsonl(snapshot / "cross_repo_package_classifications.jsonl", [row])
 
             metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
 
@@ -1031,6 +1328,12 @@ def _cell(cells, dimension: str):
         if cell.dimension == dimension:
             return cell
     raise AssertionError(f"missing cell for dimension {dimension!r}: {cells}")
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":

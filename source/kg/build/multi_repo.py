@@ -27,6 +27,7 @@ class MultiRepoBuild:
     providers: list[PackageProvider]
     link_count: int
     ambiguous_package_count: int
+    package_classifications: tuple[JsonObject, ...]
 
 
 def build_multi_kg(
@@ -59,6 +60,7 @@ def build_multi_kg(
             "provider_count": len(build.providers),
             "link_count": build.link_count,
             "ambiguous_package_count": build.ambiguous_package_count,
+            "package_classification_count": len(build.package_classifications),
         },
         "extractor_errors": build.extractor_errors,
         "counts": {
@@ -77,6 +79,7 @@ def build_multi_kg(
         coverage=build.coverage,
         manifest=manifest,
     )
+    relink.write_package_classifications(output_dir, build.package_classifications)
     return manifest
 
 
@@ -127,6 +130,7 @@ def build_multi(
         providers=list(link_result.providers),
         link_count=len(link_result.facts),
         ambiguous_package_count=link_result.ambiguous_package_count,
+        package_classifications=link_result.package_classifications,
     )
 
 
