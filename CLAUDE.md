@@ -72,7 +72,6 @@ LLM enrichment is not part of the default KG build path. If used: `source.kg.int
 | `adr/0001..0011` | Accepted architecture decisions; binding spec for implementation |
 | `docs/ontology/ONTOLOGY-RECOMMENDATION.md` | The v1 canonical ontology (10 nodes, 15 relations, Entity+Fact+Evidence+Coverage shape, identity tuples, derivation classes, promotion rules) — ADR-0006 binding |
 | `docs/evaluation/PRODUCT-QUERY-SET.md` | 55-query acceptance corpus mapped to MCP tools, with goldens for Low tier and contract checks |
-| `docs/overall-architecture/TECHNICAL-BUILDING-BLOCKS.md` | Implementation map, ADR coverage, next-ADR priority |
 | `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md` | Registry for high-precision call-site extractors that auto-promote `CALLS` facts |
 | `BACKLOG.md` | Single-page index of every deferred item across the project |
 | `source/kg/languages/{python,typescript}/extractors/` | Per-language deterministic extractors |

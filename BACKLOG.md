@@ -9,15 +9,15 @@ Format: `Item | Source | Trigger to revisit`.
 
 ---
 
-## Next ADRs (priority order per TECHNICAL-BUILDING-BLOCKS.md)
+## Next ADRs
 
 | Item | Source | Trigger to revisit |
 |---|---|---|
-| Tool Query Contract ADR — semantics for the 8 MCP tools, partial coverage rules, pagination, refusal metadata | TECHNICAL-BUILDING-BLOCKS.md "Next ADR Candidates" | Before Source Connector ADR; needed to drive what facts the engine must serve |
-| Source Connector + Extractor ADR — exact v1 inputs, parser stack, typed-client allowlist ownership | TECHNICAL-BUILDING-BLOCKS.md | After Tool Query Contract ADR locks the fact requirements |
-| Deployment / Auth / Tenancy ADR — SaaS vs self-hosted boundary, tenant isolation, SSO/SCIM, secrets, audit | TECHNICAL-BUILDING-BLOCKS.md | Parallel to Source Connector ADR |
-| Testing / Evaluation ADR — golden graphs, evidence replay, graph/evidence merge tests, p95 benchmarks | TECHNICAL-BUILDING-BLOCKS.md | After Tool Query Contract ADR locks the semantics to test against |
-| AGE Projection / Materialization Runtime ADR — projection cadence, incremental vs full rebuild, bulk-write strategy | TECHNICAL-BUILDING-BLOCKS.md | Before scale benchmarks force the choice |
+| Tool Query Contract ADR — semantics for the 8 MCP tools, partial coverage rules, pagination, refusal metadata | Architecture backlog | Before Source Connector ADR; needed to drive what facts the engine must serve |
+| Source Connector + Extractor ADR — exact v1 inputs, parser stack, typed-client allowlist ownership | Architecture backlog | After Tool Query Contract ADR locks the fact requirements |
+| Deployment / Auth / Tenancy ADR — SaaS vs self-hosted boundary, tenant isolation, SSO/SCIM, secrets, audit | Architecture backlog | Parallel to Source Connector ADR |
+| Testing / Evaluation ADR — golden graphs, evidence replay, graph/evidence merge tests, p95 benchmarks | Architecture backlog | After Tool Query Contract ADR locks the semantics to test against |
+| AGE Projection / Materialization Runtime ADR — projection cadence, incremental vs full rebuild, bulk-write strategy | Architecture backlog | Before scale benchmarks force the choice |
 
 ## Implementation discipline (cross-cutting)
 
