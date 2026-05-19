@@ -150,6 +150,35 @@ class RelinkRegistryTest(unittest.TestCase):
         self.assertEqual(buckets["fs"], "builtin_or_stdlib")
         self.assertEqual(buckets["code-only"], "unknown")
 
+    def test_linker_dedupes_collapsed_package_classifications_with_different_import_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "owner" / "consumer"
+            repo.mkdir(parents=True)
+            package_a = Entity(
+                kind="ExternalPackage",
+                identity={"tenant_id": "default", "repo": "consumer", "name": "src.styles.scss"},
+                properties={"category": "unknown", "import_root": "."},
+            )
+            package_b = Entity(
+                kind="ExternalPackage",
+                identity={"tenant_id": "default", "repo": "consumer", "name": "src.styles.scss"},
+                properties={"category": "unknown", "import_root": ".."},
+            )
+
+            result = link_external_packages(
+                (
+                    LinkerInput(
+                        repo=_repo_snapshot(repo),
+                        repo_identity=_repo_identity(repo),
+                        entities=(_repo_entity(repo), package_a, package_b),
+                    ),
+                )
+            )
+
+        self.assertEqual(len(result.package_classifications), 1)
+        self.assertEqual(result.package_classifications[0]["package_name"], "src.styles.scss")
+
 
 @dataclass(frozen=True)
 class _StubPackageMetadata:
