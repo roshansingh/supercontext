@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, TYPE_CHECKING
@@ -17,6 +18,20 @@ class LanguageFileMatcher(Protocol):
     def matches_file(self, path: Path) -> bool: ...
 
 
+class PackageMetadata(Protocol):
+    package_name: str
+    aliases: frozenset[str]
+    manifest_path: Path | None
+
+
+class PackageResolver(Protocol):
+    def manifest_paths(self, repo) -> tuple[Path, ...]: ...
+
+    def package_metadata(self, repo) -> PackageMetadata: ...
+
+    def resolve(self, import_root: str, target_repos: Iterable[Any]) -> str | None: ...
+
+
 class LanguageSupport(LanguageFileMatcher, Protocol):
     def source_roots(self, repo, ctx: ExtractionContext) -> dict[str, set[str]]: ...
 
@@ -24,7 +39,7 @@ class LanguageSupport(LanguageFileMatcher, Protocol):
 
     def opportunity_detectors(self) -> tuple[Any, ...]: ...
 
-    def package_resolver(self) -> Any | None: ...
+    def package_resolver(self) -> PackageResolver | None: ...
 
     def dimension_rules(self) -> Mapping[str, Any]: ...
 

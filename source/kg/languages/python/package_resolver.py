@@ -26,6 +26,8 @@ class PythonPackageMetadata:
 class PythonPackageResolver:
     """Resolve Python import roots against repo package metadata."""
 
+    manifest_filenames = PYTHON_PACKAGE_MANIFESTS
+
     def __init__(self) -> None:
         self._manifest_paths_cache: dict[RepoSnapshot, tuple[Path, ...]] = {}
         self._metadata_cache: dict[RepoSnapshot, PythonPackageMetadata] = {}

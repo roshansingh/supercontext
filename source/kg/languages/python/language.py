@@ -11,6 +11,7 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._shared.dimension_rules_loader import load_dimension_rules
 from source.kg.languages.known_stacks import load_known_stacks
+from source.kg.languages.types import PackageResolver
 from source.kg.languages.python.extractors.extractor_adapter import PYTHON_AST_ADAPTER
 from source.kg.languages.python.extractors.python_boto3_transport import PYTHON_BOTO3_TRANSPORT_ADAPTER
 from source.kg.languages.python.files import LANGUAGE_FILES, PythonLanguageFiles
@@ -50,7 +51,7 @@ class PythonLanguageSupport:
     def opportunity_detectors(self) -> tuple[Any, ...]:
         return (HttpClientOpportunityDetector(),)
 
-    def package_resolver(self) -> Any | None:
+    def package_resolver(self) -> PackageResolver | None:
         return PythonPackageResolver()
 
     def dimension_rules(self) -> Mapping[str, Any]:

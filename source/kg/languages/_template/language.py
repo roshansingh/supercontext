@@ -7,6 +7,7 @@ from typing import Any
 
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._template.files import LANGUAGE_FILES, TemplateLanguageFiles
+from source.kg.languages.types import PackageResolver
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ class TemplateLanguageSupport:
     def opportunity_detectors(self) -> tuple[Any, ...]:
         return ()
 
-    def package_resolver(self) -> Any | None:
+    def package_resolver(self) -> PackageResolver | None:
         return None
 
     def dimension_rules(self) -> Mapping[str, Any]:
