@@ -450,15 +450,17 @@ class EndpointExtractionTest(unittest.TestCase):
             _methods_by_path(calls),
             {
                 "/api/orders": {"POST"},
+                "/api/orders/{orderId}": {"ANY"},
                 "/api/profile": {"GET", "PATCH"},
             },
         )
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"fetch_call"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders/{orderId}"], {"fetch_call"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/profile"], {"axios_call"})
-        self.assertEqual(
-            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
-            1,
-        )
+        qualifiers_by_path = _qualifiers_by_path(calls)
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["route_params"], ["orderId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("target_dynamic_template_segment", 0), 0)
 
     def test_fetch_with_unresolved_method_keeps_any_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -576,18 +578,65 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 4)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 1)
 
-    def test_typescript_client_dynamic_template_segment_fails_closed(self) -> None:
+    def test_typescript_client_dynamic_template_segments_parameterize_safe_path_segments(self) -> None:
         build = _extract_typescript_client(
-            "const userId = getUserId();\n"
-            "fetch(`/api/users/${userId}`);\n"
+            "fetch(`/campaigns/${campaignId}/analytics/`);\n"
+            "fetch(`/items/${this.userId}`);\n"
+            "fetch(`/rows/${row['id']}`);\n"
+            "fetch(`/api/${'v1'}/items/${campaignId}`);\n"
+            "fetch(`/repeat/${id}/again/${id}`);\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/campaigns/{campaignId}/analytics/": {"ANY"},
+                "/items/{userId}": {"ANY"},
+                "/rows/{id}": {"ANY"},
+                "/api/v1/items/{campaignId}": {"ANY"},
+                "/repeat/{id}/again/{id}": {"ANY"},
+            },
+        )
+        self.assertEqual(qualifiers_by_path["/campaigns/{campaignId}/analytics/"][0]["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifiers_by_path["/campaigns/{campaignId}/analytics/"][0]["route_params"], ["campaignId"])
+        self.assertEqual(qualifiers_by_path["/items/{userId}"][0]["route_params"], ["userId"])
+        self.assertEqual(qualifiers_by_path["/rows/{id}"][0]["route_params"], ["id"])
+        self.assertEqual(qualifiers_by_path["/api/v1/items/{campaignId}"][0]["route_params"], ["campaignId"])
+        self.assertEqual(qualifiers_by_path["/repeat/{id}/again/{id}"][0]["route_params"], ["id"])
+        self.assertFalse(_call_site_coverage(build))
+
+    def test_typescript_client_unsafe_dynamic_template_segments_fail_closed(self) -> None:
+        build = _extract_typescript_client(
+            "fetch(`/items/${getId()}`);\n"
+            "fetch(`/items/${a}-${b}`);\n"
+            "fetch(`/items/${a + b}`);\n"
+            "fetch(`${baseUrl}/items`);\n"
+            "fetch(`/${tenant}${suffix}/items`);\n"
         )
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
-        self.assertEqual(
-            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
-            1,
-        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_expression_unsafe"], 2)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_composite_segment"], 2)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("target_dynamic_template_segment", 0), 0)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
+
+    def test_typescript_client_env_host_template_parameterizes_safe_path_segment(self) -> None:
+        build = _extract_typescript_client("fetch(`${process.env.API_HOST}/api/users/${userId}`);\n")
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/users/{userId}": {"ANY"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/users/{userId}"], {"${env:API_HOST}"})
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["route_params"], ["userId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("template_dynamic_host_position", 0), 0)
 
     def test_typescript_client_static_template_segment_still_resolves(self) -> None:
         build = _extract_typescript_client(
@@ -964,7 +1013,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertFalse(_call_site_coverage(build))
 
-    def test_typescript_imported_axios_client_dynamic_template_reason_is_preserved(self) -> None:
+    def test_typescript_imported_axios_client_dynamic_template_segment_is_parameterized(self) -> None:
         build = _extract_typescript_client_files(
             {
                 "src/api/axiosConfig.tsx": (
@@ -980,11 +1029,16 @@ class EndpointExtractionTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
-        self.assertEqual(
-            _coverage_reason_counts(build, "CALLS_ENDPOINT")["target_dynamic_template_segment"],
-            1,
-        )
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/users/{userId}": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/users/{userId}"], {"${env:VITE_API_ROOT}"})
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["route_params"], ["userId"])
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("target_dynamic_template_segment", 0), 0)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
 
     def test_typescript_imported_named_axios_client_uses_export_alias_and_base_path(self) -> None:
@@ -1625,6 +1679,9 @@ def _call_site_coverage(build) -> list[Coverage]:
         "target_dynamic_template_segment",
         "target_reassigned_binding",
         "target_shadowed_binding",
+        "template_dynamic_composite_segment",
+        "template_dynamic_expression_unsafe",
+        "template_dynamic_host_position",
         "unresolved_target",
         "with_block_present",
     }

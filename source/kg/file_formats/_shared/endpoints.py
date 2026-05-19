@@ -301,6 +301,7 @@ def extract_typescript_client_endpoint_calls(
             confidence = row.get("confidence")
             resolution_kind = row.get("resolution_kind")
             host_resolution_kind = row.get("host_resolution_kind")
+            route_params = row.get("route_params")
             _add_endpoint_fact(
                 repo,
                 scanned,
@@ -317,6 +318,7 @@ def extract_typescript_client_endpoint_calls(
                 confidence=confidence if isinstance(confidence, str) else None,
                 resolution_kind=resolution_kind if isinstance(resolution_kind, str) else None,
                 host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
+                route_params=route_params if _is_string_list(route_params) else None,
                 validate_path=False,
             )
             if confidence == "host_unresolved_path_resolved":
@@ -395,6 +397,7 @@ def _add_imported_client_endpoint_call(
     confidence = "host_unresolved_path_resolved" if resolved["kind"] == "host_unresolved" else None
     resolution_kind = resolved.get("resolution_kind")
     host_resolution_kind = resolved.get("host_resolution_kind")
+    route_params = resolved.get("route_params")
     _add_endpoint_fact(
         repo,
         scanned,
@@ -411,6 +414,7 @@ def _add_imported_client_endpoint_call(
         confidence=confidence,
         resolution_kind=resolution_kind if isinstance(resolution_kind, str) else None,
         host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
+        route_params=route_params if _is_string_list(route_params) else None,
         validate_path=False,
     )
     if confidence == "host_unresolved_path_resolved":
@@ -724,15 +728,20 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
         return resolved
     target_value = target_value.strip()
     resolution_kind = target.get("resolution_kind")
+    route_params = target.get("route_params")
     if target_value.startswith("http://") or target_value.startswith("https://") or target_value.startswith("${env:"):
         resolved = _split_resolved_endpoint_target(target_value)
         if isinstance(resolution_kind, str):
             resolved["resolution_kind"] = resolution_kind
+        if _is_string_list(route_params):
+            resolved["route_params"] = route_params
         return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
     if not isinstance(base_url, dict):
         resolved = _split_resolved_endpoint_target(target_value)
         if isinstance(resolution_kind, str):
             resolved["resolution_kind"] = resolution_kind
+        if _is_string_list(route_params):
+            resolved["route_params"] = route_params
         return resolved
     base_kind = base_url.get("kind")
     base_value = base_url.get("value")
@@ -742,7 +751,13 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
     resolved = _split_resolved_endpoint_target(combined)
     if isinstance(resolution_kind, str):
         resolved["resolution_kind"] = resolution_kind
+    if _is_string_list(route_params):
+        resolved["route_params"] = route_params
     return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
+
+
+def _is_string_list(value: object) -> bool:
+    return isinstance(value, list) and len(value) > 0 and all(isinstance(item, str) for item in value)
 
 
 def _split_resolved_endpoint_target(value: str) -> dict[str, object]:
@@ -828,6 +843,7 @@ def _add_endpoint_fact(
     confidence: str | None = None,
     resolution_kind: str | None = None,
     host_resolution_kind: str | None = None,
+    route_params: list[str] | None = None,
     validate_path: bool = True,
 ) -> None:
     normalized_path = normalize_endpoint_path(path)
@@ -842,6 +858,8 @@ def _add_endpoint_fact(
         qualifier["resolution_kind"] = resolution_kind
     if host_resolution_kind is not None:
         qualifier["host_resolution_kind"] = host_resolution_kind
+    if route_params:
+        qualifier["route_params"] = route_params
     add_fact(
         build,
         predicate,

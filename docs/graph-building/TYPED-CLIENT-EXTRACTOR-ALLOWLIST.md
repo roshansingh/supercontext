@@ -45,3 +45,13 @@ Each added entry must include:
 - evidence coordinates emitted
 - test fixture path
 - promotion rationale
+
+## Prototype JS/TS Client Coverage Reasons
+
+The local prototype parser-backed JS/TS client extractor emits unresolved `CALLS_ENDPOINT` coverage reasons before this extractor is promoted into the Product 1 allowlist. Current dynamic-template reasons:
+
+| Reason | Meaning |
+|---|---|
+| `template_dynamic_expression_unsafe` | Template target contains a dynamic span that is not a bare identifier, property access, or string-key element access. |
+| `template_dynamic_composite_segment` | Template target has dynamic content mixed with other content inside one path segment, such as `${a}-${b}` or adjacent spans. |
+| `template_dynamic_host_position` | Template target has dynamic content in host/base position, so the extractor cannot prove a local endpoint path. |
