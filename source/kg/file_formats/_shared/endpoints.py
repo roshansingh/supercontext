@@ -14,6 +14,7 @@ from source.kg.file_formats._shared.common import (
     add_entity_evidence,
     add_fact,
     endpoint_entity,
+    env_var_entity,
     normalize_endpoint_path,
 )
 from source.kg.core.tenant import resolve_tenant_id
@@ -302,6 +303,7 @@ def extract_typescript_client_endpoint_calls(
             resolution_kind = row.get("resolution_kind")
             host_resolution_kind = row.get("host_resolution_kind")
             route_params = row.get("route_params")
+            env_names = row.get("env_names")
             _add_endpoint_fact(
                 repo,
                 scanned,
@@ -321,6 +323,16 @@ def extract_typescript_client_endpoint_calls(
                 route_params=route_params if _is_string_list(route_params) else None,
                 validate_path=False,
             )
+            if _is_string_list(env_names):
+                _add_endpoint_env_var_references(
+                    repo,
+                    scanned,
+                    line_number,
+                    service_entity,
+                    build,
+                    tenant_id,
+                    env_names,
+                )
             if confidence == "host_unresolved_path_resolved":
                 reason = row.get("reason")
                 _add_endpoint_coverage(
@@ -398,6 +410,7 @@ def _add_imported_client_endpoint_call(
     resolution_kind = resolved.get("resolution_kind")
     host_resolution_kind = resolved.get("host_resolution_kind")
     route_params = resolved.get("route_params")
+    env_names = resolved.get("env_names")
     _add_endpoint_fact(
         repo,
         scanned,
@@ -417,6 +430,16 @@ def _add_imported_client_endpoint_call(
         route_params=route_params if _is_string_list(route_params) else None,
         validate_path=False,
     )
+    if _is_string_list(env_names):
+        _add_endpoint_env_var_references(
+            repo,
+            scanned,
+            line_number,
+            service_entity,
+            build,
+            tenant_id,
+            env_names,
+        )
     if confidence == "host_unresolved_path_resolved":
         reason = resolved.get("reason") or row.get("reason")
         _add_endpoint_coverage(
@@ -729,12 +752,15 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
     target_value = target_value.strip()
     resolution_kind = target.get("resolution_kind")
     route_params = target.get("route_params")
+    target_env_names = target.get("env_names")
     if target_value.startswith("http://") or target_value.startswith("https://") or target_value.startswith("${env:"):
         resolved = _split_resolved_endpoint_target(target_value)
         if isinstance(resolution_kind, str):
             resolved["resolution_kind"] = resolution_kind
         if _is_string_list(route_params):
             resolved["route_params"] = route_params
+        if resolved["kind"] == "host_unresolved" and _is_string_list(target_env_names):
+            resolved["env_names"] = target_env_names
         return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
     if not isinstance(base_url, dict):
         resolved = _split_resolved_endpoint_target(target_value)
@@ -742,6 +768,8 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
             resolved["resolution_kind"] = resolution_kind
         if _is_string_list(route_params):
             resolved["route_params"] = route_params
+        if resolved["kind"] == "host_unresolved" and _is_string_list(target_env_names):
+            resolved["env_names"] = target_env_names
         return resolved
     base_kind = base_url.get("kind")
     base_value = base_url.get("value")
@@ -753,11 +781,55 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
         resolved["resolution_kind"] = resolution_kind
     if _is_string_list(route_params):
         resolved["route_params"] = route_params
+    env_names = _merge_string_lists(base_url.get("env_names"), target_env_names)
+    # Env-name provenance only applies while the host is still env-backed;
+    # path-position env placeholders must not become endpoint_env_host facts.
+    if resolved["kind"] == "host_unresolved" and env_names:
+        resolved["env_names"] = env_names
     return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
 
 
 def _is_string_list(value: object) -> bool:
     return isinstance(value, list) and len(value) > 0 and all(isinstance(item, str) for item in value)
+
+
+def _merge_string_lists(*values: object) -> list[str]:
+    merged: list[str] = []
+    for value in values:
+        if not _is_string_list(value):
+            continue
+        for item in value:
+            if item not in merged:
+                merged.append(item)
+    return merged
+
+
+def _add_endpoint_env_var_references(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    line_number: int,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+    env_names: object,
+) -> None:
+    if not _is_string_list(env_names):
+        return
+    # Evidence is anchored to the endpoint call site. For imported clients, the
+    # env-backed base URL may be declared in another file and is not cited here.
+    for name in _merge_string_lists(env_names):
+        env_entity = env_var_entity(repo, name, tenant_id)
+        add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
+        add_fact(
+            build,
+            "REFERENCES_ENV_VAR",
+            service_entity,
+            env_entity,
+            repo,
+            scanned.path,
+            line_number,
+            qualifier={"name": name, "reference_kind": "endpoint_env_host"},
+        )
 
 
 def _split_resolved_endpoint_target(value: str) -> dict[str, object]:
