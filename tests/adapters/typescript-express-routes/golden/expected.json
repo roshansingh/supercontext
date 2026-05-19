@@ -1,9 +1,11 @@
 {
   "entities": {
-    "Endpoint": 12
+    "Endpoint": 12,
+    "EnvVar": 1
   },
   "facts": {
     "CALLS_ENDPOINT": 5,
-    "EXPOSES_ENDPOINT": 7
+    "EXPOSES_ENDPOINT": 7,
+    "REFERENCES_ENV_VAR": 1
   }
 }

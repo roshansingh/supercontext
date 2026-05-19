@@ -20,8 +20,8 @@ class TypeScriptExpressRoutesAdapter:
         languages=("javascript", "typescript"),
         file_kinds=("javascript", "typescript"),
         framework_tags=("express", "fastify", "koa", "@koa/router", "koa-router"),
-        produces_predicates=("EXPOSES_ENDPOINT", "CALLS_ENDPOINT"),
-        produces_entity_kinds=("Endpoint",),
+        produces_predicates=("EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "REFERENCES_ENV_VAR"),
+        produces_entity_kinds=("Endpoint", "EnvVar"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )

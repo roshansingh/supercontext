@@ -599,14 +599,14 @@ function envPlaceholderFromAccess(node) {
     );
   }
   if (ts.isPropertyAccessExpression(node) && (isProcessEnv(node.expression) || isImportMetaEnv(node.expression))) {
-    return `\${env:${node.name.text}}`;
+    return { placeholder: `\${env:${node.name.text}}`, name: node.name.text };
   }
   if (
     ts.isElementAccessExpression(node) &&
     (isProcessEnv(node.expression) || isImportMetaEnv(node.expression)) &&
     ts.isStringLiteral(node.argumentExpression)
   ) {
-    return `\${env:${node.argumentExpression.text}}`;
+    return { placeholder: `\${env:${node.argumentExpression.text}}`, name: node.argumentExpression.text };
   }
   return null;
 }
@@ -615,7 +615,7 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
   const literal = stringLiteralValue(node);
   if (literal != null) return expressionResult("resolved", literal, literal, "literal");
   const env = envPlaceholderFromAccess(node);
-  if (env != null) return { kind: "env", value: env, raw: rawNodeText(node, sourceFile) };
+  if (env != null) return { kind: "env", value: env.placeholder, raw: rawNodeText(node, sourceFile), env_names: [env.name] };
   if (ts.isIdentifier(node)) {
     return resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames);
   }
@@ -623,12 +623,14 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
     let value = node.head.text;
     let hostUnresolved = false;
     const routeParams = [];
+    let envNames = [];
     for (let index = 0; index < node.templateSpans.length; index += 1) {
       const span = node.templateSpans[index];
       const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames);
       if (resolved.kind === "env") {
         value += resolved.value;
         hostUnresolved = true;
+        if (Array.isArray(resolved.env_names)) envNames = envNames.concat(resolved.env_names);
       } else if (resolved.kind === "resolved") {
         value += resolved.value;
       } else {
@@ -657,13 +659,25 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
       routeParams.length > 0 ? "template_parameterized" : "template"
     );
     if (routeParams.length > 0) result.route_params = uniqueStrings(routeParams);
+    if (envNames.length > 0) result.env_names = uniqueStrings(envNames);
     return result;
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames);
     const right = resolveEndpointExpression(node.right, sourceFile, bindings, resolvingNames);
     if ((left.kind === "resolved" || left.kind === "env") && (right.kind === "resolved" || right.kind === "env")) {
-      return expressionResult(left.kind === "env" || right.kind === "env" ? "env" : "resolved", `${left.value}${right.value}`, rawNodeText(node, sourceFile), "concat");
+      const result = expressionResult(
+        left.kind === "env" || right.kind === "env" ? "env" : "resolved",
+        `${left.value}${right.value}`,
+        rawNodeText(node, sourceFile),
+        "concat"
+      );
+      const envNames = [
+        ...(Array.isArray(left.env_names) ? left.env_names : []),
+        ...(Array.isArray(right.env_names) ? right.env_names : []),
+      ];
+      if (envNames.length > 0) result.env_names = uniqueStrings(envNames);
+      return result;
     }
   }
   if (ts.isCallExpression(node)) {
@@ -713,6 +727,7 @@ function resolveEndpointTarget(node, sourceFile, bindings) {
   const target = splitResolvedEndpointTarget(expression.value);
   target.resolution_kind = expression.resolution_kind ?? null;
   if (Array.isArray(expression.route_params)) target.route_params = expression.route_params;
+  if (target.kind === "host_unresolved" && Array.isArray(expression.env_names)) target.env_names = expression.env_names;
   if (target.kind === "host_unresolved" || target.kind === "resolved" || target.kind === "external") return target;
   return { kind: "unresolved", path: null, host: null, raw_target: expression.raw };
 }
@@ -1228,6 +1243,11 @@ function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpr
   const resolved = splitResolvedEndpointTarget(combined);
   resolved.resolution_kind = target.resolution_kind ?? null;
   if (Array.isArray(target.route_params)) resolved.route_params = target.route_params;
+  const envNames = [
+    ...(Array.isArray(baseUrlExpression.env_names) ? baseUrlExpression.env_names : []),
+    ...(Array.isArray(target.env_names) ? target.env_names : []),
+  ];
+  if (resolved.kind === "host_unresolved" && envNames.length > 0) resolved.env_names = uniqueStrings(envNames);
   return resolved.kind === "unresolved" ? { kind: "unresolved", path: null, host: null, raw_target: target.raw } : resolved;
 }
 
@@ -1250,6 +1270,7 @@ function rowFromTarget(target, method, line, sourceKind) {
     resolution_kind: target.resolution_kind ?? null,
     host_resolution_kind: target.host_resolution_kind ?? null,
     route_params: Array.isArray(target.route_params) ? target.route_params : null,
+    env_names: Array.isArray(target.env_names) ? target.env_names : null,
   };
 }
 

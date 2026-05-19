@@ -638,6 +638,54 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("template_dynamic_host_position", 0), 0)
 
+    def test_typescript_client_env_host_emits_endpoint_env_var_references(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const api = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+            "api.get('/api/token/');\n"
+            "const bracket = axios.create({ baseURL: process.env['API_ROOT'] + '/v1' });\n"
+            "bracket.post('/orders');\n"
+            "fetch(`${import.meta.env['VITE_OTHER_ROOT']}/api/other`);\n"
+            "fetch(`/api/${process.env.USER_ID}`);\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/token/": {"GET"},
+                "/v1/orders": {"POST"},
+                "/api/other": {"ANY"},
+                "/api/${env:USER_ID}": {"ANY"},
+            },
+        )
+        self.assertEqual(
+            _env_reference_names(build, "endpoint_env_host"),
+            ["API_ROOT", "VITE_API_ROOT", "VITE_OTHER_ROOT"],
+        )
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 3)
+
+    def test_typescript_client_env_host_reference_reuses_dotenv_env_var_identity(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                ".env": "VITE_API_ROOT=https://api.example.com\n",
+                "client.ts": (
+                    "import axios from 'axios';\n"
+                    "const api = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "api.get('/api/token/');\n"
+                ),
+            }
+        )
+
+        endpoint_refs = _env_reference_object_ids(build, "endpoint_env_host")
+        config_refs = _env_reference_object_ids(build, "config_assignment")
+
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["VITE_API_ROOT"])
+        self.assertEqual(_env_reference_names(build, "config_assignment"), ["VITE_API_ROOT"])
+        self.assertEqual(endpoint_refs, config_refs)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+
     def test_typescript_client_static_template_segment_still_resolves(self) -> None:
         build = _extract_typescript_client(
             "const resource = 'users';\n"
@@ -1669,6 +1717,23 @@ def _coverage_reason_counts(build, predicate: str) -> dict[str, int]:
         if isinstance(reason, str):
             counts[reason] = counts.get(reason, 0) + 1
     return counts
+
+
+def _env_reference_names(build, reference_kind: str) -> list[str]:
+    names = [
+        fact.qualifier.get("name")
+        for fact in build.facts
+        if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == reference_kind
+    ]
+    return sorted(name for name in names if isinstance(name, str))
+
+
+def _env_reference_object_ids(build, reference_kind: str) -> set[str]:
+    return {
+        fact.object_id
+        for fact in build.facts
+        if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == reference_kind
+    }
 
 
 def _call_site_coverage(build) -> list[Coverage]:
