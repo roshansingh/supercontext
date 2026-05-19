@@ -186,15 +186,17 @@ function uniqueStrings(values) {
   return Array.from(new Set(values));
 }
 
-function hasSafeTemplatePathFrame(value) {
+function hasSafeTemplatePathFrame(value, options = {}) {
   if (value.startsWith("/")) return true;
-  if (!value.startsWith("${env:")) return false;
-  const hostEnd = value.indexOf("}");
-  return hostEnd >= 0 && value.slice(hostEnd + 1).startsWith("/");
+  if (value.startsWith("${env:")) {
+    const hostEnd = value.indexOf("}");
+    return hostEnd >= 0 && value.slice(hostEnd + 1).startsWith("/");
+  }
+  return options.relativePathAllowed === true && value.length > 0;
 }
 
-function templateParameterizationFailure(value, followingText, hasMoreSpans) {
-  if (value.length === 0 || !hasSafeTemplatePathFrame(value)) return "template_dynamic_host_position";
+function templateParameterizationFailure(value, followingText, hasMoreSpans, options = {}) {
+  if (value.length === 0 || !hasSafeTemplatePathFrame(value, options)) return "template_dynamic_host_position";
   if (!value.endsWith("/")) return "template_dynamic_composite_segment";
   if (followingText.length === 0) return hasMoreSpans ? "template_dynamic_composite_segment" : null;
   return followingText.startsWith("/") || followingText.startsWith("?") || followingText.startsWith("#")
@@ -582,7 +584,17 @@ function hasOuterResolvableDeclaration(containers, currentIndex, targetName, sou
   return false;
 }
 
-function resolveIdentifierInContainer(targetName, container, containerIndex, containers, sourceFile, bindings, useStart, resolvingNames) {
+function resolveIdentifierInContainer(
+  targetName,
+  container,
+  containerIndex,
+  containers,
+  sourceFile,
+  bindings,
+  useStart,
+  resolvingNames,
+  options = {}
+) {
   let declaration = null;
   let sawFutureDeclaration = false;
   let sawDynamicDeclaration = false;
@@ -616,7 +628,7 @@ function resolveIdentifierInContainer(targetName, container, containerIndex, con
   if (declaration != null && ts.isIdentifier(declaration.name) && declaration.initializer != null) {
     if (resolvingNames.has(targetName)) return { status: "failed", result: { kind: "unresolved", value: null, raw: targetName } };
     resolvingNames.add(targetName);
-    const resolved = resolveEndpointExpression(declaration.initializer, sourceFile, bindings, resolvingNames);
+    const resolved = resolveEndpointExpression(declaration.initializer, sourceFile, bindings, resolvingNames, null, options);
     resolvingNames.delete(targetName);
     if (resolved.kind === "resolved" || resolved.kind === "env") {
       const result = expressionResult(resolved.kind, resolved.value, targetName, "local_var");
@@ -637,7 +649,7 @@ function resolveIdentifierInContainer(targetName, container, containerIndex, con
   return { status: "none", result: null };
 }
 
-function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames) {
+function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames, options = {}) {
   const targetName = node.text;
   const useStart = node.getStart(sourceFile);
   if (nodeHasWithAncestor(node, sourceFile)) {
@@ -657,7 +669,17 @@ function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames) {
         return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_shadowed_binding" };
       }
     }
-    const resolved = resolveIdentifierInContainer(targetName, containers[index], index, containers, sourceFile, bindings, useStart, resolvingNames);
+    const resolved = resolveIdentifierInContainer(
+      targetName,
+      containers[index],
+      index,
+      containers,
+      sourceFile,
+      bindings,
+      useStart,
+      resolvingNames,
+      options
+    );
     if (resolved.status !== "none") return resolved.result;
   }
   if (hasLexicalShadow) {
@@ -774,7 +796,7 @@ function envHostPlaceholderPrefix(value) {
   return match ? match[0] : null;
 }
 
-function resolveUrlConstructorToString(node, sourceFile, bindings, resolvingNames, parameterBindings) {
+function resolveUrlConstructorToString(node, sourceFile, bindings, resolvingNames, parameterBindings, options = {}) {
   if (
     !ts.isCallExpression(node) ||
     node.arguments.length !== 0 ||
@@ -794,8 +816,8 @@ function resolveUrlConstructorToString(node, sourceFile, bindings, resolvingName
   }
   const args = Array.from(newExpression.arguments ?? []);
   if (args.length !== 2) return null;
-  const pathExpression = resolveEndpointExpression(args[0], sourceFile, bindings, resolvingNames, parameterBindings);
-  const baseExpression = resolveEndpointExpression(args[1], sourceFile, bindings, resolvingNames, parameterBindings);
+  const pathExpression = resolveEndpointExpression(args[0], sourceFile, bindings, resolvingNames, parameterBindings, options);
+  const baseExpression = resolveEndpointExpression(args[1], sourceFile, bindings, resolvingNames, parameterBindings, options);
   if (pathExpression.kind !== "resolved" || baseExpression.value == null) return null;
   if (baseExpression.kind !== "resolved" && baseExpression.kind !== "env") return null;
   const pathValue = String(pathExpression.value).trim();
@@ -875,7 +897,7 @@ function helperIsReassigned(sourceFile, helperName, declarationStatement) {
   return false;
 }
 
-function resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingNames, parameterBindings) {
+function resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingNames, parameterBindings, options = {}) {
   if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return null;
   const helperName = node.expression.text;
   const helperKey = `helper:${helperName}`;
@@ -897,7 +919,7 @@ function resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingName
   }
   const nextParameterBindings = new Map(parameterBindings ?? []);
   for (let index = 0; index < parameterNames.length; index += 1) {
-    const resolved = resolveEndpointExpression(node.arguments[index], sourceFile, bindings, resolvingNames, parameterBindings);
+    const resolved = resolveEndpointExpression(node.arguments[index], sourceFile, bindings, resolvingNames, parameterBindings, options);
     if (resolved.kind !== "resolved" && resolved.kind !== "env") {
       return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
     }
@@ -905,7 +927,7 @@ function resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingName
   }
   const nextResolving = new Set(resolvingNames);
   nextResolving.add(helperKey);
-  const resolved = resolveEndpointExpression(returnExpression, sourceFile, bindings, nextResolving, nextParameterBindings);
+  const resolved = resolveEndpointExpression(returnExpression, sourceFile, bindings, nextResolving, nextParameterBindings, options);
   if (resolved.kind !== "resolved" && resolved.kind !== "env") {
     return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
   }
@@ -914,14 +936,14 @@ function resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingName
   return result;
 }
 
-function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = new Set(), parameterBindings = null) {
+function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = new Set(), parameterBindings = null, options = {}) {
   const literal = stringLiteralValue(node);
   if (literal != null) return expressionResult("resolved", literal, literal, "literal");
   const env = envPlaceholderFromAccess(node);
   if (env != null) return { kind: "env", value: env.placeholder, raw: rawNodeText(node, sourceFile), env_names: [env.name] };
   if (ts.isIdentifier(node)) {
     if (parameterBindings?.has(node.text)) return copyExpressionWithRaw(parameterBindings.get(node.text), node.text);
-    return resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames);
+    return resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames, options);
   }
   if (ts.isTemplateExpression(node)) {
     let value = node.head.text;
@@ -930,7 +952,7 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
     let envNames = [];
     for (let index = 0; index < node.templateSpans.length; index += 1) {
       const span = node.templateSpans[index];
-      const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames, parameterBindings);
+      const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames, parameterBindings, options);
       if (resolved.kind === "env") {
         value += resolved.value;
         hostUnresolved = true;
@@ -947,7 +969,7 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
             reason: "template_dynamic_expression_unsafe",
           };
         }
-        const reason = templateParameterizationFailure(value, span.literal.text, index < node.templateSpans.length - 1);
+        const reason = templateParameterizationFailure(value, span.literal.text, index < node.templateSpans.length - 1, options);
         if (reason != null) {
           return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason };
         }
@@ -967,8 +989,8 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
     return result;
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames, parameterBindings);
-    const right = resolveEndpointExpression(node.right, sourceFile, bindings, resolvingNames, parameterBindings);
+    const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames, parameterBindings, options);
+    const right = resolveEndpointExpression(node.right, sourceFile, bindings, resolvingNames, parameterBindings, options);
     if ((left.kind === "resolved" || left.kind === "env") && (right.kind === "resolved" || right.kind === "env")) {
       const result = expressionResult(
         left.kind === "env" || right.kind === "env" ? "env" : "resolved",
@@ -990,9 +1012,9 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
     }
   }
   if (ts.isCallExpression(node)) {
-    const urlResolved = resolveUrlConstructorToString(node, sourceFile, bindings, resolvingNames, parameterBindings);
+    const urlResolved = resolveUrlConstructorToString(node, sourceFile, bindings, resolvingNames, parameterBindings, options);
     if (urlResolved != null) return urlResolved;
-    const helperResolved = resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingNames, parameterBindings);
+    const helperResolved = resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingNames, parameterBindings, options);
     if (helperResolved != null) return helperResolved;
     return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
   }
@@ -1544,8 +1566,12 @@ function methodFromOptionsLike(node) {
 }
 
 function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpression) {
-  const target = resolveEndpointExpression(targetNode, sourceFile, bindings);
-  if (!baseUrlExpression || target.kind === "unresolved" || target.value == null) return resolveEndpointTarget(targetNode, sourceFile, bindings);
+  const target = resolveEndpointExpression(targetNode, sourceFile, bindings, new Set(), null, { relativePathAllowed: true });
+  if (!baseUrlExpression) return resolveEndpointTarget(targetNode, sourceFile, bindings);
+  if (target.kind === "unresolved" || target.value == null) {
+    // Preserve the configured-client resolver's more specific relative-template failure reason.
+    return { kind: "unresolved", path: null, host: null, raw_target: target.raw, reason: target.reason ?? null };
+  }
   const targetValue = target.value.trim();
   if (targetValue.startsWith("http://") || targetValue.startsWith("https://") || targetValue.startsWith("${env:")) {
     return resolveEndpointTarget(targetNode, sourceFile, bindings);

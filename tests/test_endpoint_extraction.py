@@ -638,6 +638,59 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("template_dynamic_host_position", 0), 0)
 
+    def test_typescript_configured_axios_relative_template_path_parameterizes_under_base(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const api = axios.create({ baseURL: process.env.API_HOST });\n"
+            "api.get(`users/${userId}/orders/`);\n"
+            "fetch(`users/${id}`);\n"
+            "axios.get(`users/${id}`);\n"
+            "api.get(`items/${getId()}`);\n"
+            "api.get(`items/${a}-${b}`);\n"
+            "const stripe = axios.create({ baseURL: 'https://api.stripe.com' });\n"
+            "stripe.get('v1/customers');\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/users/{userId}/orders/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/users/{userId}/orders/"], {"${env:API_HOST}"})
+        self.assertEqual(qualifiers_by_path["/users/{userId}/orders/"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(
+            qualifiers_by_path["/users/{userId}/orders/"][0]["host_resolution_kind"],
+            "env_backed_unresolved",
+        )
+        self.assertEqual(
+            qualifiers_by_path["/users/{userId}/orders/"][0]["resolution_kind"],
+            "template_parameterized",
+        )
+        self.assertEqual(qualifiers_by_path["/users/{userId}/orders/"][0]["route_params"], ["userId"])
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 2)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_expression_unsafe"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_composite_segment"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
+    def test_typescript_configured_axios_url_constructor_relative_template_uses_base(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const api = axios.create({ baseURL: process.env.API_HOST });\n"
+            "api.get(new URL(`users/${userId}/orders/`, 'https://placeholder.invalid').toString());\n"
+            "fetch(new URL(`users/${id}`, 'https://placeholder.invalid').toString());\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/users/{userId}/orders/": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/users/{userId}/orders/"], {"${env:API_HOST}"})
+        self.assertEqual(qualifiers_by_path["/users/{userId}/orders/"][0]["resolution_kind"], "url_constructor")
+        self.assertEqual(qualifiers_by_path["/users/{userId}/orders/"][0]["route_params"], ["userId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
     def test_typescript_client_env_host_emits_endpoint_env_var_references(self) -> None:
         build = _extract_typescript_client(
             "import axios from 'axios';\n"
