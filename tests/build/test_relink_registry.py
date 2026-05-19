@@ -94,6 +94,62 @@ class RelinkRegistryTest(unittest.TestCase):
             [("@acme/shared", "workspace")],
         )
 
+    def test_linker_classifies_external_packages_from_consumer_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer_repo = root / "owner-a" / "consumer"
+            provider_repo = root / "owner-b" / "provider"
+            consumer_repo.mkdir(parents=True)
+            provider_repo.mkdir(parents=True)
+            (consumer_repo / "package.json").write_text(
+                json.dumps({"dependencies": {"shared-pkg": "workspace:*", "react": "^18.2.0"}}),
+                encoding="utf-8",
+            )
+            (provider_repo / "package.json").write_text(json.dumps({"name": "shared-pkg"}), encoding="utf-8")
+
+            result = link_external_packages(
+                (
+                    LinkerInput(
+                        repo=_repo_snapshot(consumer_repo),
+                        repo_identity=_repo_identity(consumer_repo),
+                        entities=(
+                            _repo_entity(consumer_repo),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "shared-pkg"},
+                                properties={"category": "third_party", "import_root": "shared-pkg"},
+                            ),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "react"},
+                                properties={"category": "third_party", "import_root": "react"},
+                            ),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "fs"},
+                                properties={"category": "node_builtin", "import_root": "fs"},
+                            ),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "code-only"},
+                                properties={"category": "third_party", "import_root": "code-only"},
+                            ),
+                        ),
+                    ),
+                    LinkerInput(
+                        repo=_repo_snapshot(provider_repo),
+                        repo_identity=_repo_identity(provider_repo),
+                        entities=(_repo_entity(provider_repo),),
+                    ),
+                )
+            )
+
+        buckets = {row["package_name"]: row["bucket"] for row in result.package_classifications}
+        self.assertEqual(buckets["shared-pkg"], "candidate_internal")
+        self.assertEqual(buckets["react"], "consumer_manifest_external")
+        self.assertEqual(buckets["fs"], "builtin_or_stdlib")
+        self.assertEqual(buckets["code-only"], "unknown")
+
 
 @dataclass(frozen=True)
 class _StubPackageMetadata:

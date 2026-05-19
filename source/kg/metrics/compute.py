@@ -41,6 +41,7 @@ class _Snapshot:
     facts: tuple[JsonObject, ...]
     evidence: tuple[JsonObject, ...]
     coverage: tuple[JsonObject, ...]
+    package_classifications: tuple[JsonObject, ...]
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,7 @@ def _read_snapshot(snapshot_dir: Path) -> _Snapshot:
         facts=tuple(_read_jsonl_if_exists(root / "facts.jsonl")),
         evidence=tuple(_read_jsonl_if_exists(root / "evidence.jsonl")),
         coverage=tuple(_read_jsonl_if_exists(root / "coverage.jsonl")),
+        package_classifications=tuple(_read_package_classifications(root)),
     )
 
 
@@ -169,6 +171,48 @@ def _read_jsonl_if_exists(path: Path) -> list[JsonObject]:
         if not isinstance(row, dict):
             raise ValueError(f"{path}: row {index + 1} must be a JSON object")
     return rows
+
+
+def _read_package_classifications(root: Path) -> tuple[JsonObject, ...]:
+    relink_path = root / "cross_repo_package_classifications.jsonl"
+    rows = (
+        _read_jsonl_if_exists(relink_path)
+        if relink_path.exists()
+        else _read_jsonl_if_exists(root / "package_classifications.jsonl")
+    )
+    _validate_package_classifications(rows, root)
+    return tuple(rows)
+
+
+def _validate_package_classifications(rows: list[JsonObject], root: Path) -> None:
+    allowed_buckets = {
+        "builtin_or_stdlib",
+        "consumer_manifest_external",
+        "candidate_internal",
+        "candidate_internal_ambiguous",
+        "unknown",
+    }
+    seen: set[str] = set()
+    for index, row in enumerate(rows):
+        classification_id = row.get("classification_id")
+        if not isinstance(classification_id, str) or not classification_id.strip():
+            raise ValueError(f"{root}: package classification row {index + 1} classification_id must be non-empty")
+        if classification_id != classification_id.strip():
+            raise ValueError(f"{root}: package classification row {index + 1} classification_id must not be padded")
+        if classification_id in seen:
+            raise ValueError(f"{root}: duplicate package classification_id: {classification_id}")
+        seen.add(classification_id)
+        entity_id = row.get("entity_id")
+        if not isinstance(entity_id, str) or not entity_id.strip():
+            raise ValueError(f"{root}: package classification row {index + 1} entity_id must be non-empty")
+        if entity_id != entity_id.strip():
+            raise ValueError(f"{root}: package classification row {index + 1} entity_id must not be padded")
+        package_name = row.get("package_name")
+        if "package_name" in row and (not isinstance(package_name, str) or not package_name.strip()):
+            raise ValueError(f"{root}: package classification row {index + 1} package_name must be non-empty")
+        bucket = row.get("bucket")
+        if bucket not in allowed_buckets:
+            raise ValueError(f"{root}: package classification row {index + 1} bucket is unsupported: {bucket!r}")
 
 
 def _discover_manifest_repos(manifest: JsonObject) -> tuple[_DiscoveredRepoRef, ...]:
@@ -586,6 +630,39 @@ def _m_cross_repo_linkage(context: _MetricContext, *, fleet_dir: Path | None) ->
     external_packages = [entity for entity in context.snapshot.entities if entity.get("kind") == "ExternalPackage"]
     if not external_packages:
         return MetricValue(None, "n_a", "no external package imports")
+    if context.snapshot.package_classifications:
+        ambiguous_ids = {
+            str(row.get("entity_id"))
+            for row in context.snapshot.package_classifications
+            if row.get("bucket") == "candidate_internal_ambiguous"
+        }
+        candidate_ids = {
+            str(row.get("entity_id"))
+            for row in context.snapshot.package_classifications
+            if row.get("bucket") in {"candidate_internal", "candidate_internal_ambiguous"}
+        }
+        if not candidate_ids:
+            return MetricValue(None, "n_a", "no candidate internal package dependencies")
+        resolved = {
+            str(fact.get("subject_id"))
+            for fact in context.snapshot.facts
+            if fact.get("predicate") == "RESOLVES_TO_REPO"
+        }
+        value = len(resolved.intersection(candidate_ids)) / len(candidate_ids)
+        reason = _linker_stale_reason(context.snapshot, fleet_dir)
+        if reason:
+            return MetricValue(value, "partial", reason)
+        resolver_reason = _package_resolver_gap_reason(context.snapshot.manifest)
+        if resolver_reason:
+            return MetricValue(value, "partial", resolver_reason)
+        unresolved_ambiguous_count = len(ambiguous_ids.difference(resolved))
+        if unresolved_ambiguous_count:
+            return MetricValue(
+                value,
+                "partial",
+                f"{unresolved_ambiguous_count} ambiguous candidate internal package dependencies count as unresolved",
+            )
+        return MetricValue(value, "usable")
     external_package_ids = {str(entity.get("entity_id")) for entity in external_packages}
     resolved = {
         str(fact.get("subject_id"))

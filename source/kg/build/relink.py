@@ -26,9 +26,18 @@ from source.kg.languages.types import (
 LINKER_SOURCE_SYSTEM = "package_linker"
 LINKER_RULE_VERSION = "package-linker-1"
 SNAPSHOT_ARTIFACT_BUILD_TYPES = frozenset(("fleet_relink", "multi_repo", "private_goldset_multi_repo"))
-RELINK_OUTPUT_FILES = frozenset(("cross_repo_links.jsonl", "cross_repo_link_evidence.jsonl", "manifest.json"))
+PACKAGE_CLASSIFICATIONS_FILENAME = "package_classifications.jsonl"
+RELINK_PACKAGE_CLASSIFICATIONS_FILENAME = "cross_repo_package_classifications.jsonl"
+RELINK_OUTPUT_FILES = frozenset(
+    (
+        "cross_repo_links.jsonl",
+        "cross_repo_link_evidence.jsonl",
+        RELINK_PACKAGE_CLASSIFICATIONS_FILENAME,
+        "manifest.json",
+    )
+)
 STALE_SNAPSHOT_OUTPUT_FILES = frozenset(
-    ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl")
+    ("entities.jsonl", "facts.jsonl", "evidence.jsonl", "coverage.jsonl", "metrics.jsonl", PACKAGE_CLASSIFICATIONS_FILENAME)
 )
 TENANT_SCOPED_ENTITY_KINDS = SUPPORTED_ENTITY_KINDS
 _PACKAGE_RESOLVER_LANGUAGE_PRECEDENCE = ("python", "typescript", "dotnet")
@@ -74,6 +83,7 @@ class LinkerResult:
     ambiguous_package_count: int
     consumer_dependencies: tuple[ConsumerDependency, ...] = ()
     consumer_manifest_issues: tuple[ConsumerManifestIssue, ...] = ()
+    package_classifications: tuple[JsonObject, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,7 @@ def link_external_packages(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) 
                 entity_repo_identities.setdefault(entity.entity_id, set()).add(input_repo.repo_identity)
 
     link_facts, link_evidence, ambiguous_count = _link_external_packages(entities, providers, entity_repo_identities)
+    classifications = _classify_external_packages(inputs, entities, providers, consumer_manifests.dependencies)
     return LinkerResult(
         facts=tuple(link_facts),
         evidence=tuple(link_evidence),
@@ -115,6 +126,7 @@ def link_external_packages(inputs: list[LinkerInput] | tuple[LinkerInput, ...]) 
         ambiguous_package_count=ambiguous_count,
         consumer_dependencies=consumer_manifests.dependencies,
         consumer_manifest_issues=consumer_manifests.issues,
+        package_classifications=classifications,
     )
 
 
@@ -174,6 +186,7 @@ def relink_snapshot_dirs(
         "ambiguous_package_count": result.ambiguous_package_count,
         "consumer_dependency_count": len(result.consumer_dependencies),
         "consumer_manifest_issue_count": len(result.consumer_manifest_issues),
+        "package_classification_count": len(result.package_classifications),
         "counts": {
             "facts": len({fact.fact_id for fact in result.facts}),
             "evidence": len({row.evidence_id for row in result.evidence}),
@@ -186,6 +199,11 @@ def relink_snapshot_dirs(
             staged / "cross_repo_link_evidence.jsonl",
             (row.to_record() for row in result.evidence),
             "evidence_id",
+        )
+        _write_jsonl(
+            staged / RELINK_PACKAGE_CLASSIFICATIONS_FILENAME,
+            result.package_classifications,
+            "classification_id",
         )
         _write_json_file(staged / "manifest.json", manifest)
         _publish_relink_outputs(out, staged)
@@ -200,7 +218,12 @@ def _validate_stale_snapshot_outputs(out: Path) -> None:
 
 
 def _publish_relink_outputs(out: Path, staged: Path) -> None:
-    filenames = ("cross_repo_links.jsonl", "cross_repo_link_evidence.jsonl", "manifest.json")
+    filenames = (
+        "cross_repo_links.jsonl",
+        "cross_repo_link_evidence.jsonl",
+        RELINK_PACKAGE_CLASSIFICATIONS_FILENAME,
+        "manifest.json",
+    )
     backups: dict[str, Path] = {}
     published: list[str] = []
     try:
@@ -738,6 +761,149 @@ def _collect_consumer_manifest_results(
             dependencies.extend(result.dependencies)
             issues.extend(result.issues)
     return _ConsumerManifestCollection(tuple(dependencies), tuple(issues))
+
+
+def _classify_external_packages(
+    inputs: list[LinkerInput] | tuple[LinkerInput, ...],
+    entities: list[Entity],
+    providers: list[PackageProvider],
+    consumer_dependencies: tuple[ConsumerDependency, ...],
+) -> tuple[JsonObject, ...]:
+    provider_index: dict[str, set[RepoIdentity]] = {}
+    for provider in providers:
+        for alias in provider.aliases:
+            provider_index.setdefault(_normalize_package_name(alias), set()).add(provider.repo_identity)
+        provider_index.setdefault(_normalize_package_name(provider.package_name), set()).add(provider.repo_identity)
+
+    dependencies_by_consumer = _consumer_dependencies_by_repo(inputs, consumer_dependencies)
+    classifications: list[JsonObject] = []
+    for entity in entities:
+        if entity.kind != "ExternalPackage":
+            continue
+        consumer_identity = _external_package_repo_identity(entity, inputs)
+        candidate_names = _external_package_candidate_names(entity)
+        matching_dependencies = _matching_consumer_dependencies(
+            candidate_names,
+            dependencies_by_consumer.get(consumer_identity, ()),
+        )
+        dependency = matching_dependencies[0] if len(matching_dependencies) == 1 else None
+        bucket = "unknown"
+        reason = "code import has no matching consumer manifest dependency"
+        manifest_path = None
+        line_number = None
+        if _is_builtin_package(entity):
+            bucket = "builtin_or_stdlib"
+            reason = "extractor classified package as builtin or stdlib"
+        elif len(matching_dependencies) > 1:
+            bucket = "unknown"
+            reason = "multiple consumer manifest dependencies match the imported package"
+        elif dependency is not None:
+            manifest_path = str(dependency.manifest_path)
+            line_number = dependency.line_number
+            provider_matches = {
+                identity
+                for name in {dependency.declared_name, *candidate_names}
+                for identity in provider_index.get(_normalize_package_name(name), set())
+                if identity != consumer_identity
+            }
+            if len(provider_matches) == 1:
+                bucket = "candidate_internal"
+                reason = "consumer manifest dependency matches exactly one fleet provider"
+            elif len(provider_matches) > 1:
+                bucket = "candidate_internal_ambiguous"
+                reason = "consumer manifest dependency matches multiple fleet providers"
+            elif dependency.spec_form in {"workspace", "file_path", "git_url"}:
+                bucket = "consumer_manifest_external"
+                reason = "path, workspace, or git dependency has no matching fleet provider; treating as out-of-fleet"
+            elif dependency.spec_form == "registry":
+                bucket = "consumer_manifest_external"
+                reason = "registry dependency has no matching fleet provider"
+            else:
+                bucket = "unknown"
+                reason = "consumer manifest dependency has unknown spec form"
+        package_name = next(iter(sorted(candidate_names)), str(entity.identity.get("name", "")))
+        classification_id = _package_classification_id(entity, consumer_identity, bucket)
+        classifications.append(
+            {
+                "classification_id": classification_id,
+                "entity_id": entity.entity_id,
+                "repo_identity": consumer_identity.to_json() if consumer_identity is not None else None,
+                "package_name": package_name,
+                "bucket": bucket,
+                "reason": reason,
+                "manifest_path": manifest_path,
+                "line_number": line_number,
+            }
+        )
+    return _dedupe_package_classifications(classifications)
+
+
+def _dedupe_package_classifications(classifications: list[JsonObject]) -> tuple[JsonObject, ...]:
+    rows_by_id: dict[str, JsonObject] = {}
+    for row in classifications:
+        classification_id = str(row["classification_id"])
+        previous = rows_by_id.get(classification_id)
+        if previous is None:
+            rows_by_id[classification_id] = row
+        elif previous != row:
+            raise ValueError(f"Conflicting package classification rows for classification_id: {classification_id}")
+    return tuple(rows_by_id.values())
+
+
+def write_package_classifications(output_dir: str | Path, records: tuple[JsonObject, ...]) -> None:
+    _write_jsonl(Path(output_dir).expanduser().resolve() / PACKAGE_CLASSIFICATIONS_FILENAME, records, "classification_id")
+
+
+def _consumer_dependencies_by_repo(
+    inputs: list[LinkerInput] | tuple[LinkerInput, ...],
+    dependencies: tuple[ConsumerDependency, ...],
+) -> dict[RepoIdentity, tuple[ConsumerDependency, ...]]:
+    grouped: dict[RepoIdentity, list[ConsumerDependency]] = {}
+    for dependency in dependencies:
+        for input_repo in inputs:
+            try:
+                dependency.manifest_path.resolve().relative_to(input_repo.repo.root.resolve())
+            except ValueError:
+                continue
+            grouped.setdefault(input_repo.repo_identity, []).append(dependency)
+            break
+    return {identity: tuple(rows) for identity, rows in grouped.items()}
+
+
+def _matching_consumer_dependencies(
+    candidate_names: set[str],
+    dependencies: tuple[ConsumerDependency, ...],
+) -> tuple[ConsumerDependency, ...]:
+    normalized_candidates = {_normalize_package_name(name) for name in candidate_names}
+    return tuple(
+        dependency
+        for dependency in dependencies
+        if _normalize_package_name(dependency.declared_name) in normalized_candidates
+    )
+
+
+def _external_package_repo_identity(
+    package: Entity,
+    inputs: list[LinkerInput] | tuple[LinkerInput, ...],
+) -> RepoIdentity | None:
+    repo_name = package.identity.get("repo")
+    tenant_id = package.identity.get("tenant_id")
+    matches = [
+        input_repo.repo_identity
+        for input_repo in inputs
+        if input_repo.repo_identity.name == repo_name and input_repo.repo_identity.tenant_id == tenant_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _package_classification_id(entity: Entity, consumer_identity: RepoIdentity | None, bucket: str) -> str:
+    identity_key = (
+        repo_identity_key(consumer_identity)
+        if consumer_identity is not None
+        else json.dumps(entity.identity, sort_keys=True)
+    )
+    digest = sha256(f"{entity.entity_id}\0{identity_key}\0{bucket}".encode("utf-8")).hexdigest()[:16]
+    return f"pkgclass:{digest}"
 
 
 def _validate_package_manifest_file(path: Path) -> None:
