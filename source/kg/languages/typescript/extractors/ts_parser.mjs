@@ -152,6 +152,8 @@ const ASSIGNMENT_OPERATORS = new Set([
 ]);
 const EXPRESS_ROUTE_METHODS = new Set([...HTTP_METHODS, "all"]);
 const KOA_ROUTE_METHODS = new Set([...EXPRESS_ROUTE_METHODS, "del"]);
+const SOURCE_FILE_DECLARATION_NAMES = new WeakMap();
+const HOISTED_VAR_DECLARATION_NAMES = new WeakMap();
 
 function stringLiteralValue(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
@@ -239,6 +241,7 @@ function parametersDeclareName(node, targetName) {
 
 function variableStatementDeclaresName(statement, targetName) {
   if (!ts.isVariableStatement(statement)) return false;
+  if (nodeHasDeclareModifier(statement)) return false;
   return statement.declarationList.declarations.some((declaration) => declaresNameInBindingName(declaration.name, targetName));
 }
 
@@ -259,16 +262,72 @@ function sourceFileImportDeclaresName(sourceFile, targetName) {
     if (!ts.isImportDeclaration(statement)) continue;
     const clause = statement.importClause;
     if (!clause) continue;
+    if (clause.isTypeOnly) continue;
     if (clause.name?.text === targetName) return true;
     const bindings = clause.namedBindings;
     if (bindings && ts.isNamespaceImport(bindings) && bindings.name.text === targetName) return true;
     if (bindings && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) {
+        if (element.isTypeOnly) continue;
         if (element.name.text === targetName) return true;
       }
     }
   }
   return false;
+}
+
+function sourceFileDeclaredNames(sourceFile) {
+  const cached = SOURCE_FILE_DECLARATION_NAMES.get(sourceFile);
+  if (cached) return cached;
+  const names = new Set();
+  for (const statement of sourceFile.statements) {
+    for (const name of statementDeclaredNames(statement)) {
+      names.add(name);
+    }
+  }
+  SOURCE_FILE_DECLARATION_NAMES.set(sourceFile, names);
+  return names;
+}
+
+function sourceFileDeclaresName(sourceFile, targetName) {
+  return sourceFileDeclaredNames(sourceFile).has(targetName);
+}
+
+function nodeHasDeclareModifier(node) {
+  return Array.from(node.modifiers ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword);
+}
+
+function declarationListIsVar(declarationList) {
+  return (declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
+}
+
+function isHoistedVarBoundary(node) {
+  return isFunctionBoundary(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node) || ts.isModuleDeclaration(node);
+}
+
+function hoistedVarDeclaredNames(scopeNode) {
+  const cached = HOISTED_VAR_DECLARATION_NAMES.get(scopeNode);
+  if (cached) return cached;
+  const names = new Set();
+  function visit(node) {
+    if (node !== scopeNode && isHoistedVarBoundary(node)) return;
+    if (node !== scopeNode && nodeHasDeclareModifier(node)) return;
+    if (ts.isVariableDeclarationList(node) && declarationListIsVar(node)) {
+      for (const declaration of node.declarations) {
+        for (const name of bindingNames(declaration.name)) {
+          names.add(name);
+        }
+      }
+    }
+    node.forEachChild(visit);
+  }
+  visit(scopeNode);
+  HOISTED_VAR_DECLARATION_NAMES.set(scopeNode, names);
+  return names;
+}
+
+function hoistedVarDeclaresName(scopeNode, targetName) {
+  return hoistedVarDeclaredNames(scopeNode).has(targetName);
 }
 
 function blockDeclaresNameBeforeUse(block, targetName, useNode, sourceFile) {
@@ -461,6 +520,7 @@ function statementMutatesIdentifier(statement, targetName) {
 
 function directVariableDeclaration(statement, targetName) {
   if (!ts.isVariableStatement(statement)) return null;
+  if (nodeHasDeclareModifier(statement)) return null;
   let found = null;
   for (const declaration of statement.declarationList.declarations) {
     if (!declaresNameInBindingName(declaration.name, targetName)) continue;
@@ -471,9 +531,36 @@ function directVariableDeclaration(statement, targetName) {
 }
 
 function nonVariableStatementDeclaresName(statement, targetName) {
+  if (nodeHasDeclareModifier(statement)) return false;
   return (
-    ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name?.text === targetName)
+    ((ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement)) &&
+      statement.name?.text === targetName) ||
+    (ts.isImportEqualsDeclaration(statement) && !statement.isTypeOnly && statement.name.text === targetName)
   );
+}
+
+function statementDeclaredNames(statement) {
+  const names = [];
+  if (nodeHasDeclareModifier(statement)) return names;
+  if (ts.isVariableStatement(statement)) {
+    for (const declaration of statement.declarationList.declarations) {
+      names.push(...bindingNames(declaration.name));
+    }
+  }
+  if (
+    (ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement)) &&
+    statement.name
+  ) {
+    names.push(statement.name.text);
+  }
+  if (ts.isImportEqualsDeclaration(statement) && !statement.isTypeOnly) names.push(statement.name.text);
+  return names;
 }
 
 function containerHasPriorLiteralDeclaration(container, targetName, sourceFile, useStart) {
@@ -532,7 +619,10 @@ function resolveIdentifierInContainer(targetName, container, containerIndex, con
     const resolved = resolveEndpointExpression(declaration.initializer, sourceFile, bindings, resolvingNames);
     resolvingNames.delete(targetName);
     if (resolved.kind === "resolved" || resolved.kind === "env") {
-      return { status: "resolved", result: expressionResult(resolved.kind, resolved.value, targetName, "local_var") };
+      const result = expressionResult(resolved.kind, resolved.value, targetName, "local_var");
+      if (Array.isArray(resolved.env_names)) result.env_names = uniqueStrings(resolved.env_names);
+      if (Array.isArray(resolved.route_params)) result.route_params = resolved.route_params;
+      return { status: "resolved", result };
     }
     const reason =
       resolved.reason ??
@@ -580,6 +670,58 @@ function resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames) {
   return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile) };
 }
 
+function copyExpressionWithRaw(expression, raw) {
+  return { ...expression, raw };
+}
+
+function isUrlIdentifierShadowed(identifier, sourceFile) {
+  return (
+    identifierHasScopedDeclaration(identifier, "URL", sourceFile) ||
+    sourceFileImportDeclaresName(sourceFile, "URL") ||
+    sourceFileDeclaresName(sourceFile, "URL")
+  );
+}
+
+function statementListDeclaresName(statements, targetName) {
+  return Array.from(statements ?? []).some((statement) => statementDeclaresAnyName(statement, targetName));
+}
+
+function identifierHasScopedDeclaration(identifier, targetName, sourceFile) {
+  if (identifierHasLocalScopedDeclaration(identifier, targetName, sourceFile)) return true;
+  return hoistedVarDeclaresName(sourceFile, targetName);
+}
+
+function identifierHasLocalScopedDeclaration(identifier, targetName, sourceFile) {
+  let current = identifier.parent;
+  while (current && current !== sourceFile) {
+    if (isFunctionBoundary(current) && parametersDeclareName(current, targetName)) return true;
+    if (isFunctionBoundary(current) && hoistedVarDeclaresName(current, targetName)) return true;
+    if (
+      (ts.isBlock(current) || ts.isCaseClause(current) || ts.isDefaultClause(current) || ts.isModuleBlock(current)) &&
+      statementListDeclaresName(current.statements, targetName)
+    ) {
+      return true;
+    }
+    if (ts.isModuleBlock(current) && hoistedVarDeclaresName(current, targetName)) return true;
+    if (ts.isForStatement(current) && forInitializerDeclaresName(current.initializer, targetName)) return true;
+    if (
+      (ts.isForOfStatement(current) || ts.isForInStatement(current)) &&
+      forInOfInitializerDeclaresName(current.initializer, targetName)
+    ) {
+      return true;
+    }
+    if (
+      ts.isCatchClause(current) &&
+      current.variableDeclaration &&
+      declaresNameInBindingName(current.variableDeclaration.name, targetName)
+    ) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
 function envPlaceholderFromAccess(node) {
   function isProcessEnv(expr) {
     return (
@@ -611,12 +753,174 @@ function envPlaceholderFromAccess(node) {
   return null;
 }
 
-function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = new Set()) {
+function expressionEnvNames(expression) {
+  return Array.isArray(expression.env_names) ? expression.env_names : [];
+}
+
+function decodeRouteParamBraces(pathname) {
+  return pathname.replace(/%7B/gi, "{").replace(/%7D/gi, "}");
+}
+
+function isAbsoluteUrlLike(value) {
+  return value.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value);
+}
+
+function envHostPlaceholderPrefix(value) {
+  const text = String(value);
+  const match = /^\$\{env:[^}]+\}/.exec(text);
+  if (!match) return null;
+  const suffix = text.slice(match[0].length);
+  if (suffix !== "" && !suffix.startsWith("/")) return null;
+  return match ? match[0] : null;
+}
+
+function resolveUrlConstructorToString(node, sourceFile, bindings, resolvingNames, parameterBindings) {
+  if (
+    !ts.isCallExpression(node) ||
+    node.arguments.length !== 0 ||
+    !ts.isPropertyAccessExpression(node.expression) ||
+    node.expression.name.text !== "toString" ||
+    !ts.isNewExpression(node.expression.expression)
+  ) {
+    return null;
+  }
+  const newExpression = node.expression.expression;
+  if (
+    !ts.isIdentifier(newExpression.expression) ||
+    newExpression.expression.text !== "URL" ||
+    isUrlIdentifierShadowed(newExpression.expression, sourceFile)
+  ) {
+    return null;
+  }
+  const args = Array.from(newExpression.arguments ?? []);
+  if (args.length !== 2) return null;
+  const pathExpression = resolveEndpointExpression(args[0], sourceFile, bindings, resolvingNames, parameterBindings);
+  const baseExpression = resolveEndpointExpression(args[1], sourceFile, bindings, resolvingNames, parameterBindings);
+  if (pathExpression.kind !== "resolved" || baseExpression.value == null) return null;
+  if (baseExpression.kind !== "resolved" && baseExpression.kind !== "env") return null;
+  const pathValue = String(pathExpression.value).trim();
+  if (isAbsoluteUrlLike(pathValue)) return null;
+  try {
+    if (baseExpression.kind === "env") {
+      if (!pathValue.startsWith("/")) return null;
+      const pathname = decodeRouteParamBraces(new URL(pathValue, "https://example.invalid").pathname || "/");
+      const envPrefix = envHostPlaceholderPrefix(baseExpression.value);
+      if (envPrefix == null) return null;
+      const result = expressionResult("env", `${envPrefix}${pathname}`, rawNodeText(node, sourceFile), "url_constructor");
+      const envNames = expressionEnvNames(baseExpression);
+      if (envNames.length > 0) result.env_names = uniqueStrings(envNames);
+      if (Array.isArray(pathExpression.route_params)) result.route_params = pathExpression.route_params;
+      return result;
+    }
+    const pathname = decodeRouteParamBraces(new URL(pathValue, String(baseExpression.value)).pathname || "/");
+    const result = expressionResult("resolved", pathname, rawNodeText(node, sourceFile), "url_constructor");
+    if (Array.isArray(pathExpression.route_params)) result.route_params = pathExpression.route_params;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function helperBodyReturnExpression(functionNode) {
+  if (ts.isArrowFunction(functionNode) && !ts.isBlock(functionNode.body)) return functionNode.body;
+  const body = functionNode.body;
+  if (!body || !ts.isBlock(body) || body.statements.length !== 1) return null;
+  const statement = body.statements[0];
+  return ts.isReturnStatement(statement) && statement.expression ? statement.expression : null;
+}
+
+function helperParameterNames(functionNode) {
+  const names = [];
+  for (const parameter of functionNode.parameters ?? []) {
+    if (parameter.dotDotDotToken) return null;
+    if (!ts.isIdentifier(parameter.name)) return null;
+    names.push(parameter.name.text);
+  }
+  return names;
+}
+
+function topLevelHelperCandidates(sourceFile, helperName, useNode) {
+  const useStart = useNode.getStart(sourceFile);
+  const candidates = [];
+  for (const statement of sourceFile.statements) {
+    if (statement.getStart(sourceFile) >= useStart) break;
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === helperName && statement.body) {
+      candidates.push({ functionNode: statement, statement });
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== helperName) continue;
+      const initializer = declaration.initializer;
+      if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
+        candidates.push({ functionNode: initializer, statement });
+      }
+    }
+  }
+  return candidates;
+}
+
+function helperIsReassigned(sourceFile, helperName, declarationStatement) {
+  for (const statement of sourceFile.statements) {
+    if (statement === declarationStatement) continue;
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === helperName && !statement.body) continue;
+    if (
+      statementDeclaresAnyName(statement, helperName) ||
+      (!isHoistedVarBoundary(statement) && hoistedVarDeclaresName(statement, helperName)) ||
+      statementMutatesIdentifier(statement, helperName)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingNames, parameterBindings) {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return null;
+  const helperName = node.expression.text;
+  const helperKey = `helper:${helperName}`;
+  if (resolvingNames.has(helperKey)) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
+  }
+  if (identifierHasLocalScopedDeclaration(node.expression, helperName, sourceFile)) return null;
+  if (sourceFileImportDeclaresName(sourceFile, helperName)) return null;
+  const candidates = topLevelHelperCandidates(sourceFile, helperName, node.expression);
+  if (candidates.length === 0) return null;
+  if (candidates.length > 1 || helperIsReassigned(sourceFile, helperName, candidates[0].statement)) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_reassigned" };
+  }
+  const helper = candidates[0].functionNode;
+  const returnExpression = helperBodyReturnExpression(helper);
+  const parameterNames = helperParameterNames(helper);
+  if (returnExpression == null || parameterNames == null || node.arguments.length < parameterNames.length) {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
+  }
+  const nextParameterBindings = new Map(parameterBindings ?? []);
+  for (let index = 0; index < parameterNames.length; index += 1) {
+    const resolved = resolveEndpointExpression(node.arguments[index], sourceFile, bindings, resolvingNames, parameterBindings);
+    if (resolved.kind !== "resolved" && resolved.kind !== "env") {
+      return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
+    }
+    nextParameterBindings.set(parameterNames[index], resolved);
+  }
+  const nextResolving = new Set(resolvingNames);
+  nextResolving.add(helperKey);
+  const resolved = resolveEndpointExpression(returnExpression, sourceFile, bindings, nextResolving, nextParameterBindings);
+  if (resolved.kind !== "resolved" && resolved.kind !== "env") {
+    return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
+  }
+  const result = copyExpressionWithRaw(resolved, rawNodeText(node, sourceFile));
+  result.resolution_kind = "helper_inline";
+  return result;
+}
+
+function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = new Set(), parameterBindings = null) {
   const literal = stringLiteralValue(node);
   if (literal != null) return expressionResult("resolved", literal, literal, "literal");
   const env = envPlaceholderFromAccess(node);
   if (env != null) return { kind: "env", value: env.placeholder, raw: rawNodeText(node, sourceFile), env_names: [env.name] };
   if (ts.isIdentifier(node)) {
+    if (parameterBindings?.has(node.text)) return copyExpressionWithRaw(parameterBindings.get(node.text), node.text);
     return resolveIdentifierAtUse(node, sourceFile, bindings, resolvingNames);
   }
   if (ts.isTemplateExpression(node)) {
@@ -626,7 +930,7 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
     let envNames = [];
     for (let index = 0; index < node.templateSpans.length; index += 1) {
       const span = node.templateSpans[index];
-      const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames);
+      const resolved = resolveEndpointExpression(span.expression, sourceFile, bindings, resolvingNames, parameterBindings);
       if (resolved.kind === "env") {
         value += resolved.value;
         hostUnresolved = true;
@@ -663,8 +967,8 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
     return result;
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames);
-    const right = resolveEndpointExpression(node.right, sourceFile, bindings, resolvingNames);
+    const left = resolveEndpointExpression(node.left, sourceFile, bindings, resolvingNames, parameterBindings);
+    const right = resolveEndpointExpression(node.right, sourceFile, bindings, resolvingNames, parameterBindings);
     if ((left.kind === "resolved" || left.kind === "env") && (right.kind === "resolved" || right.kind === "env")) {
       const result = expressionResult(
         left.kind === "env" || right.kind === "env" ? "env" : "resolved",
@@ -677,10 +981,19 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
         ...(Array.isArray(right.env_names) ? right.env_names : []),
       ];
       if (envNames.length > 0) result.env_names = uniqueStrings(envNames);
+      const routeParams = [
+        ...(Array.isArray(left.route_params) ? left.route_params : []),
+        ...(Array.isArray(right.route_params) ? right.route_params : []),
+      ];
+      if (routeParams.length > 0) result.route_params = uniqueStrings(routeParams);
       return result;
     }
   }
   if (ts.isCallExpression(node)) {
+    const urlResolved = resolveUrlConstructorToString(node, sourceFile, bindings, resolvingNames, parameterBindings);
+    if (urlResolved != null) return urlResolved;
+    const helperResolved = resolveDirectReturnHelperCall(node, sourceFile, bindings, resolvingNames, parameterBindings);
+    if (helperResolved != null) return helperResolved;
     return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason: "target_helper_call_deferred" };
   }
   return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile) };
