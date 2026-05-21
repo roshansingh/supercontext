@@ -4,11 +4,11 @@
 
 **Goal:** Add workflow-oriented MCP support for planning and review without widening the public primitive surface beyond the existing ADR tools plus `planning_context` and `review_context`.
 
-**As-built status:** Completed on PR #108. Checkboxes are marked complete to reflect the shipped implementation, and this plan is retained as an implementation reference rather than an active task list.
+**As-built status:** Completed on PR #108, then superseded by installable `bettercontext-mcp` skill templates under `source/kg/product/mcp_skill_templates/` plus `bettercontext-install-mcp-skills`. Checkboxes are marked complete to reflect the shipped implementation, and this plan is retained as an implementation reference rather than an active task list.
 
 **Architecture:** Keep the current MCP server shape and JSON-RPC flow intact. Extend `source/kg/product/mcp_tools.py` with additive metadata fields, clearer tool descriptions, and two new composition tools that only orchestrate existing `KgSnapshot` capabilities. Finish with host-facing docs that verify the current HTTP transport works end-to-end before any stdio work is considered.
 
-**Tech Stack:** Python 3, `unittest`, JSON-RPC over the existing `http.server` MCP server, markdown docs under `docs/mcp/`
+**Tech Stack:** Python 3, `unittest`, JSON-RPC over the existing `http.server` MCP server, installable skill templates under `source/kg/product/mcp_skill_templates/`, evaluation docs under `docs/mcp/`
 
 ---
 
@@ -19,8 +19,8 @@
 - `tests/test_mcp_tools.py`
 
 **Create**
-- `docs/mcp/CLAUDE_CODE_SKILL.md`
-- `docs/mcp/CODEX_SKILL.md`
+- `source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md`
+- `source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md`
 
 **Read for implementation details**
 - `source/kg/query/snapshot.py`
@@ -523,47 +523,20 @@ git commit -m "Add review context MCP tool"
 ### Task 4: PR4 Host Skill Docs And HTTP Verification Gate
 
 **Files:**
-- Create: `docs/mcp/CLAUDE_CODE_SKILL.md`
-- Create: `docs/mcp/CODEX_SKILL.md`
+- Create: `source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md`
+- Create: `source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md`
+- Create: `source/scripts/install_mcp_skills.py`
 
-- [x] **Step 1: Create the Claude Code wrapper doc**
+- [x] **Step 1: Create the Claude Code installable skill**
 
-Create [docs/mcp/CLAUDE_CODE_SKILL.md](docs/mcp/CLAUDE_CODE_SKILL.md) with:
-- one paragraph showing the local server command
-- a short “register this MCP” instruction block
-- concise workflow rules below it
+Create [SKILL.md](source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md) with:
+- setup instructions using `bettercontext-init` and `bettercontext-init --serve`
+- a short “register this MCP” instruction block for Claude Code
+- concise workflow rules for planning, coding, review, fallback, and evidence
 
-Use this top block:
+- [x] **Step 2: Create the Codex installable skill**
 
-````md
-# Claude Code Bettercontext Skill
-
-Start the local MCP server:
-
-```bash
-python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
-python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
-```
-
-Register the MCP endpoint in Claude Code using the local HTTP URL printed by the server, then follow the workflow rules below.
-````
-
-- [x] **Step 2: Create the Codex wrapper doc**
-
-Create [docs/mcp/CODEX_SKILL.md](docs/mcp/CODEX_SKILL.md) with the same concise workflow rules but Codex-specific registration wording:
-
-````md
-# Codex Bettercontext Skill
-
-Start the local MCP server:
-
-```bash
-python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
-python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
-```
-
-Register the MCP endpoint in Codex using the local HTTP URL printed by the server, then follow the workflow rules below.
-````
+Create [SKILL.md](source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md) with the same concise workflow rules but Codex-specific registration wording.
 
 - [x] **Step 3: Verify the repo still passes local checks after doc creation**
 
@@ -583,8 +556,8 @@ Expected:
 Run the local server in one terminal:
 
 ```bash
-python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
-python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
+bettercontext-init --repo <repo-path>
+bettercontext-mcp-server --snapshot <repo-path>/.bettercontext/kg
 ```
 
 Then, from each host environment separately:
@@ -607,8 +580,8 @@ If any item fails because the host cannot use the HTTP server reliably, stop and
 - [x] **Step 5: Commit PR4-sized docs**
 
 ```bash
-git add docs/mcp/CLAUDE_CODE_SKILL.md docs/mcp/CODEX_SKILL.md
-git commit -m "Add Bettercontext MCP workflow docs"
+git add source/kg/product/mcp_skill_templates source/scripts/install_mcp_skills.py docs/mcp/HOST_SKILL_EVALUATION.md
+git commit -m "Add installable Bettercontext MCP skills"
 ```
 
 ---

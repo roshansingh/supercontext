@@ -12,6 +12,7 @@ from typing import Any
 from source.kg.core.models import JsonObject
 from source.kg.product.mcp_tools import call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
+from source.scripts.mcp_host import format_host_for_url, is_loopback_host
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -19,18 +20,18 @@ REQUEST_READ_TIMEOUT_SECONDS = 5.0
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a local read-only Supercontext MCP server.")
+    parser = argparse.ArgumentParser(description="Run a local read-only Bettercontext MCP server.")
     parser.add_argument("--snapshot", required=True, help="Directory containing JSONL KG snapshot files")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind. Defaults to 127.0.0.1.")
     parser.add_argument("--port", type=int, default=3845, help="Port to bind. Defaults to 3845.")
     parser.add_argument("--allow-public", action="store_true", help="Allow binding to non-loopback hosts. Unsafe without auth.")
     args = parser.parse_args()
-    if not args.allow_public and not _is_loopback_host(args.host):
+    if not args.allow_public and not is_loopback_host(args.host):
         parser.error("local MCP server has no authentication; bind to loopback or pass --allow-public explicitly")
 
     kg = KgSnapshot(args.snapshot)
     server = _server_class_for_host(args.host)(_server_address_for_host(args.host, args.port), _handler_class(kg))
-    print(f"Supercontext MCP server listening on http://{_format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
+    print(f"Bettercontext MCP server listening on http://{format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -41,7 +42,7 @@ def main() -> None:
 
 def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
     class McpHandler(BaseHTTPRequestHandler):
-        server_version = "supercontext-local/0.1.0"
+        server_version = "bettercontext-local/0.1.0"
         sys_version = ""
 
         def version_string(self) -> str:
@@ -122,23 +123,8 @@ def _read_request_body(handler: BaseHTTPRequestHandler, content_length: int) -> 
     return body
 
 
-def _is_loopback_host(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def _format_host_for_url(host: str) -> str:
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return host
-    if address.version == 6:
-        return f"[{host}]"
-    return host
+_is_loopback_host = is_loopback_host
+_format_host_for_url = format_host_for_url
 
 
 def _server_class_for_host(host: str) -> type[ThreadingHTTPServer]:
@@ -238,7 +224,7 @@ def _initialize_result(params: JsonObject) -> JsonObject:
     return {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {}},
-        "serverInfo": {"name": "supercontext-local", "version": "0.1.0"},
+        "serverInfo": {"name": "bettercontext-local", "version": "0.1.0"},
     }
 
 

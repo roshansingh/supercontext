@@ -72,6 +72,43 @@ What is still pending:
 - Resource auto-attach behavior.
 - Public contract decision for workflow composition tools such as `planning_context` and `review_context`.
 
+### Post-merge review notes (as of 2026-05-21)
+
+PR #108 moved the local MCP implementation from a primitive query surface toward an agent workflow surface:
+
+- `source/scripts/mcp_server.py` is still local-development infrastructure, but it now has a usable read-only JSON-RPC tool path for host agents: `initialize`, `tools/list`, `tools/call`, `ping`, text JSON output, and `structuredContent` for tool consumers.
+- `source/kg/product/mcp_tools.py` still exposes the eight ADR-0002 primitive tools, and also exposes the experimental workflow composition tools `planning_context` and `review_context`.
+- `planning_context` is the intended first call for planning when a task mentions a service, repo, symbol, package, endpoint, event channel, domain, or file path. It normalizes the anchor, returns bounded matching rows, evidence, ambiguity/refinement actions, and then lets the agent choose narrower primitive tools.
+- `review_context` is the intended first call for code review when the agent knows the changed repo plus changed files or changed line ranges. It currently composes changed symbols, direct callers, direct callees, and repo dependency links.
+- `source/kg/product/mcp_skill_templates/{codex,claude}/bettercontext-mcp/SKILL.md` are the installable Codex and Claude Code skill templates for planning, coding, and review flows.
+- `source/scripts/install_mcp_skills.py` installs only those explicit `bettercontext-mcp` host skill templates into project-local or global Codex/Claude Code skill directories. It intentionally does not copy this repository's project-maintenance skills.
+- `install.sh` is the one-line machine installer. It installs the Bettercontext package and global host-agent MCP skills.
+- `bettercontext-init` is the per-repo setup command. It builds the repo-local KG snapshot at `.bettercontext/kg` by default, and `bettercontext-init --serve` builds that snapshot and starts the local MCP server in the foreground.
+- `AGENTS.md` and `CLAUDE.md` now direct agents to use `INDEX.md` as the canonical annotated project map before opening broad documentation sets.
+
+Recommended development install model:
+
+- Install host-agent skills globally once per user machine because the instructions are reusable across projects.
+- Build KG snapshots locally per repository because facts, paths, commit evidence, coverage, and freshness are repo-specific. The default project artifact is `.bettercontext/kg`.
+- Do not make a global KG the default. A global graph is only appropriate later behind an explicit multi-repo workspace/fleet registry with freshness and identity controls.
+- Keep project-local skill installation available for teams that want repo-pinned skill behavior, but do not require it for normal use.
+
+Current usability assessment:
+
+- For planning, the shape is directionally right: agents can call `planning_context` before broad repo search and then drill into `get_service_brief`, `find_callers`, `find_callees`, event tools, or `blast_radius`.
+- For writing code, Bettercontext should not replace reading source files. It should reduce blind search by answering exact graph questions such as who calls a symbol, what a symbol calls, which event channel has producers or consumers, and which service or dependency anchor is relevant.
+- For code review, `review_context` is useful but not yet the full product promise. It does not yet summarize endpoint, event, package, deploy, or runtime impact for a changed file set. It should be treated as static review context, not as a complete blast-radius reviewer.
+
+Remaining gaps from the review:
+
+- Skill support now has an installer for explicit global or project-local `bettercontext-mcp` skill files, but host behavior still needs real-world evaluation. Claude Code and Codex users still need a registered MCP endpoint, and we need to measure whether the installed skills reliably cause agents to call Bettercontext at planning, coding, and review time.
+- The local server is not production/host-compat ready. Auth, streamable HTTP, resource auto-attach, real-host compatibility testing, and hosted/self-hosted deployment behavior remain open.
+- `coverage_warnings` and `unsupported_scopes` are structurally present in tool outputs, but most successful paths return empty coverage metadata. Agents still cannot reliably distinguish "the graph found no risk" from "the graph lacks coverage for this risk family."
+- `deploy_blockers_for` remains an honest refusal surface until canonical deploy-blocker facts exist.
+- `planning_context` and `review_context` need a Tool Query Contract decision: keep them as MCP-visible workflow tools, move composition into host skills, or expose both with clear stability labels.
+
+The recommendation after this review is to keep the eight ADR-0002 primitive tools and keep the workflow tools for local validation. The next highest-leverage work is not adding many more top-level tools; it is evaluating the installed host-agent hooks, making coverage/refusal metadata meaningful, and expanding `review_context` toward endpoint/event/package/deploy impact without inventing unsupported facts.
+
 ## Alternatives considered
 
 **Per-IDE bespoke extensions** — rejected per `PRD.md` §6.4. Cost and maintenance burden across eight IDEs is prohibitive for an MVP, and MCP coverage already reaches all of them.

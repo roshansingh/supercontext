@@ -132,11 +132,13 @@ Optional ground-truth JSON can be loaded from the sidebar for local evaluation. 
 
 ## Local MCP Server
 
-The local MCP server exposes the ADR-0002 tool names over a dependency-free JSON-RPC HTTP endpoint. It is read-only and does not build snapshots. The current implementation is single-request/single-response over plain HTTP; ADR-0002 streamable transport remains a follow-up.
+The local MCP server exposes the ADR-0002 tool names over a dependency-free JSON-RPC HTTP endpoint. It is read-only and runs over a local KG snapshot. The current implementation is single-request/single-response over plain HTTP; ADR-0002 streamable transport remains a follow-up.
 
 ```bash
-python -m source.scripts.mcp_server --snapshot data/kg_runs/mercury_ml --port 3845
+bettercontext-init --serve
 ```
+
+To serve an existing snapshot without rebuilding it, run the PATH-independent MCP server command printed by `bettercontext-init`.
 
 Supported JSON-RPC methods:
 
@@ -149,7 +151,29 @@ Current ADR-0002 primitive tools are `search_services`, `get_service_brief`, `fi
 
 The local-development server also exposes experimental workflow composition tools, `planning_context` and `review_context`, for host-agent planning and review flows. These tools compose existing KG query surfaces and are tracked as a Tool Query Contract follow-up rather than an ADR-0002 primitive-tool amendment.
 
-Security note: the local MCP server has no authentication. Keep the default loopback bind (`127.0.0.1`). Do not expose it with `--host 0.0.0.0` unless you are on a trusted network and intentionally pass `--allow-public`.
+Security note: the local MCP server has no authentication. `bettercontext-init --serve` is loopback-only. Do not expose the MCP server with a non-loopback host unless you run the server directly with `--allow-public` on a trusted network.
+
+Recommended install model: install host-agent skills globally once, then build a local KG snapshot per repo. Global skill install:
+
+```bash
+bettercontext-install-mcp-skills --scope global --agent both
+```
+
+Project-local skill install is available when a team wants repo-pinned host instructions:
+
+```bash
+bettercontext-install-mcp-skills --scope project --project <target-project> --agent both
+```
+
+The installer copies only the installable `bettercontext-mcp` skill templates. It does not copy this repository's project-maintenance skills.
+
+The one-line machine install path installs the package and global skills:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
+```
+
+Then run `bettercontext-init` inside each target repo to build `.bettercontext/kg`. Use `bettercontext-init --serve` to build the snapshot and start the local MCP server in one foreground command.
 
 Example:
 

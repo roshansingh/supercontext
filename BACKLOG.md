@@ -1,7 +1,7 @@
 # SuperContext Backlog
 
 Status: living index of deferred work and open follow-ups across the project.
-Last updated: 2026-05-19.
+Last updated: 2026-05-21.
 
 This file is the single place to scan "what's deferred and why." Per-ADR open-follow-up sections are the authoritative source; this is the index. Refresh when ADRs change.
 
@@ -43,6 +43,10 @@ Format: `Item | Source | Trigger to revisit`.
 | Cross-file imported-constant JS/TS endpoint resolution — deferred after Debate 1 validation; remaining LatticeAI 23-repo gaps are dominated by dynamic templates, env-host provenance, and helper-call targets, not imported constants | docs/evaluation/JS-TS-ENDPOINT-RESOLUTION-VALIDATION.md | Revisit after a focused debate on dynamic route/template params and env-host/base-client provenance |
 | Endpoint route-parameter canonicalization — JS/TS client dynamic templates now emit `{param}` paths while backend frameworks may emit `:param`; unify route parameter syntax before relying on path equality between `CALLS_ENDPOINT` and `EXPOSES_ENDPOINT` | Debate 2 PR-1 Claude review; current `normalize_endpoint_path` only strips quotes and prepends `/` | Before service/client endpoint linking or blast-radius logic depends on client/server path equality |
 | MCP workflow composition tools contract — local MCP now exposes `planning_context` and `review_context` as experimental host-agent workflow tools beyond ADR-0002's eight primitive tools; decide whether to ratify, hide behind skills, or move to another surface | PR #108 Claude review; ADR-0002 Implementation Status | Tool Query Contract ADR |
+| Host-agent MCP skill adoption evaluation — installed Codex/Claude Code `bettercontext-mcp` skills must be tested against real planning, coding, and review prompts to verify agents call Bettercontext before broad search and cite returned evidence | ADR-0002 post-merge review notes; `docs/mcp/HOST_SKILL_EVALUATION.md` | Before design-partner rollout or positioning the installer as the default agent workflow |
+| MCP tool coverage/refusal metadata — `coverage_warnings` and `unsupported_scopes` are present but sparse, so agents cannot always distinguish "no risk found" from "not instrumented" | ADR-0002 post-merge review notes; PR #108 MCP workflow integration | Tool Query Contract ADR or before safety-sensitive `blast_radius` / review claims |
+| Expand `review_context` impact safely — add endpoint, event, package, deploy, and runtime impact only where the KG has supported facts and refusal metadata; avoid invented review findings | ADR-0002 post-merge review notes; `docs/MCP-WORKFLOW-INTEGRATION-DEBATE-SEED.md` | Before treating `review_context` as a complete PR-review product surface |
+| Production-compatible MCP host setup — local server still lacks auth, streamable HTTP, resource auto-attach, host compatibility tests, and hosted/self-hosted registration flows | ADR-0002 post-merge review notes; Deployment/Auth/Tenancy ADR backlog | Before exposing Bettercontext MCP outside local loopback development |
 
 ## Per-ADR open follow-ups
 
