@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from source.kg.build.pipeline import build_kg
-from source.scripts.mcp_server import _format_host_for_url
+from source.scripts.mcp_host import format_host_for_url, is_loopback_host
 
 
 DEFAULT_SNAPSHOT_DIR = ".bettercontext/kg"
@@ -36,6 +36,8 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=3845, help="MCP port for --serve. Defaults to 3845.")
     args = parser.parse_args()
+    if args.serve and not is_loopback_host(args.host):
+        parser.error("--serve only supports loopback hosts; run the MCP server directly with --allow-public for public binds")
 
     repo = Path(args.repo).expanduser().resolve()
     out = Path(args.out).expanduser().resolve() if args.out else repo / DEFAULT_SNAPSHOT_DIR
@@ -53,7 +55,7 @@ def main() -> None:
 
     if args.serve:
         print("")
-        print(f"Starting Bettercontext MCP server on http://{_format_host_for_url(args.host)}:{args.port}/mcp")
+        print(f"Starting Bettercontext MCP server on http://{format_host_for_url(args.host)}:{args.port}/mcp")
         subprocess.run(server_command, check=True)
 
 

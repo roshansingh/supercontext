@@ -57,8 +57,26 @@ class SetupRepoTest(unittest.TestCase):
         self.assertIn("9999", command)
         self.assertIn("http://[::1]:9999/mcp", stdout)
 
+    def test_serve_rejects_non_loopback_host_before_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.argv", ["setup_repo", "--repo", str(repo), "--serve", "--host", "0.0.0.0"]),
+                patch.object(setup_repo, "build_kg") as build_mock,
+                contextlib.redirect_stderr(stderr),
+                self.assertRaises(SystemExit),
+            ):
+                setup_repo.main()
+
+        build_mock.assert_not_called()
+        self.assertIn("only supports loopback", stderr.getvalue())
+
     def _run_setup(self, *args: str) -> tuple[str, object, object]:
         stdout = io.StringIO()
+        stderr = io.StringIO()
         repo_arg = args[args.index("--repo") + 1] if "--repo" in args else "."
         with (
             patch("sys.argv", ["setup_repo", *args]),
@@ -69,6 +87,7 @@ class SetupRepoTest(unittest.TestCase):
             ) as build_mock,
             patch.object(setup_repo.subprocess, "run") as run_mock,
             contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
         ):
             setup_repo.main()
         return stdout.getvalue(), build_mock, run_mock
