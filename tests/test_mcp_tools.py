@@ -214,6 +214,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "found")
         self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
 
     def test_review_context_changed_ranges_filter_symbols(self) -> None:
         with _fixture_snapshot() as kg:

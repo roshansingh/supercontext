@@ -375,6 +375,7 @@ class KgSnapshot:
 
     def repo_dependencies(self, repo: str, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit)
+        repo_key = repo.strip().lower()
         links = []
         for fact in self.facts:
             if fact["predicate"] != "RESOLVES_TO_REPO":
@@ -384,7 +385,7 @@ class KgSnapshot:
             if not package or not target_repo:
                 continue
             qualifier = fact.get("qualifier", {})
-            if qualifier.get("consumer_repo") != repo:
+            if str(qualifier.get("consumer_repo") or "").strip().lower() != repo_key:
                 continue
             links.append(self._fact_result(fact, package, target_repo))
         links = sorted(

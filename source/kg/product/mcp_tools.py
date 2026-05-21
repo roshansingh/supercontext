@@ -1199,11 +1199,12 @@ def _planning_context_fact_result(kg: KgSnapshot, fact: JsonObject, subject: Jso
 
 def _planning_context_repo_matches(kg: KgSnapshot, repo: str) -> dict[str, list[JsonObject]]:
     matches: dict[str, list[JsonObject]] = {}
+    repo_key = _normalize_repo_text(repo)
     for fact in kg.facts:
         if fact.get("predicate") != "RESOLVES_TO_REPO":
             continue
         qualifier = fact.get("qualifier", {})
-        if qualifier.get("consumer_repo") != repo:
+        if _normalize_repo_text(qualifier.get("consumer_repo")) != repo_key:
             continue
         package = kg.entities_by_id.get(fact["subject_id"])
         target_repo = kg.entities_by_id.get(fact["object_id"])
