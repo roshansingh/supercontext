@@ -28,14 +28,310 @@ from source.scripts.mcp_server import (
 )
 
 
+EXTENSION_TOOL_NAMES: tuple[str, ...] = ("planning_context", "review_context")
+
+
+def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, object]) -> None:
+    testcase.assertIn("coverage_warnings", payload)
+    testcase.assertIn("unsupported_scopes", payload)
+    testcase.assertIn("next_actions", payload)
+    testcase.assertIsInstance(payload["coverage_warnings"], list)
+    testcase.assertIsInstance(payload["unsupported_scopes"], list)
+    testcase.assertIsInstance(payload["next_actions"], list)
+
+
 class McpToolsTest(unittest.TestCase):
-    def test_tool_definitions_match_adr_0002_names(self) -> None:
+    def test_tool_definitions_include_adr_names_and_workflow_extensions(self) -> None:
         definitions = tool_definitions()
-        self.assertEqual([row["name"] for row in definitions], list(TOOL_NAMES))
+        self.assertEqual([row["name"] for row in definitions], [*TOOL_NAMES, *EXTENSION_TOOL_NAMES])
         schemas = {row["name"]: row["inputSchema"] for row in definitions}
         self.assertEqual(schemas["search_services"]["properties"]["query"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["path"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["line"]["type"], ["integer", "null"])
+        self.assertEqual(schemas["planning_context"]["properties"]["symbol"]["type"], ["string", "null"])
+        self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
+        self.assertNotIn("depth", schemas["review_context"]["properties"])
+
+    def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
+        with _fixture_snapshot() as kg:
+            symbol = call_tool(kg, "planning_context", {"symbol": "charge_card"})
+            query = call_tool(kg, "planning_context", {"query": "shared-lib"})
+
+        self.assertEqual(symbol["status"], "found")
+        self.assertIn("anchors", symbol)
+        self.assertEqual(query["status"], "found")
+        self.assertEqual(query["anchors"]["package"], "shared-lib")
+        self.assertEqual(query["dependencies"][0]["predicate"], "IMPORTS")
+
+    def test_planning_context_ambiguous_and_empty_inputs_fail_closed(self) -> None:
+        with _fixture_snapshot() as kg:
+            ambiguous = call_tool(kg, "planning_context", {"query": "payments"})
+            self.assertEqual(ambiguous["status"], "ambiguous")
+            self.assertTrue(ambiguous["next_actions"])
+            self.assertTrue(any(row["predicate"] == "RESOLVES_TO_REPO" for row in ambiguous["dependencies"]))
+            with self.assertRaisesRegex(ValueError, "planning_context requires at least one of"):
+                call_tool(kg, "planning_context", {})
+
+    def test_planning_context_package_query_does_not_treat_limited_rows_as_unique(self) -> None:
+        with _fixture_snapshot(extra_package_importers=1) as kg:
+            ambiguous = call_tool(kg, "planning_context", {"query": "shared-lib", "limit": 1})
+
+        self.assertEqual(ambiguous["status"], "ambiguous")
+        self.assertTrue(ambiguous["next_actions"])
+        self.assertEqual(len(ambiguous["dependencies"]), 1)
+        self.assertEqual(ambiguous["dependencies"][0]["predicate"], "IMPORTS")
+
+    def test_planning_context_raw_query_substring_matches_fail_closed(self) -> None:
+        with _fixture_snapshot() as kg:
+            endpoint = call_tool(kg, "planning_context", {"query": "/check"})
+            event_channel = call_tool(kg, "planning_context", {"query": "orders"})
+            domain = call_tool(kg, "planning_context", {"query": "internal"})
+
+        self.assertEqual(endpoint["status"], "ambiguous")
+        self.assertTrue(endpoint["next_actions"])
+        self.assertEqual(event_channel["status"], "ambiguous")
+        self.assertTrue(event_channel["next_actions"])
+        self.assertEqual(domain["status"], "ambiguous")
+        self.assertTrue(domain["next_actions"])
+
+    def test_planning_context_raw_query_zero_hits_is_ambiguous(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"query": "definitely-missing-anchor"})
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertTrue(result["next_actions"])
+
+    def test_planning_context_symbol_ambiguity_returns_candidates(self) -> None:
+        with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
+            result = call_tool(kg, "planning_context", {"symbol": "charge_card"})
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertGreaterEqual(len(result["symbols"]), 2)
+        self.assertTrue(result["next_actions"])
+
+    def test_planning_context_multiple_primary_anchors_intersect(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"repo": "payments", "package": "shared-lib"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["anchors"]["repo"], "payments")
+        self.assertEqual(result["anchors"]["package"], "shared-lib")
+        self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"IMPORTS", "RESOLVES_TO_REPO"})
+
+    def test_planning_context_service_and_repo_narrow_without_scope_rejection(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments", "repo": "payments"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["services"]), 1)
+        self.assertEqual(result["services"][0]["slug"], "payments")
+
+    def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"service": "pay"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["services"]), 1)
+        self.assertEqual(result["services"][0]["slug"], "payments")
+
+    def test_planning_context_symbol_path_and_line_narrow_deterministically(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"symbol": "charge_card", "path": "payments/gateway.py", "line": 5})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["symbols"]), 1)
+        self.assertEqual(result["symbols"][0]["qualname"], "charge_card")
+
+    def test_planning_context_path_and_line_filter_before_limit(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"path": "payments/checkout.py", "line": 10, "limit": 1})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["symbols"]), 1)
+        self.assertEqual(result["symbols"][0]["qualname"], "handle_checkout")
+
+    def test_planning_context_fact_line_filter_uses_attached_evidence(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "planning_context",
+                {"package": "shared-lib", "line": 2},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"IMPORTS"})
+
+    def test_planning_context_symbol_path_and_line_disambiguate_symbol_anchor(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "planning_context",
+                {"symbol": "charge_card", "path": "payments/gateway.py", "line": 5},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["symbols"]), 1)
+        self.assertEqual(result["symbols"][0]["qualname"], "charge_card")
+        self.assertEqual(result["symbols"][0]["path"], "payments/gateway.py")
+
+    def test_planning_context_repo_filters_service_anchor_without_failing_closed(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments", "repo": "payments"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["services"]), 1)
+        self.assertEqual(result["services"][0]["slug"], "payments")
+        self.assertEqual(result["dependencies"], [])
+
+    def test_planning_context_structured_endpoint_event_and_domain_anchors(self) -> None:
+        with _fixture_snapshot() as kg:
+            endpoint = call_tool(kg, "planning_context", {"repo": "payments", "endpoint": "/checkout"})
+            event = call_tool(kg, "planning_context", {"repo": "payments", "event_channel": "orders-created"})
+            domain = call_tool(kg, "planning_context", {"repo": "payments", "domain": "api.internal.example"})
+
+        self.assertEqual(endpoint["status"], "found")
+        self.assertEqual({row["predicate"] for row in endpoint["endpoints"]}, {"EXPOSES_ENDPOINT"})
+        self.assertEqual(event["status"], "found")
+        self.assertEqual({row["predicate"] for row in event["event_channels"]}, {"CONSUMES_EVENT", "PRODUCES_EVENT"})
+        self.assertEqual(domain["status"], "found")
+        self.assertEqual({row["predicate"] for row in domain["domains"]}, {"REFERENCES_DOMAIN"})
+
+    def test_review_context_aggregates_symbols_and_call_edges(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["repo"], "payments")
+        self.assertIn("changed_symbols", result)
+        self.assertIn("direct_callers", result)
+        self.assertIn("direct_callees", result)
+        self.assertIn("repo_dependencies", result)
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        self.assertEqual({row["predicate"] for row in result["direct_callees"]}, {"CALLS"})
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+        _assert_additive_fields(self, result)
+
+    def test_review_context_repo_filter_is_case_insensitive(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "Payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+
+    def test_review_context_changed_ranges_filter_symbols(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                },
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_changed_ranges_only_narrow_matching_files(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py", "payments/gateway.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(
+            {row["qualname"] for row in result["changed_symbols"]},
+            {"handle_checkout", "charge_card"},
+        )
+
+    def test_review_context_missing_changed_file_still_returns_repo_dependencies(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["payments/missing.py"]})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["changed_symbols"], [])
+        self.assertEqual(result["direct_callers"], [])
+        self.assertEqual(result["direct_callees"], [])
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+
+    def test_review_context_changed_ranges_fail_closed_for_non_overlapping_file(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 30, "end_line": 30}],
+                },
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["changed_symbols"], [])
+        self.assertEqual(result["direct_callers"], [])
+        self.assertEqual(result["direct_callees"], [])
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+
+    def test_review_context_rejects_unknown_arguments(self) -> None:
+        with _fixture_snapshot() as kg:
+            with self.assertRaisesRegex(ValueError, "does not accept argument\\(s\\): depth"):
+                call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["payments/checkout.py"], "depth": 2})
+            with self.assertRaisesRegex(ValueError, "changed_ranges"):
+                call_tool(
+                    kg,
+                    "review_context",
+                    {
+                        "repo": "payments",
+                        "changed_files": ["payments/checkout.py"],
+                        "changed_ranges": [
+                            {"path": "payments/checkout.py", "start_line": 10, "end_line": 10, "extra": "bad"}
+                        ],
+                    },
+                )
+            with self.assertRaisesRegex(ValueError, "changed_ranges"):
+                call_tool(
+                    kg,
+                    "review_context",
+                    {"repo": "payments", "changed_files": ["payments/checkout.py"], "changed_ranges": None},
+                )
+
+    def test_review_context_deploy_blocker_row_is_opt_in(self) -> None:
+        with _fixture_snapshot() as kg:
+            default = call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["payments/checkout.py"]})
+            opted_in = call_tool(
+                kg,
+                "review_context",
+                {"repo": "payments", "changed_files": ["payments/checkout.py"], "include_deploy_blockers": True},
+            )
+
+        self.assertEqual(default["unsupported_scopes"], [])
+        self.assertEqual(
+            opted_in["unsupported_scopes"],
+            [
+                {
+                    "kind": "deploy_blockers",
+                    "scope": "payments",
+                    "reason": "No canonical deploy-blocker relation is implemented yet",
+                }
+            ],
+        )
 
     def test_search_services_and_service_brief_return_json_shapes(self) -> None:
         with _fixture_snapshot() as kg:
@@ -55,7 +351,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
         self.assertEqual(len(limited_brief["endpoints"]), 1)
         self.assertEqual(len(limited_brief["event_channels"]), 1)
+        self.assertFalse(any(key.startswith("_") for key in brief["endpoints"][0]))
         self.assertEqual(missing["status"], "not_found")
+        _assert_additive_fields(self, all_services)
+        _assert_additive_fields(self, search)
+        _assert_additive_fields(self, brief)
+        _assert_additive_fields(self, limited_brief)
+        _assert_additive_fields(self, missing)
 
     def test_symbol_tools_wrap_snapshot_query_methods(self) -> None:
         with _fixture_snapshot() as kg:
@@ -69,6 +371,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(callees["callee_count"], 1)
         self.assertEqual(radius["status"], "found")
         self.assertEqual(radius["edge_count"], 1)
+        _assert_additive_fields(self, callers)
+        _assert_additive_fields(self, callees)
+        _assert_additive_fields(self, radius)
 
     def test_event_tools_filter_consumers_and_producers(self) -> None:
         with _fixture_snapshot() as kg:
@@ -83,6 +388,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(producers["returned_count"], 1)
         self.assertEqual(producers["producers"][0]["predicate"], "PRODUCES_EVENT")
         self.assertEqual(limited_producers["status"], "found")
+        _assert_additive_fields(self, consumers)
+        _assert_additive_fields(self, producers)
+        _assert_additive_fields(self, limited_producers)
 
     def test_event_tools_scan_all_matching_facts_before_limiting(self) -> None:
         with _fixture_snapshot(extra_consumers=125) as kg:
@@ -100,6 +408,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "unsupported_by_current_kg")
         self.assertEqual(result["missing_contract"], "deploy_blockers_for")
+        _assert_additive_fields(self, result)
 
     def test_tool_arguments_fail_closed(self) -> None:
         with _fixture_snapshot() as kg:
@@ -150,7 +459,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(ping["result"], {})
         self.assertEqual(batch[0]["id"], 3)
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
+        listed_tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
+        self.assertIn("downstream static CALLS closure", listed_tools["blast_radius"]["description"])
         self.assertEqual(called["result"]["structuredContent"]["status"], "found")
+        _assert_additive_fields(self, called["result"]["structuredContent"])
         self.assertFalse(called["result"]["isError"])
 
     def test_json_rpc_reports_protocol_errors(self) -> None:
@@ -247,8 +559,15 @@ class McpToolsTest(unittest.TestCase):
 
 
 class _fixture_snapshot:
-    def __init__(self, extra_consumers: int = 0) -> None:
+    def __init__(
+        self,
+        extra_consumers: int = 0,
+        extra_package_importers: int = 0,
+        extra_charge_card_symbol: bool = False,
+    ) -> None:
         self.extra_consumers = extra_consumers
+        self.extra_package_importers = extra_package_importers
+        self.extra_charge_card_symbol = extra_charge_card_symbol
 
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -267,6 +586,22 @@ class _fixture_snapshot:
                 "symbol_kind": "function",
             },
             properties={"path": "payments/checkout.py", "line": 10, "end_line": 20},
+        )
+        earlier_symbol = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.checkout",
+                "qualname": "bootstrap_checkout",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/checkout.py", "line": 1, "end_line": 3},
+        )
+        module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "payments", "module": "payments.checkout"},
+            properties={"path": "payments/checkout.py"},
         )
         callee = Entity(
             kind="CodeSymbol",
@@ -300,10 +635,51 @@ class _fixture_snapshot:
                 "name": "orders-created",
             },
         )
+        domain = Entity(
+            kind="Domain",
+            identity={"tenant_id": "default", "repo": "payments", "name": "api.internal.example"},
+        )
+        env_var = Entity(
+            kind="EnvVar",
+            identity={"tenant_id": "default", "repo": "payments", "name": "PAYMENTS_API_BASE_URL"},
+        )
+        package = Entity(
+            kind="ExternalPackage",
+            identity={"tenant_id": "default", "repo": "payments", "name": "shared-lib"},
+            properties={"category": "third_party", "import_root": "shared_lib", "distribution_name": "shared-lib"},
+        )
+        provider_repo = Entity(
+            kind="Repo",
+            identity={"tenant_id": "default", "host": "local", "owner": "default", "name": "shared-platform"},
+        )
+        duplicate_callee = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.alt_gateway",
+                "qualname": "charge_card",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/alt_gateway.py", "line": 7, "end_line": 9},
+        )
         call_fact = Fact("CALLS", caller.entity_id, callee.entity_id)
+        import_fact = Fact(
+            "IMPORTS",
+            module.entity_id,
+            package.entity_id,
+            {"category": "third_party", "import_root": "shared_lib", "distribution_name": "shared-lib"},
+        )
+        repo_link_fact = Fact(
+            "RESOLVES_TO_REPO",
+            package.entity_id,
+            provider_repo.entity_id,
+            {"consumer_repo": "payments", "package_name": "shared-lib"},
+        )
         endpoint_fact = Fact("EXPOSES_ENDPOINT", service.entity_id, endpoint.entity_id, {"method": "POST", "path": "/checkout"})
         consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
+        domain_fact = Fact("REFERENCES_DOMAIN", env_var.entity_id, domain.entity_id)
         extra_services = [
             Entity(
                 kind="Service",
@@ -316,7 +692,24 @@ class _fixture_snapshot:
             )
             for index in range(self.extra_consumers)
         ]
+        extra_modules = [
+            Entity(
+                kind="CodeModule",
+                identity={"tenant_id": "default", "repo": "payments", "module": f"payments.importer_{index}"},
+                properties={"path": f"payments/importer_{index}.py"},
+            )
+            for index in range(self.extra_package_importers)
+        ]
         extra_consume_facts = [Fact("CONSUMES_EVENT", extra_service.entity_id, channel.entity_id) for extra_service in extra_services]
+        extra_import_facts = [
+            Fact(
+                "IMPORTS",
+                extra_module.entity_id,
+                package.entity_id,
+                {"category": "third_party", "import_root": "shared_lib", "distribution_name": "shared-lib"},
+            )
+            for extra_module in extra_modules
+        ]
         evidence = [
             Evidence(
                 target_type="entity",
@@ -335,9 +728,43 @@ class _fixture_snapshot:
                 bytes_ref={"repo": "payments", "path": "payments/checkout.py", "line_start": 14, "line_end": 14},
                 confidence=1.0,
             ),
+            Evidence(
+                target_type="fact",
+                target_id=import_fact.fact_id,
+                derivation_class="deterministic_static",
+                source_system="test",
+                source_ref={"repo": "payments"},
+                bytes_ref={"repo": "payments", "path": "payments/checkout.py", "line_start": 2, "line_end": 2},
+                confidence=1.0,
+            ),
         ]
-        entities = [service, caller, callee, endpoint, channel, *extra_services]
-        facts = [call_fact, endpoint_fact, consume_fact, produce_fact, *extra_consume_facts]
+        entities = [
+            service,
+            caller,
+            earlier_symbol,
+            module,
+            callee,
+            endpoint,
+            channel,
+            domain,
+            env_var,
+            package,
+            provider_repo,
+            *([duplicate_callee] if self.extra_charge_card_symbol else []),
+            *extra_services,
+            *extra_modules,
+        ]
+        facts = [
+            call_fact,
+            import_fact,
+            repo_link_fact,
+            endpoint_fact,
+            consume_fact,
+            produce_fact,
+            domain_fact,
+            *extra_consume_facts,
+            *extra_import_facts,
+        ]
         JsonlKgStore(root).write(
             entities=entities,
             facts=facts,

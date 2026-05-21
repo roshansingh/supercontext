@@ -42,6 +42,7 @@ Format: `Item | Source | Trigger to revisit`.
 | Org dashboard / metric run history — persist and visualize `metrics.jsonl` across runs | Debate 19 PR-11 parked follow-up | When customer-facing coverage reporting becomes a feature requirement |
 | Cross-file imported-constant JS/TS endpoint resolution — deferred after Debate 1 validation; remaining LatticeAI 23-repo gaps are dominated by dynamic templates, env-host provenance, and helper-call targets, not imported constants | docs/evaluation/JS-TS-ENDPOINT-RESOLUTION-VALIDATION.md | Revisit after a focused debate on dynamic route/template params and env-host/base-client provenance |
 | Endpoint route-parameter canonicalization — JS/TS client dynamic templates now emit `{param}` paths while backend frameworks may emit `:param`; unify route parameter syntax before relying on path equality between `CALLS_ENDPOINT` and `EXPOSES_ENDPOINT` | Debate 2 PR-1 Claude review; current `normalize_endpoint_path` only strips quotes and prepends `/` | Before service/client endpoint linking or blast-radius logic depends on client/server path equality |
+| MCP workflow composition tools contract — local MCP now exposes `planning_context` and `review_context` as experimental host-agent workflow tools beyond ADR-0002's eight primitive tools; decide whether to ratify, hide behind skills, or move to another surface | PR #108 Claude review; ADR-0002 Implementation Status | Tool Query Contract ADR |
 
 ## Per-ADR open follow-ups
 

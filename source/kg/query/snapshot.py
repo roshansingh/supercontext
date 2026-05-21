@@ -177,6 +177,9 @@ class KgSnapshot:
                     return results
         return results
 
+    def import_matches(self, fact: JsonObject, package: JsonObject, package_name: str) -> bool:
+        return self._import_matches(fact, package, package_name)
+
     def top_dependencies(self, limit: int = 25, exclude_stdlib: bool = True, exclude_unknown: bool = True) -> list[JsonObject]:
         counts: dict[str, JsonObject] = {}
         for fact in self.facts:
@@ -372,6 +375,7 @@ class KgSnapshot:
 
     def repo_dependencies(self, repo: str, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit)
+        repo_key = repo.strip().lower()
         links = []
         for fact in self.facts:
             if fact["predicate"] != "RESOLVES_TO_REPO":
@@ -381,7 +385,7 @@ class KgSnapshot:
             if not package or not target_repo:
                 continue
             qualifier = fact.get("qualifier", {})
-            if qualifier.get("consumer_repo") != repo:
+            if str(qualifier.get("consumer_repo") or "").strip().lower() != repo_key:
                 continue
             links.append(self._fact_result(fact, package, target_repo))
         links = sorted(
