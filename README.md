@@ -14,13 +14,35 @@ License: TBD before public OSS release.
 
 ## Quickstart
 
+Install the CLI and global Codex/Claude Code MCP skills:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
+```
+
+Then, inside each repo you want BetterContext to index:
+
+```bash
+bettercontext-init
+```
+
+For an active local MCP server in that repo:
+
+```bash
+bettercontext-init --serve
+```
+
+The install step is global because the host-agent skills are reusable. The KG snapshot is local to each repo by default at `.bettercontext/kg`.
+
+Local editable development:
+
 ```bash
 python -m pip install -e .
 npm ci
 
-bettercontext-build-kg --repo /path/to/repo --out ./data/kg_runs/example
-bettercontext-query-kg --snapshot ./data/kg_runs/example summary
-bettercontext-query-kg --snapshot ./data/kg_runs/example top-dependencies --limit 10
+bettercontext-init --repo /path/to/repo
+bettercontext-query-kg --snapshot /path/to/repo/.bettercontext/kg summary
+bettercontext-query-kg --snapshot /path/to/repo/.bettercontext/kg top-dependencies --limit 10
 ```
 
 ## Build A KG
@@ -86,7 +108,7 @@ Read `coverage-run.md` for the human report and `coverage-run.json` for the mach
 Run the local MCP v0 server over an existing snapshot:
 
 ```bash
-bettercontext-mcp-server --snapshot ./data/kg_runs/example --port 3845
+bettercontext-mcp-server --snapshot ./.bettercontext/kg --port 3845
 ```
 
 The server is read-only and local-development oriented. Keep the default loopback bind unless you intentionally pass `--allow-public` on a trusted network.

@@ -74,6 +74,24 @@ class PackagingMetadataTest(unittest.TestCase):
             self.assertIn("dimension_rules.yaml", package_data[package])
             self.assertTrue((ROOT / Path(*package.split(".")) / "dimension_rules.yaml").exists())
 
+    def test_mcp_skill_templates_are_packaged(self) -> None:
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        package_data = data["tool"]["setuptools"]["package-data"]
+
+        self.assertIn("mcp_skill_templates/*/bettercontext-mcp/SKILL.md", package_data["source.kg.product"])
+        self.assertTrue(
+            (
+                ROOT
+                / "source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md"
+            ).exists()
+        )
+        self.assertTrue(
+            (
+                ROOT
+                / "source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md"
+            ).exists()
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -319,11 +319,11 @@ Removing it weakens the ADR contract. Faking it would be worse.
 
 MCP tools alone are not enough. Claude Code/Codex need explicit instructions to call them.
 
-Add repo-distributed guidance for host agents, for example:
+Add repo-distributed guidance for host agents. Current implementation ships this as installable skill templates:
 
-- `docs/mcp/CLAUDE_CODE_SKILL.md`
-- `docs/mcp/CODEX_SKILL.md`
-- or a generated snippet users can paste into their agent instructions.
+- `source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md`
+- `source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md`
+- installed by `bettercontext-install-mcp-skills`
 
 The hook should be short and operational:
 
