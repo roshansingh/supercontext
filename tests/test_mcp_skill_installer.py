@@ -64,7 +64,18 @@ class McpSkillInstallerTest(unittest.TestCase):
             target.parent.mkdir(parents=True)
             os.symlink(project / "missing-target", target)
 
-            with self.assertRaisesRegex(RuntimeError, "Cannot replace non-directory skill target"):
+            with self.assertRaisesRegex(RuntimeError, "Cannot install through symlinked skill path"):
+                self._run_installer("--scope", "project", "--project", str(project), "--agent", "codex")
+
+    def test_project_install_rejects_symlinked_skill_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            outside = Path(tmp) / "outside"
+            project.mkdir()
+            outside.mkdir()
+            os.symlink(outside, project / ".codex")
+
+            with self.assertRaisesRegex(RuntimeError, "Cannot install through symlinked skill path"):
                 self._run_installer("--scope", "project", "--project", str(project), "--agent", "codex")
 
     def test_global_install_uses_agent_homes(self) -> None:

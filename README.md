@@ -111,7 +111,7 @@ Run the local MCP v0 server for a repo:
 bettercontext-init --serve
 ```
 
-The server is read-only and local-development oriented. Keep the default loopback bind unless you intentionally pass `--allow-public` on a trusted network.
+The server is read-only and local-development oriented. `bettercontext-init --serve` is loopback-only; advanced public binds must use the MCP server directly with `--allow-public` on a trusted network.
 
 ## What It Extracts
 

@@ -102,6 +102,7 @@ def _target_dir(
 
 
 def _copy_resource_tree(source: Traversable, target: Path) -> None:
+    _reject_symlink_skill_path(target)
     if target.is_symlink() or target.exists():
         if target.is_symlink() or not target.is_dir():
             raise RuntimeError(f"Cannot replace non-directory skill target: {target}")
@@ -129,6 +130,15 @@ def _walk_resources(
             yield from _walk_resources(item, item_parts)
         elif item.is_file():
             yield _ResourceFile(resource=item, name_parts=item_parts)
+
+
+def _reject_symlink_skill_path(target: Path) -> None:
+    guard_root = target.parents[2] if len(target.parents) >= 3 else target.parent
+    current = target
+    while current != guard_root:
+        if current.is_symlink():
+            raise RuntimeError(f"Cannot install through symlinked skill path: {current}")
+        current = current.parent
 
 
 if __name__ == "__main__":

@@ -151,7 +151,7 @@ Current ADR-0002 primitive tools are `search_services`, `get_service_brief`, `fi
 
 The local-development server also exposes experimental workflow composition tools, `planning_context` and `review_context`, for host-agent planning and review flows. These tools compose existing KG query surfaces and are tracked as a Tool Query Contract follow-up rather than an ADR-0002 primitive-tool amendment.
 
-Security note: the local MCP server has no authentication. Keep the default loopback bind (`127.0.0.1`). Do not expose it with `--host 0.0.0.0` unless you are on a trusted network and intentionally pass `--allow-public`.
+Security note: the local MCP server has no authentication. `bettercontext-init --serve` is loopback-only. Do not expose the MCP server with a non-loopback host unless you run the server directly with `--allow-public` on a trusted network.
 
 Recommended install model: install host-agent skills globally once, then build a local KG snapshot per repo. Global skill install:
 
