@@ -12,6 +12,22 @@
 
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+install.sh — Install Bettercontext CLI and global host-agent MCP skills.
+
+Usage:
+  ./install.sh
+  ./install.sh --agent codex
+  ./install.sh --agent claude
+  ./install.sh --agent both --python python3
+
+Via curl:
+  curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash -s -- --agent codex
+EOF
+}
+
 REPO_URL="git+https://github.com/roshansingh/bettercontext.git"
 SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=""
@@ -20,6 +36,7 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 fi
 TARGET_AGENT="both"
 PYTHON_BIN="${PYTHON:-python3}"
+BETTERCONTEXT_HOME="${BETTERCONTEXT_HOME:-$HOME/.bettercontext}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,7 +57,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      sed -n '2,12p' "$0" 2>/dev/null || echo "Usage: install.sh [--agent codex|claude|both] [--python python3]"
+      usage
       exit 0
       ;;
     *)
@@ -63,42 +80,49 @@ if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/pyproject.toml" && -d "$SCRIPT_DIR/sou
   LOCAL_MODE=true
 fi
 
-echo ""
-echo "Installing Bettercontext..."
-PIP_USER_ARGS=(--user)
+INSTALL_PYTHON="$PYTHON_BIN"
+SCRIPTS_DIR=""
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-  PIP_USER_ARGS=()
-fi
+  SCRIPTS_DIR="$("$PYTHON_BIN" - <<'PY'
+import sysconfig
 
-if [[ "$LOCAL_MODE" == true ]]; then
-  echo "  Source: local repo ($SCRIPT_DIR)"
-  "$PYTHON_BIN" -m pip install "${PIP_USER_ARGS[@]}" --upgrade "$SCRIPT_DIR"
-else
-  echo "  Source: $REPO_URL"
-  "$PYTHON_BIN" -m pip install "${PIP_USER_ARGS[@]}" --upgrade "$REPO_URL"
-fi
-
-if [[ -z "${VIRTUAL_ENV:-}" ]]; then
-  USER_SCRIPTS_DIR="$("$PYTHON_BIN" - <<'PY'
-import os
-import site
-
-print(os.path.join(site.getuserbase(), "bin"))
+print(sysconfig.get_path("scripts"))
 PY
 )"
+else
+  VENV_DIR="$BETTERCONTEXT_HOME/venv"
+  echo ""
+  echo "Preparing Bettercontext environment: $VENV_DIR"
+  "$PYTHON_BIN" -m venv "$VENV_DIR"
+  INSTALL_PYTHON="$VENV_DIR/bin/python"
+  SCRIPTS_DIR="$VENV_DIR/bin"
+  "$INSTALL_PYTHON" -m pip install --upgrade pip
+fi
+
+echo ""
+echo "Installing Bettercontext..."
+if [[ "$LOCAL_MODE" == true ]]; then
+  echo "  Source: local repo ($SCRIPT_DIR)"
+  "$INSTALL_PYTHON" -m pip install --upgrade "$SCRIPT_DIR"
+else
+  echo "  Source: $REPO_URL"
+  "$INSTALL_PYTHON" -m pip install --upgrade "$REPO_URL"
+fi
+
+if [[ -n "$SCRIPTS_DIR" ]]; then
   case ":$PATH:" in
-    *":$USER_SCRIPTS_DIR:"*) ;;
+    *":$SCRIPTS_DIR:"*) ;;
     *)
       echo ""
-      echo "Note: add Python's user script directory to PATH if bettercontext-init is not found:"
-      echo "  export PATH=\"$USER_SCRIPTS_DIR:\$PATH\""
+      echo "Note: add Bettercontext's script directory to PATH if bettercontext-init is not found:"
+      echo "  export PATH=\"$SCRIPTS_DIR:\$PATH\""
       ;;
   esac
 fi
 
 echo ""
 echo "Installing global Bettercontext MCP skills..."
-"$PYTHON_BIN" -P -m source.scripts.install_mcp_skills --scope global --agent "$TARGET_AGENT"
+"$INSTALL_PYTHON" -P -m source.scripts.install_mcp_skills --scope global --agent "$TARGET_AGENT"
 
 echo ""
 echo "Done."

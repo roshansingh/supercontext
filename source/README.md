@@ -135,10 +135,10 @@ Optional ground-truth JSON can be loaded from the sidebar for local evaluation. 
 The local MCP server exposes the ADR-0002 tool names over a dependency-free JSON-RPC HTTP endpoint. It is read-only and runs over a local KG snapshot. The current implementation is single-request/single-response over plain HTTP; ADR-0002 streamable transport remains a follow-up.
 
 ```bash
-bettercontext-mcp-server --snapshot .bettercontext/kg --port 3845
+bettercontext-init --serve
 ```
 
-Use `bettercontext-init --serve` when you want to build `.bettercontext/kg` first and then start the server in one foreground command.
+To serve an existing snapshot without rebuilding it, run the PATH-independent MCP server command printed by `bettercontext-init`.
 
 Supported JSON-RPC methods:
 

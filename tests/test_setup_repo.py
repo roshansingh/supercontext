@@ -21,7 +21,7 @@ class SetupRepoTest(unittest.TestCase):
         _, out = build_mock.call_args.args[:2]
         self.assertEqual(out, repo.resolve() / ".bettercontext" / "kg")
         self.assertIn("Bettercontext KG built:", stdout)
-        self.assertIn("bettercontext-mcp-server --snapshot", stdout)
+        self.assertIn("-m source.scripts.mcp_server --snapshot", stdout)
         self.assertIn("bettercontext-install-mcp-skills --scope global", stdout)
 
     def test_custom_out_and_strict_options_are_forwarded(self) -> None:
@@ -47,7 +47,7 @@ class SetupRepoTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             repo.mkdir()
-            _, _, run_mock = self._run_setup("--repo", str(repo), "--serve", "--port", "9999")
+            stdout, _, run_mock = self._run_setup("--repo", str(repo), "--serve", "--host", "::1", "--port", "9999")
 
         self.assertEqual(run_mock.call_count, 1)
         command = run_mock.call_args.args[0]
@@ -55,6 +55,7 @@ class SetupRepoTest(unittest.TestCase):
         self.assertIn("-P", command)
         self.assertIn("--port", command)
         self.assertIn("9999", command)
+        self.assertIn("http://[::1]:9999/mcp", stdout)
 
     def _run_setup(self, *args: str) -> tuple[str, object, object]:
         stdout = io.StringIO()

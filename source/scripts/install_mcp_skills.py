@@ -35,12 +35,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--codex-home",
-        default=os.environ.get("CODEX_HOME", "~/.codex"),
+        default=os.environ.get("CODEX_HOME") or "~/.codex",
         help="Codex home for --scope global. Defaults to CODEX_HOME or ~/.codex.",
     )
     parser.add_argument(
         "--claude-home",
-        default=os.environ.get("CLAUDE_HOME", "~/.claude"),
+        default=os.environ.get("CLAUDE_HOME") or "~/.claude",
         help="Claude Code home for --scope global. Defaults to CLAUDE_HOME or ~/.claude.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print target paths without writing files.")
@@ -94,7 +94,7 @@ def _target_dir(
 
 
 def _copy_resource_tree(source: Traversable, target: Path) -> None:
-    if target.exists():
+    if target.is_symlink() or target.exists():
         if target.is_symlink() or not target.is_dir():
             raise RuntimeError(f"Cannot replace non-directory skill target: {target}")
         shutil.rmtree(target)

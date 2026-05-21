@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +57,16 @@ class McpSkillInstallerTest(unittest.TestCase):
             self.assertTrue((target / "SKILL.md").is_file())
             self.assertTrue((sibling / "SKILL.md").is_file())
 
+    def test_install_rejects_dangling_symlink_skill_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            target = project / ".codex" / "skills" / "bettercontext-mcp"
+            target.parent.mkdir(parents=True)
+            os.symlink(project / "missing-target", target)
+
+            with self.assertRaisesRegex(RuntimeError, "Cannot replace non-directory skill target"):
+                self._run_installer("--scope", "project", "--project", str(project), "--agent", "codex")
+
     def test_global_install_uses_agent_homes(self) -> None:
         with tempfile.TemporaryDirectory() as codex_tmp, tempfile.TemporaryDirectory() as claude_tmp:
             self._run_installer(
@@ -71,6 +82,14 @@ class McpSkillInstallerTest(unittest.TestCase):
 
             self.assertTrue((Path(codex_tmp) / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
             self.assertTrue((Path(claude_tmp) / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
+
+    def test_empty_global_home_env_values_fall_back_to_user_home(self) -> None:
+        with tempfile.TemporaryDirectory() as home_tmp:
+            with patch.dict(os.environ, {"CODEX_HOME": "", "CLAUDE_HOME": "", "HOME": home_tmp}):
+                output = self._run_installer("--scope", "global", "--agent", "both", "--dry-run")
+
+        self.assertIn(str(Path(home_tmp) / ".codex" / "skills" / "bettercontext-mcp"), output)
+        self.assertIn(str(Path(home_tmp) / ".claude" / "skills" / "bettercontext-mcp"), output)
 
     def test_dry_run_does_not_write_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

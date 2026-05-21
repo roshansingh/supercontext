@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 from source.kg.build.pipeline import build_kg
+from source.scripts.mcp_server import _format_host_for_url
 
 
 DEFAULT_SNAPSHOT_DIR = ".bettercontext/kg"
@@ -24,7 +26,14 @@ def main() -> None:
     )
     parser.add_argument("--strict-extractors", action="store_true", help="Exit non-zero if any extractor fails.")
     parser.add_argument("--serve", action="store_true", help="Start the local MCP server after building the snapshot.")
-    parser.add_argument("--host", default="127.0.0.1", help="MCP host for --serve. Defaults to 127.0.0.1.")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Loopback MCP host for --serve. Defaults to 127.0.0.1. "
+            "For non-loopback binds, run the MCP server directly with --allow-public."
+        ),
+    )
     parser.add_argument("--port", type=int, default=3845, help="MCP port for --serve. Defaults to 3845.")
     args = parser.parse_args()
 
@@ -34,31 +43,33 @@ def main() -> None:
 
     print(f"Bettercontext KG built: {out}")
     print(f"Repo: {manifest.get('repo_path', repo)}")
+    server_command = _mcp_server_command(out, args.host, args.port)
     print("")
     print("MCP server command:")
-    print(f"  bettercontext-mcp-server --snapshot {out} --host {args.host} --port {args.port}")
+    print(f"  {shlex.join(server_command)}")
     print("")
     print("Install global host skills once per machine:")
     print("  bettercontext-install-mcp-skills --scope global --agent both")
 
     if args.serve:
         print("")
-        print(f"Starting Bettercontext MCP server on http://{args.host}:{args.port}/mcp")
-        subprocess.run(
-            [
-                sys.executable,
-                "-P",
-                "-m",
-                "source.scripts.mcp_server",
-                "--snapshot",
-                str(out),
-                "--host",
-                args.host,
-                "--port",
-                str(args.port),
-            ],
-            check=True,
-        )
+        print(f"Starting Bettercontext MCP server on http://{_format_host_for_url(args.host)}:{args.port}/mcp")
+        subprocess.run(server_command, check=True)
+
+
+def _mcp_server_command(snapshot: Path, host: str, port: int) -> list[str]:
+    return [
+        sys.executable,
+        "-P",
+        "-m",
+        "source.scripts.mcp_server",
+        "--snapshot",
+        str(snapshot),
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
 
 
 if __name__ == "__main__":

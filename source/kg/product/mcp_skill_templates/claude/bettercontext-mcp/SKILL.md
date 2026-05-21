@@ -9,10 +9,13 @@ Use Bettercontext as compact graph context for planning, coding, and review. MCP
 
 ## Setup Check
 
-Use an already registered Bettercontext MCP endpoint if present. If no endpoint is registered and the user wants local setup, build a repo-local snapshot and start the local server:
+Use an already registered Bettercontext MCP endpoint if present. If no endpoint is registered and the user wants local setup, choose one command:
 
 ```bash
+# Build or refresh the repo-local KG snapshot.
 bettercontext-init
+
+# Build or refresh the snapshot and start the local MCP server.
 bettercontext-init --serve
 ```
 

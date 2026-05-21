@@ -78,7 +78,7 @@ class PackagingMetadataTest(unittest.TestCase):
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         package_data = data["tool"]["setuptools"]["package-data"]
 
-        self.assertIn("mcp_skill_templates/*/bettercontext-mcp/SKILL.md", package_data["source.kg.product"])
+        self.assertIn("mcp_skill_templates/*/bettercontext-mcp/*", package_data["source.kg.product"])
         self.assertTrue(
             (
                 ROOT

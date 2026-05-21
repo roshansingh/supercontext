@@ -105,10 +105,10 @@ python -m source.scripts.coverage_report \
 
 Read `coverage-run.md` for the human report and `coverage-run.json` for the machine-readable report.
 
-Run the local MCP v0 server over an existing snapshot:
+Run the local MCP v0 server for a repo:
 
 ```bash
-bettercontext-mcp-server --snapshot ./.bettercontext/kg --port 3845
+bettercontext-init --serve
 ```
 
 The server is read-only and local-development oriented. Keep the default loopback bind unless you intentionally pass `--allow-public` on a trusted network.

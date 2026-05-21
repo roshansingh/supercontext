@@ -20,12 +20,6 @@ bettercontext-init
 3. Start the local MCP server for that repo.
 
 ```bash
-bettercontext-mcp-server --snapshot .bettercontext/kg
-```
-
-Or build and serve in one foreground command:
-
-```bash
 bettercontext-init --serve
 ```
 
