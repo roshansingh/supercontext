@@ -13,7 +13,11 @@
 set -euo pipefail
 
 REPO_URL="git+https://github.com/roshansingh/bettercontext.git"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR=""
+if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" 2>/dev/null && pwd 2>/dev/null || echo "")"
+fi
 TARGET_AGENT="both"
 PYTHON_BIN="${PYTHON:-python3}"
 
@@ -74,9 +78,27 @@ else
   "$PYTHON_BIN" -m pip install "${PIP_USER_ARGS[@]}" --upgrade "$REPO_URL"
 fi
 
+if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+  USER_SCRIPTS_DIR="$("$PYTHON_BIN" - <<'PY'
+import os
+import site
+
+print(os.path.join(site.getuserbase(), "bin"))
+PY
+)"
+  case ":$PATH:" in
+    *":$USER_SCRIPTS_DIR:"*) ;;
+    *)
+      echo ""
+      echo "Note: add Python's user script directory to PATH if bettercontext-init is not found:"
+      echo "  export PATH=\"$USER_SCRIPTS_DIR:\$PATH\""
+      ;;
+  esac
+fi
+
 echo ""
 echo "Installing global Bettercontext MCP skills..."
-"$PYTHON_BIN" -m source.scripts.install_mcp_skills --scope global --agent "$TARGET_AGENT"
+"$PYTHON_BIN" -P -m source.scripts.install_mcp_skills --scope global --agent "$TARGET_AGENT"
 
 echo ""
 echo "Done."

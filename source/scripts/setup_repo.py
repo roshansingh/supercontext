@@ -47,6 +47,7 @@ def main() -> None:
         subprocess.run(
             [
                 sys.executable,
+                "-P",
                 "-m",
                 "source.scripts.mcp_server",
                 "--snapshot",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -93,6 +94,10 @@ def _target_dir(
 
 
 def _copy_resource_tree(source: Traversable, target: Path) -> None:
+    if target.exists():
+        if target.is_symlink() or not target.is_dir():
+            raise RuntimeError(f"Cannot replace non-directory skill target: {target}")
+        shutil.rmtree(target)
     for item in _walk_resources(source):
         relative = Path(*item.name_parts)
         destination = target / relative

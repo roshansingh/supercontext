@@ -40,6 +40,22 @@ class McpSkillInstallerTest(unittest.TestCase):
                 (project / ".claude" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(encoding="utf-8"),
             )
 
+    def test_install_replaces_stale_files_inside_target_skill_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            target = project / ".codex" / "skills" / "bettercontext-mcp"
+            sibling = project / ".codex" / "skills" / "coverage-report"
+            target.mkdir(parents=True)
+            sibling.mkdir()
+            (target / "old.md").write_text("stale", encoding="utf-8")
+            (sibling / "SKILL.md").write_text("existing", encoding="utf-8")
+
+            self._run_installer("--scope", "project", "--project", str(project), "--agent", "codex")
+
+            self.assertFalse((target / "old.md").exists())
+            self.assertTrue((target / "SKILL.md").is_file())
+            self.assertTrue((sibling / "SKILL.md").is_file())
+
     def test_global_install_uses_agent_homes(self) -> None:
         with tempfile.TemporaryDirectory() as codex_tmp, tempfile.TemporaryDirectory() as claude_tmp:
             self._run_installer(

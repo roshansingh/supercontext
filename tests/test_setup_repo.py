@@ -52,6 +52,7 @@ class SetupRepoTest(unittest.TestCase):
         self.assertEqual(run_mock.call_count, 1)
         command = run_mock.call_args.args[0]
         self.assertIn("source.scripts.mcp_server", command)
+        self.assertIn("-P", command)
         self.assertIn("--port", command)
         self.assertIn("9999", command)
 
