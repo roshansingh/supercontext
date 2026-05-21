@@ -10,7 +10,7 @@ python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 Register the MCP endpoint in Codex using the local HTTP URL printed by the server, then follow the workflow rules below.
 
 ## When To Call Bettercontext
-- Planning: service, repo, symbol, package, endpoint, event, domain, or file-path questions
+- Planning: service, repo, symbol, package, endpoint, event_channel/channel, domain, or file-path questions
 - Review: known changed files or changed ranges
 
 ## Tool Order
