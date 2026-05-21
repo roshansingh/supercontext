@@ -92,24 +92,13 @@ if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/pyproject.toml" && -d "$SCRIPT_DIR/sou
   LOCAL_MODE=true
 fi
 
-INSTALL_PYTHON="$PYTHON_BIN"
-SCRIPTS_DIR=""
-if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-  SCRIPTS_DIR="$("$PYTHON_BIN" - <<'PY'
-import sysconfig
-
-print(sysconfig.get_path("scripts"))
-PY
-)"
-else
-  VENV_DIR="$BETTERCONTEXT_HOME/venv"
-  echo ""
-  echo "Preparing Bettercontext environment: $VENV_DIR"
-  "$PYTHON_BIN" -m venv "$VENV_DIR"
-  INSTALL_PYTHON="$VENV_DIR/bin/python"
-  SCRIPTS_DIR="$VENV_DIR/bin"
-  "$INSTALL_PYTHON" -m pip install --upgrade pip
-fi
+VENV_DIR="$BETTERCONTEXT_HOME/venv"
+echo ""
+echo "Preparing Bettercontext environment: $VENV_DIR"
+"$PYTHON_BIN" -m venv "$VENV_DIR"
+INSTALL_PYTHON="$VENV_DIR/bin/python"
+SCRIPTS_DIR="$VENV_DIR/bin"
+"$INSTALL_PYTHON" -m pip install --upgrade pip
 
 echo ""
 echo "Installing Bettercontext..."
