@@ -13,6 +13,10 @@ Two layers exist concurrently:
 
 The architecture is ahead of the implementation by design. Work on either side, but treat ADRs as binding spec when implementing.
 
+## Project context index
+
+Use `INDEX.md` as the canonical annotated map of project docs, ADRs, debate seeds, evaluation artifacts, and external channels. When project documentation is needed, read `INDEX.md` first and then open only the relevant indexed documents. Do not maintain duplicate doc inventories here; update `INDEX.md` instead.
+
 ## Commands
 
 `pyproject.toml` defines package metadata, optional dependency groups, and console-script entry points. The default verification path is still direct Python module execution:
@@ -63,23 +67,6 @@ python -m source.scripts.coverage_report \
 `coverage_metrics` writes `<snapshot-dir>/metrics.jsonl`. `coverage_report` writes `coverage-run.json` and `coverage-run.md` under `docs/evaluation/runs/<run-id>/`. Treat all three as generated artifacts: never hand-edit metric values, reasons, scores, or contract flags. For fleet reports, pass a stable `--run-id`, the tenant/org label, and `--expected-repos` whenever the expected repo count is known.
 
 LLM enrichment is not part of the default KG build path. If used: `source.kg.integrations.llm.LightLlmClient` reads `OPENAI_API_KEY`, defaults to `gpt-4.1-mini`, override with `SUPERCONTEXT_LLM_MODEL`.
-
-## Repository layout
-
-| Path | Purpose |
-|---|---|
-| `docs/PRD.md`, `docs/PLATFORM-PRD.md` | Product vision (Product 1 wedge + broader platform) |
-| `adr/0001..0011` | Accepted architecture decisions; binding spec for implementation |
-| `docs/ontology/ONTOLOGY-RECOMMENDATION.md` | The v1 canonical ontology (10 nodes, 15 relations, Entity+Fact+Evidence+Coverage shape, identity tuples, derivation classes, promotion rules) — ADR-0006 binding |
-| `docs/evaluation/PRODUCT-QUERY-SET.md` | 55-query acceptance corpus mapped to MCP tools, with goldens for Low tier and contract checks |
-| `docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md` | Registry for high-precision call-site extractors that auto-promote `CALLS` facts |
-| `BACKLOG.md` | Single-page index of every deferred item across the project |
-| `source/kg/languages/{python,typescript}/extractors/` | Per-language deterministic extractors |
-| `source/kg/languages/{python,typescript}/normalization/` | Per-language import normalizers |
-| `source/kg/{models,store,queries,pipeline,repo_source,llm}.py` | Core data classes, JSONL store, query layer, pipeline orchestration, optional LLM client |
-| `source/scripts/{build_kg,query_kg}.py` | CLI entry points |
-| `data/kg_runs/` | Gitignored KG snapshots |
-| `debates/` | Gitignored multi-agent debate transcripts (orchestrator at `~/.agent-debate/orchestrate.sh`) |
 
 ## Architecture (the load-bearing decisions)
 

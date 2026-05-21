@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Project Context Index
+
+Use `INDEX.md` as the canonical annotated map of project docs, ADRs, debate seeds, evaluation artifacts, and external channels. When project documentation is needed, read `INDEX.md` first and then open only the relevant indexed documents. Do not maintain duplicate doc inventories here; update `INDEX.md` instead.
+
 ## Project Structure & Module Organization
 
 This repository is currently a documentation-heavy architecture repo plus a minimal KG prototype.

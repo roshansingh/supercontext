@@ -1,0 +1,84 @@
+# Bettercontext Project Index
+
+Annotated index for agents and contributors. Read this before opening many docs blindly. Each entry names the owner, URL, what is inside, and when to read it.
+
+## Start Here
+
+| URL | Owner | Annotation |
+|---|---|---|
+| [README.md](README.md) | Project | Top-level repository overview, setup commands, coverage-report commands, MCP server command, extraction scope, and repository layout. Read first when orienting to the repo or checking standard commands. |
+| [source/README.md](source/README.md) | KG implementation | Lower-level source-module overview, local query examples, Streamlit harness notes, and MCP server details. Read when working on `source/kg`, scripts, query surfaces, or MCP behavior. |
+| [docs/PRD.md](docs/PRD.md) | Product | Product 1 rationale, target users, eight MCP tools, UX principles, surfaces, and risks. Read before changing product scope, MCP contracts, or user-facing claims. |
+| [docs/PLATFORM-PRD.md](docs/PLATFORM-PRD.md) | Product | Broader platform direction beyond the local KG prototype. Read when a change might affect enterprise context graph, hosted surfaces, or long-term platform positioning. |
+
+## Architecture Decisions
+
+| URL | Owner | Annotation |
+|---|---|---|
+| [adr/README.md](adr/README.md) | Architecture | ADR index. Read when looking for accepted decisions before proposing new architecture. |
+| [adr/0001-claude-agent-sdk-for-internal-runtime.md](adr/0001-claude-agent-sdk-for-internal-runtime.md) | Agent runtime | Decision to use Claude Agent SDK internally while keeping external surface SDK-agnostic. Read before changing internal agent runtime or no-egress assumptions. |
+| [adr/0002-mcp-protocol-for-external-surface.md](adr/0002-mcp-protocol-for-external-surface.md) | MCP surface | Public MCP protocol decision, the eight tool names, current implementation status, and rationale for small structured tools. Read before changing MCP tools, schemas, transport, or host-agent integration. |
+| [adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md](adr/0004-canonical-graph-plus-candidate-enrichment-sidecar.md) | Graph trust | Canonical graph vs candidate enrichment rules. Read before exposing inferred facts in operational tools or changing default query visibility. |
+| [adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md](adr/0005-modular-evidence-retrieval-with-coordinate-fetch-and-selective-ladder.md) | Evidence retrieval | Evidence-packet and coordinate-fetch strategy. Read before changing evidence retrieval, answer packets, or source citation behavior. |
+| [adr/0006-canonical-ontology-and-fact-metadata-envelope.md](adr/0006-canonical-ontology-and-fact-metadata-envelope.md) | Ontology | Entity/fact metadata envelope, confidence, coverage policy, and partial/refusal behavior. Read before adding fact types, relation types, or coverage semantics. |
+| [adr/0007-deterministic-symbol-lookup-with-agentic-disambiguation.md](adr/0007-deterministic-symbol-lookup-with-agentic-disambiguation.md) | Symbol lookup | Symbol identity and disambiguation policy. Read before changing `lookup_symbol`, callers/callees, or symbol matching behavior. |
+| [adr/0008-deterministic-import-normalization-with-agentic-candidate-fallback.md](adr/0008-deterministic-import-normalization-with-agentic-candidate-fallback.md) | Dependency extraction | Import/package normalization and candidate fallback policy. Read before changing package classification, import facts, or dependency queries. |
+| [adr/0009-deterministic-reverse-dependency-queries-with-agentic-candidate-enrichment.md](adr/0009-deterministic-reverse-dependency-queries-with-agentic-candidate-enrichment.md) | Dependency queries | Reverse dependency query design. Read before changing `who_imports`, package impact, or dependency path behavior. |
+| [adr/0010-deploy-target-without-domain.md](adr/0010-deploy-target-without-domain.md) | Deploy modeling | Deploy target modeling when no domain exists. Read before changing deploy/config extraction or deploy mapping semantics. |
+| [adr/0011-python-import-distribution-aliases.md](adr/0011-python-import-distribution-aliases.md) | Python packages | Python import-to-distribution alias policy. Read before changing Python dependency classification. |
+
+## Evaluation And Coverage
+
+| URL | Owner | Annotation |
+|---|---|---|
+| [docs/evaluation/README.md](docs/evaluation/README.md) | Evaluation | Evaluation directory guide. Read when looking for canonical reports, validation inputs, or product-evaluation docs. |
+| [docs/evaluation/PRODUCT-QUERY-SET.md](docs/evaluation/PRODUCT-QUERY-SET.md) | Product evaluation | Product query matrix, MCP tool mapping, goldens, expected answer shapes, and validation scenarios. Read before claiming a feature improves product usefulness or choosing the next evaluated gap. |
+| [docs/evaluation/PRODUCT-QUERY-SET-RUN-EXPECTED.json](docs/evaluation/PRODUCT-QUERY-SET-RUN-EXPECTED.json) | Product evaluation | Machine-readable expected outputs for product query runs. Read when updating product-query regression behavior. |
+| [docs/evaluation/CANONICAL-VALIDATION-REPORT.md](docs/evaluation/CANONICAL-VALIDATION-REPORT.md) | Product evaluation | Canonical validation report format and interpretation. Read before changing validation-report output or interpreting answer-quality results. |
+| [docs/COVERAGE-METRICS.md](docs/COVERAGE-METRICS.md) | Coverage | User-facing coverage metric definitions and report interpretation. Read before changing coverage report semantics or explaining score movement. |
+| [docs/evaluation/COVERAGE-METRICS-IMPLEMENTATION-PLAN.md](docs/evaluation/COVERAGE-METRICS-IMPLEMENTATION-PLAN.md) | Coverage | Implementation plan for coverage metrics. Read before changing metric computation, dimensions, or generated report contracts. |
+| [docs/evaluation/COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md](docs/evaluation/COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md) | Coverage | Notes on incremental coverage and linking gaps. Read when diagnosing why coverage rows/gaps changed. |
+
+## Current Debate Seeds
+
+| URL | Owner | Annotation |
+|---|---|---|
+| [docs/MCP-WORKFLOW-INTEGRATION-DEBATE-SEED.md](docs/MCP-WORKFLOW-INTEGRATION-DEBATE-SEED.md) | MCP/product | Seed for debating MCP workflow integration for planning, coding, and review. Read before changing MCP tool scope or adding host-agent skill hooks. |
+| [docs/CROSS-REPO-PACKAGE-LINKAGE-DEBATE-SEED.md](docs/CROSS-REPO-PACKAGE-LINKAGE-DEBATE-SEED.md) | Cross-repo linkage | Seed for cross-repo package linkage work. Read before changing package resolver, multi-repo relinking, or package coverage behavior. |
+| [docs/JS-TS-ENDPOINT-COVERAGE-JUMP-DEBATE-SEED.md](docs/JS-TS-ENDPOINT-COVERAGE-JUMP-DEBATE-SEED.md) | JS/TS extraction | Seed for client-context-aware JS/TS endpoint extraction. Read before changing frontend endpoint resolution or URL helper handling. |
+| [docs/JS-TS-ENDPOINT-REMAINING-GAPS-DEBATE-SEED.md](docs/JS-TS-ENDPOINT-REMAINING-GAPS-DEBATE-SEED.md) | JS/TS extraction | Seed for remaining JS/TS endpoint gaps. Read when deciding whether more endpoint extraction work is still worth doing. |
+| [docs/K8S-ENV-HOST-LINKAGE-DEBATE-SEED.md](docs/K8S-ENV-HOST-LINKAGE-DEBATE-SEED.md) | Deploy/config linkage | Seed for linking env-backed endpoint hosts to Kubernetes, Helm, Kustomize, ConfigMap, and Secret evidence. Read before changing deploy/config extraction for endpoint host provenance. |
+
+## Design Recommendations
+
+| URL | Owner | Annotation |
+|---|---|---|
+| [docs/ontology/ONTOLOGY-RECOMMENDATION.md](docs/ontology/ONTOLOGY-RECOMMENDATION.md) | Ontology | Recommended graph ontology, coverage sidecar behavior, and deferred families. Read before adding entity kinds, predicates, or coverage policies. |
+| [docs/evidence-retrieval/EVIDENCE-RETRIEVAL-RECOMMENDATION.md](docs/evidence-retrieval/EVIDENCE-RETRIEVAL-RECOMMENDATION.md) | Evidence retrieval | Recommended evidence retrieval architecture. Read before changing packets, source snippets, or retrieval ladder behavior. |
+| [docs/graph-building/GRAPH-BUILDING-RECOMMENDATION.md](docs/graph-building/GRAPH-BUILDING-RECOMMENDATION.md) | Graph building | Recommended graph build pipeline. Read before changing snapshot build flow, extractors, or relinking architecture. |
+| [docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md](docs/graph-building/TYPED-CLIENT-EXTRACTOR-ALLOWLIST.md) | Extractors | Allowlist for typed client extraction. Read before adding API/client extractor support or changing transport/client recognition. |
+| [docs/graph-storage/GRAPH-STORAGE-RECOMMENDATION.md](docs/graph-storage/GRAPH-STORAGE-RECOMMENDATION.md) | Graph storage | Storage recommendation and separation between product APIs and raw graph semantics. Read before changing storage backend assumptions. |
+| [docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md](docs/agentic-layer/AGENTIC-LAYER-RECOMMENDATION-V2.md) | Agent runtime | Agentic layer recommendation and MCP as Layer C. Read before changing host-agent, SDK, or no-egress architecture. |
+| [docs/overall-architecture/claude-code-research.md](docs/overall-architecture/claude-code-research.md) | Research | Claude Code research notes and MCP consumption assumptions. Read when optimizing for Claude Code as a host. |
+| [docs/overall-architecture/codex-code-research.md](docs/overall-architecture/codex-code-research.md) | Research | Codex/code-agent research notes and agentic codebase context strategy. Read when optimizing for Codex-like hosts. |
+
+## Implementation Guides
+
+| URL | Owner | Annotation |
+|---|---|---|
+| [.codex/skills/implement-debate/SKILL.md](.codex/skills/implement-debate/SKILL.md) | Workflow | Required workflow for implementing converged debates, including PR sequencing, Claude review, Copilot review, merge, and measurement. Read before implementing any debate plan. |
+| [.codex/skills/safe-git-pr-workflow/SKILL.md](.codex/skills/safe-git-pr-workflow/SKILL.md) | Workflow | Git and PR workflow for this repo. Read before staging, committing, pushing, opening PRs, or handling GitHub review loops. |
+| [.codex/skills/pre-pr-semantic-review/SKILL.md](.codex/skills/pre-pr-semantic-review/SKILL.md) | Review | Semantic self-review checklist focused on extractor, query, loader, coverage, and validation bugs. Read before pushing code changes. |
+| [.codex/skills/product-evaluation/SKILL.md](.codex/skills/product-evaluation/SKILL.md) | Evaluation | Product-evaluation workflow and failure buckets. Read before interpreting product-validation results or recommending the next product gap. |
+| [.codex/skills/coverage-report/SKILL.md](.codex/skills/coverage-report/SKILL.md) | Coverage | Standard coverage-report workflow. Read before running, comparing, or summarizing KG coverage metrics. |
+| [docs/contributing/ADDING-A-NEW-LANGUAGE.md](docs/contributing/ADDING-A-NEW-LANGUAGE.md) | Extractors | Guide for adding a new language. Read before creating language-specific extractors or normalization modules. |
+
+## Channels And External Links
+
+| URL | Owner | Annotation |
+|---|---|---|
+| Not indexed yet | Project | No Slack, Discord, issue tracker, roadmap board, or external design-doc channels are currently recorded here. Add them with owner and annotation when they become part of normal project context. |
+
+## Maintenance Rule
+
+Update this file when adding a durable document, ADR, debate seed, evaluation artifact, or external project channel that future agents should know about. Do not index generated one-off review files or local run outputs unless they become canonical references.
