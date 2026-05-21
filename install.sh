@@ -36,7 +36,18 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 fi
 TARGET_AGENT="both"
 PYTHON_BIN="${PYTHON:-python3}"
-BETTERCONTEXT_HOME="${BETTERCONTEXT_HOME:-$HOME/.bettercontext}"
+if [[ -z "${BETTERCONTEXT_HOME:-}" ]]; then
+  USER_HOME="${HOME:-}"
+  if [[ -z "$USER_HOME" ]]; then
+    USER_HOME="$("$PYTHON_BIN" - <<'PY'
+from pathlib import Path
+
+print(Path.home())
+PY
+)"
+  fi
+  BETTERCONTEXT_HOME="$USER_HOME/.bettercontext"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

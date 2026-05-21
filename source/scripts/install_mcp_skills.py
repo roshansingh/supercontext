@@ -45,6 +45,8 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true", help="Print target paths without writing files.")
     args = parser.parse_args()
+    codex_home = _non_empty_home(parser, args.codex_home, "--codex-home")
+    claude_home = _non_empty_home(parser, args.claude_home, "--claude-home")
 
     agents = SUPPORTED_AGENTS if args.agent == "both" else (args.agent,)
     for agent in agents:
@@ -53,8 +55,8 @@ def main() -> None:
             agent,
             scope=args.scope,
             project=Path(args.project),
-            codex_home=Path(args.codex_home).expanduser(),
-            claude_home=Path(args.claude_home).expanduser(),
+            codex_home=codex_home,
+            claude_home=claude_home,
         )
         if args.dry_run:
             print(f"would install {agent} skill: {target}")
@@ -69,6 +71,12 @@ def _template_dir(agent: str) -> Traversable:
     if not source.is_dir():
         raise RuntimeError(f"Missing installable Bettercontext MCP skill template for {agent!r}")
     return source
+
+
+def _non_empty_home(parser: argparse.ArgumentParser, value: str, flag: str) -> Path:
+    if not value.strip():
+        parser.error(f"{flag} must not be empty")
+    return Path(value).expanduser()
 
 
 def _target_dir(

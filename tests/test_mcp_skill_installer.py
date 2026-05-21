@@ -91,6 +91,12 @@ class McpSkillInstallerTest(unittest.TestCase):
         self.assertIn(str(Path(home_tmp) / ".codex" / "skills" / "bettercontext-mcp"), output)
         self.assertIn(str(Path(home_tmp) / ".claude" / "skills" / "bettercontext-mcp"), output)
 
+    def test_explicit_empty_global_home_args_are_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._run_installer("--scope", "global", "--agent", "codex", "--codex-home", "")
+        with self.assertRaises(SystemExit):
+            self._run_installer("--scope", "global", "--agent", "claude", "--claude-home", "")
+
     def test_dry_run_does_not_write_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -103,7 +109,12 @@ class McpSkillInstallerTest(unittest.TestCase):
 
     def _run_installer(self, *args: str) -> str:
         stdout = io.StringIO()
-        with patch("sys.argv", ["install_mcp_skills", *args]), contextlib.redirect_stdout(stdout):
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["install_mcp_skills", *args]),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
             install_mcp_skills.main()
         return stdout.getvalue()
 
