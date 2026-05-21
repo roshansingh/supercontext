@@ -150,6 +150,17 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(len(result["symbols"]), 1)
         self.assertEqual(result["symbols"][0]["qualname"], "handle_checkout")
 
+    def test_planning_context_fact_line_filter_uses_attached_evidence(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "planning_context",
+                {"package": "shared-lib", "line": 2},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"IMPORTS"})
+
     def test_planning_context_symbol_path_and_line_disambiguate_symbol_anchor(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(
@@ -715,6 +726,15 @@ class _fixture_snapshot:
                 source_system="test",
                 source_ref={"repo": "payments"},
                 bytes_ref={"repo": "payments", "path": "payments/checkout.py", "line_start": 14, "line_end": 14},
+                confidence=1.0,
+            ),
+            Evidence(
+                target_type="fact",
+                target_id=import_fact.fact_id,
+                derivation_class="deterministic_static",
+                source_system="test",
+                source_ref={"repo": "payments"},
+                bytes_ref={"repo": "payments", "path": "payments/checkout.py", "line_start": 2, "line_end": 2},
                 confidence=1.0,
             ),
         ]

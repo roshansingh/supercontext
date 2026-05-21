@@ -897,9 +897,14 @@ def _planning_context_fact_row_matches(
     if anchors.get("service") and not _planning_context_fact_matches_service(subject, object_, anchors["service"]):
         return False
     path = anchors.get("path")
-    if path and not _planning_context_fact_matches_path_or_line(fact, subject, object_, path=path, line=line):
+    evidence_rows = row.get("evidence", [])
+    if path and not _planning_context_fact_matches_path_or_line(
+        subject, object_, evidence_rows, path=path, line=line
+    ):
         return False
-    if path is None and line is not None and not _planning_context_fact_matches_path_or_line(fact, subject, object_, path=None, line=line):
+    if path is None and line is not None and not _planning_context_fact_matches_path_or_line(
+        subject, object_, evidence_rows, path=None, line=line
+    ):
         return False
     return True
 
@@ -956,16 +961,18 @@ def _planning_context_fact_matches_service(subject: JsonObject, object_: JsonObj
 
 
 def _planning_context_fact_matches_path_or_line(
-    fact: JsonObject,
     subject: JsonObject,
     object_: JsonObject,
+    evidence_rows: object,
     *,
     path: str | None,
     line: int | None,
 ) -> bool:
     if any(_planning_context_entity_matches_coordinate(entity, path=path, line=line) for entity in (subject, object_)):
         return True
-    for evidence in fact.get("evidence", []):
+    if not isinstance(evidence_rows, list):
+        return False
+    for evidence in evidence_rows:
         if not isinstance(evidence, dict):
             continue
         bytes_ref = evidence.get("bytes_ref") or {}
