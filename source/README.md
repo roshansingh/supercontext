@@ -145,7 +145,9 @@ Supported JSON-RPC methods:
 - `tools/call`
 - `ping`
 
-Current tools are `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, and `deploy_blockers_for`. `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
+Current ADR-0002 primitive tools are `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, and `deploy_blockers_for`. `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
+
+The local-development server also exposes experimental workflow composition tools, `planning_context` and `review_context`, for host-agent planning and review flows. These tools compose existing KG query surfaces and are tracked as a Tool Query Contract follow-up rather than an ADR-0002 primitive-tool amendment.
 
 Security note: the local MCP server has no authentication. Keep the default loopback bind (`127.0.0.1`). Do not expose it with `--host 0.0.0.0` unless you are on a trusted network and intentionally pass `--allow-public`.
 

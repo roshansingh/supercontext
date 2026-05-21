@@ -3,8 +3,8 @@
 Start the local MCP server:
 
 ```bash
-python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
-python -m source.scripts.mcp_server --snapshot data/kg_runs/true_loop
+python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
+python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 ```
 
 Register the MCP endpoint in Codex using the local HTTP URL printed by the server, then follow the workflow rules below.

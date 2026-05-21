@@ -17,7 +17,6 @@
 - `tests/test_mcp_tools.py`
 
 **Create**
-- `docs/mcp/_shared_skill_body.md`
 - `docs/mcp/CLAUDE_CODE_SKILL.md`
 - `docs/mcp/CODEX_SKILL.md`
 
@@ -527,38 +526,15 @@ git commit -m "Add review context MCP tool"
 ### Task 4: PR4 Host Skill Docs And HTTP Verification Gate
 
 **Files:**
-- Create: `docs/mcp/_shared_skill_body.md`
 - Create: `docs/mcp/CLAUDE_CODE_SKILL.md`
 - Create: `docs/mcp/CODEX_SKILL.md`
 
-- [ ] **Step 1: Draft the shared behavior doc**
-
-Create [docs/mcp/_shared_skill_body.md](/Users/roshan/work/code/bettercontext/docs/mcp/_shared_skill_body.md) with four short sections:
-
-```md
-## When To Call Bettercontext
-- Planning: service, repo, symbol, package, endpoint, event, domain, or file-path questions
-- Review: known changed files or changed ranges
-
-## Tool Order
-1. Planning -> `planning_context`, then ADR tools for precise follow-up
-2. Coding -> ADR tools, using ambiguous-response `candidates` and per-fact `evidence`
-3. Reviewing -> `review_context`, then ADR tools per returned group
-
-## Fallback
-- On `unsupported_by_current_kg`, `ambiguous`, or `partial`, state what is unknown and use host read/grep tools
-
-## Output Rule
-- Cite returned evidence rows
-- Do not paste raw evidence packets wholesale
-```
-
-- [ ] **Step 2: Create the Claude Code wrapper doc**
+- [ ] **Step 1: Create the Claude Code wrapper doc**
 
 Create [docs/mcp/CLAUDE_CODE_SKILL.md](/Users/roshan/work/code/bettercontext/docs/mcp/CLAUDE_CODE_SKILL.md) with:
 - one paragraph showing the local server command
 - a short “register this MCP” instruction block
-- the shared body pasted below it
+- concise workflow rules below it
 
 Use this top block:
 
@@ -568,16 +544,16 @@ Use this top block:
 Start the local MCP server:
 
 ```bash
-python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
-python -m source.scripts.mcp_server --snapshot data/kg_runs/true_loop
+python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
+python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 ```
 
 Register the MCP endpoint in Claude Code using the local HTTP URL printed by the server, then follow the workflow rules below.
 ````
 
-- [ ] **Step 3: Create the Codex wrapper doc**
+- [ ] **Step 2: Create the Codex wrapper doc**
 
-Create [docs/mcp/CODEX_SKILL.md](/Users/roshan/work/code/bettercontext/docs/mcp/CODEX_SKILL.md) with the same shared body but Codex-specific registration wording:
+Create [docs/mcp/CODEX_SKILL.md](/Users/roshan/work/code/bettercontext/docs/mcp/CODEX_SKILL.md) with the same concise workflow rules but Codex-specific registration wording:
 
 ````md
 # Codex Bettercontext Skill
@@ -585,14 +561,14 @@ Create [docs/mcp/CODEX_SKILL.md](/Users/roshan/work/code/bettercontext/docs/mcp/
 Start the local MCP server:
 
 ```bash
-python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
-python -m source.scripts.mcp_server --snapshot data/kg_runs/true_loop
+python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
+python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 ```
 
 Register the MCP endpoint in Codex using the local HTTP URL printed by the server, then follow the workflow rules below.
 ````
 
-- [ ] **Step 4: Verify the repo still passes local checks after doc creation**
+- [ ] **Step 3: Verify the repo still passes local checks after doc creation**
 
 Run:
 
@@ -605,13 +581,13 @@ Expected:
 - `compileall` prints no output
 - full test suite passes
 
-- [ ] **Step 5: Execute the HTTP verification gate before merge**
+- [ ] **Step 4: Execute the HTTP verification gate before merge**
 
 Run the local server in one terminal:
 
 ```bash
-python -m source.scripts.build_kg --repo ~/work/true_loop --out data/kg_runs/true_loop
-python -m source.scripts.mcp_server --snapshot data/kg_runs/true_loop
+python -m source.scripts.build_kg --repo <repo-path> --out data/kg_runs/<snapshot-name>
+python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 ```
 
 Then, from each host environment separately:
@@ -631,10 +607,10 @@ Record pass/fail evidence in the PR description. Use this checklist in the PR bo
 
 If any item fails because the host cannot use the HTTP server reliably, stop and open follow-up work for `--stdio` by reusing `_handle_json_rpc_payload()` in [source/scripts/mcp_server.py](/Users/roshan/work/code/bettercontext/source/scripts/mcp_server.py:183). Do not merge PR4 until that transport gap is resolved or explicitly re-scoped.
 
-- [ ] **Step 6: Commit PR4-sized docs**
+- [ ] **Step 5: Commit PR4-sized docs**
 
 ```bash
-git add docs/mcp/_shared_skill_body.md docs/mcp/CLAUDE_CODE_SKILL.md docs/mcp/CODEX_SKILL.md
+git add docs/mcp/CLAUDE_CODE_SKILL.md docs/mcp/CODEX_SKILL.md
 git commit -m "Add Bettercontext MCP workflow docs"
 ```
 

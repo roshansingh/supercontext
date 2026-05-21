@@ -272,9 +272,6 @@ def _service_search_text(service: JsonObject) -> str:
 
 def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_: JsonObject) -> JsonObject:
     return {
-        "_fact": fact,
-        "_subject": subject,
-        "_object": object_,
         "fact_id": fact["fact_id"],
         "predicate": fact["predicate"],
         "subject": display_entity(subject),
@@ -555,9 +552,9 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             endpoints=endpoints,
             event_channels=event_channels,
             domains=domains,
-                next_actions=next_actions,
-                status="ambiguous",
-            )
+            next_actions=next_actions,
+            status="ambiguous",
+        )
 
     base_category = _planning_context_base_category(anchors)
     if base_category == "services":
@@ -641,7 +638,8 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         normalized_changed_file = _planning_context_normalize_path(changed_file)
         if changed_ranges:
             file_ranges = range_filters.get(normalized_changed_file, [])
-            symbol_rows = [row for row in symbol_rows if _review_context_symbol_overlaps_ranges(row, file_ranges)]
+            if file_ranges:
+                symbol_rows = [row for row in symbol_rows if _review_context_symbol_overlaps_ranges(row, file_ranges)]
         for row in symbol_rows:
             changed_symbols.append(row)
             symbol_name = str(row.get("qualified_name") or row.get("qualname") or "")
@@ -811,14 +809,14 @@ def _planning_context_base_category(anchors: dict[str, str | None]) -> str | Non
         return "services"
     if anchors.get("symbol") or anchors.get("path"):
         return "symbols"
-    if anchors.get("package") or anchors.get("repo"):
-        return "dependencies"
     if anchors.get("endpoint"):
         return "endpoints"
     if anchors.get("event_channel"):
         return "event_channels"
     if anchors.get("domain"):
         return "domains"
+    if anchors.get("package") or anchors.get("repo"):
+        return "dependencies"
     return None
 
 
@@ -1172,6 +1170,15 @@ def _planning_context_public_rows(rows: list[JsonObject]) -> list[JsonObject]:
     return public_rows
 
 
+def _planning_context_fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_: JsonObject) -> JsonObject:
+    return {
+        **_fact_result(kg, fact, subject, object_),
+        "_fact": fact,
+        "_subject": subject,
+        "_object": object_,
+    }
+
+
 def _planning_context_repo_matches(kg: KgSnapshot, repo: str) -> dict[str, list[JsonObject]]:
     matches: dict[str, list[JsonObject]] = {}
     for fact in kg.facts:
@@ -1186,7 +1193,7 @@ def _planning_context_repo_matches(kg: KgSnapshot, repo: str) -> dict[str, list[
             continue
         matches.setdefault(fact["subject_id"], []).append(
             {
-                **_fact_result(kg, fact, package, target_repo),
+                **_planning_context_fact_result(kg, fact, package, target_repo),
                 "__repo_candidates": [
                     str(qualifier.get("consumer_repo") or ""),
                     str(package.get("identity", {}).get("repo") or ""),
@@ -1210,12 +1217,12 @@ def _planning_context_package_matches(kg: KgSnapshot, package_name: str) -> dict
         module = kg.entities_by_id.get(fact["subject_id"])
         if not package or not module:
             continue
-        if not kg._import_matches(fact, package, package_name):
+        if not kg.import_matches(fact, package, package_name):
             continue
         qualifier = fact.get("qualifier", {})
         matches.setdefault(fact["object_id"], []).append(
             {
-                **_fact_result(kg, fact, module, package),
+                **_planning_context_fact_result(kg, fact, module, package),
                 "__repo_candidates": [
                     str(module.get("identity", {}).get("repo") or ""),
                     str(package.get("identity", {}).get("repo") or ""),
@@ -1245,7 +1252,7 @@ def _planning_context_endpoint_matches(kg: KgSnapshot, path_query: str) -> dict[
             continue
         matches.setdefault(fact["object_id"], []).append(
             {
-                **_fact_result(kg, fact, subject, endpoint),
+                **_planning_context_fact_result(kg, fact, subject, endpoint),
                 "__repo_candidates": [
                     str(endpoint.get("identity", {}).get("repo") or ""),
                     str(subject.get("identity", {}).get("repo") or subject.get("properties", {}).get("repo") or ""),
@@ -1272,7 +1279,7 @@ def _planning_context_event_matches(kg: KgSnapshot, query: str) -> dict[str, lis
             continue
         matches.setdefault(fact["object_id"], []).append(
             {
-                **_fact_result(kg, fact, subject, channel),
+                **_planning_context_fact_result(kg, fact, subject, channel),
                 "__repo_candidates": [
                     str(channel.get("identity", {}).get("repo") or ""),
                     str(subject.get("identity", {}).get("repo") or subject.get("properties", {}).get("repo") or ""),
@@ -1302,7 +1309,7 @@ def _planning_context_domain_matches(kg: KgSnapshot, query: str) -> dict[str, li
             continue
         matches.setdefault(fact["object_id"], []).append(
             {
-                **_fact_result(kg, fact, subject, domain),
+                **_planning_context_fact_result(kg, fact, subject, domain),
                 "__repo_candidates": [
                     str(domain.get("identity", {}).get("repo") or ""),
                     str(subject.get("identity", {}).get("repo") or subject.get("properties", {}).get("repo") or ""),
@@ -1397,10 +1404,6 @@ def _normalize_endpoint_query(value: str) -> str:
     if not normalized.startswith("/"):
         normalized = "/" + normalized
     return normalized.rstrip("/") or "/"
-
-
-def _normalize_path(value: str) -> str:
-    return value.replace("\\", "/").lstrip("./")
 
 
 def _symbol_refinement_actions(symbols: list[JsonObject]) -> list[str]:

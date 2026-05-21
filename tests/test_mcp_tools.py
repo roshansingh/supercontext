@@ -41,7 +41,7 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
 
 
 class McpToolsTest(unittest.TestCase):
-    def test_tool_definitions_match_adr_0002_names(self) -> None:
+    def test_tool_definitions_include_adr_names_and_workflow_extensions(self) -> None:
         definitions = tool_definitions()
         self.assertEqual([row["name"] for row in definitions], [*TOOL_NAMES, *EXTENSION_TOOL_NAMES])
         schemas = {row["name"]: row["inputSchema"] for row in definitions}
@@ -101,6 +101,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["status"], "ambiguous")
         self.assertTrue(result["next_actions"])
 
+    def test_planning_context_symbol_ambiguity_returns_candidates(self) -> None:
+        with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
+            result = call_tool(kg, "planning_context", {"symbol": "charge_card"})
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertGreaterEqual(len(result["symbols"]), 2)
+        self.assertTrue(result["next_actions"])
+
     def test_planning_context_multiple_primary_anchors_intersect(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "planning_context", {"repo": "payments", "package": "shared-lib"})
@@ -156,6 +164,19 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["services"][0]["slug"], "payments")
         self.assertEqual(result["dependencies"], [])
 
+    def test_planning_context_structured_endpoint_event_and_domain_anchors(self) -> None:
+        with _fixture_snapshot() as kg:
+            endpoint = call_tool(kg, "planning_context", {"repo": "payments", "endpoint": "/checkout"})
+            event = call_tool(kg, "planning_context", {"repo": "payments", "event_channel": "orders-created"})
+            domain = call_tool(kg, "planning_context", {"repo": "payments", "domain": "api.internal.example"})
+
+        self.assertEqual(endpoint["status"], "found")
+        self.assertEqual({row["predicate"] for row in endpoint["endpoints"]}, {"EXPOSES_ENDPOINT"})
+        self.assertEqual(event["status"], "found")
+        self.assertEqual({row["predicate"] for row in event["event_channels"]}, {"CONSUMES_EVENT", "PRODUCES_EVENT"})
+        self.assertEqual(domain["status"], "found")
+        self.assertEqual({row["predicate"] for row in domain["domains"]}, {"REFERENCES_DOMAIN"})
+
     def test_review_context_aggregates_symbols_and_call_edges(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(
@@ -189,6 +210,25 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "found")
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_changed_ranges_only_narrow_matching_files(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py", "payments/gateway.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(
+            {row["qualname"] for row in result["changed_symbols"]},
+            {"handle_checkout", "charge_card"},
+        )
 
     def test_review_context_missing_changed_file_is_not_found(self) -> None:
         with _fixture_snapshot() as kg:
@@ -260,6 +300,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
         self.assertEqual(len(limited_brief["endpoints"]), 1)
         self.assertEqual(len(limited_brief["event_channels"]), 1)
+        self.assertFalse(any(key.startswith("_") for key in brief["endpoints"][0]))
         self.assertEqual(missing["status"], "not_found")
         _assert_additive_fields(self, all_services)
         _assert_additive_fields(self, search)
@@ -474,9 +515,15 @@ class McpToolsTest(unittest.TestCase):
 
 
 class _fixture_snapshot:
-    def __init__(self, extra_consumers: int = 0, extra_package_importers: int = 0) -> None:
+    def __init__(
+        self,
+        extra_consumers: int = 0,
+        extra_package_importers: int = 0,
+        extra_charge_card_symbol: bool = False,
+    ) -> None:
         self.extra_consumers = extra_consumers
         self.extra_package_importers = extra_package_importers
+        self.extra_charge_card_symbol = extra_charge_card_symbol
 
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -561,6 +608,17 @@ class _fixture_snapshot:
             kind="Repo",
             identity={"tenant_id": "default", "host": "local", "owner": "default", "name": "shared-platform"},
         )
+        duplicate_callee = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.alt_gateway",
+                "qualname": "charge_card",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/alt_gateway.py", "line": 7, "end_line": 9},
+        )
         call_fact = Fact("CALLS", caller.entity_id, callee.entity_id)
         import_fact = Fact(
             "IMPORTS",
@@ -639,6 +697,7 @@ class _fixture_snapshot:
             env_var,
             package,
             provider_repo,
+            *([duplicate_callee] if self.extra_charge_card_symbol else []),
             *extra_services,
             *extra_modules,
         ]

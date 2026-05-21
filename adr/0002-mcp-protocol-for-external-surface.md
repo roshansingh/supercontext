@@ -60,6 +60,7 @@ What exists now:
 - The local server is single-request/single-response over plain HTTP. The ADR's streamable transport target remains a follow-up for real host compatibility work.
 - `search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, and `blast_radius` return current KG-backed results.
 - `deploy_blockers_for` returns `unsupported_by_current_kg` until canonical deploy-blocker facts exist.
+- The local-development MCP server also exposes experimental composition tools, `planning_context` and `review_context`, to validate host-agent planning and review workflows. These are not yet ratified as ADR-0002 public primitive tools; the Tool Query Contract ADR must decide whether they remain MCP-visible workflow tools, move behind client skills, or become a separate surface.
 
 What is still pending:
 
@@ -69,6 +70,7 @@ What is still pending:
 - Cursor pagination and summary-then-drill-down behavior beyond current local limits.
 - `supercontext://service/{name}/brief` resource.
 - Resource auto-attach behavior.
+- Public contract decision for workflow composition tools such as `planning_context` and `review_context`.
 
 ## Alternatives considered
 
