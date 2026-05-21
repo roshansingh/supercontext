@@ -61,7 +61,7 @@ def main() -> None:
         if args.dry_run:
             print(f"would install {agent} skill: {target}")
             continue
-        _copy_resource_tree(source, target)
+        _copy_resource_tree(source, target, reject_symlink_ancestors=args.scope == "project")
         print(f"installed {agent} skill: {target}")
 
 
@@ -101,8 +101,9 @@ def _target_dir(
     raise ValueError(f"Unsupported agent/scope combination: {agent}/{scope}")
 
 
-def _copy_resource_tree(source: Traversable, target: Path) -> None:
-    _reject_symlink_skill_path(target)
+def _copy_resource_tree(source: Traversable, target: Path, *, reject_symlink_ancestors: bool) -> None:
+    if reject_symlink_ancestors:
+        _reject_symlink_skill_path(target)
     if target.is_symlink() or target.exists():
         if target.is_symlink() or not target.is_dir():
             raise RuntimeError(f"Cannot replace non-directory skill target: {target}")

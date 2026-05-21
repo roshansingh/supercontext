@@ -94,6 +94,17 @@ class McpSkillInstallerTest(unittest.TestCase):
             self.assertTrue((Path(codex_tmp) / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
             self.assertTrue((Path(claude_tmp) / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
 
+    def test_global_install_allows_symlinked_agent_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real_home = Path(tmp) / "real-codex"
+            symlink_home = Path(tmp) / "codex-link"
+            real_home.mkdir()
+            os.symlink(real_home, symlink_home)
+
+            self._run_installer("--scope", "global", "--agent", "codex", "--codex-home", str(symlink_home))
+
+            self.assertTrue((real_home / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
+
     def test_empty_global_home_env_values_fall_back_to_user_home(self) -> None:
         with tempfile.TemporaryDirectory() as home_tmp:
             with patch.dict(os.environ, {"CODEX_HOME": "", "CLAUDE_HOME": "", "HOME": home_tmp}):
