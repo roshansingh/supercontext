@@ -330,9 +330,9 @@ def _required_string_list(arguments: JsonObject, field: str) -> list[str]:
 
 
 def _optional_changed_ranges(arguments: JsonObject, field: str) -> list[JsonObject]:
-    value = arguments.get(field)
-    if value is None:
+    if field not in arguments:
         return []
+    value = arguments[field]
     if not isinstance(value, list):
         raise ValueError(f"MCP tool argument {field!r} must be a list of changed-range objects")
     ranges: list[JsonObject] = []

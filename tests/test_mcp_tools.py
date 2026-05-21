@@ -250,7 +250,7 @@ class McpToolsTest(unittest.TestCase):
             {"handle_checkout", "charge_card"},
         )
 
-    def test_review_context_missing_changed_file_is_not_found(self) -> None:
+    def test_review_context_missing_changed_file_still_returns_repo_dependencies(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["payments/missing.py"]})
 
@@ -293,6 +293,12 @@ class McpToolsTest(unittest.TestCase):
                             {"path": "payments/checkout.py", "start_line": 10, "end_line": 10, "extra": "bad"}
                         ],
                     },
+                )
+            with self.assertRaisesRegex(ValueError, "changed_ranges"):
+                call_tool(
+                    kg,
+                    "review_context",
+                    {"repo": "payments", "changed_files": ["payments/checkout.py"], "changed_ranges": None},
                 )
 
     def test_review_context_deploy_blocker_row_is_opt_in(self) -> None:

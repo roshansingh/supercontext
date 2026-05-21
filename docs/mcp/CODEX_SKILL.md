@@ -19,7 +19,7 @@ Register the MCP endpoint in Codex using the local HTTP URL printed by the serve
 3. Reviewing -> `review_context`, then ADR tools per returned group
 
 ## Fallback
-- On `unsupported_by_current_kg`, `ambiguous`, or `partial`, state what is unknown and use host read/grep tools
+- On `unsupported_by_current_kg` or `ambiguous`, state what is unknown and use host read/grep tools
 
 ## Output Rule
 - Cite returned evidence rows
