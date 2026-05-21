@@ -42,7 +42,7 @@ def main() -> None:
 
 def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
     class McpHandler(BaseHTTPRequestHandler):
-        server_version = "supercontext-local/0.1.0"
+        server_version = "bettercontext-local/0.1.0"
         sys_version = ""
 
         def version_string(self) -> str:
@@ -224,7 +224,7 @@ def _initialize_result(params: JsonObject) -> JsonObject:
     return {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {}},
-        "serverInfo": {"name": "supercontext-local", "version": "0.1.0"},
+        "serverInfo": {"name": "bettercontext-local", "version": "0.1.0"},
     }
 
 
