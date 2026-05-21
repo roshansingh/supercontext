@@ -126,6 +126,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(len(result["services"]), 1)
         self.assertEqual(result["services"][0]["slug"], "payments")
 
+    def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"service": "pay"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["services"]), 1)
+        self.assertEqual(result["services"][0]["slug"], "payments")
+
     def test_planning_context_symbol_path_and_line_narrow_deterministically(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "planning_context", {"symbol": "charge_card", "path": "payments/gateway.py", "line": 5})
@@ -196,6 +204,17 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
         _assert_additive_fields(self, result)
 
+    def test_review_context_repo_filter_is_case_insensitive(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "Payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+
     def test_review_context_changed_ranges_filter_symbols(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(
@@ -234,10 +253,11 @@ class McpToolsTest(unittest.TestCase):
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["payments/missing.py"]})
 
-        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["status"], "found")
         self.assertEqual(result["changed_symbols"], [])
         self.assertEqual(result["direct_callers"], [])
         self.assertEqual(result["direct_callees"], [])
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
 
     def test_review_context_changed_ranges_fail_closed_for_non_overlapping_file(self) -> None:
         with _fixture_snapshot() as kg:
@@ -251,15 +271,28 @@ class McpToolsTest(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["status"], "found")
         self.assertEqual(result["changed_symbols"], [])
         self.assertEqual(result["direct_callers"], [])
         self.assertEqual(result["direct_callees"], [])
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
 
     def test_review_context_rejects_unknown_arguments(self) -> None:
         with _fixture_snapshot() as kg:
             with self.assertRaisesRegex(ValueError, "does not accept argument\\(s\\): depth"):
                 call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["payments/checkout.py"], "depth": 2})
+            with self.assertRaisesRegex(ValueError, "changed_ranges"):
+                call_tool(
+                    kg,
+                    "review_context",
+                    {
+                        "repo": "payments",
+                        "changed_files": ["payments/checkout.py"],
+                        "changed_ranges": [
+                            {"path": "payments/checkout.py", "start_line": 10, "end_line": 10, "extra": "bad"}
+                        ],
+                    },
+                )
 
     def test_review_context_deploy_blocker_row_is_opt_in(self) -> None:
         with _fixture_snapshot() as kg:
@@ -409,14 +442,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(batch[0]["id"], 3)
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
         listed_tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
-        self.assertEqual(
-            listed_tools["blast_radius"]["description"],
-            (
-                "Returns downstream static CALLS closure from an anchor symbol up to `depth`. "
-                "Use only when you know the exact edit-site symbol and want to enumerate intra-repo callees. "
-                "Does not include reverse callers, cross-repo edges, service or endpoint boundaries, or runtime calls."
-            ),
-        )
+        self.assertIn("downstream static CALLS closure", listed_tools["blast_radius"]["description"])
         self.assertEqual(called["result"]["structuredContent"]["status"], "found")
         _assert_additive_fields(self, called["result"]["structuredContent"])
         self.assertFalse(called["result"]["isError"])

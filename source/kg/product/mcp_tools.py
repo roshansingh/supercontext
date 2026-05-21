@@ -339,6 +339,9 @@ def _optional_changed_ranges(arguments: JsonObject, field: str) -> list[JsonObje
     for item in value:
         if not isinstance(item, dict):
             raise ValueError(f"MCP tool argument {field!r} must be a list of changed-range objects")
+        unknown = sorted(set(item) - {"path", "start_line", "end_line"})
+        if unknown:
+            raise ValueError(f"MCP tool argument {field!r} range does not accept field(s): {', '.join(unknown)}")
         path = item.get("path")
         start_line = item.get("start_line")
         end_line = item.get("end_line")
@@ -628,13 +631,11 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     include_deploy_blockers = _optional_bool(arguments, "include_deploy_blockers", default=False)
 
     changed_symbols: list[JsonObject] = []
-    direct_callers: list[JsonObject] = []
-    direct_callees: list[JsonObject] = []
     range_filters = _changed_ranges_by_path(changed_ranges)
 
     for changed_file in changed_files:
         symbol_rows = list(kg.symbols_in_file(changed_file, limit=10_000).get("symbols", []))
-        symbol_rows = [row for row in symbol_rows if str(row.get("repo") or "") == repo]
+        symbol_rows = [row for row in symbol_rows if _normalize_repo_text(row.get("repo")) == _normalize_repo_text(repo)]
         normalized_changed_file = _planning_context_normalize_path(changed_file)
         if changed_ranges:
             file_ranges = range_filters.get(normalized_changed_file, [])
@@ -642,29 +643,32 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 symbol_rows = [row for row in symbol_rows if _review_context_symbol_overlaps_ranges(row, file_ranges)]
         for row in symbol_rows:
             changed_symbols.append(row)
-            symbol_name = str(row.get("qualified_name") or row.get("qualname") or "")
-            if not symbol_name:
-                continue
-            callers = kg.find_callers(
-                symbol_name,
-                limit=limit,
-                path=_optional_symbol_path(row),
-                line=_optional_symbol_line(row),
-                include_all=False,
-            )
-            callees = kg.find_callees(
-                symbol_name,
-                limit=limit,
-                path=_optional_symbol_path(row),
-                line=_optional_symbol_line(row),
-                include_all=False,
-            )
-            direct_callers.extend(callers.get("callers", []))
-            direct_callees.extend(callees.get("callees", []))
 
+    changed_symbols = _review_context_dedupe_rows(changed_symbols)[:limit]
+    direct_callers: list[JsonObject] = []
+    direct_callees: list[JsonObject] = []
+    for row in changed_symbols:
+        symbol_name = str(row.get("qualified_name") or row.get("qualname") or "")
+        if not symbol_name:
+            continue
+        callers = kg.find_callers(
+            symbol_name,
+            limit=limit,
+            path=_optional_symbol_path(row),
+            line=_optional_symbol_line(row),
+            include_all=False,
+        )
+        callees = kg.find_callees(
+            symbol_name,
+            limit=limit,
+            path=_optional_symbol_path(row),
+            line=_optional_symbol_line(row),
+            include_all=False,
+        )
+        direct_callers.extend(callers.get("callers", []))
+        direct_callees.extend(callees.get("callees", []))
     repo_dependency_result = kg.repo_dependencies(repo, limit=limit)
     repo_dependencies = list(repo_dependency_result.get("dependencies", []))
-    changed_symbols = _review_context_dedupe_rows(changed_symbols)[:limit]
     direct_callers = _review_context_dedupe_rows(direct_callers)[:limit]
     direct_callees = _review_context_dedupe_rows(direct_callees)[:limit]
     repo_dependencies = _review_context_dedupe_rows(repo_dependencies)[:limit]
@@ -679,7 +683,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             }
         )
 
-    status = "found" if any((changed_symbols, direct_callers, direct_callees)) else "not_found"
+    status = "found" if any((changed_symbols, direct_callers, direct_callees, repo_dependencies)) else "not_found"
     return {
         "status": status,
         "repo": repo,
@@ -836,10 +840,10 @@ def _planning_context_filter_rows(
 
 def _planning_context_service_row_matches(row: JsonObject, anchors: dict[str, str | None]) -> bool:
     service = anchors.get("service")
-    if service and not _planning_context_value_matches(service, row.get("slug"), row.get("repo"), row.get("namespace"), row.get("name")):
+    if service and service.strip().lower() not in _planning_context_service_row_search_text(row).lower():
         return False
     repo = anchors.get("repo")
-    if repo and str(row.get("repo") or "").strip().lower() != repo.strip().lower():
+    if repo and _normalize_repo_text(row.get("repo")) != _normalize_repo_text(repo):
         return False
     return True
 
@@ -859,7 +863,7 @@ def _planning_context_symbol_row_matches(
     ):
         return False
     repo = anchors.get("repo")
-    if repo and str(row.get("repo") or "").strip().lower() != repo.strip().lower():
+    if repo and _normalize_repo_text(row.get("repo")) != _normalize_repo_text(repo):
         return False
     path = anchors.get("path")
     if path and not _planning_context_path_matches(str(row.get("path") or ""), path):
@@ -919,6 +923,20 @@ def _planning_context_fact_matches_package(fact: JsonObject, subject: JsonObject
         _planning_context_entity_name(object_),
     )
     return any(value.strip().lower() == needle for value in candidates if value)
+
+
+def _normalize_repo_text(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _planning_context_service_row_search_text(row: JsonObject) -> str:
+    values = [
+        row.get("slug"),
+        row.get("repo"),
+        row.get("namespace"),
+        row.get("name"),
+    ]
+    return " ".join(str(value) for value in values if value is not None)
 
 
 def _planning_context_fact_matches_endpoint(subject: JsonObject, object_: JsonObject, endpoint: str) -> bool:
@@ -1194,15 +1212,6 @@ def _planning_context_repo_matches(kg: KgSnapshot, repo: str) -> dict[str, list[
         matches.setdefault(fact["subject_id"], []).append(
             {
                 **_planning_context_fact_result(kg, fact, package, target_repo),
-                "__repo_candidates": [
-                    str(qualifier.get("consumer_repo") or ""),
-                    str(package.get("identity", {}).get("repo") or ""),
-                    str(target_repo.get("identity", {}).get("name") or ""),
-                ],
-                "__package_candidates": [
-                    str(package.get("identity", {}).get("name") or ""),
-                    str(qualifier.get("package_name") or ""),
-                ],
             }
         )
     return matches
@@ -1219,19 +1228,9 @@ def _planning_context_package_matches(kg: KgSnapshot, package_name: str) -> dict
             continue
         if not kg.import_matches(fact, package, package_name):
             continue
-        qualifier = fact.get("qualifier", {})
         matches.setdefault(fact["object_id"], []).append(
             {
                 **_planning_context_fact_result(kg, fact, module, package),
-                "__repo_candidates": [
-                    str(module.get("identity", {}).get("repo") or ""),
-                    str(package.get("identity", {}).get("repo") or ""),
-                ],
-                "__package_candidates": [
-                    str(package.get("identity", {}).get("name") or ""),
-                    str(qualifier.get("distribution_name") or ""),
-                    str(qualifier.get("import_root") or ""),
-                ],
             }
         )
     return matches
@@ -1253,11 +1252,6 @@ def _planning_context_endpoint_matches(kg: KgSnapshot, path_query: str) -> dict[
         matches.setdefault(fact["object_id"], []).append(
             {
                 **_planning_context_fact_result(kg, fact, subject, endpoint),
-                "__repo_candidates": [
-                    str(endpoint.get("identity", {}).get("repo") or ""),
-                    str(subject.get("identity", {}).get("repo") or subject.get("properties", {}).get("repo") or ""),
-                ],
-                "__endpoint_path": path,
             }
         )
     return matches
@@ -1280,15 +1274,6 @@ def _planning_context_event_matches(kg: KgSnapshot, query: str) -> dict[str, lis
         matches.setdefault(fact["object_id"], []).append(
             {
                 **_planning_context_fact_result(kg, fact, subject, channel),
-                "__repo_candidates": [
-                    str(channel.get("identity", {}).get("repo") or ""),
-                    str(subject.get("identity", {}).get("repo") or subject.get("properties", {}).get("repo") or ""),
-                ],
-                "__event_candidates": [
-                    name,
-                    str(identity.get("name") or ""),
-                    _event_channel_search_text(channel),
-                ],
             }
         )
     return matches
@@ -1310,11 +1295,6 @@ def _planning_context_domain_matches(kg: KgSnapshot, query: str) -> dict[str, li
         matches.setdefault(fact["object_id"], []).append(
             {
                 **_planning_context_fact_result(kg, fact, subject, domain),
-                "__repo_candidates": [
-                    str(domain.get("identity", {}).get("repo") or ""),
-                    str(subject.get("identity", {}).get("repo") or subject.get("properties", {}).get("repo") or ""),
-                ],
-                "__domain_name": domain_name,
             }
         )
     return matches

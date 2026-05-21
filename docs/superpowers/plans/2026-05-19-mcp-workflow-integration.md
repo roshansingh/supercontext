@@ -1,8 +1,10 @@
 # MCP Workflow Integration Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add workflow-oriented MCP support for planning and review without widening the public primitive surface beyond the existing ADR tools plus `planning_context` and `review_context`.
+
+**As-built status:** Completed on PR #108. Checkboxes are marked complete to reflect the shipped implementation, and this plan is retained as an implementation reference rather than an active task list.
 
 **Architecture:** Keep the current MCP server shape and JSON-RPC flow intact. Extend `source/kg/product/mcp_tools.py` with additive metadata fields, clearer tool descriptions, and two new composition tools that only orchestrate existing `KgSnapshot` capabilities. Finish with host-facing docs that verify the current HTTP transport works end-to-end before any stdio work is considered.
 
@@ -33,9 +35,9 @@
 - Modify: `source/kg/product/mcp_tools.py`
 - Modify: `tests/test_mcp_tools.py`
 
-- [ ] **Step 1: Write the failing additive-field tests**
+- [x] **Step 1: Write the failing additive-field tests**
 
-Add a new extension-tools constant and one assertion helper near the top of [tests/test_mcp_tools.py](/Users/roshan/work/code/bettercontext/tests/test_mcp_tools.py:31):
+Add a new extension-tools constant and one assertion helper near the top of [tests/test_mcp_tools.py](tests/test_mcp_tools.py:31):
 
 ```python
 EXTENSION_TOOL_NAMES: tuple[str, ...] = ()
@@ -60,7 +62,7 @@ Then extend the existing response-shape tests so they assert the additive keys o
 - `get_event_producers`
 - `deploy_blockers_for`
 
-- [ ] **Step 2: Run the focused test file and confirm the new assertions fail**
+- [x] **Step 2: Run the focused test file and confirm the new assertions fail**
 
 Run:
 
@@ -72,9 +74,9 @@ Expected:
 - Existing tests still execute
 - New additive-field assertions fail because current payloads do not contain all three keys
 
-- [ ] **Step 3: Implement additive default-field injection in `call_tool`**
+- [x] **Step 3: Implement additive default-field injection in `call_tool`**
 
-Edit [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:42) so `call_tool()` normalizes every dict payload through a single helper:
+Edit [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:42) so `call_tool()` normalizes every dict payload through a single helper:
 
 ```python
 def _with_default_tool_metadata(payload: JsonObject) -> JsonObject:
@@ -100,7 +102,7 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
     }
 ```
 
-Also extend `_unsupported_by_current_kg()` in [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:189) so the refusal shape already includes the same three keys explicitly:
+Also extend `_unsupported_by_current_kg()` in [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:189) so the refusal shape already includes the same three keys explicitly:
 
 ```python
 def _unsupported_by_current_kg(tool: str, reason: str) -> JsonObject:
@@ -114,9 +116,9 @@ def _unsupported_by_current_kg(tool: str, reason: str) -> JsonObject:
     }
 ```
 
-- [ ] **Step 4: Rewrite the 8 tool descriptions in `_TOOLS`**
+- [x] **Step 4: Rewrite the 8 tool descriptions in `_TOOLS`**
 
-Update the descriptions in [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:359) to 2-3 sentence operational descriptions. Use this exact `blast_radius` description as the anchor pattern:
+Update the descriptions in [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:359) to 2-3 sentence operational descriptions. Use this exact `blast_radius` description as the anchor pattern:
 
 ```python
 "blast_radius": McpTool(
@@ -136,7 +138,7 @@ Update the descriptions in [source/kg/product/mcp_tools.py](/Users/roshan/work/c
 
 Apply the same pattern to the other 7 tools: when to call, what it returns, and what it does not cover.
 
-- [ ] **Step 5: Run tests and syntax validation**
+- [x] **Step 5: Run tests and syntax validation**
 
 Run:
 
@@ -149,7 +151,7 @@ Expected:
 - `tests.test_mcp_tools` passes
 - `compileall` prints no output
 
-- [ ] **Step 6: Commit PR1-sized changes**
+- [x] **Step 6: Commit PR1-sized changes**
 
 ```bash
 git add source/kg/product/mcp_tools.py tests/test_mcp_tools.py
@@ -164,9 +166,9 @@ git commit -m "Add MCP workflow metadata defaults"
 - Modify: `source/kg/product/mcp_tools.py`
 - Modify: `tests/test_mcp_tools.py`
 
-- [ ] **Step 1: Add failing `planning_context` schema and behavior tests**
+- [x] **Step 1: Add failing `planning_context` schema and behavior tests**
 
-Extend [tests/test_mcp_tools.py](/Users/roshan/work/code/bettercontext/tests/test_mcp_tools.py:31) with `EXTENSION_TOOL_NAMES = ("planning_context",)` and add a new test group covering:
+Extend [tests/test_mcp_tools.py](tests/test_mcp_tools.py:31) with `EXTENSION_TOOL_NAMES = ("planning_context",)` and add a new test group covering:
 - `tool_definitions()` includes `planning_context` after the 8 ADR names
 - `planning_context` with `{"symbol": "charge_card"}` returns `status == "found"`
 - `planning_context` with `{"query": "payments"}` returns `found` if exactly one resolver matches
@@ -195,7 +197,7 @@ def test_planning_context_ambiguous_and_empty_inputs_fail_closed(self) -> None:
             call_tool(kg, "planning_context", {})
 ```
 
-- [ ] **Step 2: Run the focused tests to confirm they fail**
+- [x] **Step 2: Run the focused tests to confirm they fail**
 
 Run:
 
@@ -207,15 +209,11 @@ python -m unittest tests.test_mcp_tools.McpToolsTest.test_planning_context_ambig
 Expected:
 - Both tests fail because `planning_context` is not registered yet
 
-- [ ] **Step 3: Add helper schemas and the new tool registration**
+- [x] **Step 3: Add helper schemas and the new tool registration**
 
-In [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:345), add the array/object schema helpers needed by `planning_context`:
+In [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:345), add the object schema helpers needed by `planning_context`:
 
 ```python
-def _string_array_schema(description: str) -> JsonObject:
-    return {"type": "array", "items": {"type": "string"}, "description": description}
-
-
 def _planning_context_properties() -> JsonObject:
     return {
         "query": _nullable_string_schema("Optional exact identifier query when no structured anchor is known."),
@@ -234,9 +232,9 @@ def _planning_context_properties() -> JsonObject:
 
 Then register `planning_context` in `_TOOLS` immediately after the ADR names.
 
-- [ ] **Step 4: Implement `_planning_context` with explicit no-input validation**
+- [x] **Step 4: Implement `_planning_context` with explicit no-input validation**
 
-Add a handler in [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:153) that:
+Add a handler in [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:153) that:
 - raises `ValueError("planning_context requires at least one of: query, repo, path, line, symbol, service, package, endpoint, event_channel, domain")` when all anchors are absent
 - uses `_matching_services()` for `service`
 - uses `kg.lookup_symbol()` for `symbol`
@@ -298,7 +296,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     raise ValueError("planning_context branch plan must be completed for every supported anchor type")
 ```
 
-- [ ] **Step 5: Add a small `_planning_context_output()` normalizer**
+- [x] **Step 5: Add a small `_planning_context_output()` normalizer**
 
 Return a bounded workflow response with this exact top-level shape:
 
@@ -331,7 +329,7 @@ Return a bounded workflow response with this exact top-level shape:
 
 Keep arrays capped by `limit`; keep `evidence` capped separately at 5.
 
-- [ ] **Step 6: Run tests plus JSON-RPC integration checks**
+- [x] **Step 6: Run tests plus JSON-RPC integration checks**
 
 Run:
 
@@ -344,7 +342,7 @@ Expected:
 - `planning_context` tests pass
 - Existing `tools/list` and `tools/call` JSON-RPC tests still pass
 
-- [ ] **Step 7: Commit PR2-sized changes**
+- [x] **Step 7: Commit PR2-sized changes**
 
 ```bash
 git add source/kg/product/mcp_tools.py tests/test_mcp_tools.py
@@ -359,9 +357,9 @@ git commit -m "Add planning context MCP tool"
 - Modify: `source/kg/product/mcp_tools.py`
 - Modify: `tests/test_mcp_tools.py`
 
-- [ ] **Step 1: Write failing `review_context` definition and behavior tests**
+- [x] **Step 1: Write failing `review_context` definition and behavior tests**
 
-Extend [tests/test_mcp_tools.py](/Users/roshan/work/code/bettercontext/tests/test_mcp_tools.py:31) so `EXTENSION_TOOL_NAMES` becomes:
+Extend [tests/test_mcp_tools.py](tests/test_mcp_tools.py:31) so `EXTENSION_TOOL_NAMES` becomes:
 
 ```python
 EXTENSION_TOOL_NAMES: tuple[str, ...] = ("planning_context", "review_context")
@@ -403,7 +401,7 @@ def test_review_context_deploy_blocker_row_is_opt_in(self) -> None:
     self.assertEqual(opted_in["unsupported_scopes"][0]["kind"], "deploy_blockers")
 ```
 
-- [ ] **Step 2: Run the new `review_context` tests and confirm they fail**
+- [x] **Step 2: Run the new `review_context` tests and confirm they fail**
 
 Run:
 
@@ -415,9 +413,9 @@ python -m unittest tests.test_mcp_tools.McpToolsTest.test_review_context_deploy_
 Expected:
 - Fail because `review_context` does not exist yet
 
-- [ ] **Step 3: Add array/object schema helpers for changed files and ranges**
+- [x] **Step 3: Add array/object schema helpers for changed files and ranges**
 
-In [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:324), add:
+In [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:324), add:
 
 ```python
 def _required_string_list(arguments: JsonObject, field: str) -> list[str]:
@@ -446,13 +444,12 @@ Then register `review_context` with:
 - required `repo`
 - required `changed_files`
 - optional `changed_ranges`
-- optional `depth`
 - optional `limit`
 - optional `include_deploy_blockers`
 
-- [ ] **Step 4: Implement `_review_context` using only existing snapshot methods**
+- [x] **Step 4: Implement `_review_context` using only existing snapshot methods**
 
-In [source/kg/product/mcp_tools.py](/Users/roshan/work/code/bettercontext/source/kg/product/mcp_tools.py:153), compose:
+In [source/kg/product/mcp_tools.py](source/kg/product/mcp_tools.py:153), compose:
 - `kg.symbols_in_file(path, limit)`
 - overlap filtering against `changed_ranges`
 - `kg.find_callers(symbol_name, limit=limit, include_all=False)`
@@ -487,7 +484,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     }
 ```
 
-- [ ] **Step 5: Implement the explicit deploy-blocker gate**
+- [x] **Step 5: Implement the explicit deploy-blocker gate**
 
 When `include_deploy_blockers` is `True`, append exactly:
 
@@ -499,9 +496,9 @@ When `include_deploy_blockers` is `True`, append exactly:
 }
 ```
 
-Do not emit this row by default. Do not infer deploy intent from `depth`.
+Do not emit this row by default. Do not infer deploy intent from changed files alone.
 
-- [ ] **Step 6: Run full tests and MCP JSON-RPC checks**
+- [x] **Step 6: Run full tests and MCP JSON-RPC checks**
 
 Run:
 
@@ -514,7 +511,7 @@ Expected:
 - All unit tests pass
 - Existing JSON-RPC wrapper tests continue to pass with the two extension tools present
 
-- [ ] **Step 7: Commit PR3-sized changes**
+- [x] **Step 7: Commit PR3-sized changes**
 
 ```bash
 git add source/kg/product/mcp_tools.py tests/test_mcp_tools.py
@@ -529,9 +526,9 @@ git commit -m "Add review context MCP tool"
 - Create: `docs/mcp/CLAUDE_CODE_SKILL.md`
 - Create: `docs/mcp/CODEX_SKILL.md`
 
-- [ ] **Step 1: Create the Claude Code wrapper doc**
+- [x] **Step 1: Create the Claude Code wrapper doc**
 
-Create [docs/mcp/CLAUDE_CODE_SKILL.md](/Users/roshan/work/code/bettercontext/docs/mcp/CLAUDE_CODE_SKILL.md) with:
+Create [docs/mcp/CLAUDE_CODE_SKILL.md](docs/mcp/CLAUDE_CODE_SKILL.md) with:
 - one paragraph showing the local server command
 - a short “register this MCP” instruction block
 - concise workflow rules below it
@@ -551,9 +548,9 @@ python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 Register the MCP endpoint in Claude Code using the local HTTP URL printed by the server, then follow the workflow rules below.
 ````
 
-- [ ] **Step 2: Create the Codex wrapper doc**
+- [x] **Step 2: Create the Codex wrapper doc**
 
-Create [docs/mcp/CODEX_SKILL.md](/Users/roshan/work/code/bettercontext/docs/mcp/CODEX_SKILL.md) with the same concise workflow rules but Codex-specific registration wording:
+Create [docs/mcp/CODEX_SKILL.md](docs/mcp/CODEX_SKILL.md) with the same concise workflow rules but Codex-specific registration wording:
 
 ````md
 # Codex Bettercontext Skill
@@ -568,7 +565,7 @@ python -m source.scripts.mcp_server --snapshot data/kg_runs/<snapshot-name>
 Register the MCP endpoint in Codex using the local HTTP URL printed by the server, then follow the workflow rules below.
 ````
 
-- [ ] **Step 3: Verify the repo still passes local checks after doc creation**
+- [x] **Step 3: Verify the repo still passes local checks after doc creation**
 
 Run:
 
@@ -581,7 +578,7 @@ Expected:
 - `compileall` prints no output
 - full test suite passes
 
-- [ ] **Step 4: Execute the HTTP verification gate before merge**
+- [x] **Step 4: Execute the HTTP verification gate before merge**
 
 Run the local server in one terminal:
 
@@ -605,9 +602,9 @@ Record pass/fail evidence in the PR description. Use this checklist in the PR bo
 - Codex `planning_context`: PASS/FAIL
 ```
 
-If any item fails because the host cannot use the HTTP server reliably, stop and open follow-up work for `--stdio` by reusing `_handle_json_rpc_payload()` in [source/scripts/mcp_server.py](/Users/roshan/work/code/bettercontext/source/scripts/mcp_server.py:183). Do not merge PR4 until that transport gap is resolved or explicitly re-scoped.
+If any item fails because the host cannot use the HTTP server reliably, stop and open follow-up work for `--stdio` by reusing `_handle_json_rpc_payload()` in [source/scripts/mcp_server.py](source/scripts/mcp_server.py:183). Do not merge PR4 until that transport gap is resolved or explicitly re-scoped.
 
-- [ ] **Step 5: Commit PR4-sized docs**
+- [x] **Step 5: Commit PR4-sized docs**
 
 ```bash
 git add docs/mcp/CLAUDE_CODE_SKILL.md docs/mcp/CODEX_SKILL.md
