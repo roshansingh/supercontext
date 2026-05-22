@@ -22,23 +22,45 @@ class RegistrationCommand:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Register the local Bettercontext MCP server with host agents.")
+    parser = argparse.ArgumentParser(
+        description="Register the local Bettercontext MCP server with host agents."
+    )
     parser.add_argument(
         "--agent",
         choices=[*SUPPORTED_AGENTS, "both"],
         default="both",
         help="Register Codex, Claude Code, or both. Defaults to both.",
     )
-    parser.add_argument("--name", default=DEFAULT_MCP_NAME, help=f"MCP server name. Defaults to {DEFAULT_MCP_NAME}.")
-    parser.add_argument("--url", default=DEFAULT_MCP_URL, help=f"MCP server URL. Defaults to {DEFAULT_MCP_URL}.")
+    parser.add_argument(
+        "--name",
+        default=DEFAULT_MCP_NAME,
+        help=f"MCP server name. Defaults to {DEFAULT_MCP_NAME}.",
+    )
+    parser.add_argument(
+        "--url",
+        default=DEFAULT_MCP_URL,
+        help=f"MCP server URL. Defaults to {DEFAULT_MCP_URL}.",
+    )
     parser.add_argument(
         "--on-error",
         choices=["warn", "error"],
         default="warn",
-        help="Warn or error when a host CLI is missing or registration fails. Defaults to warn.",
+        help=(
+            "Warn or error when a host CLI is missing or registration fails. "
+            "Defaults to warn."
+        ),
     )
-    parser.add_argument("--missing", choices=["warn", "error"], dest="on_error", help=argparse.SUPPRESS)
-    parser.add_argument("--dry-run", action="store_true", help="Print registration commands without running them.")
+    parser.add_argument(
+        "--missing",
+        choices=["warn", "error"],
+        dest="on_error",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print registration commands without running them.",
+    )
     args = parser.parse_args()
 
     if not args.name.strip():
@@ -51,27 +73,50 @@ def main() -> None:
     agents = SUPPORTED_AGENTS if args.agent == "both" else (args.agent,)
     for agent in agents:
         command = _registration_command(agent, name=args.name, url=args.url)
-        executable_path = shutil.which(command.executable)
-        if executable_path is None:
-            message = f"{command.executable!r} CLI not found; skipped {agent} MCP registration"
+        if shutil.which(command.executable) is None:
+            message = (
+                f"{command.executable!r} CLI not found; skipped {agent} "
+                "MCP registration"
+            )
             if args.on_error == "error":
                 parser.error(message)
             print(f"warning: {message}")
             continue
 
         if args.dry_run:
-            print(f"would remove existing {agent} MCP registration: {_join(command.remove_command)}")
+            print(
+                f"would remove existing {agent} MCP registration: "
+                f"{_join(command.remove_command)}"
+            )
             print(f"would add {agent} MCP registration: {_join(command.add_command)}")
             continue
 
-        subprocess.run(command.remove_command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(
+                command.remove_command,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            _handle_registration_failure(
+                parser,
+                args.on_error,
+                agent,
+                command.remove_command,
+                exc,
+            )
+            continue
         try:
             subprocess.run(command.add_command, check=True)
-        except subprocess.CalledProcessError as exc:
-            message = f"{agent} MCP registration failed with exit code {exc.returncode}: {_join(command.add_command)}"
-            if args.on_error == "error":
-                parser.error(message)
-            print(f"warning: {message}")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            _handle_registration_failure(
+                parser,
+                args.on_error,
+                agent,
+                command.add_command,
+                exc,
+            )
             continue
         print(f"registered {agent} MCP server {args.name!r}: {args.url}")
 
@@ -89,13 +134,40 @@ def _registration_command(agent: str, *, name: str, url: str) -> RegistrationCom
             agent=agent,
             executable="claude",
             remove_command=("claude", "mcp", "remove", "--scope", "user", name),
-            add_command=("claude", "mcp", "add", "--scope", "user", "--transport", "http", name, url),
+            add_command=(
+                "claude",
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "--transport",
+                "http",
+                name,
+                url,
+            ),
         )
     raise ValueError(f"Unsupported agent: {agent}")
 
 
 def _join(command: tuple[str, ...]) -> str:
     return shlex.join(command)
+
+
+def _handle_registration_failure(
+    parser: argparse.ArgumentParser,
+    on_error: str,
+    agent: str,
+    command: tuple[str, ...],
+    exc: OSError | subprocess.CalledProcessError,
+) -> None:
+    if isinstance(exc, subprocess.CalledProcessError):
+        detail = f"exit code {exc.returncode}"
+    else:
+        detail = str(exc)
+    message = f"{agent} MCP registration failed ({detail}): {_join(command)}"
+    if on_error == "error":
+        parser.error(message)
+    print(f"warning: {message}")
 
 
 def _is_http_url(value: str) -> bool:
