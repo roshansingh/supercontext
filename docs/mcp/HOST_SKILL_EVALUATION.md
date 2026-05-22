@@ -4,7 +4,7 @@ Use this checklist to evaluate whether Codex and Claude Code actually use the in
 
 ## Setup
 
-1. Install Bettercontext and global host-agent skills once per machine.
+1. Install Bettercontext, default MCP host registration, and global host-agent skills once per machine.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
@@ -23,7 +23,11 @@ bettercontext-init
 bettercontext-init --serve
 ```
 
-4. Register the printed `/mcp` URL in the host.
+4. If host registration was skipped because the Codex or Claude Code CLI was not available during install, register it after installing that host CLI.
+
+```bash
+bettercontext-register-mcp --agent both
+```
 
 Use project-local skill install only when testing repo-pinned skill behavior:
 

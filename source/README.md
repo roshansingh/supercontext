@@ -159,6 +159,12 @@ Recommended install model: install host-agent skills globally once, then build a
 bettercontext-install-mcp-skills --scope global --agent both
 ```
 
+Global MCP registration points Codex and Claude Code at the default local endpoint:
+
+```bash
+bettercontext-register-mcp --agent both
+```
+
 Project-local skill install is available when a team wants repo-pinned host instructions:
 
 ```bash
@@ -167,13 +173,13 @@ bettercontext-install-mcp-skills --scope project --project <target-project> --ag
 
 The installer copies only the installable `bettercontext-mcp` skill templates. It does not copy this repository's project-maintenance skills.
 
-The one-line machine install path installs the package and global skills:
+The one-line machine install path installs the package, global skills, and default host MCP registration:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
 ```
 
-Then run `bettercontext-init` inside each target repo to build `.bettercontext/kg`. Use `bettercontext-init --serve` to build the snapshot and start the local MCP server in one foreground command.
+Then run `bettercontext-init` inside each target repo to build `.bettercontext/kg`. Use `bettercontext-init --serve` to build the snapshot and start the local MCP server in one foreground command. Registration is global, but the active server and KG remain repo-local.
 
 Example:
 

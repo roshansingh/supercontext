@@ -82,13 +82,14 @@ PR #108 moved the local MCP implementation from a primitive query surface toward
 - `review_context` is the intended first call for code review when the agent knows the changed repo plus changed files or changed line ranges. It currently composes changed symbols, direct callers, direct callees, and repo dependency links.
 - `source/kg/product/mcp_skill_templates/{codex,claude}/bettercontext-mcp/SKILL.md` are the installable Codex and Claude Code skill templates for planning, coding, and review flows.
 - `source/scripts/install_mcp_skills.py` installs only those explicit `bettercontext-mcp` host skill templates into project-local or global Codex/Claude Code skill directories. It intentionally does not copy this repository's project-maintenance skills.
-- `install.sh` is the one-line machine installer. It installs the Bettercontext package and global host-agent MCP skills.
+- `source/scripts/register_mcp.py` registers the default local MCP endpoint (`http://127.0.0.1:3845/mcp`) with Codex and Claude Code using their host CLIs when available.
+- `install.sh` is the one-line machine installer. It installs the Bettercontext package, global host-agent MCP skills, and default host MCP registration.
 - `bettercontext-init` is the per-repo setup command. It builds the repo-local KG snapshot at `.bettercontext/kg` by default, and `bettercontext-init --serve` builds that snapshot and starts the local MCP server in the foreground.
 - `AGENTS.md` and `CLAUDE.md` now direct agents to use `INDEX.md` as the canonical annotated project map before opening broad documentation sets.
 
 Recommended development install model:
 
-- Install host-agent skills globally once per user machine because the instructions are reusable across projects.
+- Install host-agent skills and MCP registration globally once per user machine because the instructions and default local endpoint are reusable across projects.
 - Build KG snapshots locally per repository because facts, paths, commit evidence, coverage, and freshness are repo-specific. The default project artifact is `.bettercontext/kg`.
 - Do not make a global KG the default. A global graph is only appropriate later behind an explicit multi-repo workspace/fleet registry with freshness and identity controls.
 - Keep project-local skill installation available for teams that want repo-pinned skill behavior, but do not require it for normal use.
@@ -101,7 +102,7 @@ Current usability assessment:
 
 Remaining gaps from the review:
 
-- Skill support now has an installer for explicit global or project-local `bettercontext-mcp` skill files, but host behavior still needs real-world evaluation. Claude Code and Codex users still need a registered MCP endpoint, and we need to measure whether the installed skills reliably cause agents to call Bettercontext at planning, coding, and review time.
+- Skill support now has an installer for explicit global or project-local `bettercontext-mcp` skill files, and `bettercontext-register-mcp` can register the default local MCP endpoint with Codex and Claude Code. Host behavior still needs real-world evaluation: we need to measure whether installed skills and registered MCP tools reliably cause agents to call Bettercontext at planning, coding, and review time.
 - The local server is not production/host-compat ready. Auth, streamable HTTP, resource auto-attach, real-host compatibility testing, and hosted/self-hosted deployment behavior remain open.
 - `coverage_warnings` and `unsupported_scopes` are structurally present in tool outputs, but most successful paths return empty coverage metadata. Agents still cannot reliably distinguish "the graph found no risk" from "the graph lacks coverage for this risk family."
 - `deploy_blockers_for` remains an honest refusal surface until canonical deploy-blocker facts exist.
