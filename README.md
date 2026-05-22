@@ -14,7 +14,7 @@ License: TBD before public OSS release.
 
 ## Quickstart
 
-Install the CLI and global Codex/Claude Code MCP skills:
+Install the CLI, register the default local MCP endpoint with available host agents, and install global Codex/Claude Code MCP skills:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
@@ -32,7 +32,13 @@ For an active local MCP server in that repo:
 bettercontext-init --serve
 ```
 
-The install step is global because the host-agent skills are reusable. The KG snapshot is local to each repo by default at `.bettercontext/kg`.
+The install step is global because MCP registration and host-agent skills are reusable. The KG snapshot is local to each repo by default at `.bettercontext/kg`.
+
+If you need to register the local MCP endpoint manually:
+
+```bash
+bettercontext-register-mcp --agent both
+```
 
 Local editable development:
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — Install Bettercontext CLI and global host-agent MCP skills.
+# install.sh — Install Bettercontext CLI, host MCP registration, and global host-agent MCP skills.
 #
 # Usage:
 #   ./install.sh
@@ -14,7 +14,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-install.sh — Install Bettercontext CLI and global host-agent MCP skills.
+install.sh — Install Bettercontext CLI, host MCP registration, and global host-agent MCP skills.
 
 Usage:
   ./install.sh
@@ -124,6 +124,10 @@ fi
 echo ""
 echo "Installing global Bettercontext MCP skills..."
 "$INSTALL_PYTHON" -P -m source.scripts.install_mcp_skills --scope global --agent "$TARGET_AGENT"
+
+echo ""
+echo "Registering local Bettercontext MCP endpoint with host agents..."
+"$INSTALL_PYTHON" -P -m source.scripts.register_mcp --agent "$TARGET_AGENT" --on-error warn
 
 echo ""
 echo "Done."
