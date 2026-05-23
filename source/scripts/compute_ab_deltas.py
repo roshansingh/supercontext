@@ -146,7 +146,7 @@ def _list(trace: dict[str, Any], key: str) -> list[Any]:
 def _number_delta(off_value: Any, on_value: Any) -> float | int | None:
     if isinstance(off_value, bool) or isinstance(on_value, bool):
         return None
-    if isinstance(off_value, int | float) and isinstance(on_value, int | float):
+    if isinstance(off_value, (int, float)) and isinstance(on_value, (int, float)):
         return off_value - on_value
     return None
 
