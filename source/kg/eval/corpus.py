@@ -32,6 +32,7 @@ class EvalTask:
     row: CorpusRow
     phase: str
     note: str = ""
+    fixture_input: str = ""
 
     @property
     def task_id(self) -> str:
@@ -109,6 +110,7 @@ def default_v1_tasks(
         task_id = _required_string(manifest_row, "id", row_number=index)
         phase = _required_string(manifest_row, "phase", row_number=index)
         note = _optional_string(manifest_row, "note", row_number=index)
+        fixture_input = _optional_string(manifest_row, "fixture_input", row_number=index)
         if not _is_task_id(task_id):
             raise ValueError(f"default-v1 row {index} has invalid task ID: {task_id!r}")
         if task_id in seen:
@@ -118,7 +120,7 @@ def default_v1_tasks(
         if task_id not in rows_by_id:
             raise ValueError(f"default-v1 task {task_id} does not exist in query set")
         seen.add(task_id)
-        tasks.append(EvalTask(row=rows_by_id[task_id], phase=phase, note=note))
+        tasks.append(EvalTask(row=rows_by_id[task_id], phase=phase, note=note, fixture_input=fixture_input))
 
     _validate_default_distribution(tasks)
     return tasks

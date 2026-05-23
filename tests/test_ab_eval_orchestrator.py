@@ -14,6 +14,7 @@ from source.kg.eval.runner import (
     _mcp_tool_observations,
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
+    _task_prompt,
 )
 from source.scripts.run_ab_eval import (
     _parse_arms,
@@ -515,6 +516,29 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
     def test_eval_runner_does_not_force_bare_claude_mode(self) -> None:
         self.assertNotIn("bare", _claude_extra_args())
+
+    def test_task_prompt_includes_manifest_fixture_input(self) -> None:
+        task = EvalTask(
+            row=CorpusRow(
+                task_id="Q037",
+                difficulty="Hard",
+                tool_surface="blast_radius",
+                persona="reviewer",
+                fixture="PR input shape",
+                user_question="Given this PR, compute blast radius.",
+                expected_answer_shape="blast radius",
+                capabilities="diff parsing",
+            ),
+            phase="review",
+            fixture_input='PR input:\n{"repo": "backend_api", "changed_files": ["api/auth/routes.py", "api/accounts/views.py"]}',
+        )
+
+        prompt = _task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+
+        self.assertIn("Fixture input:", prompt)
+        self.assertIn('"repo": "backend_api"', prompt)
+        self.assertIn('"changed_files": ["api/auth/routes.py", "api/accounts/views.py"]', prompt)
+        self.assertLess(prompt.index("Fixture input:"), prompt.index("User question:"))
 
 
 def _task() -> EvalTask:
