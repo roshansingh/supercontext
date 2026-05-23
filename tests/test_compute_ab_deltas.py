@@ -13,7 +13,7 @@ class ComputeAbDeltasTest(unittest.TestCase):
             [
                 _trace(
                     "mcp_on",
-                    mcp_tools=["mcp__bettercontext__find_callers"],
+                    mcp_tools=["mcp__supercontext__find_callers"],
                     mcp_success_count=1,
                     non_mcp_tools=["Read"],
                     cost=0.03,
@@ -41,7 +41,7 @@ class ComputeAbDeltasTest(unittest.TestCase):
     def test_missing_cost_stays_unavailable_without_zero_default(self) -> None:
         rows = compute_deltas(
             [
-                _trace("mcp_on", mcp_tools=["mcp__bettercontext__find_callers"], non_mcp_tools=[], cost=None),
+                _trace("mcp_on", mcp_tools=["mcp__supercontext__find_callers"], non_mcp_tools=[], cost=None),
                 _trace("mcp_off", mcp_tools=[], non_mcp_tools=["Read"], cost=0.05),
             ]
         )
@@ -68,12 +68,12 @@ class ComputeAbDeltasTest(unittest.TestCase):
         self.assertEqual(compute_deltas([_trace("mcp_on")], allow_unpaired=True), [])
 
     def test_mcp_on_permission_denials_fail_closed(self) -> None:
-        with self.assertRaisesRegex(ValueError, "BetterContext MCP denials=1"):
+        with self.assertRaisesRegex(ValueError, "SuperContext MCP denials=1"):
             compute_deltas(
                 [
                     _trace(
                         "mcp_on",
-                        mcp_tools=["mcp__bettercontext__find_callers"],
+                        mcp_tools=["mcp__supercontext__find_callers"],
                         mcp_denial_count=1,
                     ),
                     _trace("mcp_off"),
@@ -85,7 +85,7 @@ class ComputeAbDeltasTest(unittest.TestCase):
             [
                 _trace(
                     "mcp_on",
-                    mcp_tools=["mcp__bettercontext__find_callers"],
+                    mcp_tools=["mcp__supercontext__find_callers"],
                     mcp_denial_count=1,
                 ),
                 _trace("mcp_off"),
@@ -96,12 +96,12 @@ class ComputeAbDeltasTest(unittest.TestCase):
         self.assertEqual(rows[0]["on"]["mcp_tool_denial_count"], 1)
 
     def test_mcp_on_tool_errors_fail_closed(self) -> None:
-        with self.assertRaisesRegex(ValueError, "BetterContext MCP denials=0 errors=1"):
+        with self.assertRaisesRegex(ValueError, "SuperContext MCP denials=0 errors=1"):
             compute_deltas(
                 [
                     _trace(
                         "mcp_on",
-                        mcp_tools=["mcp__bettercontext__review_context"],
+                        mcp_tools=["mcp__supercontext__review_context"],
                         mcp_error_count=1,
                     ),
                     _trace("mcp_off"),

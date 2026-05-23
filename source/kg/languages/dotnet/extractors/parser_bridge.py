@@ -28,7 +28,7 @@ def _parse_dotnet_repo_uncached(repo: RepoSnapshot) -> dict[str, JsonObject]:
         raise RuntimeError(
             "dotnet parser bridge requires tree-sitter and tree-sitter-c-sharp; "
             "install the optional dotnet extra with `pip install -e '.[dotnet]'` "
-            "for local development or `pip install 'bettercontext[dotnet]'` for packaged installs"
+            "for local development or `pip install 'supercontext[dotnet]'` for packaged installs"
         ) from exc
 
     language = tree_sitter.Language(tscs.language())

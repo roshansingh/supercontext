@@ -1,1 +1,1 @@
-"""Command-line entry points for BetterContext."""
+"""Command-line entry points for SuperContext."""

@@ -1,6 +1,6 @@
 ---
 name: coverage-report
-description: Use when the user asks to run, summarize, compare, or standardize BetterContext KG coverage metrics for one repo or a fleet. Builds or uses a snapshot, runs coverage metrics, generates coverage-run.json and coverage-run.md via the repo CLI, and summarizes the highest-value KG coverage gaps without hand-editing numbers.
+description: Use when the user asks to run, summarize, compare, or standardize SuperContext KG coverage metrics for one repo or a fleet. Builds or uses a snapshot, runs coverage metrics, generates coverage-run.json and coverage-run.md via the repo CLI, and summarizes the highest-value KG coverage gaps without hand-editing numbers.
 ---
 
 # Coverage Report

@@ -171,7 +171,7 @@ async def async_run_single_task(
     tokens_in, tokens_out = _usage_tokens(serialized_messages)
     mcp_tools, non_mcp_tools = _tool_calls(serialized_messages)
     tool_attempts = _tool_attempts(serialized_messages)
-    non_mcp_tool_attempts = [name for name in tool_attempts if not name.startswith("mcp__bettercontext__")]
+    non_mcp_tool_attempts = [name for name in tool_attempts if not name.startswith("mcp__supercontext__")]
     mcp_observations = _mcp_tool_observations(serialized_messages)
     if arm == "mcp_on":
         _raise_for_mcp_tool_failures(mcp_observations)
@@ -214,7 +214,7 @@ async def async_run_single_task(
 
 def _system_prompt() -> str:
     return (
-        "You are evaluating a BetterContext MCP-enabled coding agent workflow. "
+        "You are evaluating a SuperContext MCP-enabled coding agent workflow. "
         "Answer the task using ordinary safe source-inspection tools when needed. "
         "Do not edit files. Cite file paths, symbols, or evidence when available."
     )
@@ -223,13 +223,13 @@ def _system_prompt() -> str:
 def _mcp_servers(arm: Arm, config: RunnerConfig) -> dict[str, dict[str, str]]:
     if arm == "mcp_off":
         return {}
-    return {"bettercontext": {"type": "http", "url": config.mcp_url}}
+    return {"supercontext": {"type": "http", "url": config.mcp_url}}
 
 
 def _allowed_tools(arm: Arm) -> list[str]:
     tools = list(EVAL_ALLOWED_ORDINARY_TOOLS)
     if arm == "mcp_on":
-        tools.extend(f"mcp__bettercontext__{tool['name']}" for tool in tool_definitions())
+        tools.extend(f"mcp__supercontext__{tool['name']}" for tool in tool_definitions())
     return tools
 
 
@@ -247,7 +247,7 @@ def _prepare_arm_output_dir(output_dir: Path, *, group_id: str, arm: Arm) -> Pat
 
 def _task_prompt(task: EvalTask, *, snapshot_path: Path, arm: Arm) -> str:
     fixture_input = f"Fixture input:\n{task.fixture_input}\n" if task.fixture_input else ""
-    return f"""Run this BetterContext A/B evaluation task.
+    return f"""Run this SuperContext A/B evaluation task.
 
 Task ID: {task.task_id}
 Difficulty: {task.difficulty}
@@ -266,8 +266,8 @@ Expected answer shape:
 Rules:
 - Do not modify files.
 - Use the same ordinary source-inspection behavior you would use for a real coding task.
-- If BetterContext MCP tools are available, use them when they are relevant to the question.
-- If BetterContext cannot prove a fact, say what is unknown rather than guessing.
+- If SuperContext MCP tools are available, use them when they are relevant to the question.
+- If SuperContext cannot prove a fact, say what is unknown rather than guessing.
 """
 
 
@@ -306,10 +306,10 @@ def _raise_for_mcp_tool_failures(observations: dict[str, list[str]]) -> None:
     errors = observations["errors"]
     if denials:
         names = ", ".join(sorted(set(denials)))
-        raise RuntimeError(f"Claude host denied BetterContext MCP tool permission(s): {names}")
+        raise RuntimeError(f"Claude host denied SuperContext MCP tool permission(s): {names}")
     if errors:
         names = ", ".join(sorted(set(errors)))
-        raise RuntimeError(f"Claude host returned BetterContext MCP tool error(s): {names}")
+        raise RuntimeError(f"Claude host returned SuperContext MCP tool error(s): {names}")
 
 
 def _jsonable(value: object, *, depth: int = 0) -> Any:
@@ -372,9 +372,9 @@ def _sum_int_keys_inner(value: Any, keys: set[str]) -> tuple[bool, int]:
 
 def _tool_calls(messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     names = sorted(set(_tool_names(messages)))
-    # The eval harness only attaches the BetterContext MCP server. Keep this
+    # The eval harness only attaches the SuperContext MCP server. Keep this
     # scope aligned with _mcp_tool_observations so aggregate tool counts match.
-    mcp = [name for name in names if name.startswith("mcp__bettercontext__")]
+    mcp = [name for name in names if name.startswith("mcp__supercontext__")]
     non_mcp = [name for name in names if name not in mcp]
     return mcp, non_mcp
 
@@ -411,7 +411,7 @@ def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str
             if (
                 isinstance(tool_id, str)
                 and isinstance(name, str)
-                and name.startswith("mcp__bettercontext__")
+                and name.startswith("mcp__supercontext__")
             ):
                 permission_denials_by_id[tool_id] = name
 
@@ -419,7 +419,7 @@ def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str
         for block in _content_blocks(message):
             tool_id = block.get("id")
             name = block.get("name")
-            if isinstance(tool_id, str) and isinstance(name, str) and name.startswith("mcp__bettercontext__"):
+            if isinstance(tool_id, str) and isinstance(name, str) and name.startswith("mcp__supercontext__"):
                 tool_use_names[tool_id] = name
                 attempts.append(name)
 

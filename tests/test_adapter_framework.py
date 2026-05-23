@@ -290,7 +290,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertNotIn("flask", rendered)
 
     def test_repo_snapshot_hash_and_equality_use_stable_identity(self) -> None:
-        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        root = Path("/tmp/supercontext-adapter-framework-repo")
         left = RepoSnapshot(
             root=root,
             name="repo",
@@ -310,7 +310,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(hash(left), hash(right))
 
     def test_repo_snapshot_files_by_language_is_read_only(self) -> None:
-        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        root = Path("/tmp/supercontext-adapter-framework-repo")
         repo = RepoSnapshot(
             root=root,
             name="repo",
@@ -323,7 +323,7 @@ class AdapterFrameworkTest(unittest.TestCase):
             repo.files_by_language["python"] = ()
 
     def test_repo_snapshot_requires_files_by_language(self) -> None:
-        root = Path("/tmp/bettercontext-adapter-framework-repo")
+        root = Path("/tmp/supercontext-adapter-framework-repo")
 
         with self.assertRaises(TypeError):
             RepoSnapshot(
@@ -830,7 +830,7 @@ def _discover_temp_file_formats(format_modules: dict[str, str]):
 
 
 def _repo(python_paths: tuple[Path, ...] | None = None, typescript_paths: tuple[Path, ...] = ()) -> RepoSnapshot:
-    root = Path("/tmp/bettercontext-adapter-framework-repo")
+    root = Path("/tmp/supercontext-adapter-framework-repo")
     return RepoSnapshot(
         root=root,
         name="repo",

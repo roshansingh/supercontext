@@ -1,4 +1,4 @@
-# BetterContext A/B Report - default-v1-2026-05-23 - 2026-05-23
+# SuperContext A/B Report - default-v1-2026-05-23 - 2026-05-23
 
 Delta orientation: `off_minus_on`. Positive tool/token/cost values mean `mcp_on` used less than `mcp_off`; negative values mean `mcp_on` used more.
 

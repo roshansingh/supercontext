@@ -10,15 +10,15 @@ from source.kg.build.pipeline import build_kg
 from source.scripts.mcp_host import format_host_for_url, is_loopback_host
 
 
-DEFAULT_SNAPSHOT_DIR = ".bettercontext/kg"
+DEFAULT_SNAPSHOT_DIR = ".supercontext/kg"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Initialize Bettercontext for a local repository.")
+    parser = argparse.ArgumentParser(description="Initialize SuperContext for a local repository.")
     parser.add_argument("--repo", default=".", help="Repository to index. Defaults to the current directory.")
     parser.add_argument(
         "--out",
-        help="Snapshot output directory. Defaults to <repo>/.bettercontext/kg.",
+        help="Snapshot output directory. Defaults to <repo>/.supercontext/kg.",
     )
     parser.add_argument(
         "--tenant",
@@ -43,7 +43,7 @@ def main() -> None:
     out = Path(args.out).expanduser().resolve() if args.out else repo / DEFAULT_SNAPSHOT_DIR
     manifest = build_kg(repo, out, strict_extractors=args.strict_extractors, tenant_id=args.tenant)
 
-    print(f"Bettercontext KG built: {out}")
+    print(f"SuperContext KG built: {out}")
     print(f"Repo: {manifest.get('repo_path', repo)}")
     server_command = _mcp_server_command(out, args.host, args.port)
     print("")
@@ -51,11 +51,11 @@ def main() -> None:
     print(f"  {shlex.join(server_command)}")
     print("")
     print("Install global host skills once per machine:")
-    print("  bettercontext-install-mcp-skills --scope global --agent both")
+    print("  supercontext-install-mcp-skills --scope global --agent both")
 
     if args.serve:
         print("")
-        print(f"Starting Bettercontext MCP server on http://{format_host_for_url(args.host)}:{args.port}/mcp")
+        print(f"Starting SuperContext MCP server on http://{format_host_for_url(args.host)}:{args.port}/mcp")
         subprocess.run(server_command, check=True)
 
 

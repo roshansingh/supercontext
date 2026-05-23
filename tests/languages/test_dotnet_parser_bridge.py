@@ -26,7 +26,7 @@ DOTNET_AVAILABLE = _dotnet_dependencies_available()
 class DotnetParserBridgeDependencyTest(unittest.TestCase):
     def test_missing_dependency_error_mentions_dotnet_extra(self) -> None:
         repo = RepoSnapshot(
-            root=Path("/tmp/bettercontext-dotnet-missing-deps"),
+            root=Path("/tmp/supercontext-dotnet-missing-deps"),
             name="repo",
             owner="test",
             commit_sha="sha",
@@ -45,7 +45,7 @@ class DotnetParserBridgeDependencyTest(unittest.TestCase):
                 _parse_dotnet_repo_uncached(repo)
         message = str(raised.exception)
         self.assertIn("pip install -e", message)
-        self.assertIn("bettercontext[dotnet]", message)
+        self.assertIn("supercontext[dotnet]", message)
 
 
 @unittest.skipIf(not DOTNET_AVAILABLE, "tree-sitter and tree-sitter-c-sharp not installed; install with pip install -e '.[dotnet]'")

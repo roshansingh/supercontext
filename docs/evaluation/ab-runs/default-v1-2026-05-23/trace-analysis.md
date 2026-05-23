@@ -2,9 +2,9 @@
 
 ## Current Validation Status
 
-This run completed the `default-v1-2026-05-23` A/B measurement: 18 paired tasks, 36 Claude Code host runs, local BetterContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
+This run completed the `default-v1-2026-05-23` A/B measurement: 18 paired tasks, 36 Claude Code host runs, local SuperContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
 
-The product signal is not ready to claim BetterContext improves agent outcomes by default. Quality comes first: the judge preferred `mcp_off` on 11 tasks, `mcp_on` on 3 tasks, and marked 4 ties.
+The product signal is not ready to claim SuperContext improves agent outcomes by default. Quality comes first: the judge preferred `mcp_off` on 11 tasks, `mcp_on` on 3 tasks, and marked 4 ties.
 
 | Phase | mcp_off wins | mcp_on wins | Ties |
 |---|---:|---:|---:|
@@ -14,7 +14,7 @@ The product signal is not ready to claim BetterContext improves agent outcomes b
 
 ## Strongest Product-Value Signal
 
-Cost data was available for 18 of 18 rows. Token data was available for 18 of 18 rows. Aggregate deltas use `off_minus_on`, so positive values mean BetterContext used less of that resource than the non-MCP arm.
+Cost data was available for 18 of 18 rows. Token data was available for 18 of 18 rows. Aggregate deltas use `off_minus_on`, so positive values mean SuperContext used less of that resource than the non-MCP arm.
 
 - Total dollar delta: `0.884178` in favor of `mcp_on` overall. This is `n/a` unless every paired row has cost data.
 - Total token delta: `75446` in favor of `mcp_on` overall. This is `n/a` unless every paired row has token data.
@@ -51,7 +51,7 @@ Expected movement: after classification, choose one repeated failure family and 
 ## Verification Commands
 
 ```bash
-.venv/bin/python -m source.scripts.pull_ab_traces --project bettercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/default-v1-2026-05-23/traces.jsonl
+.venv/bin/python -m source.scripts.pull_ab_traces --project supercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/default-v1-2026-05-23/traces.jsonl
 .venv/bin/python -m source.scripts.compute_ab_deltas --traces data/ab_runs/default-v1-2026-05-23/traces.jsonl --out data/ab_runs/default-v1-2026-05-23/deltas.jsonl
 .venv/bin/python -m source.scripts.judge_ab_quality --judge-model gpt-4.1-mini --deltas data/ab_runs/default-v1-2026-05-23/deltas.jsonl --out data/ab_runs/default-v1-2026-05-23/judged-deltas.jsonl --seed 6
 .venv/bin/python -m source.scripts.aggregate_ab_report --deltas data/ab_runs/default-v1-2026-05-23/judged-deltas.jsonl --out data/ab_runs/default-v1-2026-05-23/report

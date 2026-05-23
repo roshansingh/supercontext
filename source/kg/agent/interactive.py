@@ -95,7 +95,7 @@ class ClaudeInteractiveAgentSession:
 
 def _system_prompt() -> str:
     return (
-        "You are the BetterContext interactive KG agent runtime. The KG retrieval layer is authoritative. "
+        "You are the SuperContext interactive KG agent runtime. The KG retrieval layer is authoritative. "
         "You do not use tools, do not search, do not read files, and do not invent facts. First produce a "
         "small retrieval plan from the user's natural-language query. After the host executes the plan, "
         "synthesize only from the returned EvidencePacket."

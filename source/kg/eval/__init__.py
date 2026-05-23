@@ -1,1 +1,1 @@
-"""A/B evaluation helpers for BetterContext host-agent runs."""
+"""A/B evaluation helpers for SuperContext host-agent runs."""

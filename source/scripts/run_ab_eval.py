@@ -15,10 +15,10 @@ from source.kg.eval.runner import Arm, RunRecord, RunnerConfig, run_single_task
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run BetterContext MCP A/B evaluation tasks.",
+        description="Run SuperContext MCP A/B evaluation tasks.",
         epilog=(
-            "Execution sets Claude Code BetterContext MCP registration before each arm and leaves "
-            "BetterContext registered when the run completes."
+            "Execution sets Claude Code SuperContext MCP registration before each arm and leaves "
+            "SuperContext registered when the run completes."
         ),
     )
     parser.add_argument("--query-set", default=str(DEFAULT_QUERY_SET), help="Product query set markdown path.")
@@ -34,7 +34,7 @@ def main() -> None:
         help="Deterministically permutes paired arm order. Does not alter default-v1 membership.",
     )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
-    parser.add_argument("--mcp-url", default=None, help="BetterContext HTTP MCP URL for mcp_on runs.")
+    parser.add_argument("--mcp-url", default=None, help="SuperContext HTTP MCP URL for mcp_on runs.")
     parser.add_argument("--upload-to-langsmith", action="store_true", help="Upload the local run record to LangSmith.")
     parser.add_argument("--print-tasks", action="store_true", help="Print selected tasks and exit.")
     args = parser.parse_args()
@@ -145,7 +145,7 @@ def _run_paired_tasks(
                     config=config,
                 )
                 if arm == "mcp_off" and record.mcp_tools_called:
-                    raise RuntimeError("mcp_off run unexpectedly called BetterContext MCP tools")
+                    raise RuntimeError("mcp_off run unexpectedly called SuperContext MCP tools")
                 records.append(record)
             except BaseException as exc:
                 primary_error = exc

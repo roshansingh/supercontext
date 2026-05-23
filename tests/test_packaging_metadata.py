@@ -16,7 +16,7 @@ class PackagingMetadataTest(unittest.TestCase):
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = data["project"]
 
-        self.assertEqual(project["name"], "bettercontext")
+        self.assertEqual(project["name"], "supercontext")
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(project["readme"], "README.md")
         self.assertIn("PyYAML>=6.0", project["dependencies"])
@@ -80,23 +80,23 @@ class PackagingMetadataTest(unittest.TestCase):
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         package_data = data["tool"]["setuptools"]["package-data"]
 
-        self.assertIn("mcp_skill_templates/*/bettercontext-mcp/*", package_data["source.kg.product"])
+        self.assertIn("mcp_skill_templates/*/supercontext-mcp/*", package_data["source.kg.product"])
         self.assertTrue(
             (
                 ROOT
-                / "source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md"
+                / "source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md"
             ).exists()
         )
         self.assertTrue(
             (
                 ROOT
-                / "source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md"
+                / "source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md"
             ).exists()
         )
-        codex_skill = (ROOT / "source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md").read_text(
+        codex_skill = (ROOT / "source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md").read_text(
             encoding="utf-8"
         )
-        claude_skill = (ROOT / "source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md").read_text(
+        claude_skill = (ROOT / "source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("Trace Evaluation", codex_skill)

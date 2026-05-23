@@ -20,7 +20,7 @@ REQUEST_READ_TIMEOUT_SECONDS = 5.0
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a local read-only Bettercontext MCP server.")
+    parser = argparse.ArgumentParser(description="Run a local read-only SuperContext MCP server.")
     parser.add_argument("--snapshot", required=True, help="Directory containing JSONL KG snapshot files")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind. Defaults to 127.0.0.1.")
     parser.add_argument("--port", type=int, default=3845, help="Port to bind. Defaults to 3845.")
@@ -31,7 +31,7 @@ def main() -> None:
 
     kg = KgSnapshot(args.snapshot)
     server = _server_class_for_host(args.host)(_server_address_for_host(args.host, args.port), _handler_class(kg))
-    print(f"Bettercontext MCP server listening on http://{format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
+    print(f"SuperContext MCP server listening on http://{format_host_for_url(args.host)}:{args.port}/mcp", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -42,7 +42,7 @@ def main() -> None:
 
 def _handler_class(kg: KgSnapshot) -> type[BaseHTTPRequestHandler]:
     class McpHandler(BaseHTTPRequestHandler):
-        server_version = "bettercontext-local/0.1.0"
+        server_version = "supercontext-local/0.1.0"
         sys_version = ""
 
         def version_string(self) -> str:
@@ -224,7 +224,7 @@ def _initialize_result(params: JsonObject) -> JsonObject:
     return {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {}},
-        "serverInfo": {"name": "bettercontext-local", "version": "0.1.0"},
+        "serverInfo": {"name": "supercontext-local", "version": "0.1.0"},
     }
 
 

@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory contains accepted architecture decisions for BetterContext. ADRs are append-only unless a later ADR explicitly supersedes an earlier decision.
+This directory contains accepted architecture decisions for SuperContext. ADRs are append-only unless a later ADR explicitly supersedes an earlier decision.
 
 | ADR | Status | Decision |
 |---|---|---|

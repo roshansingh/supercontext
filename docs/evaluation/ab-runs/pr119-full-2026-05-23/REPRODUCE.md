@@ -16,7 +16,7 @@ Expected result:
 
 ## Pull Existing LangSmith Runs
 
-Requires access to LangSmith project `bettercontext-ab-eval`.
+Requires access to LangSmith project `supercontext-ab-eval`.
 This section contains private LangSmith run-group IDs for the current private repo.
 Redact or remove it before publishing the repository publicly.
 

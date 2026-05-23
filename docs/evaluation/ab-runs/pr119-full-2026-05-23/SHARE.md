@@ -3,7 +3,7 @@
 Use this short note for repo owners:
 
 ```text
-BetterContext A/B eval reproduction notes:
+SuperContext A/B eval reproduction notes:
 
 Report:
 https://github.com/roshansingh/bettercontext/tree/main/docs/evaluation/ab-runs/pr119-full-2026-05-23

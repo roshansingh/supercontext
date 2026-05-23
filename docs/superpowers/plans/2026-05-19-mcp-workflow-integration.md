@@ -4,7 +4,7 @@
 
 **Goal:** Add workflow-oriented MCP support for planning and review without widening the public primitive surface beyond the existing ADR tools plus `planning_context` and `review_context`.
 
-**As-built status:** Completed on PR #108, then superseded by installable `bettercontext-mcp` skill templates under `source/kg/product/mcp_skill_templates/` plus `bettercontext-install-mcp-skills`. Checkboxes are marked complete to reflect the shipped implementation, and this plan is retained as an implementation reference rather than an active task list.
+**As-built status:** Completed on PR #108, then superseded by installable `supercontext-mcp` skill templates under `source/kg/product/mcp_skill_templates/` plus `supercontext-install-mcp-skills`. Checkboxes are marked complete to reflect the shipped implementation, and this plan is retained as an implementation reference rather than an active task list.
 
 **Architecture:** Keep the current MCP server shape and JSON-RPC flow intact. Extend `source/kg/product/mcp_tools.py` with additive metadata fields, clearer tool descriptions, and two new composition tools that only orchestrate existing `KgSnapshot` capabilities. Finish with host-facing docs that verify the current HTTP transport works end-to-end before any stdio work is considered.
 
@@ -19,8 +19,8 @@
 - `tests/test_mcp_tools.py`
 
 **Create**
-- `source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md`
-- `source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md`
+- `source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md`
+- `source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md`
 
 **Read for implementation details**
 - `source/kg/query/snapshot.py`
@@ -523,20 +523,20 @@ git commit -m "Add review context MCP tool"
 ### Task 4: PR4 Host Skill Docs And HTTP Verification Gate
 
 **Files:**
-- Create: `source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md`
-- Create: `source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md`
+- Create: `source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md`
+- Create: `source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md`
 - Create: `source/scripts/install_mcp_skills.py`
 
 - [x] **Step 1: Create the Claude Code installable skill**
 
-Create [SKILL.md](source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md) with:
-- setup instructions using `bettercontext-init` and `bettercontext-init --serve`
+Create [SKILL.md](source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md) with:
+- setup instructions using `supercontext-init` and `supercontext-init --serve`
 - a short “register this MCP” instruction block for Claude Code
 - concise workflow rules for planning, coding, review, fallback, and evidence
 
 - [x] **Step 2: Create the Codex installable skill**
 
-Create [SKILL.md](source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md) with the same concise workflow rules but Codex-specific registration wording.
+Create [SKILL.md](source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md) with the same concise workflow rules but Codex-specific registration wording.
 
 - [x] **Step 3: Verify the repo still passes local checks after doc creation**
 
@@ -556,8 +556,8 @@ Expected:
 Run the local server in one terminal:
 
 ```bash
-bettercontext-init --repo <repo-path>
-bettercontext-mcp-server --snapshot <repo-path>/.bettercontext/kg
+supercontext-init --repo <repo-path>
+supercontext-mcp-server --snapshot <repo-path>/.supercontext/kg
 ```
 
 Then, from each host environment separately:
@@ -581,7 +581,7 @@ If any item fails because the host cannot use the HTTP server reliably, stop and
 
 ```bash
 git add source/kg/product/mcp_skill_templates source/scripts/install_mcp_skills.py docs/mcp/HOST_SKILL_EVALUATION.md
-git commit -m "Add installable Bettercontext MCP skills"
+git commit -m "Add installable SuperContext MCP skills"
 ```
 
 ---

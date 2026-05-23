@@ -1,10 +1,10 @@
 # Host Skill Evaluation
 
-Use this checklist to evaluate whether Codex and Claude Code actually use the installed Bettercontext MCP skill during normal coding workflows.
+Use this checklist to evaluate whether Codex and Claude Code actually use the installed SuperContext MCP skill during normal coding workflows.
 
 ## Setup
 
-1. Install Bettercontext, default MCP host registration, and global host-agent skills once per machine.
+1. Install SuperContext, default MCP host registration, and global host-agent skills once per machine.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
@@ -14,25 +14,25 @@ curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/inst
 
 ```bash
 cd <repo-path>
-bettercontext-init
+supercontext-init
 ```
 
 3. Start the local MCP server for that repo.
 
 ```bash
-bettercontext-init --serve
+supercontext-init --serve
 ```
 
 4. If host registration was skipped because the Codex or Claude Code CLI was not available during install, register it after installing that host CLI.
 
 ```bash
-bettercontext-register-mcp --agent both
+supercontext-register-mcp --agent both
 ```
 
 Use project-local skill install only when testing repo-pinned skill behavior:
 
 ```bash
-bettercontext-install-mcp-skills --scope project --project <repo-path> --agent both
+supercontext-install-mcp-skills --scope project --project <repo-path> --agent both
 ```
 
 ## Evaluation Tasks
@@ -44,7 +44,7 @@ Run each task once in Codex and once in Claude Code.
 Prompt:
 
 ```text
-Plan a change to <service-or-endpoint>. Before reading broadly, use Bettercontext if it can help.
+Plan a change to <service-or-endpoint>. Before reading broadly, use SuperContext if it can help.
 ```
 
 Pass criteria:
@@ -52,7 +52,7 @@ Pass criteria:
 - The agent calls `planning_context` before broad repo search.
 - The call uses a structured anchor when one is available.
 - The answer names returned services, symbols, dependencies, endpoints, events, or domains with evidence.
-- If Bettercontext returns `ambiguous`, `not_found`, or `unsupported_by_current_kg`, the agent states the limitation before falling back.
+- If SuperContext returns `ambiguous`, `not_found`, or `unsupported_by_current_kg`, the agent states the limitation before falling back.
 
 ### Coding
 
@@ -66,14 +66,14 @@ Pass criteria:
 
 - The agent uses `find_callers`, `find_callees`, `blast_radius`, or `planning_context` with `path`/`symbol` before editing when the anchor is known.
 - The agent still reads the relevant source files before changing code.
-- The agent does not claim endpoint, event, deploy, or runtime impact unless Bettercontext returned it.
+- The agent does not claim endpoint, event, deploy, or runtime impact unless SuperContext returned it.
 
 ### Review
 
 Prompt:
 
 ```text
-Review the current diff. Use Bettercontext for changed-file impact first, then inspect code.
+Review the current diff. Use SuperContext for changed-file impact first, then inspect code.
 ```
 
 Pass criteria:
@@ -87,9 +87,9 @@ Pass criteria:
 
 Score each host/task pair from 0 to 2:
 
-- `0`: Did not use Bettercontext or used the wrong tool.
-- `1`: Used Bettercontext, but late, with weak anchors, or without citing evidence.
-- `2`: Used Bettercontext early, chose the right tool, cited evidence, and handled fallback honestly.
+- `0`: Did not use SuperContext or used the wrong tool.
+- `1`: Used SuperContext, but late, with weak anchors, or without citing evidence.
+- `2`: Used SuperContext early, chose the right tool, cited evidence, and handled fallback honestly.
 
 Record:
 
@@ -97,7 +97,7 @@ Record:
 - skill scope: `project` or `global`
 - MCP server command and snapshot path
 - prompt
-- first Bettercontext tool called
+- first SuperContext tool called
 - whether source reads happened before or after the MCP call
 - score
 - failure reason

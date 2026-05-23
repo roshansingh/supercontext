@@ -11,7 +11,7 @@ from source.scripts.compute_ab_deltas import load_jsonl
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Judge blinded BetterContext A/B answer quality.")
+    parser = argparse.ArgumentParser(description="Judge blinded SuperContext A/B answer quality.")
     parser.add_argument("--judge-model", required=True, help="Model name used by the judge.")
     parser.add_argument("--deltas", required=True, help="Input deltas JSONL.")
     parser.add_argument("--out", required=True, help="Output judged deltas JSONL.")

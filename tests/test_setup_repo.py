@@ -19,10 +19,10 @@ class SetupRepoTest(unittest.TestCase):
 
         self.assertEqual(build_mock.call_count, 1)
         _, out = build_mock.call_args.args[:2]
-        self.assertEqual(out, repo.resolve() / ".bettercontext" / "kg")
-        self.assertIn("Bettercontext KG built:", stdout)
+        self.assertEqual(out, repo.resolve() / ".supercontext" / "kg")
+        self.assertIn("SuperContext KG built:", stdout)
         self.assertIn("-m source.scripts.mcp_server --snapshot", stdout)
-        self.assertIn("bettercontext-install-mcp-skills --scope global", stdout)
+        self.assertIn("supercontext-install-mcp-skills --scope global", stdout)
 
     def test_custom_out_and_strict_options_are_forwarded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

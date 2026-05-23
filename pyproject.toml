@@ -3,12 +3,12 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bettercontext"
+name = "supercontext"
 version = "0.1.0"
 description = "Typed cross-service knowledge graph for AI coding agents in microservice organizations."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "BetterContext contributors" }]
+authors = [{ name = "SuperContext contributors" }]
 dependencies = ["packaging>=24.0", "PyYAML>=6.0"]
 keywords = ["code-analysis", "knowledge-graph", "mcp", "software-architecture"]
 classifiers = [
@@ -33,21 +33,21 @@ dev = ["build>=1.2"]
 dotnet = ["tree-sitter>=0.25", "tree-sitter-c-sharp>=0.23.5"]
 
 [project.scripts]
-bettercontext-build-kg = "source.scripts.build_kg:main"
-bettercontext-build-multi-kg = "source.scripts.build_multi_kg:main"
-bettercontext-init = "source.scripts.setup_repo:main"
-bettercontext-relink = "source.scripts.relink:main"
-bettercontext-query-kg = "source.scripts.query_kg:main"
-bettercontext-mcp-server = "source.scripts.mcp_server:main"
-bettercontext-install-mcp-skills = "source.scripts.install_mcp_skills:main"
-bettercontext-register-mcp = "source.scripts.register_mcp:main"
-bettercontext-pull-ab-traces = "source.scripts.pull_ab_traces:main"
-bettercontext-compute-ab-deltas = "source.scripts.compute_ab_deltas:main"
-bettercontext-aggregate-ab-report = "source.scripts.aggregate_ab_report:main"
-bettercontext-judge-ab-quality = "source.scripts.judge_ab_quality:main"
-bettercontext-run-validation = "source.scripts.run_product_validation:main"
-bettercontext-coverage-metrics = "source.scripts.coverage_metrics:main"
-bettercontext-coverage-report = "source.scripts.coverage_report:main"
+supercontext-build-kg = "source.scripts.build_kg:main"
+supercontext-build-multi-kg = "source.scripts.build_multi_kg:main"
+supercontext-init = "source.scripts.setup_repo:main"
+supercontext-relink = "source.scripts.relink:main"
+supercontext-query-kg = "source.scripts.query_kg:main"
+supercontext-mcp-server = "source.scripts.mcp_server:main"
+supercontext-install-mcp-skills = "source.scripts.install_mcp_skills:main"
+supercontext-register-mcp = "source.scripts.register_mcp:main"
+supercontext-pull-ab-traces = "source.scripts.pull_ab_traces:main"
+supercontext-compute-ab-deltas = "source.scripts.compute_ab_deltas:main"
+supercontext-aggregate-ab-report = "source.scripts.aggregate_ab_report:main"
+supercontext-judge-ab-quality = "source.scripts.judge_ab_quality:main"
+supercontext-run-validation = "source.scripts.run_product_validation:main"
+supercontext-coverage-metrics = "source.scripts.coverage_metrics:main"
+supercontext-coverage-report = "source.scripts.coverage_report:main"
 
 [tool.setuptools.packages.find]
 include = ["source*"]
@@ -58,5 +58,5 @@ include = ["source*"]
 "source.kg.metrics" = ["config.yaml", "tool_predicates.yaml", "useful_edges.yaml"]
 "source.kg.languages.python" = ["known_stacks.yaml", "dimension_rules.yaml"]
 "source.kg.languages.typescript" = ["known_stacks.yaml", "dimension_rules.yaml"]
-"source.kg.product" = ["mcp_skill_templates/*/bettercontext-mcp/*"]
+"source.kg.product" = ["mcp_skill_templates/*/supercontext-mcp/*"]
 "source.kg.eval" = ["*.yaml"]

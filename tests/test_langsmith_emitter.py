@@ -96,12 +96,12 @@ class LangSmithEmitterTest(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"LANGSMITH_API_KEY": "test-key", "LANGSMITH_PROJECT": "bettercontext-ab-eval"},
+                {"LANGSMITH_API_KEY": "test-key", "LANGSMITH_PROJECT": "supercontext-ab-eval"},
                 clear=False,
             ):
                 url = emit_run(record, messages_path, run_tree_cls=FakeRunTree)
 
-        self.assertEqual(url, "https://smith.langchain.com/fake/bettercontext.ab_eval.Q003.mcp_off")
+        self.assertEqual(url, "https://smith.langchain.com/fake/supercontext.ab_eval.Q003.mcp_off")
         self.assertEqual(len(FakeRunTree.roots), 1)
         root = FakeRunTree.roots[0]
         self.assertTrue(root.posted)
@@ -109,7 +109,7 @@ class LangSmithEmitterTest(unittest.TestCase):
         self.assertNotIn("record", root.outputs)
         self.assertIn("arm:mcp_off", root.tags)
         self.assertIn("task_id:Q003", root.tags)
-        self.assertEqual(root.project_name, "bettercontext-ab-eval")
+        self.assertEqual(root.project_name, "supercontext-ab-eval")
         self.assertEqual(root.metadata["run_group_id"], "group-1")
         self.assertEqual(root.metadata["mcp_tools_called"], [])
         self.assertEqual(root.metadata["mcp_tool_denial_count"], 0)

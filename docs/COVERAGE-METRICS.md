@@ -1,6 +1,6 @@
 # Coverage Metrics
 
-BetterContext coverage metrics score how complete, useful, and trustworthy a KG snapshot is. Most metrics are `0.0` to `1.0`, where higher is better. `M_silent_gap` is the exception: lower is better because it measures missed opportunities.
+SuperContext coverage metrics score how complete, useful, and trustworthy a KG snapshot is. Most metrics are `0.0` to `1.0`, where higher is better. `M_silent_gap` is the exception: lower is better because it measures missed opportunities.
 
 ## Metrics
 

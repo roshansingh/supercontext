@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 
-DEFAULT_MCP_NAME = "bettercontext"
+DEFAULT_MCP_NAME = "supercontext"
 DEFAULT_MCP_URL = "http://127.0.0.1:3845/mcp"
 SUPPORTED_AGENTS = ("codex", "claude")
 
@@ -23,7 +23,7 @@ class RegistrationCommand:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Register the local Bettercontext MCP server with host agents."
+        description="Register the local SuperContext MCP server with host agents."
     )
     parser.add_argument(
         "--agent",

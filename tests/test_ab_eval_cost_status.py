@@ -43,7 +43,7 @@ class AbEvalCostStatusTest(unittest.TestCase):
         self.assertEqual(_mcp_servers("mcp_off", config), {})
         self.assertEqual(
             _mcp_servers("mcp_on", config),
-            {"bettercontext": {"type": "http", "url": "http://127.0.0.1:9999/mcp"}},
+            {"supercontext": {"type": "http", "url": "http://127.0.0.1:9999/mcp"}},
         )
 
     def test_usage_tokens_sum_across_messages(self) -> None:
