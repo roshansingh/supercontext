@@ -1,8 +1,12 @@
 debates/
 data/kg_runs/
+data/ab_runs/
 docs/plans/
 docs/reviews/
 docs/evaluation/runs/
+# Private debate seed; reusable eval code/docs live in tracked source/README files.
+docs/MCP-AB-EVAL-DEBATE-SEED.md
+.env
 __pycache__/
 *.pyc
 node_modules/

@@ -1,0 +1,55 @@
+tasks:
+  - id: Q003
+    phase: coding
+    note: Low-tier caller lookup with an MCP-relevant surface.
+  - id: Q004
+    phase: coding
+    note: Low-tier callee lookup with direct evidence.
+  - id: Q011
+    phase: planning
+    note: Low-tier service identity planning question.
+  - id: Q015
+    phase: planning
+    note: Low-tier service brief and KG inventory.
+  - id: Q016
+    phase: coding
+    note: Medium symbol impact task.
+  - id: Q021
+    phase: review
+    note: Medium PR changed-symbol review task.
+  - id: Q031
+    phase: planning
+    note: Medium service ownership planning task.
+  - id: Q035
+    phase: planning
+    note: Medium deploy topology planning task.
+  - id: Q051
+    phase: coding
+    note: Medium promotion-rule caller behavior.
+  - id: Q054
+    phase: planning
+    note: Medium product-scope refusal behavior.
+  - id: Q037
+    phase: review
+    note: Hard cross-service PR blast-radius review.
+  - id: Q038
+    phase: planning
+    note: Hard event deletion planning task.
+  - id: Q040
+    phase: review
+    note: Hard deploy-blocker review task.
+  - id: Q045
+    phase: planning
+    note: Hard transitive service dependency planning task.
+  - id: Q048
+    phase: review
+    note: Hard coverage-aware contract PR review.
+  - id: Q053
+    phase: review
+    note: Hard security blast-radius review task.
+  - id: Q081
+    phase: planning
+    note: Hard cross-repo service discovery planning task.
+  - id: Q110
+    phase: review
+    note: Hard end-to-end feature PR review task.

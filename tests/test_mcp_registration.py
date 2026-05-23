@@ -105,6 +105,35 @@ class McpRegistrationTest(unittest.TestCase):
         self.assertIn("would add claude MCP registration", output)
         self.run_mock.assert_not_called()
 
+    def test_remove_dry_run_prints_remove_without_add(self) -> None:
+        output = self._run_register(
+            "--agent",
+            "claude",
+            "--remove",
+            "--dry-run",
+            which_side_effect=lambda executable: f"/bin/{executable}",
+        )
+
+        self.assertIn("would remove existing claude MCP registration", output)
+        self.assertNotIn("would add claude MCP registration", output)
+        self.run_mock.assert_not_called()
+
+    def test_remove_runs_remove_without_add(self) -> None:
+        output = self._run_register(
+            "--agent",
+            "codex",
+            "--remove",
+            which_side_effect=lambda executable: f"/bin/{executable}",
+        )
+
+        self.assertIn("removed codex MCP server", output)
+        self.run_mock.assert_called_once_with(
+            ("codex", "mcp", "remove", "bettercontext"),
+            check=False,
+            stdout=register_mcp.subprocess.DEVNULL,
+            stderr=register_mcp.subprocess.DEVNULL,
+        )
+
     def test_missing_cli_warns_by_default(self) -> None:
         output = self._run_register(
             "--agent",
