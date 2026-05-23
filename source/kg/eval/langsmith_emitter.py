@@ -10,8 +10,7 @@ from source.kg.eval.runner import RunRecord
 
 def emit_run(record: RunRecord, messages_path: str | Path, *, run_tree_cls: type[Any] | None = None) -> str:
     """Upload one local A/B run record and its captured SDK messages to LangSmith."""
-    api_key = os.environ.get("LANGSMITH_API_KEY")
-    if not api_key:
+    if not os.environ.get("LANGSMITH_API_KEY"):
         raise RuntimeError("LANGSMITH_API_KEY is required to upload A/B eval traces to LangSmith.")
 
     resolved_messages_path = Path(messages_path)
