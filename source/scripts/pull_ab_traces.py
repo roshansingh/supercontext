@@ -25,26 +25,23 @@ def main() -> None:
         raise RuntimeError("langsmith is required. Install with `pip install -e '.[eval]'`.") from exc
 
     client = Client()
-    traces = []
-    for run in client.list_runs(project_name=args.project, is_root=True, limit=args.limit):
-        trace = trace_from_langsmith_run(run)
-        if trace.get("arm") not in {"mcp_on", "mcp_off"}:
-            continue
-        if run_group_ids and trace.get("run_group_id") not in run_group_ids:
-            continue
-        if args.harness_version and trace.get("harness_version") != args.harness_version:
-            continue
-        traces.append(trace)
-
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as stream:
-        for trace in traces:
+        for run in client.list_runs(project_name=args.project, is_root=True, limit=args.limit):
+            trace = trace_from_langsmith_run(run)
+            if trace.get("arm") not in {"mcp_on", "mcp_off"}:
+                continue
+            if run_group_ids and trace.get("run_group_id") not in run_group_ids:
+                continue
+            if args.harness_version and trace.get("harness_version") != args.harness_version:
+                continue
             stream.write(json.dumps(trace, sort_keys=True) + "\n")
 
 
 def trace_from_langsmith_run(run: Any) -> dict[str, Any]:
     metadata = _metadata(run)
+    record_cost_status = metadata.pop("cost_status", None)
     total_cost = getattr(run, "total_cost", None)
     trace = {
         "id": str(getattr(run, "id", "")),
@@ -62,6 +59,8 @@ def trace_from_langsmith_run(run: Any) -> dict[str, Any]:
         "completion_tokens": getattr(run, "completion_tokens", None),
         "cost_status": "available" if total_cost is not None else "unavailable",
     }
+    if record_cost_status is not None:
+        trace["record_cost_status"] = record_cost_status
     for key in (
         "run_group_id",
         "arm",

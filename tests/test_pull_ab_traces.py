@@ -32,6 +32,7 @@ class PullAbTracesTest(unittest.TestCase):
                     "final_answer_citations": ["a.py"],
                     "model": "claude-sonnet-4-5-20250929",
                     "random_seed": 7,
+                    "cost_status": "not_uploaded",
                 }
             },
             inputs={"task_id": "Q003"},
@@ -51,6 +52,8 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["run_group_id"], "group-1")
         self.assertEqual(trace["mcp_tools_called"], ["mcp__bettercontext__find_callers"])
         self.assertEqual(trace["cost_status"], "available")
+        self.assertEqual(trace["record_cost_status"], "not_uploaded")
+        self.assertNotIn("cost_status", trace["metadata"])
         self.assertEqual(trace["total_cost"], 0.01)
 
     def test_trace_from_langsmith_run_marks_missing_cost_unavailable(self) -> None:
