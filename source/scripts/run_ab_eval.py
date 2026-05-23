@@ -171,11 +171,22 @@ def _pre_arm_host_config_command(*, arm: Arm, host: str, mcp_url: str) -> tuple[
         "source.scripts.register_mcp",
         "--agent",
         "claude",
+        "--on-error",
+        "error",
         "--url",
         mcp_url,
     )
     if arm == "mcp_off":
-        return (sys.executable, "-m", "source.scripts.register_mcp", "--agent", "claude", "--remove")
+        return (
+            sys.executable,
+            "-m",
+            "source.scripts.register_mcp",
+            "--agent",
+            "claude",
+            "--on-error",
+            "error",
+            "--remove",
+        )
     return command
 
 
@@ -189,6 +200,8 @@ def _post_arm_host_config_command(*, arm: Arm, host: str, mcp_url: str) -> tuple
             "source.scripts.register_mcp",
             "--agent",
             "claude",
+            "--on-error",
+            "error",
             "--url",
             mcp_url,
         )

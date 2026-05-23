@@ -184,16 +184,34 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            on_command[-6:],
-            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--url", "http://127.0.0.1:9999/mcp"),
+            on_command[-8:],
+            (
+                "-m",
+                "source.scripts.register_mcp",
+                "--agent",
+                "claude",
+                "--on-error",
+                "error",
+                "--url",
+                "http://127.0.0.1:9999/mcp",
+            ),
         )
         self.assertEqual(
-            off_command[-5:],
-            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--remove"),
+            off_command[-7:],
+            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--on-error", "error", "--remove"),
         )
         self.assertEqual(
-            restore_command[-6:],
-            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--url", "http://127.0.0.1:9999/mcp"),
+            restore_command[-8:],
+            (
+                "-m",
+                "source.scripts.register_mcp",
+                "--agent",
+                "claude",
+                "--on-error",
+                "error",
+                "--url",
+                "http://127.0.0.1:9999/mcp",
+            ),
         )
 
     def test_host_config_command_suppresses_registration_stdout(self) -> None:
