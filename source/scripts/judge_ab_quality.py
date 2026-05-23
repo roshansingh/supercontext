@@ -96,7 +96,7 @@ def parse_judge_response(response: str, *, label_to_arm: dict[str, str]) -> dict
     if winner not in {"A", "B", "tie"}:
         raise ValueError("judge response winner must be A, B, or tie")
     confidence = payload.get("confidence")
-    if isinstance(confidence, bool) or not isinstance(confidence, int | float) or not 0 <= confidence <= 1:
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
         raise ValueError("judge response confidence must be a number from 0 to 1")
     reasoning = payload.get("reasoning")
     if not isinstance(reasoning, str) or not reasoning.strip():

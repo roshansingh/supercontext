@@ -44,6 +44,7 @@ class McpSkillInstallerTest(unittest.TestCase):
             )
             self.assertIn("Trace Evaluation", codex_skill)
             self.assertIn("where mcp hurts", codex_skill.casefold())
+            self.assertIn("name: bettercontext-mcp", claude_skill)
             self.assertIn("Trace Evaluation", claude_skill)
             self.assertIn("tokens", claude_skill)
 

@@ -74,6 +74,15 @@ class JudgeAbQualityTest(unittest.TestCase):
         self.assertEqual(judged[0]["quality_verdict"], "judge_error")
         self.assertIn("valid JSON", judged[0]["judge_error"])
 
+    def test_auto_quality_rows_are_preserved_without_judge_call(self) -> None:
+        row = _delta_row()
+        row["quality_verdict"] = "auto"
+
+        judged = judge_ab_quality.judge_rows([row], judge_model="judge-test", client_factory=FakeJudgeClient)
+
+        self.assertEqual(judged, [row])
+        self.assertEqual(FakeJudgeClient.prompts, [])
+
     def test_judge_model_is_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             deltas = Path(tmp) / "deltas.jsonl"
