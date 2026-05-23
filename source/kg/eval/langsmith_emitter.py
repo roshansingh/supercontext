@@ -65,7 +65,12 @@ def emit_run(record: RunRecord, messages_path: str | Path, *, run_tree_cls: type
         inputs={"run_group_id": record.run_group_id, "arm": record.arm, "task_id": record.task_id},
         outputs={
             "mcp_tools_called": record.mcp_tools_called,
+            "mcp_tool_attempt_count": record.mcp_tool_attempt_count,
+            "mcp_tool_success_count": record.mcp_tool_success_count,
+            "mcp_tool_denial_count": record.mcp_tool_denial_count,
+            "mcp_tool_error_count": record.mcp_tool_error_count,
             "non_mcp_tools_called": record.non_mcp_tools_called,
+            "non_mcp_tool_attempt_count": record.non_mcp_tool_attempt_count,
             "wall_time_seconds": record.wall_time_seconds,
             "cost_status": record.cost_status,
         },

@@ -4,7 +4,7 @@ import asyncio
 import dataclasses
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -14,12 +14,18 @@ from source.kg.product.claude_tool_policy import (
     DEFAULT_CLAUDE_PERMISSION_MODE,
     resolve_claude_cli_path,
 )
+from source.kg.product.mcp_tools import tool_definitions
 
 
 Arm = Literal["mcp_on", "mcp_off"]
 DEFAULT_EVAL_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_HARNESS_VERSION = "ab-eval-v1"
 DEFAULT_MCP_URL = "http://127.0.0.1:3845/mcp"
+# A/B eval needs the same ordinary inspection surface agents used in the baseline arm.
+# The prompt forbids edits and explicit edit/write tools are denied below; Bash remains
+# available because prior baseline runs relied on jq/grep-style snapshot inspection.
+EVAL_ALLOWED_ORDINARY_TOOLS = ("Read", "Grep", "Glob", "LS", "Bash", "ToolSearch")
+EVAL_DISALLOWED_EDIT_TOOLS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,15 @@ class RunRecord:
     pre_arm_host_config_command: tuple[str, ...] = ()
     post_arm_host_config_command: tuple[str, ...] = ()
     cost_status: str = "not_uploaded"
+    non_mcp_tool_attempt_count: int = 0
+    non_mcp_tool_attempts: list[str] = field(default_factory=list)
+    mcp_tool_attempt_count: int = 0
+    mcp_tool_success_count: int = 0
+    mcp_tool_denial_count: int = 0
+    mcp_tool_error_count: int = 0
+    mcp_tool_successes: list[str] = field(default_factory=list)
+    mcp_tool_denials: list[str] = field(default_factory=list)
+    mcp_tool_errors: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -133,6 +148,8 @@ async def async_run_single_task(
             options=ClaudeAgentOptions(
                 model=resolved_config.model,
                 max_turns=resolved_config.max_turns,
+                allowed_tools=_allowed_tools(arm),
+                disallowed_tools=list(EVAL_DISALLOWED_EDIT_TOOLS),
                 permission_mode=resolved_config.permission_mode,
                 cli_path=resolve_claude_cli_path(resolved_config.claude_cli_path),
                 mcp_servers=_mcp_servers(arm, resolved_config),
@@ -153,6 +170,11 @@ async def async_run_single_task(
     _raise_for_host_error_messages(serialized_messages)
     tokens_in, tokens_out = _usage_tokens(serialized_messages)
     mcp_tools, non_mcp_tools = _tool_calls(serialized_messages)
+    tool_attempts = _tool_attempts(serialized_messages)
+    non_mcp_tool_attempts = [name for name in tool_attempts if not name.startswith("mcp__bettercontext__")]
+    mcp_observations = _mcp_tool_observations(serialized_messages)
+    if arm == "mcp_on":
+        _raise_for_mcp_tool_failures(mcp_observations)
     record = RunRecord(
         run_group_id=group_id,
         arm=arm,
@@ -166,6 +188,8 @@ async def async_run_single_task(
         snapshot_path=str(snapshot_path),
         mcp_tools_called=mcp_tools,
         non_mcp_tools_called=non_mcp_tools,
+        non_mcp_tool_attempt_count=len(non_mcp_tool_attempts),
+        non_mcp_tool_attempts=non_mcp_tool_attempts,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         wall_time_seconds=round(time.monotonic() - start, 3),
@@ -176,6 +200,13 @@ async def async_run_single_task(
         random_seed=random_seed,
         pre_arm_host_config_command=pre_arm_host_config_command,
         post_arm_host_config_command=post_arm_host_config_command,
+        mcp_tool_attempt_count=len(mcp_observations["attempts"]),
+        mcp_tool_success_count=len(mcp_observations["successes"]),
+        mcp_tool_denial_count=len(mcp_observations["denials"]),
+        mcp_tool_error_count=len(mcp_observations["errors"]),
+        mcp_tool_successes=mcp_observations["successes"],
+        mcp_tool_denials=mcp_observations["denials"],
+        mcp_tool_errors=mcp_observations["errors"],
     )
     (arm_dir / "record.json").write_text(json.dumps(record.to_json(), indent=2, sort_keys=True), encoding="utf-8")
     return record
@@ -193,6 +224,13 @@ def _mcp_servers(arm: Arm, config: RunnerConfig) -> dict[str, dict[str, str]]:
     if arm == "mcp_off":
         return {}
     return {"bettercontext": {"type": "http", "url": config.mcp_url}}
+
+
+def _allowed_tools(arm: Arm) -> list[str]:
+    tools = list(EVAL_ALLOWED_ORDINARY_TOOLS)
+    if arm == "mcp_on":
+        tools.extend(f"mcp__bettercontext__{tool['name']}" for tool in tool_definitions())
+    return tools
 
 
 def _claude_extra_args() -> dict[str, str | None]:
@@ -261,6 +299,17 @@ def _raise_for_host_error_messages(messages: list[dict[str, Any]]) -> None:
         raise RuntimeError("Claude host run failed: missing ResultMessage")
 
 
+def _raise_for_mcp_tool_failures(observations: dict[str, list[str]]) -> None:
+    denials = observations["denials"]
+    errors = observations["errors"]
+    if denials:
+        names = ", ".join(sorted(set(denials)))
+        raise RuntimeError(f"Claude host denied BetterContext MCP tool permission(s): {names}")
+    if errors:
+        names = ", ".join(sorted(set(errors)))
+        raise RuntimeError(f"Claude host returned BetterContext MCP tool error(s): {names}")
+
+
 def _jsonable(value: object, *, depth: int = 0) -> Any:
     if depth > 8:
         return repr(value)
@@ -321,9 +370,97 @@ def _sum_int_keys_inner(value: Any, keys: set[str]) -> tuple[bool, int]:
 
 def _tool_calls(messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     names = sorted(set(_tool_names(messages)))
+    # The eval harness only attaches the BetterContext MCP server. Keep this
+    # scope aligned with _mcp_tool_observations so aggregate tool counts match.
     mcp = [name for name in names if name.startswith("mcp__bettercontext__")]
     non_mcp = [name for name in names if name not in mcp]
     return mcp, non_mcp
+
+
+def _tool_attempts(messages: list[dict[str, Any]]) -> list[str]:
+    attempts: list[str] = []
+    for message in messages:
+        for block in _content_blocks(message):
+            tool_id = block.get("id")
+            name = block.get("name")
+            if isinstance(tool_id, str) and isinstance(name, str) and name:
+                attempts.append(name)
+    return attempts
+
+
+def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str]]:
+    tool_use_names: dict[str, str] = {}
+    permission_denials_by_id: dict[str, str] = {}
+    attempts: list[str] = []
+    successes: list[str] = []
+    denials: list[str] = []
+    errors: list[str] = []
+    observed_denial_ids: set[str] = set()
+
+    for message in messages:
+        data = message.get("data")
+        if not isinstance(data, dict):
+            continue
+        for denial in data.get("permission_denials") or []:
+            if not isinstance(denial, dict):
+                continue
+            name = denial.get("tool_name")
+            tool_id = denial.get("tool_use_id")
+            if (
+                isinstance(tool_id, str)
+                and isinstance(name, str)
+                and name.startswith("mcp__bettercontext__")
+            ):
+                permission_denials_by_id[tool_id] = name
+
+    for message in messages:
+        for block in _content_blocks(message):
+            tool_id = block.get("id")
+            name = block.get("name")
+            if isinstance(tool_id, str) and isinstance(name, str) and name.startswith("mcp__bettercontext__"):
+                tool_use_names[tool_id] = name
+                attempts.append(name)
+
+            result_id = block.get("tool_use_id")
+            if isinstance(result_id, str) and result_id in tool_use_names:
+                result_name = tool_use_names[result_id]
+                if result_id in permission_denials_by_id or _tool_result_is_denial(block):
+                    denials.append(result_name)
+                    observed_denial_ids.add(result_id)
+                elif block.get("is_error") is True:
+                    errors.append(result_name)
+                else:
+                    successes.append(result_name)
+
+    for tool_id, name in permission_denials_by_id.items():
+        if tool_id not in observed_denial_ids:
+            denials.append(name)
+
+    return {
+        "attempts": attempts,
+        "successes": successes,
+        "denials": denials,
+        "errors": errors,
+    }
+
+
+def _content_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
+    data = message.get("data")
+    if not isinstance(data, dict):
+        return []
+    content = data.get("content")
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict)]
+
+
+def _tool_result_is_denial(block: dict[str, Any]) -> bool:
+    if block.get("is_error") is not True:
+        return False
+    content = block.get("content")
+    if not isinstance(content, str):
+        return False
+    return "requested permissions to use" in content.lower()
 
 
 def _tool_names(value: Any) -> list[str]:

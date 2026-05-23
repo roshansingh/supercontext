@@ -238,11 +238,10 @@ def _tools_call_result(kg: KgSnapshot, params: JsonObject) -> JsonObject:
     if not isinstance(arguments, dict):
         raise ValueError("tools/call arguments must be an object")
     result = call_tool(kg, name.strip(), arguments)
-    is_error = result.get("status") == "unsupported_by_current_kg"
     return {
         "content": [{"type": "text", "text": json.dumps(result, indent=2, sort_keys=True)}],
         "structuredContent": result,
-        "isError": is_error,
+        "isError": False,
     }
 
 

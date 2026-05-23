@@ -11,7 +11,13 @@ class ComputeAbDeltasTest(unittest.TestCase):
     def test_pairs_traces_and_computes_off_minus_on_deltas(self) -> None:
         rows = compute_deltas(
             [
-                _trace("mcp_on", mcp_tools=["mcp__bettercontext__find_callers"], non_mcp_tools=["Read"], cost=0.03),
+                _trace(
+                    "mcp_on",
+                    mcp_tools=["mcp__bettercontext__find_callers"],
+                    mcp_success_count=1,
+                    non_mcp_tools=["Read"],
+                    cost=0.03,
+                ),
                 _trace("mcp_off", mcp_tools=[], non_mcp_tools=["Read", "Grep", "Read"], cost=0.05),
             ]
         )
@@ -24,7 +30,11 @@ class ComputeAbDeltasTest(unittest.TestCase):
         self.assertAlmostEqual(row["dollars_delta"], 0.02, places=9)
         self.assertEqual(row["deltas"]["tool_calls"], 1)
         self.assertEqual(row["deltas"]["mcp_calls"], -1)
+        self.assertEqual(row["deltas"]["mcp_tool_attempts"], -1)
+        self.assertEqual(row["deltas"]["mcp_tool_successes"], -1)
+        self.assertEqual(row["on"]["mcp_tool_success_count"], 1)
         self.assertEqual(row["deltas"]["non_mcp_calls"], 2)
+        self.assertEqual(row["deltas"]["non_mcp_tool_attempts"], 2)
         self.assertEqual(row["deltas"]["tokens_in"], 20)
         self.assertEqual(row["deltas"]["tokens_out"], 5)
 
@@ -57,6 +67,47 @@ class ComputeAbDeltasTest(unittest.TestCase):
     def test_unpaired_traces_can_be_explicitly_skipped(self) -> None:
         self.assertEqual(compute_deltas([_trace("mcp_on")], allow_unpaired=True), [])
 
+    def test_mcp_on_permission_denials_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "BetterContext MCP denials=1"):
+            compute_deltas(
+                [
+                    _trace(
+                        "mcp_on",
+                        mcp_tools=["mcp__bettercontext__find_callers"],
+                        mcp_denial_count=1,
+                    ),
+                    _trace("mcp_off"),
+                ]
+            )
+
+    def test_mcp_on_tool_failures_can_be_explicitly_allowed_for_forensics(self) -> None:
+        rows = compute_deltas(
+            [
+                _trace(
+                    "mcp_on",
+                    mcp_tools=["mcp__bettercontext__find_callers"],
+                    mcp_denial_count=1,
+                ),
+                _trace("mcp_off"),
+            ],
+            allow_mcp_tool_failures=True,
+        )
+
+        self.assertEqual(rows[0]["on"]["mcp_tool_denial_count"], 1)
+
+    def test_mcp_on_tool_errors_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "BetterContext MCP denials=0 errors=1"):
+            compute_deltas(
+                [
+                    _trace(
+                        "mcp_on",
+                        mcp_tools=["mcp__bettercontext__review_context"],
+                        mcp_error_count=1,
+                    ),
+                    _trace("mcp_off"),
+                ]
+            )
+
     def test_load_jsonl_reports_file_and_line_for_malformed_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "traces.jsonl"
@@ -71,6 +122,9 @@ def _trace(
     *,
     difficulty: str = "Low",
     mcp_tools: list[str] | None = None,
+    mcp_success_count: int = 0,
+    mcp_denial_count: int = 0,
+    mcp_error_count: int = 0,
     non_mcp_tools: list[str] | None = None,
     cost: float | None = 0.01,
 ) -> dict:
@@ -81,7 +135,16 @@ def _trace(
         "phase": "coding",
         "difficulty": difficulty,
         "mcp_tools_called": mcp_tools or [],
+        "mcp_tool_attempt_count": len(mcp_tools or []),
+        "mcp_tool_success_count": mcp_success_count,
+        "mcp_tool_denial_count": mcp_denial_count,
+        "mcp_tool_error_count": mcp_error_count,
+        "mcp_tool_successes": (mcp_tools or []) if mcp_success_count else [],
+        "mcp_tool_denials": (mcp_tools or []) if mcp_denial_count else [],
+        "mcp_tool_errors": (mcp_tools or []) if mcp_error_count else [],
         "non_mcp_tools_called": ["Read"] if non_mcp_tools is None else non_mcp_tools,
+        "non_mcp_tool_attempt_count": len(["Read"] if non_mcp_tools is None else non_mcp_tools),
+        "non_mcp_tool_attempts": ["Read"] if non_mcp_tools is None else non_mcp_tools,
         "tokens_in": 100 if arm == "mcp_on" else 120,
         "tokens_out": 10 if arm == "mcp_on" else 15,
         "wall_time_seconds": 1.0 if arm == "mcp_on" else 2.5,

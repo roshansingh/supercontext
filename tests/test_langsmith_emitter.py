@@ -112,10 +112,14 @@ class LangSmithEmitterTest(unittest.TestCase):
         self.assertEqual(root.project_name, "bettercontext-ab-eval")
         self.assertEqual(root.metadata["run_group_id"], "group-1")
         self.assertEqual(root.metadata["mcp_tools_called"], [])
+        self.assertEqual(root.metadata["mcp_tool_denial_count"], 0)
+        self.assertEqual(root.metadata["non_mcp_tool_attempt_count"], 1)
         self.assertNotIn("dollars_spent", root.metadata)
 
         child_names = [child.name for child in root.children]
         self.assertEqual(child_names, ["harness.task_start", "host.claude_code.messages", "harness.task_end"])
+        self.assertEqual(root.children[2].outputs["mcp_tool_success_count"], 0)
+        self.assertEqual(root.children[2].outputs["non_mcp_tool_attempt_count"], 1)
         llm_span = root.children[1]
         self.assertEqual(llm_span.run_type, "llm")
         self.assertEqual(llm_span.metadata["ls_provider"], "anthropic")
@@ -174,6 +178,8 @@ def _record(*, messages_path: Path) -> RunRecord:
         snapshot_path="data/kg_runs/example",
         mcp_tools_called=[],
         non_mcp_tools_called=["Read"],
+        non_mcp_tool_attempt_count=1,
+        non_mcp_tool_attempts=["Read"],
         tokens_in=10,
         tokens_out=15,
         wall_time_seconds=1.25,

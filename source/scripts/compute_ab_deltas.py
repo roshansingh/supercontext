@@ -12,9 +12,18 @@ def main() -> None:
     parser.add_argument("--traces", required=True, help="Input traces JSONL from pull_ab_traces.")
     parser.add_argument("--out", required=True, help="Output deltas JSONL path.")
     parser.add_argument("--allow-unpaired", action="store_true", help="Skip incomplete run pairs instead of failing.")
+    parser.add_argument(
+        "--allow-mcp-tool-failures",
+        action="store_true",
+        help="Allow mcp_on rows with denied/errored BetterContext tool calls instead of failing closed.",
+    )
     args = parser.parse_args()
 
-    rows = compute_deltas(load_jsonl(Path(args.traces)), allow_unpaired=args.allow_unpaired)
+    rows = compute_deltas(
+        load_jsonl(Path(args.traces)),
+        allow_unpaired=args.allow_unpaired,
+        allow_mcp_tool_failures=args.allow_mcp_tool_failures,
+    )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as stream:
@@ -22,7 +31,12 @@ def main() -> None:
             stream.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def compute_deltas(traces: list[dict[str, Any]], *, allow_unpaired: bool = False) -> list[dict[str, Any]]:
+def compute_deltas(
+    traces: list[dict[str, Any]],
+    *,
+    allow_unpaired: bool = False,
+    allow_mcp_tool_failures: bool = False,
+) -> list[dict[str, Any]]:
     pairs: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(dict)
     for trace in traces:
         run_group_id = _required_string(trace, "run_group_id")
@@ -46,6 +60,8 @@ def compute_deltas(traces: list[dict[str, Any]], *, allow_unpaired: bool = False
             )
         on = arms["mcp_on"]
         off = arms["mcp_off"]
+        if not allow_mcp_tool_failures:
+            _reject_mcp_on_tool_failures(on, run_group_id=run_group_id, task_id=task_id)
         cost_status = _paired_cost_status(on, off)
         deltas.append(
             {
@@ -62,7 +78,35 @@ def compute_deltas(traces: list[dict[str, Any]], *, allow_unpaired: bool = False
                 "deltas": {
                     "tool_calls": _tool_count(off) - _tool_count(on),
                     "mcp_calls": _list_len(off, "mcp_tools_called") - _list_len(on, "mcp_tools_called"),
+                    "mcp_tool_attempts": _int_delta(
+                        _int_field(off, "mcp_tool_attempt_count", fallback=_list_len(off, "mcp_tools_called")),
+                        _int_field(on, "mcp_tool_attempt_count", fallback=_list_len(on, "mcp_tools_called")),
+                    ),
+                    "mcp_tool_successes": _int_delta(
+                        _int_field(off, "mcp_tool_success_count"),
+                        _int_field(on, "mcp_tool_success_count"),
+                    ),
+                    "mcp_tool_denials": _int_delta(
+                        _int_field(off, "mcp_tool_denial_count"),
+                        _int_field(on, "mcp_tool_denial_count"),
+                    ),
+                    "mcp_tool_errors": _int_delta(
+                        _int_field(off, "mcp_tool_error_count"),
+                        _int_field(on, "mcp_tool_error_count"),
+                    ),
                     "non_mcp_calls": _list_len(off, "non_mcp_tools_called") - _list_len(on, "non_mcp_tools_called"),
+                    "non_mcp_tool_attempts": _int_delta(
+                        _int_field(
+                            off,
+                            "non_mcp_tool_attempt_count",
+                            fallback=_list_len(off, "non_mcp_tools_called"),
+                        ),
+                        _int_field(
+                            on,
+                            "non_mcp_tool_attempt_count",
+                            fallback=_list_len(on, "non_mcp_tools_called"),
+                        ),
+                    ),
                     "tokens_in": _number_delta(off.get("tokens_in"), on.get("tokens_in")),
                     "tokens_out": _number_delta(off.get("tokens_out"), on.get("tokens_out")),
                     "wall_time_seconds": _number_delta(off.get("wall_time_seconds"), on.get("wall_time_seconds")),
@@ -95,7 +139,20 @@ def _arm_summary(trace: dict[str, Any]) -> dict[str, Any]:
     return {
         "answer": trace.get("final_answer"),
         "mcp_tools_called": _list(trace, "mcp_tools_called"),
+        "mcp_tool_attempt_count": _int_field(
+            trace, "mcp_tool_attempt_count", fallback=_list_len(trace, "mcp_tools_called")
+        ),
+        "mcp_tool_success_count": _int_field(trace, "mcp_tool_success_count"),
+        "mcp_tool_denial_count": _int_field(trace, "mcp_tool_denial_count"),
+        "mcp_tool_error_count": _int_field(trace, "mcp_tool_error_count"),
+        "mcp_tool_successes": _list(trace, "mcp_tool_successes"),
+        "mcp_tool_denials": _list(trace, "mcp_tool_denials"),
+        "mcp_tool_errors": _list(trace, "mcp_tool_errors"),
         "non_mcp_tools_called": _list(trace, "non_mcp_tools_called"),
+        "non_mcp_tool_attempt_count": _int_field(
+            trace, "non_mcp_tool_attempt_count", fallback=_list_len(trace, "non_mcp_tools_called")
+        ),
+        "non_mcp_tool_attempts": _list(trace, "non_mcp_tool_attempts"),
         "tokens_in": trace.get("tokens_in"),
         "tokens_out": trace.get("tokens_out"),
         "total_cost": trace.get("total_cost"),
@@ -127,7 +184,21 @@ def _required_string(row: dict[str, Any], key: str) -> str:
 
 
 def _tool_count(trace: dict[str, Any]) -> int:
-    return _list_len(trace, "mcp_tools_called") + _list_len(trace, "non_mcp_tools_called")
+    # In normal mode mcp_on denials/errors fail closed before this point. The attempt
+    # count is still used for explicit forensic runs with --allow-mcp-tool-failures.
+    return _int_field(trace, "mcp_tool_attempt_count", fallback=_list_len(trace, "mcp_tools_called")) + _int_field(
+        trace, "non_mcp_tool_attempt_count", fallback=_list_len(trace, "non_mcp_tools_called")
+    )
+
+
+def _reject_mcp_on_tool_failures(on: dict[str, Any], *, run_group_id: str, task_id: str) -> None:
+    denial_count = _int_field(on, "mcp_tool_denial_count", fallback=_list_len(on, "mcp_tool_denials"))
+    error_count = _int_field(on, "mcp_tool_error_count", fallback=_list_len(on, "mcp_tool_errors"))
+    if denial_count or error_count:
+        raise ValueError(
+            f"invalid mcp_on trace for run_group_id={run_group_id!r} task_id={task_id!r}: "
+            f"BetterContext MCP denials={denial_count} errors={error_count}"
+        )
 
 
 def _list_len(trace: dict[str, Any], key: str) -> int:
@@ -141,6 +212,21 @@ def _list(trace: dict[str, Any], key: str) -> list[Any]:
     if not isinstance(value, list):
         raise ValueError(f"trace field {key!r} must be a list")
     return value
+
+
+def _int_field(trace: dict[str, Any], key: str, *, fallback: int = 0) -> int:
+    value = trace.get(key)
+    if value is None:
+        return fallback
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"trace field {key!r} must be an integer")
+    if value < 0:
+        raise ValueError(f"trace field {key!r} must be non-negative")
+    return value
+
+
+def _int_delta(off_value: int, on_value: int) -> int:
+    return off_value - on_value
 
 
 def _number_delta(off_value: Any, on_value: Any) -> float | int | None:

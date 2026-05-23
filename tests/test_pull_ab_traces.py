@@ -25,7 +25,16 @@ class PullAbTracesTest(unittest.TestCase):
                     "difficulty": "Low",
                     "harness_version": "ab-eval-v1",
                     "mcp_tools_called": ["mcp__bettercontext__find_callers"],
+                    "mcp_tool_attempt_count": 1,
+                    "mcp_tool_success_count": 1,
+                    "mcp_tool_denial_count": 0,
+                    "mcp_tool_error_count": 0,
+                    "mcp_tool_successes": ["mcp__bettercontext__find_callers"],
+                    "mcp_tool_denials": [],
+                    "mcp_tool_errors": [],
                     "non_mcp_tools_called": ["Read"],
+                    "non_mcp_tool_attempt_count": 2,
+                    "non_mcp_tool_attempts": ["Read", "Read"],
                     "tokens_in": 10,
                     "tokens_out": 5,
                     "wall_time_seconds": 1.2,
@@ -52,6 +61,12 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["tags"], ["arm:mcp_on", "task_id:Q003"])
         self.assertEqual(trace["run_group_id"], "group-1")
         self.assertEqual(trace["mcp_tools_called"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(trace["mcp_tool_attempt_count"], 1)
+        self.assertEqual(trace["mcp_tool_success_count"], 1)
+        self.assertEqual(trace["mcp_tool_denial_count"], 0)
+        self.assertEqual(trace["mcp_tool_successes"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(trace["non_mcp_tool_attempt_count"], 2)
+        self.assertEqual(trace["non_mcp_tool_attempts"], ["Read", "Read"])
         self.assertEqual(trace["cost_status"], "available")
         self.assertEqual(trace["record_cost_status"], "not_uploaded")
         self.assertNotIn("cost_status", trace["metadata"])

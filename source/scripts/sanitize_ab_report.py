@@ -65,18 +65,31 @@ def render_sanitized_report(
 def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
     deltas = row.get("deltas", {})
     token_delta = _sum_numbers(deltas.get("tokens_in"), deltas.get("tokens_out"))
+    aspects = _sanitize_aspect_winners(row.get("judge_aspect_winners"))
+    on = row.get("on") if isinstance(row.get("on"), dict) else {}
     return {
         "task_id": row.get("task_id"),
         "phase": row.get("phase") or "unknown",
         "difficulty": row.get("difficulty") or "unknown",
         "quality_verdict": row.get("quality_verdict") or "unknown",
         "judge_winner": row.get("judge_winner") or "unknown",
+        "judge_aspect_winners": aspects,
         "judge_confidence": _round_number(row.get("judge_confidence")),
         "cost_status": row.get("cost_status"),
         "dollars_delta": _round_number(row.get("dollars_delta")),
+        "mcp_on_tool_health": {
+            "attempts": _round_number(on.get("mcp_tool_attempt_count")),
+            "successes": _round_number(on.get("mcp_tool_success_count")),
+            "denials": _round_number(on.get("mcp_tool_denial_count")),
+            "errors": _round_number(on.get("mcp_tool_error_count")),
+        },
         "deltas": {
             "tool_calls": _round_number(deltas.get("tool_calls")),
             "mcp_calls": _round_number(deltas.get("mcp_calls")),
+            "mcp_tool_attempts": _round_number(deltas.get("mcp_tool_attempts")),
+            "mcp_tool_successes": _round_number(deltas.get("mcp_tool_successes")),
+            "mcp_tool_denials": _round_number(deltas.get("mcp_tool_denials")),
+            "mcp_tool_errors": _round_number(deltas.get("mcp_tool_errors")),
             "non_mcp_calls": _round_number(deltas.get("non_mcp_calls")),
             "tokens_in": _round_number(deltas.get("tokens_in")),
             "tokens_out": _round_number(deltas.get("tokens_out")),
@@ -108,6 +121,7 @@ def _summary(
         "judge_model": judge_model,
         "quality_verdicts": dict(Counter(row.get("quality_verdict") for row in sanitized_rows)),
         "judge_winners": dict(Counter(row.get("judge_winner") for row in sanitized_rows)),
+        "judge_aspect_winners": _aspect_winner_counts(sanitized_rows),
         "phase_aggregates": _round_nested(raw_report.get("phase_aggregates", {})),
         "rows": sanitized_rows,
         "privacy_note": (
@@ -126,6 +140,7 @@ def _report_markdown(
     seed: int,
 ) -> str:
     winners = summary["judge_winners"]
+    aspect_counts = summary["judge_aspect_winners"]
     lines = [
         f"# BetterContext A/B Report - {run_id} - {run_date}",
         "",
@@ -139,21 +154,42 @@ def _report_markdown(
         "",
         f"- Tasks: {summary['task_count']} paired tasks / {summary['arm_count']} host runs",
         f"- Quality judge: `{judge_model}`, blinded A/B answer order, seed `{seed}`",
-        f"- Judge winners: `mcp_off={winners.get('mcp_off', 0)}`, `mcp_on={winners.get('mcp_on', 0)}`, "
+        f"- Overall quality winners: `mcp_off={winners.get('mcp_off', 0)}`, `mcp_on={winners.get('mcp_on', 0)}`, "
         f"`tie={winners.get('tie', 0)}`",
+        "- Quality gate: answer quality must be at least tied before token, cost, or latency wins matter.",
         f"- Cost availability: `{dict(Counter(row.get('cost_status') for row in summary['rows']))}`",
         "",
-        "## Per Task",
+        "## Rubric Summary",
         "",
-        "| Task | Phase | Difficulty | Winner | Confidence | Tool Delta | Token Delta | Dollar Delta | "
-        "Wall-Time Delta |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|",
+        "| Aspect | mcp_off wins | mcp_on wins | Ties | Unknown |",
+        "|---|---:|---:|---:|---:|",
     ]
+    for aspect in ("correctness", "evidence", "completeness", "actionability"):
+        counts = aspect_counts.get(aspect, {})
+        lines.append(
+            f"| {aspect} | {counts.get('mcp_off', 0)} | {counts.get('mcp_on', 0)} | "
+            f"{counts.get('tie', 0)} | {counts.get('unknown', 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Per Task",
+            "",
+            "| Task | Phase | Difficulty | Overall | Correctness | Evidence | Completeness | Actionability | "
+            "MCP OK | MCP Denied | Tool Delta | Token Delta | Dollar Delta | Wall-Time Delta |",
+            "|---|---|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
     for row in summary["rows"]:
         deltas = row["deltas"]
+        aspects = row["judge_aspect_winners"]
+        mcp_health = row["mcp_on_tool_health"]
         lines.append(
-            f"| {row['task_id']} | {row['phase']} | {row['difficulty']} | {row['judge_winner']} | "
-            f"{_format_number(row['judge_confidence'])} | {_format_number(deltas['tool_calls'])} | "
+            f"| {row['task_id']} | {row['phase']} | {row['difficulty']} | "
+            f"{row['judge_winner']} ({_format_number(row['judge_confidence'])}) | "
+            f"{aspects['correctness']} | {aspects['evidence']} | {aspects['completeness']} | "
+            f"{aspects['actionability']} | {_format_number(mcp_health['successes'])} | "
+            f"{_format_number(mcp_health['denials'])} | {_format_number(deltas['tool_calls'])} | "
             f"{_format_number(deltas['tokens_total'])} | {_format_number(row['dollars_delta'])} | "
             f"{_format_number(deltas['wall_time_seconds'])} |"
         )
@@ -194,23 +230,45 @@ def _trace_analysis(
     total_tool_delta = _sum_existing_numbers(row["deltas"]["tool_calls"] for row in rows)
     mcp_on_wins = _join_task_ids(rows, winner="mcp_on")
     mcp_off_wins = _join_task_ids(rows, winner="mcp_off")
+    mcp_on_win_count = summary["judge_winners"].get("mcp_on", 0)
+    mcp_off_win_count = summary["judge_winners"].get("mcp_off", 0)
+    tie_count = summary["judge_winners"].get("tie", 0)
+    judged_count = mcp_on_win_count + mcp_off_win_count + tie_count
+    quality_resource_sentence = _quality_resource_sentence(
+        mcp_on_win_count=mcp_on_win_count,
+        mcp_off_win_count=mcp_off_win_count,
+        tie_count=tie_count,
+    )
+    blocking_gap_sentence = _blocking_gap_sentence(
+        rows,
+        mcp_on_win_count=mcp_on_win_count,
+        mcp_off_win_count=mcp_off_win_count,
+        tie_count=tie_count,
+        judged_count=judged_count,
+    )
+    tool_delta_sentence = _tool_delta_sentence(total_tool_delta)
     phase_rows = "\n".join(
         f"| {phase} | {counts.get('mcp_off', 0)} | {counts.get('mcp_on', 0)} | {counts.get('tie', 0)} |"
         for phase, counts in sorted(winner_by_phase.items())
     )
     available_cost_rows = sum(row.get("cost_status") == "available" for row in rows)
     available_token_rows = sum(_is_number(row["deltas"]["tokens_total"]) for row in rows)
+    aspect_rows = _aspect_markdown_rows(summary["judge_aspect_winners"])
     return f"""# Trace Analysis - {run_id} - {run_date}
 
 ## Current Validation Status
 
 This run completed the `{run_id}` A/B measurement: {summary['task_count']} paired tasks, {summary['arm_count']} Claude Code host runs, local BetterContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
 
-The product signal is not ready to claim BetterContext improves agent outcomes by default. Quality comes first: the judge preferred `mcp_off` on {summary['judge_winners'].get('mcp_off', 0)} tasks, `mcp_on` on {summary['judge_winners'].get('mcp_on', 0)} tasks, and marked {summary['judge_winners'].get('tie', 0)} ties.
+The product signal is rubric-based, not a single scoreboard. Quality comes first: the judge preferred `mcp_off` overall on {summary['judge_winners'].get('mcp_off', 0)} tasks, `mcp_on` on {summary['judge_winners'].get('mcp_on', 0)} tasks, and marked {summary['judge_winners'].get('tie', 0)} ties. A cost, token, or latency win matters only after answer quality is at least tied.
 
 | Phase | mcp_off wins | mcp_on wins | Ties |
 |---|---:|---:|---:|
 {phase_rows}
+
+| Quality Aspect | mcp_off wins | mcp_on wins | Ties | Unknown |
+|---|---:|---:|---:|---:|
+{aspect_rows}
 
 ## Strongest Product-Value Signal
 
@@ -220,13 +278,13 @@ Cost data was available for {available_cost_rows} of {summary['task_count']} row
 - Total token delta: `{_format_number(total_token_delta)}` in favor of `mcp_on` overall. This is `n/a` unless every paired row has token data.
 - Positive dollar deltas appeared on {sum((row['dollars_delta'] or 0) > 0 for row in rows)} of {available_cost_rows} cost-available rows.
 
-This says MCP can reduce spend or tokens in many cases, but that signal is secondary because answer quality was worse on most judged tasks.
+{quality_resource_sentence}
 
 ## Weakest Blocking Gap
 
-The blocking gap is skill/tool adoption quality, not trace capture. The installed skill and MCP server were available, but `mcp_on` still lost quality on most planning and coding tasks. The likely failure pattern is that the host either overused the MCP packet, used it too late, or accepted partial KG context where ordinary source inspection produced a better answer.
+{blocking_gap_sentence}
 
-The report also shows `mcp_on` often used more total tool calls despite MCP availability: total tool-call delta was `{_format_number(total_tool_delta)}`, where negative means `mcp_on` used more tools.
+{tool_delta_sentence}
 
 ## Where MCP Helped
 
@@ -260,12 +318,96 @@ Expected movement: after classification, choose one repeated failure family and 
 """
 
 
+def _quality_resource_sentence(*, mcp_on_win_count: int, mcp_off_win_count: int, tie_count: int) -> str:
+    if mcp_on_win_count > mcp_off_win_count:
+        return (
+            "This says MCP improved judged answer quality on more tasks and can reduce spend or tokens in many cases. "
+            "That is a positive product signal, but the task-level losses still gate any broad rollout claim."
+        )
+    if mcp_off_win_count > mcp_on_win_count:
+        return (
+            "This says MCP can reduce spend or tokens in some cases, but that signal is secondary because "
+            "`mcp_off` won judged answer quality on more tasks."
+        )
+    if mcp_on_win_count or mcp_off_win_count or tie_count:
+        return (
+            "This says resource deltas are secondary: judged answer quality was tied overall, so the next decision "
+            "depends on task-level quality and reliability."
+        )
+    return "This run has no judged quality winners yet, so resource deltas are diagnostic only."
+
+
+def _blocking_gap_sentence(
+    rows: list[dict[str, Any]],
+    *,
+    mcp_on_win_count: int,
+    mcp_off_win_count: int,
+    tie_count: int,
+    judged_count: int,
+) -> str:
+    zero_mcp_rows = sum(row.get("mcp_on_tool_health", {}).get("attempts") == 0 for row in rows)
+    non_winning_rows = mcp_off_win_count + tie_count
+    if mcp_on_win_count > mcp_off_win_count:
+        return (
+            "The blocking gap is consistency, not trace capture. The installed skill and MCP server were available, "
+            f"but `mcp_on` did not win {non_winning_rows} of {judged_count} judged tasks"
+            f"{_zero_mcp_clause(zero_mcp_rows)}. The next work should classify the loss/tie rows before optimizing "
+            "cost or latency."
+        )
+    return (
+        "The blocking gap is skill/tool adoption quality, not trace capture. The installed skill and MCP server were "
+        f"available, but `mcp_on` only won {mcp_on_win_count} of {judged_count} judged tasks"
+        f"{_zero_mcp_clause(zero_mcp_rows)}. The likely failure pattern is that the host either used MCP too late, "
+        "accepted partial KG context, or found better evidence through ordinary source inspection."
+    )
+
+
+def _zero_mcp_clause(zero_mcp_rows: int) -> str:
+    if zero_mcp_rows:
+        return f", and {zero_mcp_rows} `mcp_on` rows made zero MCP calls"
+    return ""
+
+
+def _tool_delta_sentence(total_tool_delta: int | float | None) -> str:
+    if not _is_number(total_tool_delta):
+        return "Total tool-call delta was `n/a`, so tool-use efficiency cannot be aggregated for this run."
+    direction = "used fewer" if total_tool_delta > 0 else "used more" if total_tool_delta < 0 else "used the same number of"
+    return (
+        f"The report also shows aggregate tool-use behavior: total tool-call delta was "
+        f"`{_format_number(total_tool_delta)}`, so `mcp_on` {direction} tool calls overall."
+    )
+
+
 def _format_number(value: Any) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, float):
         return f"{value:.6f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def _sanitize_aspect_winners(value: Any) -> dict[str, str]:
+    aspects = {}
+    source = value if isinstance(value, dict) else {}
+    for aspect in ("correctness", "evidence", "completeness", "actionability"):
+        winner = source.get(aspect)
+        aspects[aspect] = winner if winner in {"mcp_off", "mcp_on", "tie"} else "unknown"
+    return aspects
+
+
+def _aspect_winner_counts(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    counts = {}
+    for aspect in ("correctness", "evidence", "completeness", "actionability"):
+        counts[aspect] = dict(Counter(row["judge_aspect_winners"][aspect] for row in rows))
+    return counts
+
+
+def _aspect_markdown_rows(aspect_counts: dict[str, dict[str, int]]) -> str:
+    return "\n".join(
+        f"| {aspect} | {counts.get('mcp_off', 0)} | {counts.get('mcp_on', 0)} | "
+        f"{counts.get('tie', 0)} | {counts.get('unknown', 0)} |"
+        for aspect, counts in aspect_counts.items()
+    )
 
 
 def _round_number(value: Any) -> Any:

@@ -9,8 +9,11 @@ from source.kg.eval.corpus import CorpusRow, EvalTask
 from source.kg.eval.runner import (
     RunRecord,
     RunnerConfig,
+    _allowed_tools,
     _claude_extra_args,
+    _mcp_tool_observations,
     _raise_for_host_error_messages,
+    _raise_for_mcp_tool_failures,
 )
 from source.scripts.run_ab_eval import (
     _parse_arms,
@@ -301,6 +304,214 @@ class AbEvalOrchestratorTest(unittest.TestCase):
     def test_missing_result_message_fails_closed(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "missing ResultMessage"):
             _raise_for_host_error_messages([{"type": "SystemMessage", "data": {"subtype": "init"}}])
+
+    def test_eval_runner_allows_safe_read_tools_and_mcp_only_for_on_arm(self) -> None:
+        on_tools = _allowed_tools("mcp_on")
+        off_tools = _allowed_tools("mcp_off")
+
+        self.assertIn("Read", on_tools)
+        self.assertIn("Grep", on_tools)
+        self.assertIn("Bash", on_tools)
+        self.assertIn("ToolSearch", on_tools)
+        self.assertIn("mcp__bettercontext__find_callers", on_tools)
+        self.assertIn("mcp__bettercontext__review_context", on_tools)
+        self.assertNotIn("mcp__bettercontext__find_callers", off_tools)
+
+    def test_mcp_tool_denials_are_counted_and_fail_closed(self) -> None:
+        observations = _mcp_tool_observations(
+            [
+                {
+                    "type": "AssistantMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "id": "toolu_1",
+                                "name": "mcp__bettercontext__find_callers",
+                                "input": {"symbol": "load_model"},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "UserMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "tool_use_id": "toolu_1",
+                                "is_error": True,
+                                "content": "Claude requested permissions to use mcp__bettercontext__find_callers.",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "ResultMessage",
+                    "data": {
+                        "is_error": False,
+                        "permission_denials": [
+                            {
+                                "tool_use_id": "toolu_1",
+                                "tool_name": "mcp__bettercontext__find_callers",
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(observations["attempts"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(observations["denials"], ["mcp__bettercontext__find_callers"])
+        with self.assertRaisesRegex(RuntimeError, "denied BetterContext MCP"):
+            _raise_for_mcp_tool_failures(observations)
+
+    def test_mcp_tool_errors_are_counted_and_fail_closed(self) -> None:
+        observations = _mcp_tool_observations(
+            [
+                {
+                    "type": "AssistantMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "id": "toolu_1",
+                                "name": "mcp__bettercontext__review_context",
+                                "input": {"changed_files": ["source/kg/eval/runner.py"]},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "UserMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "tool_use_id": "toolu_1",
+                                "is_error": True,
+                                "content": "server returned invalid JSON",
+                            }
+                        ]
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(observations["errors"], ["mcp__bettercontext__review_context"])
+        with self.assertRaisesRegex(RuntimeError, "BetterContext MCP tool error"):
+            _raise_for_mcp_tool_failures(observations)
+
+    def test_permission_denial_metadata_prevents_error_double_count(self) -> None:
+        observations = _mcp_tool_observations(
+            [
+                {
+                    "type": "AssistantMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "id": "toolu_1",
+                                "name": "mcp__bettercontext__find_callers",
+                                "input": {"symbol": "load_model"},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "UserMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "tool_use_id": "toolu_1",
+                                "is_error": True,
+                                "content": "tool use was blocked by host policy",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "ResultMessage",
+                    "data": {
+                        "is_error": False,
+                        "permission_denials": [
+                            {
+                                "tool_use_id": "toolu_1",
+                                "tool_name": "mcp__bettercontext__find_callers",
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(observations["denials"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(observations["errors"], [])
+
+    def test_successful_mcp_tool_result_is_counted(self) -> None:
+        observations = _mcp_tool_observations(
+            [
+                {
+                    "type": "AssistantMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "id": "toolu_1",
+                                "name": "mcp__bettercontext__find_callees",
+                                "input": {"symbol": "predict_on_session"},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "UserMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "tool_use_id": "toolu_1",
+                                "is_error": False,
+                                "content": [{"text": "{\"status\":\"found\"}"}],
+                            }
+                        ]
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(observations["successes"], ["mcp__bettercontext__find_callees"])
+        _raise_for_mcp_tool_failures(observations)
+
+    def test_repeated_mcp_tool_successes_remain_invocation_lists(self) -> None:
+        observations = _mcp_tool_observations(
+            [
+                {
+                    "type": "AssistantMessage",
+                    "data": {
+                        "content": [
+                            {
+                                "id": "toolu_1",
+                                "name": "mcp__bettercontext__find_callees",
+                                "input": {"symbol": "predict_on_session"},
+                            },
+                            {
+                                "id": "toolu_2",
+                                "name": "mcp__bettercontext__find_callees",
+                                "input": {"symbol": "score_session"},
+                            },
+                        ]
+                    },
+                },
+                {
+                    "type": "UserMessage",
+                    "data": {
+                        "content": [
+                            {"tool_use_id": "toolu_1", "is_error": False, "content": "ok"},
+                            {"tool_use_id": "toolu_2", "is_error": False, "content": "ok"},
+                        ]
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(
+            observations["successes"],
+            ["mcp__bettercontext__find_callees", "mcp__bettercontext__find_callees"],
+        )
 
     def test_eval_runner_does_not_force_bare_claude_mode(self) -> None:
         self.assertNotIn("bare", _claude_extra_args())
