@@ -134,6 +134,40 @@ class McpRegistrationTest(unittest.TestCase):
             stderr=register_mcp.subprocess.DEVNULL,
         )
 
+    def test_remove_failure_warns_by_default_without_claiming_success(self) -> None:
+        output = self._run_register(
+            "--agent",
+            "codex",
+            "--remove",
+            which_side_effect=lambda executable: f"/bin/{executable}",
+            run_side_effect=[
+                register_mcp.subprocess.CompletedProcess(
+                    ("codex", "mcp", "remove", "bettercontext"),
+                    1,
+                ),
+            ],
+        )
+
+        self.assertIn("warning: codex MCP registration failed (exit code 1)", output)
+        self.assertNotIn("ran remove command for codex MCP server", output)
+
+    def test_remove_failure_errors_in_strict_mode(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._run_register(
+                "--agent",
+                "codex",
+                "--remove",
+                "--on-error",
+                "error",
+                which_side_effect=lambda executable: f"/bin/{executable}",
+                run_side_effect=[
+                    register_mcp.subprocess.CompletedProcess(
+                        ("codex", "mcp", "remove", "bettercontext"),
+                        1,
+                    ),
+                ],
+            )
+
     def test_missing_cli_warns_by_default(self) -> None:
         output = self._run_register(
             "--agent",
