@@ -39,7 +39,7 @@ class AbEvalCorpusTest(unittest.TestCase):
         q037 = next(task for task in tasks if task.task_id == "Q037")
         self.assertIn('"changed_files"', q037.fixture_input)
         self.assertIn('"changed_ranges"', q037.fixture_input)
-        self.assertIn('"repo": "mercury_api"', q037.fixture_input)
+        self.assertIn('"repo": "backend_api"', q037.fixture_input)
 
     def test_default_v1_rejects_manifest_rows_not_in_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

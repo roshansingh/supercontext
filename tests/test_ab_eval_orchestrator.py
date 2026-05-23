@@ -530,14 +530,14 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                 capabilities="diff parsing",
             ),
             phase="review",
-            fixture_input='PR input:\n{"repo": "mercury_api", "changed_files": ["companies/urls.py"]}',
+            fixture_input='PR input:\n{"repo": "backend_api", "changed_files": ["api/auth/routes.py", "api/accounts/views.py"]}',
         )
 
         prompt = _task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
 
         self.assertIn("Fixture input:", prompt)
-        self.assertIn('"repo": "mercury_api"', prompt)
-        self.assertIn('"changed_files": ["companies/urls.py"]', prompt)
+        self.assertIn('"repo": "backend_api"', prompt)
+        self.assertIn('"changed_files": ["api/auth/routes.py", "api/accounts/views.py"]', prompt)
         self.assertLess(prompt.index("Fixture input:"), prompt.index("User question:"))
 
 

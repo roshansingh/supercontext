@@ -36,19 +36,19 @@ tasks:
       PR input:
       {
         "provider": "fixture",
-        "repo": "mercury_api",
-        "pr_url": "fixture://q037/mercury-api-auth-routes",
+        "repo": "backend_api",
+        "pr_url": "fixture://q037/backend-api-auth-routes",
         "base_sha": "fixture-base",
         "head_sha": "fixture-head",
         "changed_files": [
-          "companies/urls.py",
-          "companies/views/views.py"
+          "api/auth/routes.py",
+          "api/accounts/views.py"
         ],
         "changed_ranges": [
-          {"path": "companies/urls.py", "start_line": 60, "end_line": 64},
-          {"path": "companies/views/views.py", "start_line": 218, "end_line": 275}
+          {"path": "api/auth/routes.py", "start_line": 60, "end_line": 64},
+          {"path": "api/accounts/views.py", "start_line": 218, "end_line": 275}
         ],
-        "diff": "Auth, token, registration, and company-user route handling changed in mercury_api. Compute blast radius for affected services, endpoint callers, schemas/contracts, deployables, owners, and explicit unknowns."
+        "diff": "Auth, token, registration, and user-management route handling changed in backend_api. Compute blast radius for affected services, endpoint callers, schemas/contracts, deployables, owners, and explicit unknowns."
       }
   - id: Q038
     phase: planning
