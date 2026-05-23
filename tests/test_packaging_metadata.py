@@ -92,6 +92,13 @@ class PackagingMetadataTest(unittest.TestCase):
             ).exists()
         )
 
+    def test_eval_yaml_is_packaged(self) -> None:
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        package_data = data["tool"]["setuptools"]["package-data"]
+
+        self.assertIn("*.yaml", package_data["source.kg.eval"])
+        self.assertTrue((ROOT / "source/kg/eval/default_v1_tasks.yaml").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

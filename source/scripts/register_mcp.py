@@ -61,6 +61,11 @@ def main() -> None:
         action="store_true",
         help="Print registration commands without running them.",
     )
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="Remove the MCP registration and do not add it again.",
+    )
     args = parser.parse_args()
 
     if not args.name.strip():
@@ -88,7 +93,8 @@ def main() -> None:
                 f"would remove existing {agent} MCP registration: "
                 f"{_join(command.remove_command)}"
             )
-            print(f"would add {agent} MCP registration: {_join(command.add_command)}")
+            if not args.remove:
+                print(f"would add {agent} MCP registration: {_join(command.add_command)}")
             continue
 
         try:
@@ -106,6 +112,9 @@ def main() -> None:
                 command.remove_command,
                 exc,
             )
+            continue
+        if args.remove:
+            print(f"ran remove command for {agent} MCP server {args.name!r}")
             continue
         try:
             subprocess.run(command.add_command, check=True)

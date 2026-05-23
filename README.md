@@ -111,6 +111,16 @@ python -m source.scripts.coverage_report \
 
 Read `coverage-run.md` for the human report and `coverage-run.json` for the machine-readable report.
 
+## Evaluation Traces
+
+BetterContext evaluation code and trace-analysis skills are intended to be open and reproducible. Raw traces and repo-specific run outputs are private by default.
+
+Local A/B harness records, downloaded LangSmith traces, SDK message streams, and intermediate deltas belong under `data/ab_runs/<run-id>/`. That path is gitignored because traces can contain prompts, final answers, file paths, snippets, model metadata, and tool-call payloads from the evaluated repo.
+
+Checked-in evaluation reports belong under `docs/evaluation/ab-runs/<run-id>/` only when they are generated from public fixtures or have been explicitly sanitized. For private repos, keep the generated report and trace-analysis notes outside git or share only a redacted summary.
+
+The installed host skills may include trace-evaluation guidance for Codex and Claude Code. Those skill files should describe how to analyze `ab-report.md`, `ab-report.json`, `deltas.jsonl`, and LangSmith runs, but they must not embed real trace data or customer-specific examples.
+
 Run the local MCP v0 server for a repo:
 
 ```bash
