@@ -98,7 +98,7 @@ def main() -> None:
             continue
 
         try:
-            subprocess.run(
+            remove_result = subprocess.run(
                 command.remove_command,
                 check=False,
                 stdout=subprocess.DEVNULL,
@@ -114,6 +114,16 @@ def main() -> None:
             )
             continue
         if args.remove:
+            remove_returncode = getattr(remove_result, "returncode", 0)
+            if isinstance(remove_returncode, int) and remove_returncode != 0:
+                _handle_registration_failure(
+                    parser,
+                    args.on_error,
+                    agent,
+                    command.remove_command,
+                    subprocess.CalledProcessError(remove_returncode, command.remove_command),
+                )
+                continue
             print(f"ran remove command for {agent} MCP server {args.name!r}")
             continue
         try:
