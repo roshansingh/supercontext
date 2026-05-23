@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from decimal import Decimal
 from types import SimpleNamespace
 
 from source.scripts.pull_ab_traces import trace_from_langsmith_run
@@ -37,9 +38,9 @@ class PullAbTracesTest(unittest.TestCase):
             },
             inputs={"task_id": "Q003"},
             outputs={"final_answer": "answer"},
-            total_cost=0.01,
-            prompt_cost=0.004,
-            completion_cost=0.006,
+            total_cost=Decimal("0.01"),
+            prompt_cost=Decimal("0.004"),
+            completion_cost=Decimal("0.006"),
             total_tokens=15,
             prompt_tokens=10,
             completion_tokens=5,
@@ -55,6 +56,8 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["record_cost_status"], "not_uploaded")
         self.assertNotIn("cost_status", trace["metadata"])
         self.assertEqual(trace["total_cost"], 0.01)
+        self.assertEqual(trace["prompt_cost"], 0.004)
+        self.assertEqual(trace["completion_cost"], 0.006)
 
     def test_trace_from_langsmith_run_marks_missing_cost_unavailable(self) -> None:
         run = SimpleNamespace(extra={"metadata": {"arm": "mcp_off"}}, tags=[], total_cost=None)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,7 @@ def main() -> None:
 def trace_from_langsmith_run(run: Any) -> dict[str, Any]:
     metadata = _metadata(run)
     record_cost_status = metadata.pop("cost_status", None)
-    total_cost = getattr(run, "total_cost", None)
+    total_cost = _decimal_to_float(getattr(run, "total_cost", None))
     trace = {
         "id": str(getattr(run, "id", "")),
         "name": getattr(run, "name", ""),
@@ -52,8 +53,8 @@ def trace_from_langsmith_run(run: Any) -> dict[str, Any]:
         "inputs": getattr(run, "inputs", None) or {},
         "outputs": getattr(run, "outputs", None) or {},
         "total_cost": total_cost,
-        "prompt_cost": getattr(run, "prompt_cost", None),
-        "completion_cost": getattr(run, "completion_cost", None),
+        "prompt_cost": _decimal_to_float(getattr(run, "prompt_cost", None)),
+        "completion_cost": _decimal_to_float(getattr(run, "completion_cost", None)),
         "total_tokens": getattr(run, "total_tokens", None),
         "prompt_tokens": getattr(run, "prompt_tokens", None),
         "completion_tokens": getattr(run, "completion_tokens", None),
@@ -92,6 +93,12 @@ def _metadata(run: Any) -> dict[str, Any]:
     if isinstance(metadata, dict):
         return dict(metadata)
     return {}
+
+
+def _decimal_to_float(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
 
 
 if __name__ == "__main__":
