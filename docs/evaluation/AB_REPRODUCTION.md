@@ -1,0 +1,81 @@
+# A/B Evaluation Reproduction
+
+This page explains how repo owners can recreate BetterContext MCP A/B reports.
+
+## Prerequisites
+
+- Claude Code is installed and logged in.
+- `.env` contains `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, and `OPENAI_API_KEY`.
+- The target repos and KG snapshot are available locally.
+- Raw run artifacts stay under `data/ab_runs/<run-id>/`; do not commit them.
+
+## Rerun From Scratch
+
+Start the local MCP server:
+
+```bash
+.venv/bin/python -m source.scripts.mcp_server \
+  --snapshot <snapshot-dir> \
+  --host 127.0.0.1 \
+  --port 3851
+```
+
+Run the paired A/B:
+
+```bash
+set -a; source .env; set +a
+.venv/bin/python -m source.scripts.run_ab_eval \
+  --query-set docs/evaluation/PRODUCT-QUERY-SET.md \
+  --snapshot <snapshot-dir> \
+  --tasks default-v1 \
+  --arms mcp_on,mcp_off \
+  --out data/ab_runs/<run-id> \
+  --seed <seed> \
+  --mcp-url http://127.0.0.1:3851/mcp \
+  --upload-to-langsmith
+```
+
+Pull traces, compute deltas, judge, and render:
+
+```bash
+.venv/bin/python -m source.scripts.pull_ab_traces \
+  --project "$LANGSMITH_PROJECT" \
+  --run-group-ids <comma-separated-run-group-ids> \
+  --limit 100 \
+  --out data/ab_runs/<run-id>/traces.jsonl
+
+.venv/bin/python -m source.scripts.compute_ab_deltas \
+  --traces data/ab_runs/<run-id>/traces.jsonl \
+  --out data/ab_runs/<run-id>/deltas.jsonl
+
+.venv/bin/python -m source.scripts.judge_ab_quality \
+  --judge-model gpt-4.1-mini \
+  --deltas data/ab_runs/<run-id>/deltas.jsonl \
+  --out data/ab_runs/<run-id>/judged-deltas.jsonl \
+  --seed <seed>
+
+.venv/bin/python -m source.scripts.aggregate_ab_report \
+  --deltas data/ab_runs/<run-id>/judged-deltas.jsonl \
+  --out data/ab_runs/<run-id>/report
+
+.venv/bin/python -m source.scripts.sanitize_ab_report \
+  --judged-deltas data/ab_runs/<run-id>/judged-deltas.jsonl \
+  --raw-report data/ab_runs/<run-id>/report/ab-report.json \
+  --out docs/evaluation/ab-runs/<run-id> \
+  --run-id <run-id> \
+  --date <YYYY-MM-DD> \
+  --judge-model gpt-4.1-mini \
+  --seed <seed>
+```
+
+## What Git Can Recreate
+
+Git contains the harness, report generators, default-v1 task manifest, and sanitized reports.
+
+Git does not contain private repo snapshots, raw Claude SDK messages, raw answers, judge reasoning, LangSmith URLs, or API keys.
+
+## Expected Checks
+
+- `compute_ab_deltas` should fail closed if any `mcp_on` row has BetterContext MCP denials or tool errors.
+- The final sanitized report should show `MCP Denied = 0`.
+- Interpret token, cost, and latency only after checking the quality rubric.

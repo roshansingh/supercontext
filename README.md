@@ -121,6 +121,20 @@ Checked-in evaluation reports belong under `docs/evaluation/ab-runs/<run-id>/` o
 
 The installed host skills may include trace-evaluation guidance for Codex and Claude Code. Those skill files should describe how to analyze `ab-report.md`, `ab-report.json`, `deltas.jsonl`, and LangSmith runs, but they must not embed real trace data or customer-specific examples.
 
+See `docs/evaluation/AB_REPRODUCTION.md` for the reproducible A/B workflow and per-run reproduction notes under `docs/evaluation/ab-runs/<run-id>/`.
+
+## Before Open Sourcing
+
+Remove private evaluation material before publishing this repository publicly. If any private data was committed, remove it from Git history, not only from the latest tree.
+
+Do not publish:
+
+- raw `data/ab_runs/` traces, SDK `messages.jsonl`, final answers, or judge reasoning
+- LangSmith URLs, private run IDs, API keys, `.env`, or local machine paths
+- private KG snapshots or generated artifacts from customer/org repos
+- customer, org, repo, service, or file names that are not cleared for publication
+- internal debates, plans, or private review notes not intended for OSS
+
 Run the local MCP v0 server for a repo:
 
 ```bash
