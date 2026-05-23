@@ -6,7 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from source.kg.eval.corpus import CorpusRow, EvalTask
-from source.kg.eval.runner import RunRecord, RunnerConfig
+from source.kg.eval.runner import (
+    RunRecord,
+    RunnerConfig,
+    _claude_extra_args,
+    _raise_for_host_error_messages,
+)
 from source.scripts.run_ab_eval import (
     _parse_arms,
     _post_arm_host_config_command,
@@ -254,6 +259,51 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             )
 
         self.assertIn("restore failed", "\n".join(context.exception.__notes__))
+
+    def test_host_error_result_messages_fail_closed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Not logged in"):
+            _raise_for_host_error_messages(
+                [
+                    {
+                        "type": "ResultMessage",
+                        "data": {
+                            "is_error": True,
+                            "result": "Not logged in · Please run /login",
+                        },
+                    }
+                ]
+            )
+
+    def test_non_error_result_messages_do_not_fail(self) -> None:
+        _raise_for_host_error_messages(
+            [
+                {
+                    "type": "ResultMessage",
+                    "data": {
+                        "is_error": False,
+                        "result": "answer",
+                    },
+                }
+            ]
+        )
+
+    def test_host_message_errors_fail_closed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "authentication_failed"):
+            _raise_for_host_error_messages(
+                [
+                    {
+                        "type": "AssistantMessage",
+                        "data": {"error": "authentication_failed"},
+                    }
+                ]
+            )
+
+    def test_missing_result_message_fails_closed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "missing ResultMessage"):
+            _raise_for_host_error_messages([{"type": "SystemMessage", "data": {"subtype": "init"}}])
+
+    def test_eval_runner_does_not_force_bare_claude_mode(self) -> None:
+        self.assertNotIn("bare", _claude_extra_args())
 
 
 def _task() -> EvalTask:

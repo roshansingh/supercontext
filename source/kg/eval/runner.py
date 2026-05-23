@@ -137,7 +137,7 @@ async def async_run_single_task(
                 cli_path=resolve_claude_cli_path(resolved_config.claude_cli_path),
                 mcp_servers=_mcp_servers(arm, resolved_config),
                 cwd=Path.cwd(),
-                extra_args={"bare": None},
+                extra_args=_claude_extra_args(),
                 load_timeout_ms=resolved_config.load_timeout_ms,
                 system_prompt=_system_prompt(),
             )
@@ -150,6 +150,7 @@ async def async_run_single_task(
                 message_stream.flush()
                 if isinstance(message, ResultMessage):
                     final_answer = str(getattr(message, "result", ""))
+    _raise_for_host_error_messages(serialized_messages)
     tokens_in, tokens_out = _usage_tokens(serialized_messages)
     mcp_tools, non_mcp_tools = _tool_calls(serialized_messages)
     record = RunRecord(
@@ -194,6 +195,10 @@ def _mcp_servers(arm: Arm, config: RunnerConfig) -> dict[str, dict[str, str]]:
     return {"bettercontext": {"type": "http", "url": config.mcp_url}}
 
 
+def _claude_extra_args() -> dict[str, str | None]:
+    return {}
+
+
 def _prepare_arm_output_dir(output_dir: Path, *, group_id: str, arm: Arm) -> Path:
     arm_dir = output_dir / group_id / arm
     if arm_dir.exists():
@@ -232,6 +237,28 @@ def _message_to_json(message: object) -> dict[str, Any]:
         "data": _jsonable(message),
         "repr": repr(message),
     }
+
+
+def _raise_for_host_error_messages(messages: list[dict[str, Any]]) -> None:
+    saw_result_message = False
+    for message in messages:
+        data = message.get("data")
+        if not isinstance(data, dict):
+            continue
+        if message.get("type") == "ResultMessage":
+            saw_result_message = True
+            if data.get("is_error") is True:
+                detail = (
+                    data.get("result")
+                    or data.get("api_error_status")
+                    or data.get("errors")
+                    or "unknown host error"
+                )
+                raise RuntimeError(f"Claude host run failed: {detail}")
+        elif data.get("error"):
+            raise RuntimeError(f"Claude host message failed: {data.get('error')}")
+    if not saw_result_message:
+        raise RuntimeError("Claude host run failed: missing ResultMessage")
 
 
 def _jsonable(value: object, *, depth: int = 0) -> Any:
