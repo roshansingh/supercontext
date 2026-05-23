@@ -127,8 +127,9 @@ def _run_paired_tasks(
         ordered_arms = list(arms)
         rng.shuffle(ordered_arms)
         for arm in ordered_arms:
-            pre_command = _pre_arm_host_config_command(arm=arm, host=host)
-            post_command = _post_arm_host_config_command(arm=arm, host=host)
+            pre_command = _pre_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
+            post_command = _post_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
+            primary_error: BaseException | None = None
             try:
                 run_host_command(pre_command)
                 record = run_task(
@@ -146,31 +147,61 @@ def _run_paired_tasks(
                 if arm == "mcp_off" and record.mcp_tools_called:
                     raise RuntimeError("mcp_off run unexpectedly called BetterContext MCP tools")
                 records.append(record)
+            except BaseException as exc:
+                primary_error = exc
+                raise
             finally:
                 if post_command:
-                    run_host_command(post_command)
+                    try:
+                        run_host_command(post_command)
+                    except Exception as cleanup_error:
+                        if primary_error is not None:
+                            primary_error.add_note(f"post-arm host config command failed: {cleanup_error}")
+                        else:
+                            raise
     return records
 
 
-def _pre_arm_host_config_command(*, arm: Arm, host: str) -> tuple[str, ...]:
+def _pre_arm_host_config_command(*, arm: Arm, host: str, mcp_url: str) -> tuple[str, ...]:
     if host != "claude_code":
         raise ValueError(f"Unsupported A/B host: {host}")
-    command = (sys.executable, "-m", "source.scripts.register_mcp", "--agent", "claude")
+    command = (
+        sys.executable,
+        "-m",
+        "source.scripts.register_mcp",
+        "--agent",
+        "claude",
+        "--url",
+        mcp_url,
+    )
     if arm == "mcp_off":
-        return (*command, "--remove")
+        return (sys.executable, "-m", "source.scripts.register_mcp", "--agent", "claude", "--remove")
     return command
 
 
-def _post_arm_host_config_command(*, arm: Arm, host: str) -> tuple[str, ...]:
+def _post_arm_host_config_command(*, arm: Arm, host: str, mcp_url: str) -> tuple[str, ...]:
     if host != "claude_code":
         raise ValueError(f"Unsupported A/B host: {host}")
     if arm == "mcp_off":
-        return (sys.executable, "-m", "source.scripts.register_mcp", "--agent", "claude")
+        return (
+            sys.executable,
+            "-m",
+            "source.scripts.register_mcp",
+            "--agent",
+            "claude",
+            "--url",
+            mcp_url,
+        )
     return ()
 
 
 def _run_host_config_command(command: tuple[str, ...]) -> None:
-    subprocess.run(command, check=True)
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        detail = f": {stderr}" if stderr else ""
+        raise RuntimeError(f"host config command failed with exit code {exc.returncode}{detail}") from exc
 
 
 def _upload_to_langsmith(record: RunRecord) -> str:

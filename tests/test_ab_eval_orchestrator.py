@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.eval.corpus import CorpusRow, EvalTask
 from source.kg.eval.runner import RunRecord, RunnerConfig
@@ -9,6 +11,7 @@ from source.scripts.run_ab_eval import (
     _parse_arms,
     _post_arm_host_config_command,
     _pre_arm_host_config_command,
+    _run_host_config_command,
     _run_paired_tasks,
 )
 
@@ -170,13 +173,69 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             _parse_arms("mcp_on,other")
 
     def test_host_config_commands_use_claude_registration_contract(self) -> None:
-        on_command = _pre_arm_host_config_command(arm="mcp_on", host="claude_code")
-        off_command = _pre_arm_host_config_command(arm="mcp_off", host="claude_code")
-        restore_command = _post_arm_host_config_command(arm="mcp_off", host="claude_code")
+        on_command = _pre_arm_host_config_command(
+            arm="mcp_on", host="claude_code", mcp_url="http://127.0.0.1:9999/mcp"
+        )
+        off_command = _pre_arm_host_config_command(
+            arm="mcp_off", host="claude_code", mcp_url="http://127.0.0.1:9999/mcp"
+        )
+        restore_command = _post_arm_host_config_command(
+            arm="mcp_off", host="claude_code", mcp_url="http://127.0.0.1:9999/mcp"
+        )
 
-        self.assertEqual(on_command[-4:], ("-m", "source.scripts.register_mcp", "--agent", "claude"))
-        self.assertEqual(off_command[-5:], ("-m", "source.scripts.register_mcp", "--agent", "claude", "--remove"))
-        self.assertEqual(restore_command[-4:], ("-m", "source.scripts.register_mcp", "--agent", "claude"))
+        self.assertEqual(
+            on_command[-6:],
+            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--url", "http://127.0.0.1:9999/mcp"),
+        )
+        self.assertEqual(
+            off_command[-5:],
+            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--remove"),
+        )
+        self.assertEqual(
+            restore_command[-6:],
+            ("-m", "source.scripts.register_mcp", "--agent", "claude", "--url", "http://127.0.0.1:9999/mcp"),
+        )
+
+    def test_host_config_command_suppresses_registration_stdout(self) -> None:
+        with patch("source.scripts.run_ab_eval.subprocess.run") as run_mock:
+            _run_host_config_command(("register", "mcp"))
+
+        run_mock.assert_called_once()
+        _, kwargs = run_mock.call_args
+        self.assertTrue(kwargs["check"])
+        self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+        self.assertEqual(kwargs["stderr"], subprocess.PIPE)
+        self.assertTrue(kwargs["text"])
+
+    def test_host_config_command_includes_stderr_in_failure(self) -> None:
+        error = subprocess.CalledProcessError(2, ("register", "mcp"), stderr="bad config\n")
+        with patch("source.scripts.run_ab_eval.subprocess.run", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "bad config"):
+                _run_host_config_command(("register", "mcp"))
+
+    def test_cleanup_failure_does_not_mask_primary_run_failure(self) -> None:
+        def fake_run_task(*args, **kwargs) -> RunRecord:
+            raise RuntimeError("primary run failed")
+
+        def fail_restore(command: tuple[str, ...]) -> None:
+            if "--remove" not in command:
+                raise RuntimeError("restore failed")
+
+        with self.assertRaisesRegex(RuntimeError, "primary run failed") as context:
+            _run_paired_tasks(
+                [_task()],
+                arms=["mcp_off"],
+                snapshot="snapshot-dir",
+                output_dir="out-dir",
+                host="claude_code",
+                seed=0,
+                config=RunnerConfig(),
+                run_task=fake_run_task,
+                run_host_command=fail_restore,
+                group_id_factory=lambda: "group-1",
+            )
+
+        self.assertIn("restore failed", "\n".join(context.exception.__notes__))
 
 
 def _task() -> EvalTask:
