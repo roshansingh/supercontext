@@ -1,5 +1,9 @@
 # BetterContext A/B Report - pr119-full-2026-05-23 - 2026-05-23
 
+> BetterContext is a semantic context accelerator and evidence provider. It should make Claude Code/Codex do less
+> blind grep/read work when the KG has the right facts. It should not stop the agent from falling back to source
+> inspection when KG coverage is missing, ambiguous, or out of scope.
+
 Delta orientation: `off_minus_on`. Positive tool/token/cost values mean `mcp_on` used less than `mcp_off`; negative values mean `mcp_on` used more.
 
 This checked-in report is sanitized. Raw answers, judge reasoning, SDK messages, LangSmith URLs, and downloaded traces remain under ignored `data/ab_runs/pr119-full-2026-05-23/`.
