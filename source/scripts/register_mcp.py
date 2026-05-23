@@ -114,7 +114,7 @@ def main() -> None:
             )
             continue
         if args.remove:
-            print(f"removed {agent} MCP server {args.name!r}")
+            print(f"ran remove command for {agent} MCP server {args.name!r}")
             continue
         try:
             subprocess.run(command.add_command, check=True)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from source.kg.eval.runner import RunRecord, RunnerConfig, _mcp_servers, _usage_tokens
+from source.kg.eval.runner import RunRecord, RunnerConfig, _mcp_servers, _prepare_arm_output_dir, _usage_tokens
 
 
 class AbEvalCostStatusTest(unittest.TestCase):
@@ -52,6 +54,23 @@ class AbEvalCostStatusTest(unittest.TestCase):
         ]
 
         self.assertEqual(_usage_tokens(messages), (10, 29))
+
+    def test_usage_tokens_skip_nested_duplicate_keys_and_preserve_zero(self) -> None:
+        messages = [
+            {"data": {"usage": {"input_tokens": 0, "details": {"input_tokens": 3}}}},
+            {"data": {"usage": {"output_tokens": 0}}},
+        ]
+
+        self.assertEqual(_usage_tokens(messages), (0, 0))
+
+    def test_arm_output_dir_uses_run_group_and_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            arm_dir = _prepare_arm_output_dir(root, group_id="group-1", arm="mcp_on")
+
+            self.assertEqual(arm_dir, root / "group-1" / "mcp_on")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                _prepare_arm_output_dir(root, group_id="group-1", arm="mcp_on")
 
 
 if __name__ == "__main__":

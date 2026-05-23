@@ -16,7 +16,12 @@ def main() -> None:
     parser.add_argument("--tasks", default="default-v1", help="Comma-separated task IDs or default-v1.")
     parser.add_argument("--arms", default="mcp_on", help="PR1 supports exactly one arm: mcp_on or mcp_off.")
     parser.add_argument("--out", default="data/ab_runs/smoke", help="Output directory for local run records.")
-    parser.add_argument("--seed", type=int, default=0, help="Execution seed. Does not alter default-v1 membership.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Recorded in run metadata only. Does not alter default-v1 membership or host execution.",
+    )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
     parser.add_argument("--mcp-url", default=None, help="BetterContext HTTP MCP URL for mcp_on runs.")
     parser.add_argument("--print-tasks", action="store_true", help="Print selected tasks and exit.")
@@ -50,6 +55,7 @@ def main() -> None:
         arm=arm,  # type: ignore[arg-type]
         snapshot=args.snapshot,
         output_dir=args.out,
+        host=args.host,
         random_seed=args.seed,
         config=config,
     )

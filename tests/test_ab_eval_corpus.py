@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from source.kg.eval.corpus import DEFAULT_QUERY_SET, default_v1_tasks, parse_query_set
+from source.kg.eval.corpus import DEFAULT_QUERY_SET, _clean, default_v1_tasks, parse_query_set
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +92,11 @@ class AbEvalCorpusTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "Q003\tLow\tcoding")
+
+    def test_clean_strips_only_wrapping_backticks(self) -> None:
+        self.assertEqual(_clean(" `foo` and `bar` "), "`foo` and `bar`")
+        self.assertEqual(_clean(" `wrapped` "), "wrapped")
+        self.assertEqual(_clean(" `$PY_REPO`, `$CALLER_SYMBOL` "), "$PY_REPO, $CALLER_SYMBOL")
 
 
 if __name__ == "__main__":

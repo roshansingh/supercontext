@@ -66,6 +66,7 @@ def run_single_task(
     arm: Arm,
     snapshot: str | Path,
     output_dir: str | Path,
+    host: str = "claude_code",
     run_group_id: str | None = None,
     random_seed: int = 0,
     config: RunnerConfig | None = None,
@@ -76,6 +77,7 @@ def run_single_task(
             arm=arm,
             snapshot=snapshot,
             output_dir=output_dir,
+            host=host,
             run_group_id=run_group_id,
             random_seed=random_seed,
             config=config,
@@ -89,12 +91,15 @@ async def async_run_single_task(
     arm: Arm,
     snapshot: str | Path,
     output_dir: str | Path,
+    host: str = "claude_code",
     run_group_id: str | None = None,
     random_seed: int = 0,
     config: RunnerConfig | None = None,
 ) -> RunRecord:
     if arm not in {"mcp_on", "mcp_off"}:
         raise ValueError(f"Unsupported A/B arm: {arm}")
+    if host != "claude_code":
+        raise ValueError(f"Unsupported A/B host: {host}")
     snapshot_path = Path(snapshot).expanduser()
     if not snapshot_path.exists():
         raise ValueError(f"Snapshot path does not exist: {snapshot_path}")
@@ -108,8 +113,7 @@ async def async_run_single_task(
 
     resolved_config = config or RunnerConfig()
     group_id = run_group_id or str(uuid4())
-    arm_dir = Path(output_dir) / arm
-    arm_dir.mkdir(parents=True, exist_ok=True)
+    arm_dir = _prepare_arm_output_dir(Path(output_dir), group_id=group_id, arm=arm)
     messages_path = arm_dir / "messages.jsonl"
 
     prompt = _task_prompt(task, snapshot_path=snapshot_path, arm=arm)
@@ -145,7 +149,7 @@ async def async_run_single_task(
         arm=arm,
         task_id=task.task_id,
         phase=task.phase,
-        host="claude_code",
+        host=host,
         repo_fixture=task.fixture,
         difficulty=task.difficulty,
         harness_version=DEFAULT_HARNESS_VERSION,
@@ -178,6 +182,14 @@ def _mcp_servers(arm: Arm, config: RunnerConfig) -> dict[str, dict[str, str]]:
     if arm == "mcp_off":
         return {}
     return {"bettercontext": {"type": "http", "url": config.mcp_url}}
+
+
+def _prepare_arm_output_dir(output_dir: Path, *, group_id: str, arm: Arm) -> Path:
+    arm_dir = output_dir / group_id / arm
+    if arm_dir.exists():
+        raise ValueError(f"A/B eval output already exists for run group {group_id!r} arm {arm!r}: {arm_dir}")
+    arm_dir.mkdir(parents=True)
+    return arm_dir
 
 
 def _task_prompt(task: EvalTask, *, snapshot_path: Path, arm: Arm) -> str:
@@ -238,22 +250,36 @@ def _usage_tokens(messages: list[dict[str, Any]]) -> tuple[int | None, int | Non
 
 
 def _sum_int_keys(value: Any, keys: set[str]) -> int | None:
-    total = _sum_int_keys_inner(value, keys)
-    return total if total > 0 else None
+    found, total = _sum_int_keys_inner(value, keys)
+    return total if found else None
 
 
-def _sum_int_keys_inner(value: Any, keys: set[str]) -> int:
+def _sum_int_keys_inner(value: Any, keys: set[str]) -> tuple[bool, int]:
     if isinstance(value, dict):
+        found = False
         total = 0
         for key, item in value.items():
             if key in keys and isinstance(item, int) and not isinstance(item, bool):
+                found = True
                 total += item
-        for item in value.values():
-            total += _sum_int_keys_inner(item, keys)
-        return total
+        if found:
+            return True, total
+        for key, item in value.items():
+            if key in keys:
+                continue
+            child_found, child_total = _sum_int_keys_inner(item, keys)
+            found = found or child_found
+            total += child_total
+        return found, total
     elif isinstance(value, list):
-        return sum(_sum_int_keys_inner(item, keys) for item in value)
-    return 0
+        found = False
+        total = 0
+        for item in value:
+            child_found, child_total = _sum_int_keys_inner(item, keys)
+            found = found or child_found
+            total += child_total
+        return found, total
+    return False, 0
 
 
 def _tool_calls(messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:

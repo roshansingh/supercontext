@@ -126,7 +126,7 @@ class McpRegistrationTest(unittest.TestCase):
             which_side_effect=lambda executable: f"/bin/{executable}",
         )
 
-        self.assertIn("removed codex MCP server", output)
+        self.assertIn("ran remove command for codex MCP server", output)
         self.run_mock.assert_called_once_with(
             ("codex", "mcp", "remove", "bettercontext"),
             check=False,

@@ -178,9 +178,13 @@ def _markdown_cells(line: str) -> list[str]:
 
 def _clean(value: object) -> str:
     text = str(value).strip()
-    if len(text) >= 2 and text[0] == "`" and text[-1] == "`":
+    if text.count("`") == 2 and len(text) >= 2 and text[0] == "`" and text[-1] == "`":
         text = text[1:-1].strip()
-    return text.replace("`", "")
+    elif "," in text:
+        parts = [part.strip() for part in text.split(",")]
+        if all(part.count("`") == 2 and part.startswith("`") and part.endswith("`") for part in parts):
+            text = ", ".join(part[1:-1].strip() for part in parts)
+    return text
 
 
 def _is_task_id(value: str) -> bool:
