@@ -375,6 +375,31 @@ class McpToolsTest(unittest.TestCase):
         _assert_additive_fields(self, callees)
         _assert_additive_fields(self, radius)
 
+    def test_discovery_keeps_fuzzy_but_graph_tools_require_exact_symbols(self) -> None:
+        with _fixture_snapshot() as kg:
+            lookup = kg.lookup_symbol("card")
+            planning = call_tool(kg, "planning_context", {"query": "card"})
+            callers = call_tool(kg, "find_callers", {"symbol": "card"})
+            callees = call_tool(kg, "find_callees", {"symbol": "handle"})
+            radius = call_tool(kg, "blast_radius", {"symbol": "handle", "depth": 1})
+            dependency = kg.dependency_path("handle", "shared-lib")
+            evidence = kg.evidence_for_call("handle_checkout", "card")
+
+        self.assertEqual(lookup["status"], "resolved")
+        self.assertEqual(lookup["confidence"], "fuzzy_unique")
+        self.assertEqual(lookup["resolved_symbol"]["qualname"], "charge_card")
+        self.assertTrue(any(row["qualname"] == "charge_card" for row in planning["symbols"]))
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(callers["target"]["confidence"], "not_found")
+        self.assertEqual(callees["status"], "not_found")
+        self.assertEqual(callees["source"]["confidence"], "not_found")
+        self.assertEqual(radius["status"], "not_found")
+        self.assertEqual(radius["source"]["confidence"], "not_found")
+        self.assertEqual(dependency["status"], "not_found")
+        self.assertEqual(dependency["source"]["confidence"], "not_found")
+        self.assertEqual(evidence["status"], "not_found")
+        self.assertEqual(evidence["callee"]["confidence"], "not_found")
+
     def test_event_tools_filter_consumers_and_producers(self) -> None:
         with _fixture_snapshot() as kg:
             consumers = call_tool(kg, "get_event_consumers", {"channel": "orders"})

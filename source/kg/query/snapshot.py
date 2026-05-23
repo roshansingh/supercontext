@@ -44,7 +44,7 @@ class KgSnapshot:
         line: int | None = None,
         include_all: bool = False,
     ) -> JsonObject:
-        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line, allow_fuzzy=False)
         if resolution["status"] == "not_found":
             return {"status": "not_found", "target": resolution, "callers": []}
         if resolution["status"] == "ambiguous" and not include_all:
@@ -79,7 +79,7 @@ class KgSnapshot:
         line: int | None = None,
         include_all: bool = False,
     ) -> JsonObject:
-        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line, allow_fuzzy=False)
         if resolution["status"] == "not_found":
             return {"status": "not_found", "source": resolution, "callees": []}
         if resolution["status"] == "ambiguous" and not include_all:
@@ -115,7 +115,7 @@ class KgSnapshot:
         line: int | None = None,
         include_all: bool = False,
     ) -> JsonObject:
-        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        resolution = self._resolve_symbol(symbol_query, limit=limit, path=path, line=line, allow_fuzzy=False)
         if resolution["status"] == "not_found":
             return {"status": "not_found", "source": resolution, "edges": []}
         if resolution["status"] == "ambiguous" and not include_all:
@@ -294,7 +294,7 @@ class KgSnapshot:
     ) -> JsonObject:
         max_depth = min(max(1, max_depth), 6)
         limit = min(max(1, limit), 25)
-        source_resolution = self._resolve_symbol(source_query, limit=limit, path=path, line=line)
+        source_resolution = self._resolve_symbol(source_query, limit=limit, path=path, line=line, allow_fuzzy=False)
         if source_resolution["status"] == "not_found":
             return self._dependency_path_response(
                 "not_found",
@@ -713,12 +713,12 @@ class KgSnapshot:
         line: int | None = None,
         limit: int = 25,
     ) -> JsonObject:
-        caller_resolution = self._resolve_symbol(caller_query, limit=limit, path=path, line=line)
+        caller_resolution = self._resolve_symbol(caller_query, limit=limit, path=path, line=line, allow_fuzzy=False)
         if caller_resolution["status"] != "resolved":
             return {
                 "status": "ambiguous" if caller_resolution["status"] == "ambiguous" else "not_found",
                 "caller": caller_resolution,
-                "callee": self._resolve_symbol(callee_query, limit=limit),
+                "callee": self._resolve_symbol(callee_query, limit=limit, allow_fuzzy=False),
                 "matches": [],
             }
 
@@ -734,7 +734,7 @@ class KgSnapshot:
                 line=line,
             )
 
-        callee_resolution = self._resolve_symbol(callee_query, limit=limit)
+        callee_resolution = self._resolve_symbol(callee_query, limit=limit, allow_fuzzy=False)
         if callee_resolution["status"] != "resolved":
             return {
                 "status": "ambiguous" if callee_resolution["status"] == "ambiguous" else "not_found",
@@ -839,7 +839,7 @@ class KgSnapshot:
 
     def _callee_resolution_from_matches(self, callee_query: str, entities: list[JsonObject], limit: int) -> JsonObject:
         if not entities:
-            return self._resolve_symbol(callee_query, limit=limit)
+            return self._resolve_symbol(callee_query, limit=limit, allow_fuzzy=False)
         return self._resolution_result(callee_query, "exact_name", entities, limit)
 
     def _matching_symbols(self, symbol_query: str) -> list[JsonObject]:
@@ -857,6 +857,7 @@ class KgSnapshot:
         limit: int = 25,
         path: str | None = None,
         line: int | None = None,
+        allow_fuzzy: bool = True,
     ) -> JsonObject:
         query = symbol_query.strip()
         if not query:
@@ -885,14 +886,14 @@ class KgSnapshot:
                 exact_name.append(entity)
             elif not query_is_qualified and (qualname.lower() == needle or short_name.lower() == needle):
                 exact_name.append(entity)
-            elif needle in qualified.lower():
+            elif allow_fuzzy and needle in qualified.lower():
                 fuzzy.append(entity)
 
         if exact_qualified:
             return self._resolution_result(query, "exact_qualified", exact_qualified, limit)
         if exact_name:
             return self._resolution_result(query, "exact_name", exact_name, limit)
-        if fuzzy:
+        if allow_fuzzy and fuzzy:
             return self._resolution_result(query, "fuzzy", fuzzy, limit)
         return {
             "status": "not_found",
