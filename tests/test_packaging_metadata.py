@@ -23,6 +23,8 @@ class PackagingMetadataTest(unittest.TestCase):
         self.assertIn("classifiers", project)
         self.assertIn("Repository", project["urls"])
         self.assertIn("agent", project["optional-dependencies"])
+        self.assertIn("eval", project["optional-dependencies"])
+        self.assertIn("langsmith>=0.4.43", project["optional-dependencies"]["eval"])
 
     def test_console_script_targets_import(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

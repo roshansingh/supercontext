@@ -24,6 +24,7 @@ def main() -> None:
     )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
     parser.add_argument("--mcp-url", default=None, help="BetterContext HTTP MCP URL for mcp_on runs.")
+    parser.add_argument("--upload-to-langsmith", action="store_true", help="Upload the local run record to LangSmith.")
     parser.add_argument("--print-tasks", action="store_true", help="Print selected tasks and exit.")
     args = parser.parse_args()
 
@@ -59,7 +60,12 @@ def main() -> None:
         random_seed=args.seed,
         config=config,
     )
-    print(json.dumps(record.to_json(), sort_keys=True))
+    payload = record.to_json()
+    if args.upload_to_langsmith:
+        from source.kg.eval.langsmith_emitter import emit_run
+
+        payload["langsmith_run_url"] = emit_run(record, Path(record.host_session_log_path))
+    print(json.dumps(payload, sort_keys=True))
 
 
 def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTask]:
