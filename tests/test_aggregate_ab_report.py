@@ -20,11 +20,13 @@ class AggregateAbReportTest(unittest.TestCase):
             report_json = (Path(tmp) / "ab-report.json").read_text(encoding="utf-8")
 
         self.assertIn("## Phase Aggregates", markdown)
+        self.assertIn("## Rubric Aggregates", markdown)
         self.assertIn("| coding | 1 |", markdown)
-        self.assertIn("## Where MCP Hurts", markdown)
+        self.assertIn("## Potential Resource Regressions", markdown)
         self.assertIn("- Q011", markdown)
         self.assertIn("unavailable", markdown)
         self.assertIn('"phase_aggregates"', report_json)
+        self.assertIn('"rubric_aggregates"', report_json)
         self.assertEqual(report["phase_aggregates"]["planning"]["avg_tool_calls_delta"], -1.0)
 
     def test_missing_phase_groups_as_unknown_and_partial_tokens_are_na(self) -> None:
@@ -44,9 +46,12 @@ class AggregateAbReportTest(unittest.TestCase):
             markdown = (Path(tmp) / "ab-report.md").read_text(encoding="utf-8")
 
         self.assertIn("unknown", report["phase_aggregates"])
-        self.assertIn("| Q999 | None | ungraded | 1 | n/a | unavailable | unavailable |", markdown)
+        self.assertIn(
+            "| Q999 | None | ungraded | unknown | unknown | unknown | unknown | n/a | n/a | 1 | n/a | unavailable | unavailable |",
+            markdown,
+        )
 
-    def test_citation_regressions_are_listed_as_mcp_hurts(self) -> None:
+    def test_resource_regressions_are_listed(self) -> None:
         rows = [
             {
                 "task_id": "Q777",
@@ -56,7 +61,7 @@ class AggregateAbReportTest(unittest.TestCase):
                 "cost_status": "unavailable",
                 "dollars_delta": None,
                 "deltas": {
-                    "tool_calls": 0,
+                    "tool_calls": -1,
                     "tokens_in": 0,
                     "tokens_out": 0,
                     "citations_count": 1,

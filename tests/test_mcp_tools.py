@@ -452,6 +452,15 @@ class McpToolsTest(unittest.TestCase):
                     "params": {"name": "search_services", "arguments": {"query": "payments"}},
                 },
             )
+            unsupported = _handle_json_rpc(
+                kg,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "deploy_blockers_for", "arguments": {"service": "payments"}},
+                },
+            )
 
         self.assertEqual(initialized["result"]["serverInfo"]["name"], "bettercontext-local")
         self.assertEqual(initialized["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
@@ -464,6 +473,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(called["result"]["structuredContent"]["status"], "found")
         _assert_additive_fields(self, called["result"]["structuredContent"])
         self.assertFalse(called["result"]["isError"])
+        self.assertEqual(unsupported["result"]["structuredContent"]["status"], "unsupported_by_current_kg")
+        self.assertFalse(unsupported["result"]["isError"])
 
     def test_json_rpc_reports_protocol_errors(self) -> None:
         with _fixture_snapshot() as kg:

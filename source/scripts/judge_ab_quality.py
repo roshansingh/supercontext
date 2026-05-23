@@ -65,7 +65,7 @@ def build_judge_prompt(row: dict[str, Any], *, rng: random.Random) -> tuple[str,
     ]
     rng.shuffle(answers)
     label_to_arm = {"A": answers[0][0], "B": answers[1][0]}
-    prompt = f"""Judge the two answers for correctness and evidence quality.
+    prompt = f"""Judge the two answers by rubric. Correctness is the gating dimension.
 
 Task: {row.get("task_id")}
 Phase: {row.get("phase")}
@@ -78,6 +78,7 @@ Answer B:
 
 Return strict JSON with keys:
 - winner: "A", "B", or "tie"
+- aspect_winners: object with keys "correctness", "evidence", "completeness", "actionability"; each value is "A", "B", or "tie"
 - confidence: number from 0 to 1
 - reasoning: short reason focused on correctness first, then evidence quality
 """
@@ -101,11 +102,29 @@ def parse_judge_response(response: str, *, label_to_arm: dict[str, str]) -> dict
     reasoning = payload.get("reasoning")
     if not isinstance(reasoning, str) or not reasoning.strip():
         raise ValueError("judge response reasoning must be a non-empty string")
+    aspect_winners = _parse_aspect_winners(payload.get("aspect_winners"), label_to_arm=label_to_arm)
     return {
         "judge_winner": "tie" if winner == "tie" else label_to_arm[winner],
+        "judge_aspect_winners": aspect_winners,
         "judge_confidence": confidence,
         "judge_reasoning": reasoning.strip(),
     }
+
+
+def _parse_aspect_winners(value: Any, *, label_to_arm: dict[str, str]) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError("judge response aspect_winners must be an object")
+    required = ("correctness", "evidence", "completeness", "actionability")
+    parsed: dict[str, str] = {}
+    for aspect in required:
+        winner = value.get(aspect)
+        if winner not in {"A", "B", "tie"}:
+            raise ValueError(f"judge response aspect_winners.{aspect} must be A, B, or tie")
+        parsed[aspect] = "tie" if winner == "tie" else label_to_arm[winner]
+    unknown = sorted(set(value) - set(required))
+    if unknown:
+        raise ValueError(f"judge response aspect_winners has unsupported keys: {', '.join(unknown)}")
+    return parsed
 
 
 def _extract_json_object(response: str) -> str:

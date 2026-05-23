@@ -20,7 +20,19 @@ class FakeJudgeClient:
 
     def respond(self, prompt: str) -> str:
         self.prompts.append(prompt)
-        return json.dumps({"winner": "A", "confidence": 0.8, "reasoning": "A is more correct."})
+        return json.dumps(
+            {
+                "winner": "A",
+                "aspect_winners": {
+                    "correctness": "A",
+                    "evidence": "A",
+                    "completeness": "tie",
+                    "actionability": "B",
+                },
+                "confidence": 0.8,
+                "reasoning": "A is more correct.",
+            }
+        )
 
 
 class FencedJudgeClient:
@@ -28,7 +40,11 @@ class FencedJudgeClient:
         self.model = model
 
     def respond(self, prompt: str) -> str:
-        return '```json\n{"winner":"tie","confidence":0.5,"reasoning":"Both are equivalent."}\n```'
+        return (
+            '```json\n{"winner":"tie","aspect_winners":{"correctness":"tie","evidence":"tie",'
+            '"completeness":"tie","actionability":"tie"},"confidence":0.5,'
+            '"reasoning":"Both are equivalent."}\n```'
+        )
 
 
 class InlineFencedJudgeClient:
@@ -36,7 +52,11 @@ class InlineFencedJudgeClient:
         self.model = model
 
     def respond(self, prompt: str) -> str:
-        return '```json {"winner":"B","confidence":0.7,"reasoning":"B has stronger evidence."}\n```'
+        return (
+            '```json {"winner":"B","aspect_winners":{"correctness":"B","evidence":"B",'
+            '"completeness":"B","actionability":"tie"},"confidence":0.7,'
+            '"reasoning":"B has stronger evidence."}\n```'
+        )
 
 
 class BadJudgeClient:
@@ -58,10 +78,15 @@ class JudgeAbQualityTest(unittest.TestCase):
 
         self.assertEqual(judged[0]["quality_verdict"], "judged")
         self.assertIn(judged[0]["judge_winner"], {"mcp_on", "mcp_off"})
+        self.assertEqual(
+            set(judged[0]["judge_aspect_winners"]),
+            {"correctness", "evidence", "completeness", "actionability"},
+        )
         self.assertEqual(judged[0]["judge_confidence"], 0.8)
         prompt = FakeJudgeClient.prompts[0]
         self.assertNotIn("mcp_on", prompt)
         self.assertNotIn("mcp_off", prompt)
+        self.assertIn("Correctness is the gating dimension", prompt)
 
     def test_prompt_order_changes_with_seed(self) -> None:
         row = _delta_row(on_answer="on answer", off_answer="off answer")
@@ -92,6 +117,23 @@ class JudgeAbQualityTest(unittest.TestCase):
 
         self.assertEqual(judged[0]["quality_verdict"], "judge_error")
         self.assertIn("valid JSON", judged[0]["judge_error"])
+
+    def test_missing_aspect_winners_marks_row_error(self) -> None:
+        class MissingAspectJudgeClient:
+            def __init__(self, model: str) -> None:
+                self.model = model
+
+            def respond(self, prompt: str) -> str:
+                return json.dumps({"winner": "A", "confidence": 0.8, "reasoning": "A wins."})
+
+        judged = judge_ab_quality.judge_rows(
+            [_delta_row()],
+            judge_model="judge-test",
+            client_factory=MissingAspectJudgeClient,
+        )
+
+        self.assertEqual(judged[0]["quality_verdict"], "judge_error")
+        self.assertIn("aspect_winners", judged[0]["judge_error"])
 
     def test_auto_quality_rows_are_preserved_without_judge_call(self) -> None:
         row = _delta_row()

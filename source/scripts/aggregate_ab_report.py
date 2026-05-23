@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +21,7 @@ def main() -> None:
 
 def render_report(rows: list[dict[str, Any]], out_dir: Path) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    report = {"rows": rows, "phase_aggregates": _phase_aggregates(rows)}
+    report = {"rows": rows, "phase_aggregates": _phase_aggregates(rows), "rubric_aggregates": _rubric_aggregates(rows)}
     (out_dir / "ab-report.json").write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     (out_dir / "ab-report.md").write_text(_markdown(report), encoding="utf-8")
     return report
@@ -32,19 +32,45 @@ def _markdown(report: dict[str, Any]) -> str:
     lines = [
         "# BetterContext A/B Report",
         "",
-        "## Per Task",
+        "Quality is the gating dimension. Cost, token, and latency deltas are secondary unless answer quality is tied or better.",
         "",
-        "| Task | Phase | Quality | Tool Delta | Token Delta | Dollar Delta | Cost |",
-        "|---|---|---|---:|---:|---:|---|",
+        "## Rubric Aggregates",
+        "",
+        "| Aspect | mcp_off wins | mcp_on wins | Ties | Unknown |",
+        "|---|---:|---:|---:|---:|",
     ]
+    for aspect, counts in report["rubric_aggregates"].items():
+        lines.append(
+            f"| {aspect} | {counts.get('mcp_off', 0)} | {counts.get('mcp_on', 0)} | "
+            f"{counts.get('tie', 0)} | {counts.get('unknown', 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Per Task",
+            "",
+            "| Task | Phase | Quality | Correctness | Evidence | Completeness | Actionability | "
+            "MCP OK | MCP Denied | Tool Delta | Token Delta | Dollar Delta | Cost |",
+            "|---|---|---|---|---|---|---|---:|---:|---:|---:|---:|---|",
+        ]
+    )
     for row in rows:
         deltas = row.get("deltas", {})
         token_delta = _sum_pair(deltas.get("tokens_in"), deltas.get("tokens_out"))
+        aspects = _aspect_winners(row)
+        on = row.get("on") if isinstance(row.get("on"), dict) else {}
         lines.append(
-            "| {task} | {phase} | {quality} | {tools} | {tokens} | {dollars} | {cost} |".format(
+            "| {task} | {phase} | {quality} | {correctness} | {evidence} | {completeness} | "
+            "{actionability} | {mcp_ok} | {mcp_denied} | {tools} | {tokens} | {dollars} | {cost} |".format(
                 task=row.get("task_id", ""),
                 phase=row.get("phase", ""),
-                quality=row.get("quality_verdict", ""),
+                quality=row.get("judge_winner") or row.get("quality_verdict", ""),
+                correctness=aspects["correctness"],
+                evidence=aspects["evidence"],
+                completeness=aspects["completeness"],
+                actionability=aspects["actionability"],
+                mcp_ok=_format_number(on.get("mcp_tool_success_count")),
+                mcp_denied=_format_number(on.get("mcp_tool_denial_count")),
                 tools=_format_number(deltas.get("tool_calls")),
                 tokens=_format_number(token_delta),
                 dollars=_format_dollars(row.get("dollars_delta"), row.get("cost_status")),
@@ -67,12 +93,12 @@ def _markdown(report: dict[str, Any]) -> str:
             f"{_format_number(aggregate['avg_token_delta'])} | {_format_number(aggregate['avg_wall_time_delta'])} |"
         )
 
-    lines.extend(["", "## Where MCP Hurts", ""])
-    hurts = [row for row in rows if _mcp_hurts(row)]
-    if not hurts:
+    lines.extend(["", "## Potential Resource Regressions", ""])
+    regressions = [row for row in rows if _mcp_uses_more_resources(row)]
+    if not regressions:
         lines.append("None.")
     else:
-        for row in hurts:
+        for row in regressions:
             lines.append(f"- {row.get('task_id')}: {row.get('phase')} delta={row.get('deltas', {})}")
     lines.append("")
     return "\n".join(lines)
@@ -97,7 +123,24 @@ def _aggregate_phase(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _mcp_hurts(row: dict[str, Any]) -> bool:
+def _rubric_aggregates(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    return {aspect: dict(Counter(_aspect_winners(row)[aspect] for row in rows)) for aspect in _rubric_aspects()}
+
+
+def _aspect_winners(row: dict[str, Any]) -> dict[str, str]:
+    raw = row.get("judge_aspect_winners")
+    source = raw if isinstance(raw, dict) else {}
+    return {
+        aspect: winner if (winner := source.get(aspect)) in {"mcp_off", "mcp_on", "tie"} else "unknown"
+        for aspect in _rubric_aspects()
+    }
+
+
+def _rubric_aspects() -> tuple[str, ...]:
+    return ("correctness", "evidence", "completeness", "actionability")
+
+
+def _mcp_uses_more_resources(row: dict[str, Any]) -> bool:
     deltas = row.get("deltas", {})
     return any(
         _is_number(value) and value < 0
@@ -108,7 +151,7 @@ def _mcp_hurts(row: dict[str, Any]) -> bool:
             deltas.get("wall_time_seconds"),
             row.get("dollars_delta"),
         )
-    ) or (_is_number(deltas.get("citations_count")) and deltas.get("citations_count") > 0)
+    )
 
 
 def _average(values: Any) -> float | None:
