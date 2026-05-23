@@ -31,6 +31,14 @@ class FencedJudgeClient:
         return '```json\n{"winner":"tie","confidence":0.5,"reasoning":"Both are equivalent."}\n```'
 
 
+class InlineFencedJudgeClient:
+    def __init__(self, model: str) -> None:
+        self.model = model
+
+    def respond(self, prompt: str) -> str:
+        return '```json {"winner":"B","confidence":0.7,"reasoning":"B has stronger evidence."}\n```'
+
+
 class BadJudgeClient:
     def __init__(self, model: str) -> None:
         self.model = model
@@ -67,6 +75,17 @@ class JudgeAbQualityTest(unittest.TestCase):
 
         self.assertEqual(judged[0]["quality_verdict"], "judged")
         self.assertEqual(judged[0]["judge_winner"], "tie")
+
+    def test_inline_fenced_judge_json_is_accepted(self) -> None:
+        judged = judge_ab_quality.judge_rows(
+            [_delta_row()],
+            judge_model="judge-test",
+            seed=1,
+            client_factory=InlineFencedJudgeClient,
+        )
+
+        self.assertEqual(judged[0]["quality_verdict"], "judged")
+        self.assertIn(judged[0]["judge_winner"], {"mcp_on", "mcp_off"})
 
     def test_bad_judge_response_marks_row_error_and_continues(self) -> None:
         judged = judge_ab_quality.judge_rows([_delta_row()], judge_model="judge-test", client_factory=BadJudgeClient)

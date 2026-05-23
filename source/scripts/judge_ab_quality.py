@@ -111,17 +111,28 @@ def parse_judge_response(response: str, *, label_to_arm: dict[str, str]) -> dict
 def _extract_json_object(response: str) -> str:
     stripped = response.strip()
     if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
+        stripped = _strip_json_code_fence(stripped)
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start == -1 or end == -1 or end < start:
         return stripped
     return stripped[start : end + 1]
+
+
+def _strip_json_code_fence(response: str) -> str:
+    content = response[3:]
+    first_line, separator, tail = content.partition("\n")
+    first_parts = first_line.lstrip().split(maxsplit=1)
+    if not first_parts:
+        content = tail
+    elif first_parts[0].lower() in {"json", "jsonc"}:
+        content = first_parts[1] if len(first_parts) == 2 else ""
+        if separator:
+            content = f"{content}\n{tail}" if content else tail
+    closing_fence = content.rfind("```")
+    if closing_fence != -1:
+        content = content[:closing_fence] + content[closing_fence + 3 :]
+    return content.strip()
 
 
 if __name__ == "__main__":
