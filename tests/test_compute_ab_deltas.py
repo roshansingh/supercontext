@@ -81,7 +81,7 @@ def _trace(
         "phase": "coding",
         "difficulty": difficulty,
         "mcp_tools_called": mcp_tools or [],
-        "non_mcp_tools_called": non_mcp_tools or ["Read"],
+        "non_mcp_tools_called": ["Read"] if non_mcp_tools is None else non_mcp_tools,
         "tokens_in": 100 if arm == "mcp_on" else 120,
         "tokens_out": 10 if arm == "mcp_on" else 15,
         "wall_time_seconds": 1.0 if arm == "mcp_on" else 2.5,
