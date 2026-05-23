@@ -246,7 +246,7 @@ def _prepare_arm_output_dir(output_dir: Path, *, group_id: str, arm: Arm) -> Pat
 
 
 def _task_prompt(task: EvalTask, *, snapshot_path: Path, arm: Arm) -> str:
-    fixture_input = f"\nFixture input:\n{task.fixture_input}\n" if task.fixture_input else ""
+    fixture_input = f"Fixture input:\n{task.fixture_input}\n" if task.fixture_input else ""
     return f"""Run this BetterContext A/B evaluation task.
 
 Task ID: {task.task_id}

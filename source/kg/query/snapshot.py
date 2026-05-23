@@ -684,7 +684,7 @@ class KgSnapshot:
         path: str | None = None,
         line: int | None = None,
     ) -> JsonObject:
-        return self._resolve_symbol(symbol_query, limit=limit, path=path, line=line)
+        return self._resolve_symbol(symbol_query, limit=limit, path=path, line=line, allow_fuzzy=True)
 
     def symbols_in_file(self, file_path: str, limit: int = 100) -> JsonObject:
         normalized_path = self._normalize_path(file_path)
@@ -857,7 +857,8 @@ class KgSnapshot:
         limit: int = 25,
         path: str | None = None,
         line: int | None = None,
-        allow_fuzzy: bool = True,
+        *,
+        allow_fuzzy: bool,
     ) -> JsonObject:
         query = symbol_query.strip()
         if not query:
