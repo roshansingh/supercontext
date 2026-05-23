@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from source.kg.eval.corpus import DEFAULT_QUERY_SET, EvalTask, default_v1_tasks, parse_query_set
-from source.kg.eval.runner import RunnerConfig, run_single_task
+from source.kg.eval.runner import RunRecord, RunnerConfig, run_single_task
 
 
 def main() -> None:
@@ -24,6 +24,7 @@ def main() -> None:
     )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
     parser.add_argument("--mcp-url", default=None, help="BetterContext HTTP MCP URL for mcp_on runs.")
+    parser.add_argument("--upload-to-langsmith", action="store_true", help="Upload the local run record to LangSmith.")
     parser.add_argument("--print-tasks", action="store_true", help="Print selected tasks and exit.")
     args = parser.parse_args()
 
@@ -59,7 +60,10 @@ def main() -> None:
         random_seed=args.seed,
         config=config,
     )
-    print(json.dumps(record.to_json(), sort_keys=True))
+    payload = record.to_json()
+    if args.upload_to_langsmith:
+        payload["langsmith_run_url"] = _upload_to_langsmith(record)
+    print(json.dumps(payload, sort_keys=True))
 
 
 def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTask]:
@@ -82,6 +86,15 @@ def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTas
     if not selected:
         raise SystemExit("--tasks must name at least one task")
     return selected
+
+
+def _upload_to_langsmith(record: RunRecord) -> str:
+    if not record.host_session_log_path:
+        raise RuntimeError("messages log not captured; cannot upload A/B eval run to LangSmith")
+
+    from source.kg.eval.langsmith_emitter import emit_run
+
+    return emit_run(record, Path(record.host_session_log_path))
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ Issues = "https://github.com/roshansingh/bettercontext/issues"
 ui = ["streamlit>=1.30"]
 llm = ["openai>=1.0"]
 agent = ["claude-agent-sdk"]
+eval = ["langsmith>=0.4.43"]
 dev = ["build>=1.2"]
 dotnet = ["tree-sitter>=0.25", "tree-sitter-c-sharp>=0.23.5"]
 
