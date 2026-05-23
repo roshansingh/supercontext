@@ -53,7 +53,8 @@ def compute_deltas(traces: list[dict[str, Any]], *, allow_unpaired: bool = False
                 "task_id": task_id,
                 "phase": on.get("phase") or off.get("phase"),
                 "difficulty": on.get("difficulty") or off.get("difficulty"),
-                "quality_verdict": "auto" if (on.get("difficulty") or off.get("difficulty")) == "Low" else "ungraded",
+                "quality_verdict": "ungraded",
+                "quality_grading_mode": _quality_grading_mode(on, off),
                 "cost_status": cost_status,
                 "dollars_delta": _number_delta(off.get("total_cost"), on.get("total_cost"))
                 if cost_status == "available"
@@ -80,7 +81,10 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}:{line_number}: invalid JSON: {exc.msg}") from exc
         if not isinstance(row, dict):
             raise ValueError(f"{path}:{line_number}: expected JSON object")
         rows.append(row)
@@ -109,6 +113,10 @@ def _paired_cost_status(on: dict[str, Any], off: dict[str, Any]) -> str:
     ):
         return "available"
     return "unavailable"
+
+
+def _quality_grading_mode(on: dict[str, Any], off: dict[str, Any]) -> str:
+    return "auto_eligible" if (on.get("difficulty") or off.get("difficulty")) == "Low" else "manual_required"
 
 
 def _required_string(row: dict[str, Any], key: str) -> str:

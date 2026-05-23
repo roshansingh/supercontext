@@ -39,7 +39,7 @@ def _markdown(report: dict[str, Any]) -> str:
     ]
     for row in rows:
         deltas = row.get("deltas", {})
-        token_delta = _sum_present(deltas.get("tokens_in"), deltas.get("tokens_out"))
+        token_delta = _sum_pair(deltas.get("tokens_in"), deltas.get("tokens_out"))
         lines.append(
             "| {task} | {phase} | {quality} | {tools} | {tokens} | {dollars} | {cost} |".format(
                 task=row.get("task_id", ""),
@@ -81,7 +81,7 @@ def _markdown(report: dict[str, Any]) -> str:
 def _phase_aggregates(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     by_phase: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        by_phase[str(row.get("phase", "unknown"))].append(row)
+        by_phase[str(row.get("phase") or "unknown")].append(row)
     return {phase: _aggregate_phase(phase_rows) for phase, phase_rows in by_phase.items()}
 
 
@@ -90,7 +90,7 @@ def _aggregate_phase(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "tasks": len(rows),
         "avg_tool_calls_delta": _average(row.get("deltas", {}).get("tool_calls") for row in rows),
         "avg_token_delta": _average(
-            _sum_present(row.get("deltas", {}).get("tokens_in"), row.get("deltas", {}).get("tokens_out"))
+            _sum_pair(row.get("deltas", {}).get("tokens_in"), row.get("deltas", {}).get("tokens_out"))
             for row in rows
         ),
         "avg_wall_time_delta": _average(row.get("deltas", {}).get("wall_time_seconds") for row in rows),
@@ -100,7 +100,7 @@ def _aggregate_phase(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _mcp_hurts(row: dict[str, Any]) -> bool:
     deltas = row.get("deltas", {})
     return any(
-        isinstance(value, int | float) and value < 0
+        _is_number(value) and value < 0
         for value in (
             deltas.get("tool_calls"),
             deltas.get("tokens_in"),
@@ -108,25 +108,27 @@ def _mcp_hurts(row: dict[str, Any]) -> bool:
             deltas.get("wall_time_seconds"),
             row.get("dollars_delta"),
         )
-    )
+    ) or (_is_number(deltas.get("citations_count")) and deltas.get("citations_count") > 0)
 
 
 def _average(values: Any) -> float | None:
-    numeric = [value for value in values if isinstance(value, int | float) and not isinstance(value, bool)]
+    numeric = [value for value in values if _is_number(value)]
     if not numeric:
         return None
     return round(sum(numeric) / len(numeric), 3)
 
 
-def _sum_present(*values: Any) -> float | int | None:
-    numeric = [value for value in values if isinstance(value, int | float) and not isinstance(value, bool)]
-    if not numeric:
+def _sum_pair(left: Any, right: Any) -> float | int | None:
+    if (
+        not _is_number(left)
+        or not _is_number(right)
+    ):
         return None
-    return sum(numeric)
+    return left + right
 
 
 def _format_number(value: Any) -> str:
-    if isinstance(value, int | float) and not isinstance(value, bool):
+    if _is_number(value):
         return str(value)
     return "n/a"
 
@@ -134,7 +136,13 @@ def _format_number(value: Any) -> str:
 def _format_dollars(value: Any, cost_status: Any) -> str:
     if cost_status != "available" or value is None:
         return "unavailable"
+    if not _is_number(value):
+        return "unavailable"
     return _format_number(value)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 if __name__ == "__main__":

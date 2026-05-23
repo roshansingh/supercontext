@@ -11,6 +11,7 @@ def main() -> None:
     parser.add_argument("--project", required=True, help="LangSmith project name.")
     parser.add_argument("--run-group-ids", default="", help="Comma-separated run_group_id values to pull.")
     parser.add_argument("--harness-version", default="", help="Optional harness_version metadata filter.")
+    parser.add_argument("--limit", type=int, default=None, help="Maximum root runs to request from LangSmith.")
     parser.add_argument("--out", required=True, help="Output JSONL path, usually under data/ab_runs/<run-id>/.")
     args = parser.parse_args()
 
@@ -25,7 +26,7 @@ def main() -> None:
 
     client = Client()
     traces = []
-    for run in client.list_runs(project_name=args.project, is_root=True):
+    for run in client.list_runs(project_name=args.project, is_root=True, limit=args.limit):
         trace = trace_from_langsmith_run(run)
         if trace.get("arm") not in {"mcp_on", "mcp_off"}:
             continue

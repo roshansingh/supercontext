@@ -27,6 +27,49 @@ class AggregateAbReportTest(unittest.TestCase):
         self.assertIn('"phase_aggregates"', report_json)
         self.assertEqual(report["phase_aggregates"]["planning"]["avg_tool_calls_delta"], -1.0)
 
+    def test_missing_phase_groups_as_unknown_and_partial_tokens_are_na(self) -> None:
+        rows = [
+            {
+                "task_id": "Q999",
+                "run_group_id": "group-1",
+                "phase": None,
+                "quality_verdict": "ungraded",
+                "cost_status": "unavailable",
+                "dollars_delta": None,
+                "deltas": {"tool_calls": 1, "tokens_in": 5, "tokens_out": None, "wall_time_seconds": None},
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = render_report(rows, Path(tmp))
+            markdown = (Path(tmp) / "ab-report.md").read_text(encoding="utf-8")
+
+        self.assertIn("unknown", report["phase_aggregates"])
+        self.assertIn("| Q999 | None | ungraded | 1 | n/a | unavailable | unavailable |", markdown)
+
+    def test_citation_regressions_are_listed_as_mcp_hurts(self) -> None:
+        rows = [
+            {
+                "task_id": "Q777",
+                "run_group_id": "group-1",
+                "phase": "review",
+                "quality_verdict": "ungraded",
+                "cost_status": "unavailable",
+                "dollars_delta": None,
+                "deltas": {
+                    "tool_calls": 0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "citations_count": 1,
+                    "wall_time_seconds": 0,
+                },
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            render_report(rows, Path(tmp))
+            markdown = (Path(tmp) / "ab-report.md").read_text(encoding="utf-8")
+
+        self.assertIn("- Q777", markdown)
+
 
 def _delta(
     task_id: str,

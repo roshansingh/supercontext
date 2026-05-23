@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from source.scripts.compute_ab_deltas import compute_deltas
+from source.scripts.compute_ab_deltas import compute_deltas, load_jsonl
 
 
 class ComputeAbDeltasTest(unittest.TestCase):
@@ -16,7 +18,8 @@ class ComputeAbDeltasTest(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(row["quality_verdict"], "auto")
+        self.assertEqual(row["quality_verdict"], "ungraded")
+        self.assertEqual(row["quality_grading_mode"], "auto_eligible")
         self.assertEqual(row["cost_status"], "available")
         self.assertAlmostEqual(row["dollars_delta"], 0.02, places=9)
         self.assertEqual(row["deltas"]["tool_calls"], 1)
@@ -45,6 +48,7 @@ class ComputeAbDeltasTest(unittest.TestCase):
         )
 
         self.assertEqual(rows[0]["quality_verdict"], "ungraded")
+        self.assertEqual(rows[0]["quality_grading_mode"], "manual_required")
 
     def test_unpaired_traces_fail_loudly_by_default(self) -> None:
         with self.assertRaisesRegex(ValueError, "unpaired traces"):
@@ -52,6 +56,14 @@ class ComputeAbDeltasTest(unittest.TestCase):
 
     def test_unpaired_traces_can_be_explicitly_skipped(self) -> None:
         self.assertEqual(compute_deltas([_trace("mcp_on")], allow_unpaired=True), [])
+
+    def test_load_jsonl_reports_file_and_line_for_malformed_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "traces.jsonl"
+            path.write_text("{\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"traces\.jsonl:1: invalid JSON"):
+                load_jsonl(path)
 
 
 def _trace(
