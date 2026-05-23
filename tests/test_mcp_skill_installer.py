@@ -36,10 +36,16 @@ class McpSkillInstallerTest(unittest.TestCase):
                 "name: bettercontext-mcp",
                 (project / ".codex" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(encoding="utf-8"),
             )
-            self.assertIn(
-                "name: bettercontext-mcp",
-                (project / ".claude" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(encoding="utf-8"),
+            codex_skill = (project / ".codex" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(
+                encoding="utf-8"
             )
+            claude_skill = (project / ".claude" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("Trace Evaluation", codex_skill)
+            self.assertIn("where mcp hurts", codex_skill.casefold())
+            self.assertIn("Trace Evaluation", claude_skill)
+            self.assertIn("tokens", claude_skill)
 
     def test_install_replaces_stale_files_inside_target_skill_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

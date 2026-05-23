@@ -93,6 +93,12 @@ class PackagingMetadataTest(unittest.TestCase):
                 / "source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md"
             ).exists()
         )
+        self.assertIn(
+            "Trace Evaluation",
+            (
+                ROOT / "source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md"
+            ).read_text(encoding="utf-8"),
+        )
 
     def test_eval_yaml_is_packaged(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

@@ -1,6 +1,6 @@
 ---
 name: bettercontext-mcp
-description: Use when planning, implementing, or reviewing code with a Bettercontext MCP server available. Call Bettercontext before broad repo exploration when a task mentions a service, repo, symbol, package, endpoint, event channel, domain, file path, or changed files/ranges.
+description: Use when planning, implementing, reviewing code, or analyzing Bettercontext A/B trace reports with a Bettercontext MCP server available. Call Bettercontext before broad repo exploration when a task mentions a service, repo, symbol, package, endpoint, event channel, domain, file path, or changed files/ranges. Use the trace-evaluation guidance for ab-report.md, ab-report.json, deltas.jsonl, or LangSmith run analysis.
 ---
 
 # Bettercontext MCP
@@ -53,6 +53,20 @@ Before reviewing a diff, call `review_context` with:
 - `changed_ranges` when line ranges are known
 
 Use returned `changed_symbols`, `direct_callers`, `direct_callees`, and `repo_dependencies` to decide what to inspect next. Drill into primitive tools for concrete findings.
+
+## Trace Evaluation
+
+When analyzing Bettercontext A/B traces, `ab-report.md`, `ab-report.json`, `deltas.jsonl`, or LangSmith runs, evaluate in this order:
+
+1. Correctness or quality verdict first.
+2. Evidence and citation quality.
+3. MCP tool timing and `mcp_tools_called`.
+4. Non-MCP tool-call count and repeated source-search behavior.
+5. Token, dollar, and wall-time deltas.
+6. "Where MCP Hurts" rows.
+7. Skill-compliance signal: whether Bettercontext was used early for planning, coding, or review tasks.
+
+Do not claim value from lower tokens, fewer tool calls, lower cost, or faster wall time when `quality_verdict` is `ungraded`, when `mcp_on` quality is worse, or when `cost_status` is `unavailable`.
 
 ## Output Rules
 
