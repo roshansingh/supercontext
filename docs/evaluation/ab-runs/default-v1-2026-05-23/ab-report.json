@@ -1,0 +1,399 @@
+{
+  "arm_count": 36,
+  "date": "2026-05-23",
+  "delta_orientation": "off_minus_on; positive means mcp_on used less or cost less, negative means mcp_on used more or cost more",
+  "judge_model": "gpt-4.1-mini",
+  "judge_winners": {
+    "mcp_off": 11,
+    "mcp_on": 3,
+    "tie": 4
+  },
+  "phase_aggregates": {
+    "coding": {
+      "avg_token_delta": 5403.75,
+      "avg_tool_calls_delta": -1.0,
+      "avg_wall_time_delta": 110.298,
+      "tasks": 4
+    },
+    "planning": {
+      "avg_token_delta": 6410.125,
+      "avg_tool_calls_delta": -0.5,
+      "avg_wall_time_delta": 102.854,
+      "tasks": 8
+    },
+    "review": {
+      "avg_token_delta": 425.0,
+      "avg_tool_calls_delta": -1.833,
+      "avg_wall_time_delta": 1.295,
+      "tasks": 6
+    }
+  },
+  "privacy_note": "Sanitized artifact. Raw traces, answers, judge reasoning, SDK messages, and LangSmith URLs remain under ignored data/ab_runs/ and are not committed.",
+  "quality_verdicts": {
+    "judged": 18
+  },
+  "rows": [
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 2,
+        "tokens_in": 1021,
+        "tokens_out": 15329,
+        "tokens_total": 16350,
+        "tool_calls": 1,
+        "wall_time_seconds": 334.991
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.232998,
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q045"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 0,
+        "tokens_in": 314,
+        "tokens_out": 5430,
+        "tokens_total": 5744,
+        "tool_calls": -1,
+        "wall_time_seconds": 113.536
+      },
+      "difficulty": "Low",
+      "dollars_delta": 0.082392,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q004"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": 0,
+        "non_mcp_calls": -1,
+        "tokens_in": -36,
+        "tokens_out": -270,
+        "tokens_total": -306,
+        "tool_calls": -1,
+        "wall_time_seconds": -5.13
+      },
+      "difficulty": "Medium",
+      "dollars_delta": -0.004158,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_on",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q054"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "non_mcp_calls": -1,
+        "tokens_in": -6,
+        "tokens_out": 737,
+        "tokens_total": 731,
+        "tool_calls": -3,
+        "wall_time_seconds": 16.799
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.011037,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q035"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": -1,
+        "tokens_in": 11339,
+        "tokens_out": 3678,
+        "tokens_total": 15017,
+        "tool_calls": -2,
+        "wall_time_seconds": 74.994
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.089187,
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q037"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 3,
+        "tokens_in": 3558,
+        "tokens_out": 6861,
+        "tokens_total": 10419,
+        "tool_calls": 2,
+        "wall_time_seconds": 156.294
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.113589,
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q031"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": -1,
+        "tokens_in": 193,
+        "tokens_out": 2002,
+        "tokens_total": 2195,
+        "tool_calls": -2,
+        "wall_time_seconds": 48.124
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.030609,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q038"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 0,
+        "tokens_in": 359,
+        "tokens_out": 4857,
+        "tokens_total": 5216,
+        "tool_calls": -1,
+        "wall_time_seconds": 117.404
+      },
+      "difficulty": "Low",
+      "dollars_delta": 0.073932,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q003"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": -1,
+        "tokens_in": -18989,
+        "tokens_out": 2039,
+        "tokens_total": -16950,
+        "tool_calls": -2,
+        "wall_time_seconds": 26.359
+      },
+      "difficulty": "Hard",
+      "dollars_delta": -0.026382,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_on",
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q048"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 1,
+        "tokens_in": 244,
+        "tokens_out": 2993,
+        "tokens_total": 3237,
+        "tool_calls": 0,
+        "wall_time_seconds": 64.164
+      },
+      "difficulty": "Low",
+      "dollars_delta": 0.045627,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q011"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 1,
+        "tokens_in": 234,
+        "tokens_out": 5048,
+        "tokens_total": 5282,
+        "tool_calls": 0,
+        "wall_time_seconds": 124.247
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.076422,
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q110"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": -2,
+        "tokens_in": 219,
+        "tokens_out": 1127,
+        "tokens_total": 1346,
+        "tool_calls": -3,
+        "wall_time_seconds": 29.449
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.017562,
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q051"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "non_mcp_calls": 0,
+        "tokens_in": -281,
+        "tokens_out": -3244,
+        "tokens_total": -3525,
+        "tool_calls": -2,
+        "wall_time_seconds": -49.299
+      },
+      "difficulty": "Medium",
+      "dollars_delta": -0.049503,
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q021"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 2,
+        "tokens_in": 638,
+        "tokens_out": 8671,
+        "tokens_total": 9309,
+        "tool_calls": 1,
+        "wall_time_seconds": 180.802
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.131979,
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q016"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "non_mcp_calls": 0,
+        "tokens_in": -713,
+        "tokens_out": -8391,
+        "tokens_total": -9104,
+        "tool_calls": -2,
+        "wall_time_seconds": -156.302
+      },
+      "difficulty": "Hard",
+      "dollars_delta": -0.128004,
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q053"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": -1,
+        "tokens_in": 8155,
+        "tokens_out": -1004,
+        "tokens_total": 7151,
+        "tool_calls": -2,
+        "wall_time_seconds": -23.624
+      },
+      "difficulty": "Low",
+      "dollars_delta": 0.009405,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_on",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q015"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "non_mcp_calls": -1,
+        "tokens_in": 13678,
+        "tokens_out": -1848,
+        "tokens_total": 11830,
+        "tool_calls": -3,
+        "wall_time_seconds": -12.228
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.013314,
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q040"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "non_mcp_calls": 2,
+        "tokens_in": 699,
+        "tokens_out": 10805,
+        "tokens_total": 11504,
+        "tool_calls": 1,
+        "wall_time_seconds": 231.213
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.164172,
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q081"
+    }
+  ],
+  "run_id": "default-v1-2026-05-23",
+  "task_count": 18
+}
