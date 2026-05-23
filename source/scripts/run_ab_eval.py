@@ -2,25 +2,36 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
+import subprocess
+import sys
 from pathlib import Path
+from typing import cast
+from uuid import uuid4
 
 from source.kg.eval.corpus import DEFAULT_QUERY_SET, EvalTask, default_v1_tasks, parse_query_set
-from source.kg.eval.runner import RunRecord, RunnerConfig, run_single_task
+from source.kg.eval.runner import Arm, RunRecord, RunnerConfig, run_single_task
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run BetterContext MCP A/B evaluation tasks.")
+    parser = argparse.ArgumentParser(
+        description="Run BetterContext MCP A/B evaluation tasks.",
+        epilog=(
+            "Execution sets Claude Code BetterContext MCP registration before each arm and leaves "
+            "BetterContext registered when the run completes."
+        ),
+    )
     parser.add_argument("--query-set", default=str(DEFAULT_QUERY_SET), help="Product query set markdown path.")
     parser.add_argument("--snapshot", help="KG snapshot path. Required unless --print-tasks is used.")
     parser.add_argument("--host", choices=["claude_code"], default="claude_code")
     parser.add_argument("--tasks", default="default-v1", help="Comma-separated task IDs or default-v1.")
-    parser.add_argument("--arms", default="mcp_on", help="PR1 supports exactly one arm: mcp_on or mcp_off.")
+    parser.add_argument("--arms", default="mcp_on,mcp_off", help="Comma-separated arms: mcp_on, mcp_off.")
     parser.add_argument("--out", default="data/ab_runs/smoke", help="Output directory for local run records.")
     parser.add_argument(
         "--seed",
         type=int,
         default=0,
-        help="Recorded in run metadata only. Does not alter default-v1 membership or host execution.",
+        help="Deterministically permutes paired arm order. Does not alter default-v1 membership.",
     )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
     parser.add_argument("--mcp-url", default=None, help="BetterContext HTTP MCP URL for mcp_on runs.")
@@ -34,14 +45,7 @@ def main() -> None:
             print(f"{task.task_id}\t{task.difficulty}\t{task.phase}")
         return
 
-    arms = [arm.strip() for arm in args.arms.split(",") if arm.strip()]
-    if len(tasks) != 1:
-        parser.error("PR1 supports exactly one task for execution; use --print-tasks for manifests")
-    if len(arms) != 1:
-        parser.error("PR1 supports exactly one arm for execution")
-    arm = arms[0]
-    if arm not in {"mcp_on", "mcp_off"}:
-        parser.error("--arms must contain mcp_on or mcp_off")
+    arms = _parse_arms(args.arms)
     if not args.snapshot:
         parser.error("--snapshot is required unless --print-tasks is used")
 
@@ -51,19 +55,20 @@ def main() -> None:
     if args.mcp_url:
         config_kwargs["mcp_url"] = args.mcp_url
     config = RunnerConfig(**config_kwargs)
-    record = run_single_task(
-        tasks[0],
-        arm=arm,  # type: ignore[arg-type]
+    records = _run_paired_tasks(
+        tasks,
+        arms=arms,
         snapshot=args.snapshot,
         output_dir=args.out,
         host=args.host,
-        random_seed=args.seed,
+        seed=args.seed,
         config=config,
     )
-    payload = record.to_json()
-    if args.upload_to_langsmith:
-        payload["langsmith_run_url"] = _upload_to_langsmith(record)
-    print(json.dumps(payload, sort_keys=True))
+    for record in records:
+        payload = record.to_json()
+        if args.upload_to_langsmith:
+            payload["langsmith_run_url"] = _upload_to_langsmith(record)
+        print(json.dumps(payload, sort_keys=True))
 
 
 def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTask]:
@@ -86,6 +91,86 @@ def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTas
     if not selected:
         raise SystemExit("--tasks must name at least one task")
     return selected
+
+
+def _parse_arms(arms_arg: str) -> list[Arm]:
+    arms = [arm.strip() for arm in arms_arg.split(",") if arm.strip()]
+    if not arms:
+        raise SystemExit("--arms must contain at least one arm")
+    unsupported = [arm for arm in arms if arm not in {"mcp_on", "mcp_off"}]
+    if unsupported:
+        raise SystemExit(f"--arms contains unsupported value(s): {', '.join(unsupported)}")
+    if len(set(arms)) != len(arms):
+        raise SystemExit("--arms must not contain duplicate arms")
+    return cast(list[Arm], arms)
+
+
+def _run_paired_tasks(
+    tasks: list[EvalTask],
+    *,
+    arms: list[Arm],
+    snapshot: str | Path,
+    output_dir: str | Path,
+    host: str,
+    seed: int,
+    config: RunnerConfig,
+    run_task=run_single_task,
+    run_host_command=None,
+    group_id_factory=uuid4,
+) -> list[RunRecord]:
+    if run_host_command is None:
+        run_host_command = _run_host_config_command
+    rng = random.Random(seed)
+    records: list[RunRecord] = []
+    for task in tasks:
+        run_group_id = str(group_id_factory())
+        ordered_arms = list(arms)
+        rng.shuffle(ordered_arms)
+        for arm in ordered_arms:
+            pre_command = _pre_arm_host_config_command(arm=arm, host=host)
+            post_command = _post_arm_host_config_command(arm=arm, host=host)
+            try:
+                run_host_command(pre_command)
+                record = run_task(
+                    task,
+                    arm=arm,
+                    snapshot=snapshot,
+                    output_dir=output_dir,
+                    host=host,
+                    run_group_id=run_group_id,
+                    random_seed=seed,
+                    pre_arm_host_config_command=pre_command,
+                    post_arm_host_config_command=post_command,
+                    config=config,
+                )
+                if arm == "mcp_off" and record.mcp_tools_called:
+                    raise RuntimeError("mcp_off run unexpectedly called BetterContext MCP tools")
+                records.append(record)
+            finally:
+                if post_command:
+                    run_host_command(post_command)
+    return records
+
+
+def _pre_arm_host_config_command(*, arm: Arm, host: str) -> tuple[str, ...]:
+    if host != "claude_code":
+        raise ValueError(f"Unsupported A/B host: {host}")
+    command = (sys.executable, "-m", "source.scripts.register_mcp", "--agent", "claude")
+    if arm == "mcp_off":
+        return (*command, "--remove")
+    return command
+
+
+def _post_arm_host_config_command(*, arm: Arm, host: str) -> tuple[str, ...]:
+    if host != "claude_code":
+        raise ValueError(f"Unsupported A/B host: {host}")
+    if arm == "mcp_off":
+        return (sys.executable, "-m", "source.scripts.register_mcp", "--agent", "claude")
+    return ()
+
+
+def _run_host_config_command(command: tuple[str, ...]) -> None:
+    subprocess.run(command, check=True)
 
 
 def _upload_to_langsmith(record: RunRecord) -> str:

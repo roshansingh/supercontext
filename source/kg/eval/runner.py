@@ -44,6 +44,8 @@ class RunRecord:
     host_session_log_path: str
     model: str
     random_seed: int
+    pre_arm_host_config_command: tuple[str, ...] = ()
+    post_arm_host_config_command: tuple[str, ...] = ()
     cost_status: str = "not_uploaded"
 
     def to_json(self) -> dict[str, Any]:
@@ -69,6 +71,8 @@ def run_single_task(
     host: str = "claude_code",
     run_group_id: str | None = None,
     random_seed: int = 0,
+    pre_arm_host_config_command: tuple[str, ...] = (),
+    post_arm_host_config_command: tuple[str, ...] = (),
     config: RunnerConfig | None = None,
 ) -> RunRecord:
     return asyncio.run(
@@ -80,6 +84,8 @@ def run_single_task(
             host=host,
             run_group_id=run_group_id,
             random_seed=random_seed,
+            pre_arm_host_config_command=pre_arm_host_config_command,
+            post_arm_host_config_command=post_arm_host_config_command,
             config=config,
         )
     )
@@ -94,6 +100,8 @@ async def async_run_single_task(
     host: str = "claude_code",
     run_group_id: str | None = None,
     random_seed: int = 0,
+    pre_arm_host_config_command: tuple[str, ...] = (),
+    post_arm_host_config_command: tuple[str, ...] = (),
     config: RunnerConfig | None = None,
 ) -> RunRecord:
     if arm not in {"mcp_on", "mcp_off"}:
@@ -165,6 +173,8 @@ async def async_run_single_task(
         host_session_log_path=str(messages_path),
         model=resolved_config.model,
         random_seed=random_seed,
+        pre_arm_host_config_command=pre_arm_host_config_command,
+        post_arm_host_config_command=post_arm_host_config_command,
     )
     (arm_dir / "record.json").write_text(json.dumps(record.to_json(), indent=2, sort_keys=True), encoding="utf-8")
     return record
