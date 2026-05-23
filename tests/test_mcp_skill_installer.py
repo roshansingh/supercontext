@@ -32,16 +32,13 @@ class McpSkillInstallerTest(unittest.TestCase):
                 sorted(path.name for path in (project / ".claude" / "skills").iterdir()),
                 ["bettercontext-mcp", "coverage-report"],
             )
-            self.assertIn(
-                "name: bettercontext-mcp",
-                (project / ".codex" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(encoding="utf-8"),
-            )
             codex_skill = (project / ".codex" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(
                 encoding="utf-8"
             )
             claude_skill = (project / ".claude" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(
                 encoding="utf-8"
             )
+            self.assertIn("name: bettercontext-mcp", codex_skill)
             self.assertIn("Trace Evaluation", codex_skill)
             self.assertIn("where mcp hurts", codex_skill.casefold())
             self.assertIn("name: bettercontext-mcp", claude_skill)
