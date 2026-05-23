@@ -4,11 +4,13 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from source.kg.eval.langsmith_emitter import emit_run
 from source.kg.eval.runner import RunRecord
+from source.scripts.run_ab_eval import _upload_to_langsmith
 
 
 class FakeRunTree:
@@ -104,6 +106,7 @@ class LangSmithEmitterTest(unittest.TestCase):
         root = FakeRunTree.roots[0]
         self.assertTrue(root.posted)
         self.assertTrue(root.patched)
+        self.assertNotIn("record", root.outputs)
         self.assertIn("arm:mcp_off", root.tags)
         self.assertIn("task_id:Q003", root.tags)
         self.assertEqual(root.project_name, "bettercontext-ab-eval")
@@ -140,6 +143,21 @@ class LangSmithEmitterTest(unittest.TestCase):
             with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=False):
                 with self.assertRaisesRegex(ValueError, "expected object"):
                     emit_run(_record(messages_path=messages_path), messages_path, run_tree_cls=FakeRunTree)
+
+    def test_emit_run_rejects_malformed_message_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            messages_path = Path(tmp) / "messages.jsonl"
+            messages_path.write_text("{\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=False):
+                with self.assertRaisesRegex(ValueError, "Invalid JSON"):
+                    emit_run(_record(messages_path=messages_path), messages_path, run_tree_cls=FakeRunTree)
+
+    def test_upload_to_langsmith_rejects_missing_message_log_path(self) -> None:
+        record = replace(_record(messages_path=Path("messages.jsonl")), host_session_log_path="")
+
+        with self.assertRaisesRegex(RuntimeError, "messages log not captured"):
+            _upload_to_langsmith(record)
 
 
 def _record(*, messages_path: Path) -> RunRecord:

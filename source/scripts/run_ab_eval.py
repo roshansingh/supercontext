@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from source.kg.eval.corpus import DEFAULT_QUERY_SET, EvalTask, default_v1_tasks, parse_query_set
-from source.kg.eval.runner import RunnerConfig, run_single_task
+from source.kg.eval.runner import RunRecord, RunnerConfig, run_single_task
 
 
 def main() -> None:
@@ -62,9 +62,7 @@ def main() -> None:
     )
     payload = record.to_json()
     if args.upload_to_langsmith:
-        from source.kg.eval.langsmith_emitter import emit_run
-
-        payload["langsmith_run_url"] = emit_run(record, Path(record.host_session_log_path))
+        payload["langsmith_run_url"] = _upload_to_langsmith(record)
     print(json.dumps(payload, sort_keys=True))
 
 
@@ -88,6 +86,15 @@ def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTas
     if not selected:
         raise SystemExit("--tasks must name at least one task")
     return selected
+
+
+def _upload_to_langsmith(record: RunRecord) -> str:
+    if not record.host_session_log_path:
+        raise RuntimeError("messages log not captured; cannot upload A/B eval run to LangSmith")
+
+    from source.kg.eval.langsmith_emitter import emit_run
+
+    return emit_run(record, Path(record.host_session_log_path))
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ def emit_run(record: RunRecord, messages_path: str | Path, *, run_tree_cls: type
         },
     )
 
-    root.end(outputs={"final_answer": record.final_answer, "record": record.to_json()})
+    root.end(outputs={"final_answer": record.final_answer})
     root.patch()
     return str(root.get_url())
 
