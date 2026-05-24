@@ -40,9 +40,11 @@ class McpSkillInstallerTest(unittest.TestCase):
             )
             self.assertIn("name: supercontext-mcp", codex_skill)
             self.assertIn("Trace Evaluation", codex_skill)
+            self.assertIn("Coverage Fallback", codex_skill)
             self.assertIn("where mcp hurts", codex_skill.casefold())
             self.assertIn("name: supercontext-mcp", claude_skill)
             self.assertIn("Trace Evaluation", claude_skill)
+            self.assertIn("Coverage Fallback", claude_skill)
             self.assertIn("tokens", claude_skill)
 
     def test_install_replaces_stale_files_inside_target_skill_only(self) -> None:

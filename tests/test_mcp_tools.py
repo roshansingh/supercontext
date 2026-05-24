@@ -50,13 +50,26 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("depth", schemas["review_context"]["properties"])
         descriptions = {row["name"]: row["description"] for row in definitions}
         self.assertIn("Primary workflow tool", descriptions["planning_context"])
+        self.assertIn("exact symbol impact", descriptions["planning_context"])
+        self.assertIn("Requires at least one anchor", descriptions["planning_context"])
+        self.assertIn("not a whole-snapshot summary tool", descriptions["planning_context"])
+        self.assertIn("inspect source", descriptions["planning_context"])
         self.assertIn("Primary workflow tool", descriptions["review_context"])
+        self.assertIn("reading the diff", descriptions["review_context"])
         self.assertIn("planning_context first", descriptions["search_services"])
         self.assertIn("planning_context first", descriptions["get_service_brief"])
+        self.assertIn("inspect source manifests", descriptions["get_service_brief"])
         self.assertIn("review_context first", descriptions["find_callers"])
+        self.assertIn("inspect imports and source text", descriptions["find_callers"])
+        self.assertIn("report concrete source call sites", descriptions["find_callers"])
         self.assertIn("planning_context or review_context", descriptions["find_callees"])
+        self.assertIn("inspect the source body", descriptions["find_callees"])
         self.assertIn("planning_context first", descriptions["get_event_consumers"])
+        self.assertIn("wrong channel", descriptions["get_event_consumers"])
         self.assertIn("planning_context first", descriptions["get_event_producers"])
+        self.assertIn("wrong channel", descriptions["get_event_producers"])
+        self.assertIn("inspect callers/callees", descriptions["blast_radius"])
+        self.assertIn("source manifest inspection", descriptions["deploy_blockers_for"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:

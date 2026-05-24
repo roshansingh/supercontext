@@ -1428,8 +1428,10 @@ _TOOLS: dict[str, McpTool] = {
         name="planning_context",
         description=(
             "Primary workflow tool for repo-aware planning and broad context. "
-            "Use it first when a task names or implies a service, repo, symbol, package, endpoint, event channel, domain, or path. "
-            "Returns anchored KG context with evidence, ambiguity, coverage warnings, unsupported scopes, and next actions before narrower drill-down tools."
+            "Use it first for broad, ambiguous, multi-anchor, service, repo, endpoint, event, domain, package, or path questions. "
+            "For a single exact symbol impact question, use find_callers, find_callees, or blast_radius first instead. "
+            "Requires at least one anchor and is not a whole-snapshot summary tool. "
+            "Returns anchored KG context with evidence, ambiguity, coverage warnings, unsupported scopes, and next actions; unsupported or not_found results are prompts to inspect source, not final answers."
         ),
         input_schema=_object_schema(_planning_context_properties()),
         handler=_planning_context,
@@ -1439,6 +1441,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Primary workflow tool for PR or code review when the repo and changed files or ranges are known. "
             "Use it first to compose changed symbols, direct callers, direct callees, repo dependencies, evidence, and unsupported scopes. "
+            "It does not replace reading the diff or changed files; if changed lines are missing or unsupported, inspect source before answering. "
             "After it anchors the review, drill into exact symbols or services with narrower tools as needed."
         ),
         input_schema=_object_schema(_review_context_properties(), required=["repo", "changed_files"]),
@@ -1449,7 +1452,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Candidate service lookup only. "
             "Use it after broad planning context when you still need to choose between possible services by name, slug, namespace, repo, or stored properties. "
-            "For broad planning or ambiguous service tasks, use planning_context first. "
+            "For broad planning or ambiguous service tasks, use planning_context first; for a known service, prefer get_service_brief. "
             "Does not return endpoint topology, caller graphs, deploy blockers, or runtime health."
         ),
         input_schema=_object_schema({"query": _nullable_string_schema("Optional service search text."), "limit": _limit_schema()}),
@@ -1461,6 +1464,7 @@ _TOOLS: dict[str, McpTool] = {
             "Known-service drill-down tool. "
             "Use it after the target service is known to get a compact service brief plus related endpoint, event-channel, and deploy-mapping facts. "
             "If the task is broad or ambiguous, use planning_context first. "
+            "If deploy, runtime, or manifest facts are missing, inspect source manifests instead of answering from absence. "
             "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime contracts."
         ),
         input_schema=_object_schema(
@@ -1473,9 +1477,10 @@ _TOOLS: dict[str, McpTool] = {
         name="find_callers",
         description=(
             "Exact-symbol reverse-call drill-down tool. "
-            "Use it when you know the function, method, or symbol and need static CALLS edges whose downstream target matches it. "
-            "For PR or code review, use review_context first. "
-            "Does not include transitive closure, runtime dispatch, cross-repo execution paths, or endpoint/service-level rollups."
+            "Use it first when the task asks who calls a known function, method, or symbol. "
+            "If it returns not_found or ambiguity, inspect imports and source text and report concrete source call sites before concluding there are no callers. "
+            "For broad PR review with changed files, use review_context first. "
+            "Does not include transitive closure, runtime dispatch, cross-repo execution paths, endpoint/service-level rollups, or external-package call targets."
         ),
         input_schema=_object_schema(_symbol_properties(), required=["symbol"]),
         handler=_find_callers,
@@ -1484,7 +1489,8 @@ _TOOLS: dict[str, McpTool] = {
         name="find_callees",
         description=(
             "Exact-symbol downstream-call drill-down tool. "
-            "Use it when you know the function, method, or symbol and need static CALLS edges whose upstream subject matches it. "
+            "Use it first when the task asks what a known function, method, or symbol calls. "
+            "If it returns not_found or ambiguity, inspect the source body before concluding there are no callees. "
             "For broad dependency understanding, start with planning_context or review_context. "
             "Does not return reverse callers, transitive closure, runtime-only invocations, or service and endpoint boundaries."
         ),
@@ -1497,6 +1503,7 @@ _TOOLS: dict[str, McpTool] = {
             "Known event-channel consumer drill-down tool. "
             "Use it when you know the queue, topic, ARN, or channel and want indexed static consumers attached to that channel. "
             "For broad event impact, use planning_context first. "
+            "If the result points at the wrong channel or says coverage is missing, inspect producer/consumer source before answering. "
             "Does not infer delivery guarantees, runtime subscribers, message schemas, or cross-environment broker state."
         ),
         input_schema=_object_schema(
@@ -1511,6 +1518,7 @@ _TOOLS: dict[str, McpTool] = {
             "Known event-channel producer drill-down tool. "
             "Use it when you know the queue, topic, ARN, or channel and need indexed static producers that emit onto it. "
             "For broad event impact, use planning_context first. "
+            "If the result points at the wrong channel or says coverage is missing, inspect producer/consumer source before answering. "
             "Does not prove messages were published at runtime, identify consumers, or recover schema and deployment guarantees."
         ),
         input_schema=_object_schema(
@@ -1524,6 +1532,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Exact-symbol static CALLS closure drill-down tool. "
             "Use only when you know the exact edit-site symbol and want downstream intra-repo callees up to `depth`. "
+            "If the result is empty or partial, inspect callers/callees in source before claiming no impact. "
             "It is not full service, endpoint, deploy, schema, or runtime impact. "
             "Does not include reverse callers, cross-repo edges, service or endpoint boundaries, or runtime calls."
         ),
@@ -1537,7 +1546,8 @@ _TOOLS: dict[str, McpTool] = {
         name="deploy_blockers_for",
         description=(
             "Explicit deploy-blocker drill-down tool for a known service when the current KG implements that contract. "
-            "Use it mainly to surface supported deploy-blocker facts or a clear unsupported-scope refusal until deploy facts exist. "
+            "Use it mainly to surface supported deploy-blocker facts or a clear unsupported-scope signal until deploy facts exist. "
+            "Unsupported deploy facts require source manifest inspection before answering deployability questions. "
             "Does not infer blockers from callers, events, config drift, or undeclared operational dependencies."
         ),
         input_schema=_object_schema({"service": _string_schema("Service name or slug."), "limit": _limit_schema()}, required=["service"]),

@@ -221,7 +221,9 @@ async def async_run_single_task(
 def _system_prompt() -> str:
     return (
         "You are evaluating a SuperContext MCP-enabled coding agent workflow. "
-        "Answer the task using ordinary safe source-inspection tools when needed. "
+        "Use SuperContext as an index and answer the task using ordinary safe source-inspection tools when needed. "
+        "Missing, unsupported, ambiguous, or empty SuperContext results are prompts to inspect source before answering from absence. "
+        "Answer the user question directly; do not frame the final answer as an eval result, arm report, or golden-answer comparison. "
         "Do not edit files. Cite file paths, symbols, or evidence when available."
     )
 
@@ -271,9 +273,12 @@ Expected answer shape:
 
 Rules:
 - Do not modify files.
+- Answer the user question directly. Do not include A/B arm labels, evaluation-result headings, or golden-answer commentary in the final answer.
 - Use the same ordinary source-inspection behavior you would use for a real coding task.
+- For exact symbol caller/callee questions, if KG returns `not_found`, search source imports, definitions, and call sites; report concrete source call sites found before mentioning KG limitations.
+- For whole-KG or snapshot summary tasks, inspect the snapshot manifest, metrics, and JSONL files directly; do not call anchored MCP tools without an anchor.
 - If SuperContext MCP tools are available, use them when they are relevant to the question.
-- If SuperContext cannot prove a fact, say what is unknown rather than guessing.
+- If SuperContext cannot prove a fact, inspect source when the fact is answerable from files or diffs; only then say what remains unknown rather than guessing.
 """
 
 

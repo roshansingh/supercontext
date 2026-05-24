@@ -14,6 +14,7 @@ from source.kg.eval.runner import (
     _mcp_tool_observations,
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
+    _system_prompt,
     _task_prompt,
     _tool_calls,
 )
@@ -554,6 +555,22 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
     def test_eval_runner_does_not_force_bare_claude_mode(self) -> None:
         self.assertNotIn("bare", _claude_extra_args())
+
+    def test_eval_prompts_require_source_fallback_for_missing_mcp_facts(self) -> None:
+        task = _task()
+
+        system_prompt = _system_prompt()
+        task_prompt = _task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+
+        self.assertIn("inspect source before answering from absence", system_prompt)
+        self.assertIn("do not frame the final answer as an eval result", system_prompt)
+        self.assertIn("Answer the user question directly", task_prompt)
+        self.assertIn("Do not include A/B arm labels", task_prompt)
+        self.assertIn("report concrete source call sites found", task_prompt)
+        self.assertIn("For whole-KG or snapshot summary tasks", task_prompt)
+        self.assertIn("do not call anchored MCP tools without an anchor", task_prompt)
+        self.assertIn("inspect source when the fact is answerable from files or diffs", task_prompt)
+        self.assertNotIn("say what is unknown rather than guessing", task_prompt)
 
     def test_task_prompt_includes_manifest_fixture_input(self) -> None:
         task = EvalTask(

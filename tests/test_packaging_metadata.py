@@ -100,7 +100,15 @@ class PackagingMetadataTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("Trace Evaluation", codex_skill)
+        self.assertIn("Coverage Fallback", codex_skill)
+        self.assertIn("exact symbol question", codex_skill)
+        self.assertIn("concrete source call sites", codex_skill)
+        self.assertIn("Whole KG or snapshot summary", codex_skill)
         self.assertIn("Trace Evaluation", claude_skill)
+        self.assertIn("Coverage Fallback", claude_skill)
+        self.assertIn("exact symbol question", claude_skill)
+        self.assertIn("concrete source call sites", claude_skill)
+        self.assertIn("Whole KG or snapshot summary", claude_skill)
 
     def test_eval_yaml_is_packaged(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
