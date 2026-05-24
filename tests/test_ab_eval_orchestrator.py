@@ -15,6 +15,7 @@ from source.kg.eval.runner import (
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
     _task_prompt,
+    _tool_calls,
 )
 from source.scripts.run_ab_eval import (
     _parse_arms,
@@ -398,6 +399,43 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertEqual(observations["errors"], ["mcp__supercontext__review_context"])
         with self.assertRaisesRegex(RuntimeError, "SuperContext MCP tool error"):
             _raise_for_mcp_tool_failures(observations)
+
+    def test_legacy_bettercontext_tool_prefix_counts_as_supercontext_mcp(self) -> None:
+        messages = [
+            {
+                "type": "AssistantMessage",
+                "data": {
+                    "content": [
+                        {
+                            "id": "toolu_1",
+                            "name": "mcp__bettercontext__find_callers",
+                            "input": {"symbol": "load_model"},
+                        },
+                        {
+                            "id": "toolu_2",
+                            "name": "Read",
+                            "input": {"file_path": "source/kg/eval/runner.py"},
+                        },
+                    ]
+                },
+            },
+            {
+                "type": "UserMessage",
+                "data": {
+                    "content": [
+                        {"tool_use_id": "toolu_1", "is_error": False, "content": "ok"},
+                        {"tool_use_id": "toolu_2", "is_error": False, "content": "ok"},
+                    ]
+                },
+            },
+        ]
+
+        mcp_tools, non_mcp_tools = _tool_calls(messages)
+        observations = _mcp_tool_observations(messages)
+
+        self.assertEqual(mcp_tools, ["mcp__bettercontext__find_callers"])
+        self.assertEqual(non_mcp_tools, ["Read"])
+        self.assertEqual(observations["successes"], ["mcp__bettercontext__find_callers"])
 
     def test_permission_denial_metadata_prevents_error_double_count(self) -> None:
         observations = _mcp_tool_observations(

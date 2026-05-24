@@ -20,6 +20,8 @@ Install the CLI, register the default local MCP endpoint with available host age
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
 ```
 
+The install URL intentionally points at `roshansingh/bettercontext` until the GitHub repository itself is renamed. If you previously installed BetterContext, the installer warns about legacy `~/.bettercontext` state; remove old `bettercontext` MCP registrations and stale scripts after verifying `supercontext-init` works.
+
 Then, inside each repo you want SuperContext to index:
 
 ```bash

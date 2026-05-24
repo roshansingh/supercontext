@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 
 DEFAULT_MCP_NAME = "supercontext"
+LEGACY_MCP_NAME = "bettercontext"
 DEFAULT_MCP_URL = "http://127.0.0.1:3845/mcp"
 SUPPORTED_AGENTS = ("codex", "claude")
 
@@ -93,6 +94,12 @@ def main() -> None:
                 f"would remove existing {agent} MCP registration: "
                 f"{_join(command.remove_command)}"
             )
+            if _should_remove_legacy_name(args.name, args.remove):
+                legacy_command = _registration_command(agent, name=LEGACY_MCP_NAME, url=args.url)
+                print(
+                    f"would remove legacy {agent} MCP registration: "
+                    f"{_join(legacy_command.remove_command)}"
+                )
             if not args.remove:
                 print(f"would add {agent} MCP registration: {_join(command.add_command)}")
             continue
@@ -126,6 +133,9 @@ def main() -> None:
                 continue
             print(f"ran remove command for {agent} MCP server {args.name!r}")
             continue
+        if _should_remove_legacy_name(args.name, args.remove):
+            legacy_command = _registration_command(agent, name=LEGACY_MCP_NAME, url=args.url)
+            _remove_legacy_registration(agent, legacy_command.remove_command)
         try:
             subprocess.run(command.add_command, check=True)
         except (OSError, subprocess.CalledProcessError) as exc:
@@ -138,6 +148,26 @@ def main() -> None:
             )
             continue
         print(f"registered {agent} MCP server {args.name!r}: {args.url}")
+
+
+def _should_remove_legacy_name(name: str, remove: bool) -> bool:
+    return not remove and name == DEFAULT_MCP_NAME
+
+
+def _remove_legacy_registration(agent: str, command: tuple[str, ...]) -> None:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        print(f"warning: legacy {agent} MCP cleanup failed ({exc}): {_join(command)}")
+        return
+    returncode = getattr(result, "returncode", 0)
+    if isinstance(returncode, int) and returncode == 0:
+        print(f"removed legacy {agent} MCP registration {LEGACY_MCP_NAME!r}")
 
 
 def _registration_command(agent: str, *, name: str, url: str) -> RegistrationCommand:

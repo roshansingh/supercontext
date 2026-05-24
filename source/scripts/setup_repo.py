@@ -11,6 +11,7 @@ from source.scripts.mcp_host import format_host_for_url, is_loopback_host
 
 
 DEFAULT_SNAPSHOT_DIR = ".supercontext/kg"
+LEGACY_SNAPSHOT_DIR = ".bettercontext/kg"
 
 
 def main() -> None:
@@ -41,6 +42,8 @@ def main() -> None:
 
     repo = Path(args.repo).expanduser().resolve()
     out = Path(args.out).expanduser().resolve() if args.out else repo / DEFAULT_SNAPSHOT_DIR
+    if not args.out:
+        _warn_for_legacy_snapshot(repo, out)
     manifest = build_kg(repo, out, strict_extractors=args.strict_extractors, tenant_id=args.tenant)
 
     print(f"SuperContext KG built: {out}")
@@ -72,6 +75,17 @@ def _mcp_server_command(snapshot: Path, host: str, port: int) -> list[str]:
         "--port",
         str(port),
     ]
+
+
+def _warn_for_legacy_snapshot(repo: Path, out: Path) -> None:
+    legacy_out = repo / LEGACY_SNAPSHOT_DIR
+    legacy_manifest = legacy_out / "manifest.json"
+    if legacy_manifest.exists() and not out.exists():
+        print(
+            "Warning: detected legacy BetterContext KG snapshot at "
+            f"{legacy_out}. SuperContext will build a new snapshot at {out}. "
+            "Remove the legacy directory after verifying the new snapshot."
+        )
 
 
 if __name__ == "__main__":

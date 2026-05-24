@@ -179,6 +179,8 @@ The one-line machine install path installs the package, global skills, and defau
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
 ```
 
+The install URL intentionally points at `roshansingh/bettercontext` until the GitHub repository itself is renamed. For upgrades from BetterContext, remove stale `bettercontext` MCP registrations and old `~/.bettercontext` scripts after verifying the new `supercontext-*` commands work.
+
 Then run `supercontext-init` inside each target repo to build `.supercontext/kg`. Use `supercontext-init --serve` to build the snapshot and start the local MCP server in one foreground command. Registration is global, but the active server and KG remain repo-local.
 
 Example:

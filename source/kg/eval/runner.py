@@ -21,6 +21,12 @@ Arm = Literal["mcp_on", "mcp_off"]
 DEFAULT_EVAL_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_HARNESS_VERSION = "ab-eval-v1"
 DEFAULT_MCP_URL = "http://127.0.0.1:3845/mcp"
+SUPERCONTEXT_MCP_TOOL_PREFIX = "mcp__supercontext__"
+LEGACY_BETTERCONTEXT_MCP_TOOL_PREFIX = "mcp__bettercontext__"
+SUPERCONTEXT_MCP_TOOL_PREFIXES = (
+    SUPERCONTEXT_MCP_TOOL_PREFIX,
+    LEGACY_BETTERCONTEXT_MCP_TOOL_PREFIX,
+)
 # A/B eval needs the same ordinary inspection surface agents used in the baseline arm.
 # The prompt forbids edits and explicit edit/write tools are denied below; Bash remains
 # available because prior baseline runs relied on jq/grep-style snapshot inspection.
@@ -171,7 +177,7 @@ async def async_run_single_task(
     tokens_in, tokens_out = _usage_tokens(serialized_messages)
     mcp_tools, non_mcp_tools = _tool_calls(serialized_messages)
     tool_attempts = _tool_attempts(serialized_messages)
-    non_mcp_tool_attempts = [name for name in tool_attempts if not name.startswith("mcp__supercontext__")]
+    non_mcp_tool_attempts = [name for name in tool_attempts if not _is_supercontext_mcp_tool(name)]
     mcp_observations = _mcp_tool_observations(serialized_messages)
     if arm == "mcp_on":
         _raise_for_mcp_tool_failures(mcp_observations)
@@ -229,7 +235,7 @@ def _mcp_servers(arm: Arm, config: RunnerConfig) -> dict[str, dict[str, str]]:
 def _allowed_tools(arm: Arm) -> list[str]:
     tools = list(EVAL_ALLOWED_ORDINARY_TOOLS)
     if arm == "mcp_on":
-        tools.extend(f"mcp__supercontext__{tool['name']}" for tool in tool_definitions())
+        tools.extend(f"{SUPERCONTEXT_MCP_TOOL_PREFIX}{tool['name']}" for tool in tool_definitions())
     return tools
 
 
@@ -374,7 +380,7 @@ def _tool_calls(messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     names = sorted(set(_tool_names(messages)))
     # The eval harness only attaches the SuperContext MCP server. Keep this
     # scope aligned with _mcp_tool_observations so aggregate tool counts match.
-    mcp = [name for name in names if name.startswith("mcp__supercontext__")]
+    mcp = [name for name in names if _is_supercontext_mcp_tool(name)]
     non_mcp = [name for name in names if name not in mcp]
     return mcp, non_mcp
 
@@ -411,7 +417,7 @@ def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str
             if (
                 isinstance(tool_id, str)
                 and isinstance(name, str)
-                and name.startswith("mcp__supercontext__")
+                and _is_supercontext_mcp_tool(name)
             ):
                 permission_denials_by_id[tool_id] = name
 
@@ -419,7 +425,7 @@ def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str
         for block in _content_blocks(message):
             tool_id = block.get("id")
             name = block.get("name")
-            if isinstance(tool_id, str) and isinstance(name, str) and name.startswith("mcp__supercontext__"):
+            if isinstance(tool_id, str) and isinstance(name, str) and _is_supercontext_mcp_tool(name):
                 tool_use_names[tool_id] = name
                 attempts.append(name)
 
@@ -444,6 +450,10 @@ def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str
         "denials": denials,
         "errors": errors,
     }
+
+
+def _is_supercontext_mcp_tool(name: str) -> bool:
+    return name.startswith(SUPERCONTEXT_MCP_TOOL_PREFIXES)
 
 
 def _content_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:

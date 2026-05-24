@@ -1,6 +1,8 @@
 debates/
 data/kg_runs/
 data/ab_runs/
+.supercontext/
+.bettercontext/
 docs/plans/
 docs/reviews/
 docs/evaluation/runs/

@@ -50,8 +50,10 @@ Expected movement: after classification, choose one repeated failure family and 
 
 ## Verification Commands
 
+Historical note: this run was captured before the product rename. The original LangSmith project was `bettercontext-ab-eval`; use `supercontext-ab-eval` only for post-rename reruns.
+
 ```bash
-.venv/bin/python -m source.scripts.pull_ab_traces --project supercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/default-v1-2026-05-23/traces.jsonl
+.venv/bin/python -m source.scripts.pull_ab_traces --project bettercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/default-v1-2026-05-23/traces.jsonl
 .venv/bin/python -m source.scripts.compute_ab_deltas --traces data/ab_runs/default-v1-2026-05-23/traces.jsonl --out data/ab_runs/default-v1-2026-05-23/deltas.jsonl
 .venv/bin/python -m source.scripts.judge_ab_quality --judge-model gpt-4.1-mini --deltas data/ab_runs/default-v1-2026-05-23/deltas.jsonl --out data/ab_runs/default-v1-2026-05-23/judged-deltas.jsonl --seed 6
 .venv/bin/python -m source.scripts.aggregate_ab_report --deltas data/ab_runs/default-v1-2026-05-23/judged-deltas.jsonl --out data/ab_runs/default-v1-2026-05-23/report

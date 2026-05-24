@@ -36,6 +36,7 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 fi
 TARGET_AGENT="both"
 PYTHON_BIN="${PYTHON:-python3}"
+USER_HOME="${HOME:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -74,17 +75,30 @@ case "$TARGET_AGENT" in
     ;;
 esac
 
-if [[ -z "${SUPERCONTEXT_HOME:-}" ]]; then
-  USER_HOME="${HOME:-}"
-  if [[ -z "$USER_HOME" ]]; then
-    USER_HOME="$("$PYTHON_BIN" - <<'PY'
+if [[ -z "$USER_HOME" ]]; then
+  USER_HOME="$("$PYTHON_BIN" - <<'PY'
 from pathlib import Path
 
 print(Path.home())
 PY
 )"
-  fi
+fi
+
+if [[ -z "${SUPERCONTEXT_HOME:-}" ]]; then
   SUPERCONTEXT_HOME="$USER_HOME/.supercontext"
+fi
+
+if [[ -n "${BETTERCONTEXT_HOME:-}" ]]; then
+  echo "Warning: BETTERCONTEXT_HOME is set but deprecated. Use SUPERCONTEXT_HOME for SuperContext installs." >&2
+fi
+
+LEGACY_HOME="${BETTERCONTEXT_HOME:-$USER_HOME/.bettercontext}"
+if [[ -d "$LEGACY_HOME" ]]; then
+  echo "Warning: detected legacy BetterContext install at $LEGACY_HOME" >&2
+  echo "         After verifying SuperContext, remove stale host registrations and scripts:" >&2
+  echo "           codex mcp remove bettercontext || true" >&2
+  echo "           claude mcp remove --scope user bettercontext || true" >&2
+  echo "           rm -rf \"$LEGACY_HOME\"" >&2
 fi
 
 LOCAL_MODE=false

@@ -27,6 +27,12 @@ class McpRegistrationTest(unittest.TestCase):
                     stderr=register_mcp.subprocess.DEVNULL,
                 ),
                 call(
+                    ("codex", "mcp", "remove", "bettercontext"),
+                    check=False,
+                    stdout=register_mcp.subprocess.DEVNULL,
+                    stderr=register_mcp.subprocess.DEVNULL,
+                ),
+                call(
                     (
                         "codex",
                         "mcp",
@@ -39,6 +45,12 @@ class McpRegistrationTest(unittest.TestCase):
                 ),
                 call(
                     ("claude", "mcp", "remove", "--scope", "user", "supercontext"),
+                    check=False,
+                    stdout=register_mcp.subprocess.DEVNULL,
+                    stderr=register_mcp.subprocess.DEVNULL,
+                ),
+                call(
+                    ("claude", "mcp", "remove", "--scope", "user", "bettercontext"),
                     check=False,
                     stdout=register_mcp.subprocess.DEVNULL,
                     stderr=register_mcp.subprocess.DEVNULL,
@@ -102,6 +114,7 @@ class McpRegistrationTest(unittest.TestCase):
         )
 
         self.assertIn("would remove existing claude MCP registration", output)
+        self.assertIn("would remove legacy claude MCP registration", output)
         self.assertIn("would add claude MCP registration", output)
         self.run_mock.assert_not_called()
 
@@ -212,6 +225,10 @@ class McpRegistrationTest(unittest.TestCase):
                     ("codex", "mcp", "remove", "supercontext"),
                     1,
                 ),
+                register_mcp.subprocess.CompletedProcess(
+                    ("codex", "mcp", "remove", "bettercontext"),
+                    1,
+                ),
                 register_mcp.subprocess.CalledProcessError(
                     2,
                     (
@@ -241,6 +258,10 @@ class McpRegistrationTest(unittest.TestCase):
                         ("codex", "mcp", "remove", "supercontext"),
                         1,
                     ),
+                    register_mcp.subprocess.CompletedProcess(
+                        ("codex", "mcp", "remove", "bettercontext"),
+                        1,
+                    ),
                     register_mcp.subprocess.CalledProcessError(
                         2,
                         (
@@ -266,6 +287,10 @@ class McpRegistrationTest(unittest.TestCase):
                     1,
                 ),
                 register_mcp.subprocess.CompletedProcess(
+                    ("codex", "mcp", "remove", "bettercontext"),
+                    0,
+                ),
+                register_mcp.subprocess.CompletedProcess(
                     (
                         "codex",
                         "mcp",
@@ -278,6 +303,10 @@ class McpRegistrationTest(unittest.TestCase):
                 ),
                 register_mcp.subprocess.CompletedProcess(
                     ("claude", "mcp", "remove", "--scope", "user", "supercontext"),
+                    1,
+                ),
+                register_mcp.subprocess.CompletedProcess(
+                    ("claude", "mcp", "remove", "--scope", "user", "bettercontext"),
                     1,
                 ),
                 register_mcp.subprocess.CalledProcessError(
