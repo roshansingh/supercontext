@@ -47,6 +47,23 @@ def _with_default_tool_metadata(payload: JsonObject) -> JsonObject:
         "coverage_warnings": payload.get("coverage_warnings", []),
         "unsupported_scopes": payload.get("unsupported_scopes", []),
         "next_actions": payload.get("next_actions", []),
+        "source_fallback_recommended": payload.get("source_fallback_recommended", False),
+        "source_fallback_reason": payload.get("source_fallback_reason"),
+        "source_fallback_actions": payload.get("source_fallback_actions", []),
+    }
+
+
+def _with_source_fallback(payload: JsonObject, *, reason: str, actions: list[str]) -> JsonObject:
+    next_actions = list(payload.get("next_actions", []))
+    for action in actions:
+        if action not in next_actions:
+            next_actions.append(action)
+    return {
+        **payload,
+        "next_actions": next_actions,
+        "source_fallback_recommended": True,
+        "source_fallback_reason": reason,
+        "source_fallback_actions": actions,
     }
 
 
@@ -83,7 +100,13 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     limit = _limit(arguments)
     matches = _matching_services(kg, service_query)
     if not matches:
-        return {"status": "not_found", "query": service_query, "service": None}
+        return _with_source_fallback(
+            {"status": "not_found", "query": service_query, "service": None},
+            reason="service_not_found",
+            actions=[
+                "Search service manifests, deployment files, and repository names for the requested service before concluding it is absent.",
+            ],
+        )
     if len(matches) > 1:
         return {
             "status": "ambiguous",
@@ -98,7 +121,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     endpoints = [row for row in related if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}]
     events = [row for row in related if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}]
     deploy_mappings = [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
-    return {
+    payload: JsonObject = {
         "status": "found",
         "service": _service_row(kg, service),
         "summary": {
@@ -110,30 +133,61 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "event_channels": events[:limit],
         "deploy_mappings": deploy_mappings[:limit],
     }
+    if not deploy_mappings:
+        payload = _with_source_fallback(
+            payload,
+            reason="deploy_mapping_not_indexed",
+            actions=[
+                "Inspect Kubernetes, Terraform, Docker, ingress, and domain routing manifests before answering deploy or runtime routing questions from absence.",
+            ],
+        )
+    return payload
 
 
 def _find_callers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return kg.find_callers(
+    result = kg.find_callers(
         _required_string(arguments, "symbol"),
         limit=_limit(arguments),
         path=_optional_string(arguments, "path"),
         line=_optional_int(arguments, "line"),
         include_all=_optional_bool(arguments, "include_all", default=False),
     )
+    if result.get("status") in {"not_found", "ambiguous"}:
+        return _with_source_fallback(
+            result,
+            reason="symbol_callers_not_proven_by_kg",
+            actions=[
+                "Search source imports and definitions for the symbol or qualified name.",
+                "Search source call sites before concluding there are no callers.",
+                "Report concrete source call sites before describing the KG miss.",
+            ],
+        )
+    return result
 
 
 def _find_callees(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return kg.find_callees(
+    result = kg.find_callees(
         _required_string(arguments, "symbol"),
         limit=_limit(arguments),
         path=_optional_string(arguments, "path"),
         line=_optional_int(arguments, "line"),
         include_all=_optional_bool(arguments, "include_all", default=False),
     )
+    if result.get("status") in {"not_found", "ambiguous"}:
+        return _with_source_fallback(
+            result,
+            reason="symbol_callees_not_proven_by_kg",
+            actions=[
+                "Read the source body for the requested symbol.",
+                "Search imports and direct call expressions before concluding there are no callees.",
+                "Report concrete source callees before describing the KG miss.",
+            ],
+        )
+    return result
 
 
 def _blast_radius(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return kg.blast_radius(
+    result = kg.blast_radius(
         _required_string(arguments, "symbol"),
         depth=_bounded_int(arguments.get("depth", 1), field="depth", minimum=1, maximum=6),
         limit=_limit(arguments),
@@ -141,6 +195,16 @@ def _blast_radius(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         line=_optional_int(arguments, "line"),
         include_all=_optional_bool(arguments, "include_all", default=False),
     )
+    if result.get("status") in {"not_found", "ambiguous"} or not result.get("edges"):
+        return _with_source_fallback(
+            result,
+            reason="blast_radius_not_proven_by_kg",
+            actions=[
+                "Inspect source callers and callees around the edit-site symbol before claiming no impact.",
+                "Treat empty static CALLS closure as a KG limitation when runtime, framework, or external-package calls may exist.",
+            ],
+        )
+    return result
 
 
 def _get_event_consumers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
@@ -174,13 +238,23 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
             continue
         rows.append(_fact_result(kg, fact, subject, object_))
     returned = rows[:limit]
-    return {
+    payload: JsonObject = {
         "status": "found" if rows else "not_found",
         "channel": channel,
         "event_fact_count": len(rows),
         "returned_count": len(returned),
         result_key: returned,
     }
+    if not rows:
+        payload = _with_source_fallback(
+            payload,
+            reason="event_channel_not_found",
+            actions=[
+                "Search producer and consumer source for the queue, topic, ARN, environment-specific channel name, or schema references.",
+                "Verify the returned channel matches the prompt before using event results as evidence.",
+            ],
+        )
+    return payload
 
 
 def _event_channel_search_text(channel: JsonObject) -> str:
@@ -198,14 +272,20 @@ def _event_channel_search_text(channel: JsonObject) -> str:
 
 
 def _unsupported_by_current_kg(tool: str, reason: str) -> JsonObject:
-    return {
-        "status": "unsupported_by_current_kg",
-        "reason": reason,
-        "missing_contract": tool,
-        "coverage_warnings": [],
-        "unsupported_scopes": [],
-        "next_actions": [],
-    }
+    return _with_source_fallback(
+        {
+            "status": "unsupported_by_current_kg",
+            "reason": reason,
+            "missing_contract": tool,
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        },
+        reason="unsupported_by_current_kg",
+        actions=[
+            "Inspect source, manifests, configuration, or diffs for this unsupported scope before answering from absence.",
+        ],
+    )
 
 
 def _validate_declared_arguments(tool: McpTool, arguments: JsonObject) -> None:
@@ -686,7 +766,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         )
 
     status = "found" if any((changed_symbols, direct_callers, direct_callees, repo_dependencies)) else "not_found"
-    return {
+    payload: JsonObject = {
         "status": status,
         "repo": repo,
         "changed_symbols": _planning_context_public_rows(changed_symbols),
@@ -698,6 +778,16 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "evidence": _planning_context_evidence(changed_symbols, direct_callers, direct_callees, repo_dependencies),
         "next_actions": [],
     }
+    if status == "not_found":
+        payload = _with_source_fallback(
+            payload,
+            reason="review_context_not_proven_by_kg",
+            actions=[
+                "Inspect the PR diff or changed files directly before saying what changed.",
+                "Search changed symbols in source when the KG does not map changed files to symbols.",
+            ],
+        )
+    return payload
 
 
 def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> JsonObject:
@@ -1130,7 +1220,7 @@ def _planning_context_output(
     bounded_endpoints = _planning_context_public_rows(endpoints)
     bounded_event_channels = _planning_context_public_rows(event_channels)
     bounded_domains = _planning_context_public_rows(domains)
-    return {
+    payload: JsonObject = {
         "status": status,
         "query": query,
         "anchors": {
@@ -1161,6 +1251,16 @@ def _planning_context_output(
         "unsupported_scopes": [],
         "next_actions": next_actions,
     }
+    if status == "not_found":
+        payload = _with_source_fallback(
+            payload,
+            reason="planning_context_not_proven_by_kg",
+            actions=[
+                "Inspect source files, manifests, or snapshot records matching the requested anchor before answering from absence.",
+                "Broaden or correct the anchor if source evidence suggests a different repo, path, symbol, service, endpoint, event channel, or domain.",
+            ],
+        )
+    return payload
 
 
 def _planning_context_evidence(*groups: list[JsonObject]) -> list[JsonObject]:

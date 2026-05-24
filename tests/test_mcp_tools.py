@@ -32,9 +32,14 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
     testcase.assertIn("coverage_warnings", payload)
     testcase.assertIn("unsupported_scopes", payload)
     testcase.assertIn("next_actions", payload)
+    testcase.assertIn("source_fallback_recommended", payload)
+    testcase.assertIn("source_fallback_reason", payload)
+    testcase.assertIn("source_fallback_actions", payload)
     testcase.assertIsInstance(payload["coverage_warnings"], list)
     testcase.assertIsInstance(payload["unsupported_scopes"], list)
     testcase.assertIsInstance(payload["next_actions"], list)
+    testcase.assertIsInstance(payload["source_fallback_recommended"], bool)
+    testcase.assertIsInstance(payload["source_fallback_actions"], list)
 
 
 class McpToolsTest(unittest.TestCase):
@@ -119,6 +124,15 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ambiguous")
         self.assertTrue(result["next_actions"])
+
+    def test_planning_context_not_found_recommends_source_fallback(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"repo": "missing-repo"})
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertTrue(result["source_fallback_recommended"])
+        self.assertEqual(result["source_fallback_reason"], "planning_context_not_proven_by_kg")
+        self.assertTrue(any("Inspect source files" in action for action in result["source_fallback_actions"]))
 
     def test_planning_context_symbol_ambiguity_returns_candidates(self) -> None:
         with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
@@ -370,8 +384,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
         self.assertEqual(len(limited_brief["endpoints"]), 1)
         self.assertEqual(len(limited_brief["event_channels"]), 1)
+        self.assertTrue(brief["source_fallback_recommended"])
+        self.assertEqual(brief["source_fallback_reason"], "deploy_mapping_not_indexed")
+        self.assertTrue(any("Kubernetes" in action for action in brief["source_fallback_actions"]))
         self.assertFalse(any(key.startswith("_") for key in brief["endpoints"][0]))
         self.assertEqual(missing["status"], "not_found")
+        self.assertTrue(missing["source_fallback_recommended"])
+        self.assertEqual(missing["source_fallback_reason"], "service_not_found")
         _assert_additive_fields(self, all_services)
         _assert_additive_fields(self, search)
         _assert_additive_fields(self, brief)
@@ -410,10 +429,17 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(any(row["qualname"] == "charge_card" for row in planning["symbols"]))
         self.assertEqual(callers["status"], "not_found")
         self.assertEqual(callers["target"]["confidence"], "not_found")
+        self.assertTrue(callers["source_fallback_recommended"])
+        self.assertEqual(callers["source_fallback_reason"], "symbol_callers_not_proven_by_kg")
+        self.assertTrue(any("call sites" in action for action in callers["source_fallback_actions"]))
         self.assertEqual(callees["status"], "not_found")
         self.assertEqual(callees["source"]["confidence"], "not_found")
+        self.assertTrue(callees["source_fallback_recommended"])
+        self.assertEqual(callees["source_fallback_reason"], "symbol_callees_not_proven_by_kg")
         self.assertEqual(radius["status"], "not_found")
         self.assertEqual(radius["source"]["confidence"], "not_found")
+        self.assertTrue(radius["source_fallback_recommended"])
+        self.assertEqual(radius["source_fallback_reason"], "blast_radius_not_proven_by_kg")
         self.assertEqual(dependency["status"], "not_found")
         self.assertEqual(dependency["source"]["confidence"], "not_found")
         self.assertEqual(evidence["status"], "not_found")
@@ -436,6 +462,19 @@ class McpToolsTest(unittest.TestCase):
         _assert_additive_fields(self, producers)
         _assert_additive_fields(self, limited_producers)
 
+    def test_event_tools_not_found_recommend_source_fallback(self) -> None:
+        with _fixture_snapshot() as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "missing-queue"})
+            producers = call_tool(kg, "get_event_producers", {"channel": "missing-queue"})
+
+        self.assertEqual(consumers["status"], "not_found")
+        self.assertTrue(consumers["source_fallback_recommended"])
+        self.assertEqual(consumers["source_fallback_reason"], "event_channel_not_found")
+        self.assertTrue(any("producer and consumer source" in action for action in consumers["source_fallback_actions"]))
+        self.assertEqual(producers["status"], "not_found")
+        self.assertTrue(producers["source_fallback_recommended"])
+        self.assertEqual(producers["source_fallback_reason"], "event_channel_not_found")
+
     def test_event_tools_scan_all_matching_facts_before_limiting(self) -> None:
         with _fixture_snapshot(extra_consumers=125) as kg:
             consumers = call_tool(kg, "get_event_consumers", {"channel": "orders", "limit": 1})
@@ -452,6 +491,8 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "unsupported_by_current_kg")
         self.assertEqual(result["missing_contract"], "deploy_blockers_for")
+        self.assertTrue(result["source_fallback_recommended"])
+        self.assertEqual(result["source_fallback_reason"], "unsupported_by_current_kg")
         _assert_additive_fields(self, result)
 
     def test_tool_arguments_fail_closed(self) -> None:
