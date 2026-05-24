@@ -9,10 +9,11 @@ from pathlib import Path
 
 import yaml
 
-from source.kg.eval.corpus import DEFAULT_QUERY_SET, _clean, default_v1_tasks, parse_query_set
+from source.kg.eval.corpus import DEFAULT_QUERY_SET, _clean, default_v1_tasks, fixture_defaults_from_query_set, parse_query_set
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PRIVATE_FIXTURE_OVERRIDES = ROOT / "docs/evaluation/default-v1-fixture-overrides.yaml"
 
 
 class AbEvalCorpusTest(unittest.TestCase):
@@ -40,6 +41,49 @@ class AbEvalCorpusTest(unittest.TestCase):
         self.assertIn('"changed_files"', q037.fixture_input)
         self.assertIn('"changed_ranges"', q037.fixture_input)
         self.assertIn('"repo": "backend_api"', q037.fixture_input)
+        q003 = next(task for task in tasks if task.task_id == "Q003")
+        self.assertEqual(q003.fixture, "mercury_ml, load_model")
+        self.assertEqual(q003.prompt, "Who calls `load_model`?")
+        self.assertIn(("$CALLER_SYMBOL", "load_model"), q003.fixture_bindings)
+        q011 = next(task for task in tasks if task.task_id == "Q011")
+        self.assertEqual(q011.prompt, "What service identity and URN did this repo produce?")
+        self.assertIn(("$PY_REPO", "mercury_ml"), q011.fixture_bindings)
+        q035 = next(task for task in tasks if task.task_id == "Q035")
+        self.assertEqual(q035.prompt, "Which Kubernetes deployable runs `$SERVICE`?")
+        self.assertEqual(q035.fixture_input, "")
+        q048 = next(task for task in tasks if task.task_id == "Q048")
+        self.assertEqual(q048.fixture_input, "")
+
+    def test_default_v1_private_fixture_overrides_are_applied(self) -> None:
+        tasks = default_v1_tasks(
+            query_set_path=ROOT / DEFAULT_QUERY_SET,
+            fixture_overrides_path=PRIVATE_FIXTURE_OVERRIDES,
+            seed=0,
+        )
+
+        q035 = next(task for task in tasks if task.task_id == "Q035")
+        self.assertEqual(q035.prompt, "Which Kubernetes deployable runs `mercury-api`?")
+        self.assertIn(("$SERVICE", "mercury-api"), q035.fixture_bindings)
+        self.assertIn('"service": "mercury_api"', q035.fixture_input)
+        q040 = next(task for task in tasks if task.task_id == "Q040")
+        self.assertEqual(q040.prompt, "What must deploy before `mercury-api` can safely deploy this schema change?")
+        q045 = next(task for task in tasks if task.task_id == "Q045")
+        self.assertEqual(
+            q045.prompt,
+            "Which services depend on `la-mercury-ml` directly and indirectly up to depth 3?",
+        )
+        self.assertIn(("$SERVICE", "la-mercury-ml"), q045.fixture_bindings)
+        self.assertIn('"service": "mercury_ml"', q045.fixture_input)
+        q048 = next(task for task in tasks if task.task_id == "Q048")
+        self.assertIn('"event_channel": "la-prod-twilio"', q048.fixture_input)
+
+    def test_fixture_defaults_parse_only_concrete_values(self) -> None:
+        defaults = fixture_defaults_from_query_set(ROOT / DEFAULT_QUERY_SET)
+
+        self.assertEqual(defaults["$PY_REPO"], "mercury_ml")
+        self.assertEqual(defaults["$CALLER_SYMBOL"], "load_model")
+        self.assertEqual(defaults["$ENTRY_SYMBOL_LINE"], "70")
+        self.assertNotIn("$SERVICE", defaults)
 
     def test_default_v1_rejects_manifest_rows_not_in_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -49,6 +93,40 @@ class AbEvalCorpusTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "does not exist in query set"):
+                default_v1_tasks(query_set_path=ROOT / DEFAULT_QUERY_SET, manifest_path=manifest)
+
+    def test_default_v1_rejects_malformed_fixture_bindings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "default_v1_bad.yaml"
+            manifest.write_text(
+                yaml.safe_dump(
+                    {
+                        "tasks": [
+                            {"id": "Q003", "phase": "coding", "fixture_bindings": {"SERVICE": "mercury-api"}},
+                            {"id": "Q004", "phase": "coding"},
+                            {"id": "Q011", "phase": "planning"},
+                            {"id": "Q015", "phase": "planning"},
+                            {"id": "Q016", "phase": "coding"},
+                            {"id": "Q021", "phase": "review"},
+                            {"id": "Q031", "phase": "planning"},
+                            {"id": "Q035", "phase": "planning"},
+                            {"id": "Q051", "phase": "coding"},
+                            {"id": "Q054", "phase": "planning"},
+                            {"id": "Q037", "phase": "review"},
+                            {"id": "Q038", "phase": "planning"},
+                            {"id": "Q040", "phase": "review"},
+                            {"id": "Q045", "phase": "planning"},
+                            {"id": "Q048", "phase": "review"},
+                            {"id": "Q053", "phase": "review"},
+                            {"id": "Q081", "phase": "planning"},
+                            {"id": "Q110", "phase": "review"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "fixture binding key"):
                 default_v1_tasks(query_set_path=ROOT / DEFAULT_QUERY_SET, manifest_path=manifest)
 
     def test_print_tasks_cli_outputs_default_v1_tasks(self) -> None:
@@ -61,6 +139,8 @@ class AbEvalCorpusTest(unittest.TestCase):
                 str(ROOT / DEFAULT_QUERY_SET),
                 "--tasks",
                 "default-v1",
+                "--fixture-overrides",
+                str(PRIVATE_FIXTURE_OVERRIDES),
                 "--seed",
                 "1",
                 "--print-tasks",

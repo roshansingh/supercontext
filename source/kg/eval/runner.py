@@ -252,6 +252,7 @@ def _prepare_arm_output_dir(output_dir: Path, *, group_id: str, arm: Arm) -> Pat
 
 
 def _task_prompt(task: EvalTask, *, snapshot_path: Path, arm: Arm) -> str:
+    fixture_bindings = _fixture_binding_block(task)
     fixture_input = f"Fixture input:\n{task.fixture_input}\n" if task.fixture_input else ""
     return f"""Run this SuperContext A/B evaluation task.
 
@@ -261,13 +262,14 @@ Phase: {task.phase}
 Fixture: {task.fixture}
 Snapshot path: {snapshot_path}
 Arm: {arm}
+{fixture_bindings}
 {fixture_input}
 
 User question:
 {task.prompt}
 
 Expected answer shape:
-{task.row.expected_answer_shape}
+{task.expected_answer_shape}
 
 Rules:
 - Do not modify files.
@@ -275,6 +277,15 @@ Rules:
 - If SuperContext MCP tools are available, use them when they are relevant to the question.
 - If SuperContext cannot prove a fact, say what is unknown rather than guessing.
 """
+
+
+def _fixture_binding_block(task: EvalTask) -> str:
+    if not task.fixture_bindings:
+        return ""
+    lines = ["Resolved fixture bindings. Use these concrete values wherever the original corpus used variables:"]
+    for variable, value in task.fixture_bindings:
+        lines.append(f"- {variable} = {value}")
+    return "\n".join(lines) + "\n"
 
 
 def _message_to_json(message: object) -> dict[str, Any]:

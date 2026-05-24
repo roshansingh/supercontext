@@ -1,0 +1,53 @@
+tasks:
+  - id: Q031
+    fixture_input: |
+      Repo under inspection:
+      {
+        "repo": "mercury_api",
+        "service_slug": "mercury-api",
+        "owner_scope": "source-visible service ownership only; report unknown when no catalog, CODEOWNERS, or owner metadata proves a team/person"
+      }
+  - id: Q035
+    fixture_bindings:
+      $SERVICE: mercury-api
+    fixture_input: |
+      Service under inspection:
+      {
+        "service": "mercury_api",
+        "service_slug": "mercury-api",
+        "repo": "mercury_api",
+        "deploy_scope": "Kubernetes manifests and deploy targets visible in the snapshot/source tree"
+      }
+  - id: Q040
+    fixture_bindings:
+      $SERVICE: mercury-api
+    fixture_input: |
+      Schema-change fixture:
+      {
+        "service": "mercury_api",
+        "service_slug": "mercury-api",
+        "repo": "mercury_api",
+        "schema_change": "breaking API response schema change on public mercury_api endpoints",
+        "required_answer_boundary": "distinguish proven deploy blockers from unsupported deploy-blocker/schema-consumer relations"
+      }
+  - id: Q045
+    fixture_bindings:
+      $SERVICE: la-mercury-ml
+    fixture_input: |
+      Service dependency fixture:
+      {
+        "service": "mercury_ml",
+        "service_slug": "la-mercury-ml",
+        "repo": "mercury_ml",
+        "direction": "services that depend on this service/package, directly and transitively up to depth 3"
+      }
+  - id: Q048
+    fixture_input: |
+      Contract PR fixture:
+      {
+        "event_channel": "la-prod-twilio",
+        "change": "contract change to Twilio SQS message payload",
+        "unresolved_consumer": "mercury_api/messaging/twilio_events/event_processor.py:89",
+        "unresolved_expression": "settings.TWILIO_SQS",
+        "required_answer_boundary": "report known consumers/producers with citations and explicitly refuse to prove safety for the uninstrumented consumer scope"
+      }

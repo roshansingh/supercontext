@@ -19,6 +19,7 @@ from source.kg.eval.runner import (
 )
 from source.scripts.run_ab_eval import (
     _parse_arms,
+    _positive_int,
     _post_arm_host_config_command,
     _pre_arm_host_config_command,
     _run_host_config_command,
@@ -106,6 +107,106 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                 expected_commands.append(call["post"])
         self.assertEqual(commands, expected_commands)
 
+    def test_parallel_paired_tasks_skip_shared_registration_and_keep_grouping(self) -> None:
+        task_a = _task("Q003")
+        task_b = _task("Q016")
+        commands: list[tuple[str, ...]] = []
+        calls: list[dict[str, object]] = []
+
+        def fake_run_task(
+            task_arg: EvalTask,
+            *,
+            arm: str,
+            snapshot: str | Path,
+            output_dir: str | Path,
+            host: str,
+            run_group_id: str,
+            random_seed: int,
+            pre_arm_host_config_command: tuple[str, ...],
+            post_arm_host_config_command: tuple[str, ...],
+            config: RunnerConfig,
+        ) -> RunRecord:
+            calls.append(
+                {
+                    "task_id": task_arg.task_id,
+                    "arm": arm,
+                    "run_group_id": run_group_id,
+                    "pre": pre_arm_host_config_command,
+                    "post": post_arm_host_config_command,
+                }
+            )
+            return _record(
+                task=task_arg,
+                arm=arm,
+                run_group_id=run_group_id,
+                pre=pre_arm_host_config_command,
+                post=post_arm_host_config_command,
+            )
+
+        records = _run_paired_tasks(
+            [task_a, task_b],
+            arms=["mcp_on", "mcp_off"],
+            snapshot="snapshot-dir",
+            output_dir="out-dir",
+            host="claude_code",
+            seed=1,
+            config=RunnerConfig(),
+            run_task=fake_run_task,
+            run_host_command=commands.append,
+            group_id_factory=iter(["group-1", "group-2"]).__next__,
+            parallelism=2,
+        )
+
+        self.assertEqual(commands, [])
+        self.assertEqual([record.task_id for record in records], ["Q003", "Q003", "Q016", "Q016"])
+        self.assertEqual({record.run_group_id for record in records[:2]}, {"group-1"})
+        self.assertEqual({record.run_group_id for record in records[2:]}, {"group-2"})
+        self.assertEqual({record.arm for record in records[:2]}, {"mcp_on", "mcp_off"})
+        self.assertEqual({record.arm for record in records[2:]}, {"mcp_on", "mcp_off"})
+        self.assertTrue(all(call["pre"] == () and call["post"] == () for call in calls))
+
+    def test_parallel_mcp_off_rejects_supercontext_tool_calls_without_registration_cleanup(self) -> None:
+        commands: list[tuple[str, ...]] = []
+
+        def fake_run_task(
+            task_arg: EvalTask,
+            *,
+            arm: str,
+            snapshot: str | Path,
+            output_dir: str | Path,
+            host: str,
+            run_group_id: str,
+            random_seed: int,
+            pre_arm_host_config_command: tuple[str, ...],
+            post_arm_host_config_command: tuple[str, ...],
+            config: RunnerConfig,
+        ) -> RunRecord:
+            return _record(
+                task=task_arg,
+                arm=arm,
+                run_group_id=run_group_id,
+                pre=pre_arm_host_config_command,
+                post=post_arm_host_config_command,
+                mcp_tools=["mcp__supercontext__planning_context"],
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "mcp_off"):
+            _run_paired_tasks(
+                [_task()],
+                arms=["mcp_off"],
+                snapshot="snapshot-dir",
+                output_dir="out-dir",
+                host="claude_code",
+                seed=0,
+                config=RunnerConfig(),
+                run_task=fake_run_task,
+                run_host_command=commands.append,
+                group_id_factory=lambda: "group-1",
+                parallelism=2,
+            )
+
+        self.assertEqual(commands, [])
+
     def test_mcp_off_rejects_supercontext_tool_calls_and_restores_registration(self) -> None:
         commands: list[tuple[str, ...]] = []
 
@@ -181,6 +282,11 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             _parse_arms("mcp_on,mcp_on")
         with self.assertRaisesRegex(SystemExit, "unsupported"):
             _parse_arms("mcp_on,other")
+
+    def test_positive_int_rejects_non_positive_parallelism(self) -> None:
+        self.assertEqual(_positive_int("2"), 2)
+        with self.assertRaisesRegex(Exception, "at least 1"):
+            _positive_int("0")
 
     def test_host_config_commands_use_claude_registration_contract(self) -> None:
         on_command = _pre_arm_host_config_command(
@@ -578,11 +684,36 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertIn('"changed_files": ["api/auth/routes.py", "api/accounts/views.py"]', prompt)
         self.assertLess(prompt.index("Fixture input:"), prompt.index("User question:"))
 
+    def test_task_prompt_includes_resolved_fixture_bindings(self) -> None:
+        task = EvalTask(
+            row=CorpusRow(
+                task_id="Q003",
+                difficulty="Low",
+                tool_surface="find_callers",
+                persona="reviewer",
+                fixture="$PY_REPO, $CALLER_SYMBOL",
+                user_question="Who calls `$CALLER_SYMBOL`?",
+                expected_answer_shape="caller list for `$CALLER_SYMBOL`",
+                capabilities="call graph",
+            ),
+            phase="coding",
+            fixture_bindings=(("$PY_REPO", "mercury_ml"), ("$CALLER_SYMBOL", "load_model")),
+        )
 
-def _task() -> EvalTask:
+        prompt = _task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+
+        self.assertIn("Fixture: mercury_ml, load_model", prompt)
+        self.assertIn("Resolved fixture bindings", prompt)
+        self.assertIn("- $PY_REPO = mercury_ml", prompt)
+        self.assertIn("- $CALLER_SYMBOL = load_model", prompt)
+        self.assertIn("Who calls `load_model`?", prompt)
+        self.assertIn("caller list for `load_model`", prompt)
+
+
+def _task(task_id: str = "Q003") -> EvalTask:
     return EvalTask(
         row=CorpusRow(
-            task_id="Q003",
+            task_id=task_id,
             difficulty="Low",
             tool_surface="find_callers",
             persona="reviewer",
