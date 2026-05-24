@@ -28,9 +28,6 @@ from source.scripts.mcp_server import (
 )
 
 
-EXTENSION_TOOL_NAMES: tuple[str, ...] = ("planning_context", "review_context")
-
-
 def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, object]) -> None:
     testcase.assertIn("coverage_warnings", payload)
     testcase.assertIn("unsupported_scopes", payload)
@@ -43,7 +40,7 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
 class McpToolsTest(unittest.TestCase):
     def test_tool_definitions_include_adr_names_and_workflow_extensions(self) -> None:
         definitions = tool_definitions()
-        self.assertEqual([row["name"] for row in definitions], [*TOOL_NAMES, *EXTENSION_TOOL_NAMES])
+        self.assertEqual([row["name"] for row in definitions], list(TOOL_NAMES))
         schemas = {row["name"]: row["inputSchema"] for row in definitions}
         self.assertEqual(schemas["search_services"]["properties"]["query"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["path"]["type"], ["string", "null"])
@@ -51,6 +48,15 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(schemas["planning_context"]["properties"]["symbol"]["type"], ["string", "null"])
         self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
         self.assertNotIn("depth", schemas["review_context"]["properties"])
+        descriptions = {row["name"]: row["description"] for row in definitions}
+        self.assertIn("Primary workflow tool", descriptions["planning_context"])
+        self.assertIn("Primary workflow tool", descriptions["review_context"])
+        self.assertIn("planning_context first", descriptions["search_services"])
+        self.assertIn("planning_context first", descriptions["get_service_brief"])
+        self.assertIn("review_context first", descriptions["find_callers"])
+        self.assertIn("planning_context or review_context", descriptions["find_callees"])
+        self.assertIn("planning_context first", descriptions["get_event_consumers"])
+        self.assertIn("planning_context first", descriptions["get_event_producers"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:
@@ -492,9 +498,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(ping["result"], {})
         self.assertEqual(batch[0]["id"], 3)
-        self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
+        self.assertEqual(listed["result"]["tools"][0]["name"], "planning_context")
         listed_tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
-        self.assertIn("downstream static CALLS closure", listed_tools["blast_radius"]["description"])
+        self.assertIn("Exact-symbol static CALLS closure", listed_tools["blast_radius"]["description"])
         self.assertEqual(called["result"]["structuredContent"]["status"], "found")
         _assert_additive_fields(self, called["result"]["structuredContent"])
         self.assertFalse(called["result"]["isError"])

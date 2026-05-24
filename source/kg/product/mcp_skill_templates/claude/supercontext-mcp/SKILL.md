@@ -7,6 +7,22 @@ description: Use when planning, implementing, reviewing code, or analyzing Super
 
 Use SuperContext as compact graph context for planning, coding, and review. MCP tool results still spend context tokens, so prefer one bounded workflow call before narrow follow-ups.
 
+## Tool Selection
+
+| Task shape | First SuperContext tool |
+|---|---|
+| Broad repo-aware planning | `planning_context` |
+| Feature or bug task mentioning a service, repo, symbol, package, endpoint, event channel, domain, or path | `planning_context` |
+| PR or code review with changed files | `review_context` |
+| Exact reverse impact for a known symbol | `find_callers` |
+| Exact downstream calls for a known symbol | `find_callees` |
+| Static downstream call closure from an exact symbol | `blast_radius` |
+| Known service summary | `get_service_brief` |
+| Candidate service lookup | `search_services` |
+| Known event channel impact | `get_event_consumers` or `get_event_producers` |
+
+Treat `planning_context` and `review_context` as first-level workflow tools. Treat `find_callers`, `find_callees`, `blast_radius`, `search_services`, `get_service_brief`, and event tools as drill-down tools once the anchor is known.
+
 ## Setup Check
 
 Use an already registered SuperContext MCP endpoint if present. If no endpoint is registered and the user wants local setup, choose one command:
@@ -53,6 +69,15 @@ Before reviewing a diff, call `review_context` with:
 - `changed_ranges` when line ranges are known
 
 Use returned `changed_symbols`, `direct_callers`, `direct_callees`, and `repo_dependencies` to decide what to inspect next. Drill into primitive tools for concrete findings.
+
+## Anti-Patterns
+
+- Do not start broad planning with repeated primitive calls.
+- Do not repeatedly call `get_service_brief` to discover the right service when `planning_context` can anchor first.
+- Do not use `find_callers` or `find_callees` on fuzzy or candidate-only symbol names as proof.
+- Do not treat `deploy_blockers_for` as productive deploy analysis until deploy-blocker facts exist.
+- Do not ignore `coverage_warnings`, `unsupported_scopes`, or `next_actions`.
+- Do not replace source inspection before editing code; use SuperContext to reduce blind search and decide what to inspect.
 
 ## Trace Evaluation
 
