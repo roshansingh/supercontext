@@ -302,6 +302,8 @@ def _load_raw_records(raw_root: Path) -> dict[str, RawArmEvidence]:
                 "Mismatched task_id in run group "
                 f"{run_group_id}: mcp_on={arms['mcp_on'].task_id}, mcp_off={arms['mcp_off'].task_id}"
             )
+        # Classification reports mcp_on evidence. mcp_off-only groups are tolerated because
+        # pr119 intentionally lacks some mcp_on raw records; those rows render as missing.
     return by_task
 
 
@@ -346,6 +348,8 @@ def _load_caveats(path: Path) -> dict[str, CaveatEvidence]:
             continue
         if _is_markdown_separator_row(line):
             continue
+        if not line.strip():
+            continue
         if not line.startswith("|"):
             if caveats:
                 break
@@ -376,7 +380,10 @@ def _load_post_pr119(paths: list[Path]) -> dict[str, FocusedRerunEvidence]:
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{line_number} must be valid JSON") from exc
             if not isinstance(row, dict):
                 raise ValueError(f"{path}:{line_number} must be an object")
             task_id = _require_clean_string(row.get("task_id"), f"{path}:{line_number}.task_id")
@@ -457,7 +464,7 @@ def _is_caveat_header(line: str) -> bool:
     if not line.startswith("|"):
         return False
     cells = [cell.strip().lower() for cell in line.strip().strip("|").split("|")]
-    return cells[:4] == ["task", "result", "classification", "what happened"]
+    return cells == ["task", "result", "classification", "what happened"]
 
 
 def _is_markdown_separator_row(line: str) -> bool:

@@ -66,6 +66,30 @@ class ClassifyNonWinsTest(unittest.TestCase):
         self.assertEqual(result.non_wins[0].task_id, "Q001")
         self.assertEqual(result.non_wins[0].report_summary, "Separator skipped.")
 
+    def test_blank_line_inside_caveat_table_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            report_md = root / "ab-report.md"
+            _write_report(report_json, [_row("Q001", "mcp_off"), _row("Q002", "tie")])
+            report_md.write_text(
+                "\n".join(
+                    [
+                        "| Task | Result | Classification | What happened |",
+                        "|---|---|---|---|",
+                        "| Q001 | `mcp_off` won | Real MCP quality loss | First row. |",
+                        "",
+                        "| Q002 | tie | Acceptable tie | Second row. |",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = classify_non_wins(report_json, report_md_path=report_md)
+
+        self.assertEqual([row.task_id for row in result.non_wins], ["Q001", "Q002"])
+
     def test_zero_mcp_call_raw_record_is_valid_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -83,6 +107,18 @@ class ClassifyNonWinsTest(unittest.TestCase):
         self.assertEqual(row.mcp_tool_count_on, 0)
         self.assertEqual(row.mcp_tools_called, ())
         self.assertEqual(row.non_mcp_tools_called, ("Read",))
+
+    def test_mcp_off_only_raw_group_is_tolerated_as_missing_on_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            raw_root = root / "raw"
+            _write_report(report_json, [_row("Q001", "mcp_off")])
+            _write_raw_record(raw_root, "group-1", "mcp_off", "Q001", mcp_tools=[], non_mcp_tools=["Read"])
+
+            result = classify_non_wins(report_json, raw_root)
+
+        self.assertEqual(result.non_wins[0].raw_evidence_status, "missing")
 
     def test_mismatched_raw_task_ids_in_run_group_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -208,6 +244,17 @@ class ClassifyNonWinsTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "No caveat table rows"):
                 classify_non_wins(report_json, report_md_path=report_md)
+
+    def test_malformed_post_pr119_json_has_location(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            post_path = root / "post.jsonl"
+            _write_report(report_json, [_row("Q003", "mcp_off")])
+            post_path.write_text("{not json}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "post.jsonl:1 must be valid JSON"):
+                classify_non_wins(report_json, post_pr119_paths=[post_path])
 
 
 def _write_report(path: Path, rows: list[dict]) -> None:
