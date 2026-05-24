@@ -52,7 +52,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("Primary workflow tool", descriptions["planning_context"])
         self.assertIn("Primary workflow tool", descriptions["review_context"])
         self.assertIn("planning_context first", descriptions["search_services"])
+        self.assertIn("planning_context first", descriptions["get_service_brief"])
         self.assertIn("review_context first", descriptions["find_callers"])
+        self.assertIn("planning_context or review_context", descriptions["find_callees"])
+        self.assertIn("planning_context first", descriptions["get_event_consumers"])
+        self.assertIn("planning_context first", descriptions["get_event_producers"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:
