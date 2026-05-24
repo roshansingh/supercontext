@@ -77,6 +77,7 @@ class ClassificationResult:
     report_json_path: Path
     raw_root: Path | None
     report_md_path: Path | None
+    run_id: str
     report_sha256: str
     source_winner_counts: dict[str, int]
     non_wins: tuple[ClassifiedRow, ...]
@@ -99,6 +100,10 @@ def classify_non_wins(
     source_winner_counts = {winner: 0 for winner in sorted(VALID_WINNERS)}
     classified_non_wins: list[ClassifiedRow] = []
     classified_wins: list[ClassifiedRow] = []
+    report_task_ids = {row["task_id"] for row in rows}
+    unknown_post_task_ids = sorted(set(focused_reruns) - report_task_ids)
+    if unknown_post_task_ids:
+        raise ValueError(f"Post-pr119 task_id not found in report rows: {', '.join(unknown_post_task_ids)}")
     for row in rows:
         winner = row["judge_winner"]
         source_winner_counts[winner] += 1
@@ -117,6 +122,7 @@ def classify_non_wins(
         report_json_path=report_json_path,
         raw_root=raw_root,
         report_md_path=report_md_path,
+        run_id=_infer_run_id(report_json_path),
         report_sha256=_sha256(report_json_path),
         source_winner_counts=source_winner_counts,
         non_wins=tuple(classified_non_wins),
@@ -126,9 +132,9 @@ def classify_non_wins(
 
 def render_markdown(result: ClassificationResult) -> str:
     lines = [
-        "# pr119 Non-Win Classification",
+        f"# {result.run_id} Non-Win Classification",
         "",
-        "Generated from the sanitized pr119 A/B report plus available local raw records.",
+        f"Generated from the sanitized {result.run_id} A/B report plus available local raw records.",
         "",
         "## Sources",
         "",
@@ -338,7 +344,7 @@ def _load_caveats(path: Path) -> dict[str, CaveatEvidence]:
             continue
         if not in_table:
             continue
-        if line.startswith("|---"):
+        if _is_markdown_separator_row(line):
             continue
         if not line.startswith("|"):
             if caveats:
@@ -454,12 +460,27 @@ def _is_caveat_header(line: str) -> bool:
     return cells[:4] == ["task", "result", "classification", "what happened"]
 
 
+def _is_markdown_separator_row(line: str) -> bool:
+    if not line.startswith("|"):
+        return False
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if not cells:
+        return False
+    return all(cell and set(cell) <= {"-", ":"} and "-" in cell for cell in cells)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _infer_run_id(report_json_path: Path) -> str:
+    if report_json_path.name == "ab-report.json" and report_json_path.parent.name:
+        return report_json_path.parent.name
+    return report_json_path.stem
 
 
 def _strip_markdown_code(value: str) -> str:

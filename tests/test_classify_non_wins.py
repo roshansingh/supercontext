@@ -12,6 +12,7 @@ class ClassifyNonWinsTest(unittest.TestCase):
     def test_current_pr119_report_has_expected_baseline_and_win_inventory(self) -> None:
         result = classify_non_wins(Path("docs/evaluation/ab-runs/pr119-full-2026-05-23/ab-report.json"))
 
+        self.assertEqual(result.run_id, "pr119-full-2026-05-23")
         self.assertEqual(result.source_winner_counts, {"mcp_off": 4, "mcp_on": 11, "tie": 3})
         self.assertEqual(len(result.non_wins), 7)
         self.assertEqual(len(result.wins), 11)
@@ -40,6 +41,30 @@ class ClassifyNonWinsTest(unittest.TestCase):
         self.assertEqual(by_task["Q002"].raw_evidence_status, "missing")
         self.assertEqual(by_task["Q002"].mcp_tools_called, ())
         self.assertEqual(by_task["Q002"].report_summary, "Report fallback only.")
+
+    def test_space_padded_caveat_separator_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            report_md = root / "ab-report.md"
+            _write_report(report_json, [_row("Q001", "mcp_off")])
+            report_md.write_text(
+                "\n".join(
+                    [
+                        "| Task | Result | Classification | What happened |",
+                        "| --- | --- | --- | --- |",
+                        "| Q001 | `mcp_off` won | Real MCP quality loss | Separator skipped. |",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = classify_non_wins(report_json, report_md_path=report_md)
+
+        self.assertEqual(len(result.non_wins), 1)
+        self.assertEqual(result.non_wins[0].task_id, "Q001")
+        self.assertEqual(result.non_wins[0].report_summary, "Separator skipped.")
 
     def test_zero_mcp_call_raw_record_is_valid_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,6 +182,20 @@ class ClassifyNonWinsTest(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValueError, "Duplicate post-pr119 task_id"):
+                classify_non_wins(report_json, post_pr119_paths=[post_path])
+
+    def test_unknown_post_pr119_task_id_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            post_path = root / "post.jsonl"
+            _write_report(report_json, [_row("Q003", "mcp_off")])
+            post_path.write_text(
+                json.dumps({"task_id": "Q0O3", "judge_winner": "mcp_on", "judge_confidence": 0.95}) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Post-pr119 task_id not found"):
                 classify_non_wins(report_json, post_pr119_paths=[post_path])
 
     def test_report_markdown_without_caveat_rows_raises(self) -> None:
