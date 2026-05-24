@@ -1,0 +1,709 @@
+{
+  "arm_count": 36,
+  "date": "2026-05-24",
+  "delta_orientation": "off_minus_on; positive means mcp_on used less or cost less, negative means mcp_on used more or cost more",
+  "judge_aspect_winners": {
+    "actionability": {
+      "mcp_off": 9,
+      "mcp_on": 4,
+      "tie": 5
+    },
+    "completeness": {
+      "mcp_off": 7,
+      "mcp_on": 4,
+      "tie": 7
+    },
+    "correctness": {
+      "mcp_off": 9,
+      "mcp_on": 4,
+      "tie": 5
+    },
+    "evidence": {
+      "mcp_off": 10,
+      "mcp_on": 2,
+      "tie": 6
+    }
+  },
+  "judge_model": "gpt-4.1-mini",
+  "judge_winners": {
+    "mcp_off": 9,
+    "mcp_on": 4,
+    "tie": 5
+  },
+  "phase_aggregates": {
+    "coding": {
+      "avg_token_delta": 3900.5,
+      "avg_tool_calls_delta": 8.0,
+      "avg_wall_time_delta": 25.592,
+      "tasks": 4
+    },
+    "planning": {
+      "avg_token_delta": 8585.375,
+      "avg_tool_calls_delta": 11.875,
+      "avg_wall_time_delta": 16.692,
+      "tasks": 8
+    },
+    "review": {
+      "avg_token_delta": 6438.5,
+      "avg_tool_calls_delta": 5.333,
+      "avg_wall_time_delta": 29.408,
+      "tasks": 6
+    }
+  },
+  "privacy_note": "Sanitized artifact. Raw traces, answers, judge reasoning, SDK messages, and LangSmith URLs remain under ignored data/ab_runs/ and are not committed.",
+  "quality_verdicts": {
+    "judged": 18
+  },
+  "rows": [
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "mcp_tool_attempts": -1,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -1,
+        "non_mcp_calls": -1,
+        "tokens_in": -5,
+        "tokens_out": -513,
+        "tokens_total": -518,
+        "tool_calls": -1,
+        "wall_time_seconds": -19.798
+      },
+      "difficulty": "Low",
+      "dollars_delta": -0.00771,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "tie",
+        "correctness": "tie",
+        "evidence": "mcp_on"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "mcp_on_tool_health": {
+        "attempts": 1,
+        "denials": 0,
+        "errors": 0,
+        "successes": 1
+      },
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q004"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -2,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -2,
+        "non_mcp_calls": -1,
+        "tokens_in": 15,
+        "tokens_out": 674,
+        "tokens_total": 689,
+        "tool_calls": 7,
+        "wall_time_seconds": -28.995
+      },
+      "difficulty": "Low",
+      "dollars_delta": 0.010155,
+      "judge_aspect_winners": {
+        "actionability": "tie",
+        "completeness": "tie",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 2,
+        "denials": 0,
+        "errors": 0,
+        "successes": 2
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q015"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -3,
+        "mcp_tool_attempts": -7,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -7,
+        "non_mcp_calls": -1,
+        "tokens_in": 10620,
+        "tokens_out": -585,
+        "tokens_total": 10035,
+        "tool_calls": 13,
+        "wall_time_seconds": -48.746
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.023085,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "tie",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 7,
+        "denials": 0,
+        "errors": 0,
+        "successes": 7
+      },
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q053"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -2,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -2,
+        "non_mcp_calls": -1,
+        "tokens_in": 13,
+        "tokens_out": 3397,
+        "tokens_total": 3410,
+        "tool_calls": 0,
+        "wall_time_seconds": -5.665
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.050994,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_off",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 2,
+        "denials": 0,
+        "errors": 0,
+        "successes": 2
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q045"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -3,
+        "mcp_tool_attempts": -4,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -4,
+        "non_mcp_calls": -2,
+        "tokens_in": 8394,
+        "tokens_out": 13595,
+        "tokens_total": 21989,
+        "tool_calls": 20,
+        "wall_time_seconds": 255.676
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.229107,
+      "judge_aspect_winners": {
+        "actionability": "mcp_on",
+        "completeness": "mcp_on",
+        "correctness": "mcp_on",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_on",
+      "mcp_on_tool_health": {
+        "attempts": 4,
+        "denials": 0,
+        "errors": 0,
+        "successes": 4
+      },
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q040"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": 0,
+        "mcp_tool_attempts": 0,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": 0,
+        "non_mcp_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": -494,
+        "tokens_total": -494,
+        "tool_calls": 0,
+        "wall_time_seconds": -10.752
+      },
+      "difficulty": "Medium",
+      "dollars_delta": -0.00741,
+      "judge_aspect_winners": {
+        "actionability": "tie",
+        "completeness": "tie",
+        "correctness": "tie",
+        "evidence": "tie"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "mcp_on_tool_health": {
+        "attempts": 0,
+        "denials": 0,
+        "errors": 0,
+        "successes": 0
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q054"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -4,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -4,
+        "non_mcp_calls": -1,
+        "tokens_in": 10717,
+        "tokens_out": -490,
+        "tokens_total": 10227,
+        "tool_calls": 3,
+        "wall_time_seconds": -21.784
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.024801,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_on",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 4,
+        "denials": 0,
+        "errors": 0,
+        "successes": 4
+      },
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q048"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "mcp_tool_attempts": -1,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -1,
+        "non_mcp_calls": 1,
+        "tokens_in": 50,
+        "tokens_out": -120,
+        "tokens_total": -70,
+        "tool_calls": 4,
+        "wall_time_seconds": -0.973
+      },
+      "difficulty": "Low",
+      "dollars_delta": -0.00165,
+      "judge_aspect_winners": {
+        "actionability": "mcp_on",
+        "completeness": "mcp_on",
+        "correctness": "mcp_on",
+        "evidence": "mcp_on"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_on",
+      "mcp_on_tool_health": {
+        "attempts": 1,
+        "denials": 0,
+        "errors": 0,
+        "successes": 1
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q011"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -3,
+        "mcp_tool_attempts": -3,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -3,
+        "non_mcp_calls": -2,
+        "tokens_in": 111,
+        "tokens_out": 3051,
+        "tokens_total": 3162,
+        "tool_calls": 22,
+        "wall_time_seconds": 85.798
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.046098,
+      "judge_aspect_winners": {
+        "actionability": "mcp_on",
+        "completeness": "mcp_off",
+        "correctness": "mcp_on",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_on",
+      "mcp_on_tool_health": {
+        "attempts": 3,
+        "denials": 0,
+        "errors": 0,
+        "successes": 3
+      },
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q037"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "mcp_tool_attempts": -1,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -1,
+        "non_mcp_calls": 0,
+        "tokens_in": 10805,
+        "tokens_out": 1210,
+        "tokens_total": 12015,
+        "tool_calls": 11,
+        "wall_time_seconds": 17.165
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.050565,
+      "judge_aspect_winners": {
+        "actionability": "tie",
+        "completeness": "tie",
+        "correctness": "tie",
+        "evidence": "tie"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "mcp_on_tool_health": {
+        "attempts": 1,
+        "denials": 0,
+        "errors": 0,
+        "successes": 1
+      },
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q051"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -14,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -14,
+        "non_mcp_calls": 2,
+        "tokens_in": 13518,
+        "tokens_out": 2318,
+        "tokens_total": 15836,
+        "tool_calls": 26,
+        "wall_time_seconds": 24.475
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.075324,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_off",
+        "correctness": "mcp_off",
+        "evidence": "tie"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 14,
+        "denials": 0,
+        "errors": 0,
+        "successes": 14
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q081"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -7,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -7,
+        "non_mcp_calls": 0,
+        "tokens_in": 141,
+        "tokens_out": 424,
+        "tokens_total": 565,
+        "tool_calls": 8,
+        "wall_time_seconds": 43.913
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.006783,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_off",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 7,
+        "denials": 0,
+        "errors": 0,
+        "successes": 7
+      },
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q016"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -4,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -4,
+        "non_mcp_calls": 0,
+        "tokens_in": 13441,
+        "tokens_out": 2316,
+        "tokens_total": 15757,
+        "tool_calls": 13,
+        "wall_time_seconds": 58.11
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.075063,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_off",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 4,
+        "denials": 0,
+        "errors": 0,
+        "successes": 4
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q035"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "mcp_tool_attempts": -1,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -1,
+        "non_mcp_calls": 1,
+        "tokens_in": 298,
+        "tokens_out": 3242,
+        "tokens_total": 3540,
+        "tool_calls": 14,
+        "wall_time_seconds": 61.088
+      },
+      "difficulty": "Low",
+      "dollars_delta": 0.049524,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_off",
+        "correctness": "mcp_off",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.95,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 1,
+        "denials": 0,
+        "errors": 0,
+        "successes": 1
+      },
+      "phase": "coding",
+      "quality_verdict": "judged",
+      "task_id": "Q003"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -7,
+        "mcp_tool_attempts": -13,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -13,
+        "non_mcp_calls": 1,
+        "tokens_in": -317,
+        "tokens_out": -5678,
+        "tokens_total": -5995,
+        "tool_calls": -23,
+        "wall_time_seconds": -108.24
+      },
+      "difficulty": "Hard",
+      "dollars_delta": -0.086121,
+      "judge_aspect_winners": {
+        "actionability": "tie",
+        "completeness": "tie",
+        "correctness": "mcp_on",
+        "evidence": "tie"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_on",
+      "mcp_on_tool_health": {
+        "attempts": 13,
+        "denials": 0,
+        "errors": 0,
+        "successes": 13
+      },
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q110"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -2,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -2,
+        "non_mcp_calls": 1,
+        "tokens_in": 13497,
+        "tokens_out": 2744,
+        "tokens_total": 16241,
+        "tool_calls": 19,
+        "wall_time_seconds": 70.119
+      },
+      "difficulty": "Medium",
+      "dollars_delta": 0.081651,
+      "judge_aspect_winners": {
+        "actionability": "mcp_on",
+        "completeness": "mcp_off",
+        "correctness": "tie",
+        "evidence": "mcp_off"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "mcp_on_tool_health": {
+        "attempts": 2,
+        "denials": 0,
+        "errors": 0,
+        "successes": 2
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q031"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -1,
+        "mcp_tool_attempts": -8,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -8,
+        "non_mcp_calls": 1,
+        "tokens_in": 41,
+        "tokens_out": -828,
+        "tokens_total": -787,
+        "tool_calls": -3,
+        "wall_time_seconds": 13.747
+      },
+      "difficulty": "Medium",
+      "dollars_delta": -0.012297,
+      "judge_aspect_winners": {
+        "actionability": "mcp_off",
+        "completeness": "mcp_on",
+        "correctness": "mcp_off",
+        "evidence": "tie"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "mcp_off",
+      "mcp_on_tool_health": {
+        "attempts": 8,
+        "denials": 0,
+        "errors": 0,
+        "successes": 8
+      },
+      "phase": "review",
+      "quality_verdict": "judged",
+      "task_id": "Q021"
+    },
+    {
+      "cost_status": "available",
+      "deltas": {
+        "citations_count": 0,
+        "mcp_calls": -2,
+        "mcp_tool_attempts": -2,
+        "mcp_tool_denials": 0,
+        "mcp_tool_errors": 0,
+        "mcp_tool_successes": -2,
+        "non_mcp_calls": -1,
+        "tokens_in": 14472,
+        "tokens_out": 2842,
+        "tokens_total": 17314,
+        "tool_calls": 26,
+        "wall_time_seconds": 27.214
+      },
+      "difficulty": "Hard",
+      "dollars_delta": 0.086046,
+      "judge_aspect_winners": {
+        "actionability": "tie",
+        "completeness": "tie",
+        "correctness": "tie",
+        "evidence": "tie"
+      },
+      "judge_confidence": 0.9,
+      "judge_winner": "tie",
+      "mcp_on_tool_health": {
+        "attempts": 2,
+        "denials": 0,
+        "errors": 0,
+        "successes": 2
+      },
+      "phase": "planning",
+      "quality_verdict": "judged",
+      "task_id": "Q038"
+    }
+  ],
+  "run_id": "pr119-workflow-tools-2026-05-24-rerun",
+  "task_count": 18
+}
