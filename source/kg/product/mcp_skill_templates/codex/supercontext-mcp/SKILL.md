@@ -1,22 +1,22 @@
 ---
-name: bettercontext-mcp
-description: Use when planning, implementing, reviewing code, or analyzing Bettercontext A/B trace reports with a Bettercontext MCP server available. Call Bettercontext before broad repo exploration when a task mentions a service, repo, symbol, package, endpoint, event channel, domain, file path, or changed files/ranges. Use the trace-evaluation guidance for ab-report.md, ab-report.json, deltas.jsonl, or LangSmith run analysis.
+name: supercontext-mcp
+description: Use when planning, implementing, reviewing code, or analyzing SuperContext A/B trace reports with a SuperContext MCP server available. Call SuperContext before broad repo exploration when a task mentions a service, repo, symbol, package, endpoint, event channel, domain, file path, or changed files/ranges. Use the trace-evaluation guidance for ab-report.md, ab-report.json, deltas.jsonl, or LangSmith run analysis.
 ---
 
-# Bettercontext MCP
+# SuperContext MCP
 
-Use Bettercontext as compact graph context for planning, coding, and review. MCP tool results still spend context tokens, so prefer one bounded workflow call before narrow follow-ups.
+Use SuperContext as compact graph context for planning, coding, and review. MCP tool results still spend context tokens, so prefer one bounded workflow call before narrow follow-ups.
 
 ## Setup Check
 
-Use an already registered Bettercontext MCP endpoint if present. If no endpoint is registered and the user wants local setup, choose one command:
+Use an already registered SuperContext MCP endpoint if present. If no endpoint is registered and the user wants local setup, choose one command:
 
 ```bash
 # Build or refresh the repo-local KG snapshot.
-bettercontext-init
+supercontext-init
 
 # Build or refresh the snapshot and start the local MCP server.
-bettercontext-init --serve
+supercontext-init --serve
 ```
 
 Register the printed local HTTP `/mcp` URL in Codex. Keep the server loopback-bound unless the user intentionally accepts an unauthenticated public bind.
@@ -30,11 +30,11 @@ Use structured anchors when known:
 - `service`, `repo`, `symbol`, `path`, `line`
 - `package`, `endpoint`, `event_channel`, `domain`
 
-If the result is `ambiguous`, use `next_actions` or returned candidates to refine. If the result is `unsupported_by_current_kg` or `not_found`, state what Bettercontext could not prove and fall back to normal repo search/read tools.
+If the result is `ambiguous`, use `next_actions` or returned candidates to refine. If the result is `unsupported_by_current_kg` or `not_found`, state what SuperContext could not prove and fall back to normal repo search/read tools.
 
 ## Coding
 
-Use Bettercontext for exact graph questions while editing:
+Use SuperContext for exact graph questions while editing:
 
 - `find_callers` before changing a known symbol with downstream users.
 - `find_callees` to understand immediate dependencies of a changed symbol.
@@ -42,7 +42,7 @@ Use Bettercontext for exact graph questions while editing:
 - `get_service_brief` for service-scoped endpoint/event/deploy facts.
 - `get_event_consumers` and `get_event_producers` for async channel impact.
 
-Still read the relevant source files before editing. Do not treat Bettercontext as a replacement for code inspection.
+Still read the relevant source files before editing. Do not treat SuperContext as a replacement for code inspection.
 
 ## Review
 
@@ -56,7 +56,7 @@ Use returned `changed_symbols`, `direct_callers`, `direct_callees`, and `repo_de
 
 ## Trace Evaluation
 
-When analyzing Bettercontext A/B traces, `ab-report.md`, `ab-report.json`, `deltas.jsonl`, or LangSmith runs, evaluate in this order:
+When analyzing SuperContext A/B traces, `ab-report.md`, `ab-report.json`, `deltas.jsonl`, or LangSmith runs, evaluate in this order:
 
 1. Correctness or quality verdict first.
 2. Evidence and citation quality.
@@ -64,7 +64,7 @@ When analyzing Bettercontext A/B traces, `ab-report.md`, `ab-report.json`, `delt
 4. Non-MCP tool-call count and repeated source-search behavior.
 5. Token, dollar, and wall-time deltas.
 6. "Where MCP Hurts" rows.
-7. Skill-compliance signal: whether Bettercontext was used early for planning, coding, or review tasks.
+7. Skill-compliance signal: whether SuperContext was used early for planning, coding, or review tasks.
 
 Do not claim value from lower tokens, fewer tool calls, lower cost, or faster wall time when `quality_verdict` is `ungraded`, when `mcp_on` quality is worse, or when `cost_status` is `unavailable`.
 

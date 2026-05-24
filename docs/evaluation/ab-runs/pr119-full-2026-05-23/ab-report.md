@@ -1,6 +1,6 @@
-# BetterContext A/B Report - pr119-full-2026-05-23 - 2026-05-23
+# SuperContext A/B Report - pr119-full-2026-05-23 - 2026-05-23
 
-> BetterContext is a semantic context accelerator and evidence provider. It should make Claude Code/Codex do less
+> SuperContext is a semantic context accelerator and evidence provider. It should make Claude Code/Codex do less
 > blind grep/read work when the KG has the right facts. It should not stop the agent from falling back to source
 > inspection when KG coverage is missing, ambiguous, or out of scope.
 
@@ -54,7 +54,7 @@ This checked-in report is sanitized. Raw answers, judge reasoning, SDK messages,
 
 | Task | Result | Classification | What happened |
 |---|---|---|---|
-| Q035 | `mcp_off` won | Real MCP quality loss: missing KG fact / retrieval gap | `mcp_on` used BetterContext but concluded the KG could not prove Kubernetes deployables. `mcp_off` found manifest-level deployment mappings through ordinary source search. The immediate issue is that the KG/tool path did not expose the deployable facts needed for this question, and the agent used service-oriented MCP calls instead of a deploy-specific path. |
+| Q035 | `mcp_off` won | Real MCP quality loss: missing KG fact / retrieval gap | `mcp_on` used SuperContext but concluded the KG could not prove Kubernetes deployables. `mcp_off` found manifest-level deployment mappings through ordinary source search. The immediate issue is that the KG/tool path did not expose the deployable facts needed for this question, and the agent used service-oriented MCP calls instead of a deploy-specific path. |
 | Q003 | `mcp_off` won | Real MCP quality loss: symbol-resolution gap | `mcp_on` returned ambiguous or fuzzy `load_model` candidates and included unrelated matches. `mcp_off` found the concrete `pycaret.load_model` call sites by source inspection. This points to retrieval/symbol resolution behavior, not MCP availability. |
 | Q015 | `mcp_off` won | Synthesis / report consistency issue | Both arms summarized KG inventory. `mcp_on` was more concise but had internal inconsistencies/noisier claims in counts and coverage phrasing. This is weaker answer synthesis around metrics, not a core MCP transport failure. |
 | Q037 | `mcp_off` won | Eval task-input problem / inconclusive MCP loss | The prompt said "Given this PR" but did not provide a concrete PR input shape. `mcp_on` made zero MCP calls and refused because changed files, repo, and diff were missing. `mcp_off` inferred a PR from local context and answered. This row should not be treated as a clean MCP quality loss until the task supplies explicit PR input. |

@@ -10,7 +10,7 @@ from source.scripts.compute_ab_deltas import load_jsonl
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render sanitized checked-in BetterContext A/B reports.")
+    parser = argparse.ArgumentParser(description="Render sanitized checked-in SuperContext A/B reports.")
     parser.add_argument("--judged-deltas", required=True, help="Judged deltas JSONL.")
     parser.add_argument("--raw-report", required=True, help="Raw aggregate ab-report.json.")
     parser.add_argument("--out", required=True, help="Output docs directory.")
@@ -142,7 +142,7 @@ def _report_markdown(
     winners = summary["judge_winners"]
     aspect_counts = summary["judge_aspect_winners"]
     lines = [
-        f"# BetterContext A/B Report - {run_id} - {run_date}",
+        f"# SuperContext A/B Report - {run_id} - {run_date}",
         "",
         "Delta orientation: `off_minus_on`. Positive tool/token/cost values mean `mcp_on` used less than "
         "`mcp_off`; negative values mean `mcp_on` used more.",
@@ -258,7 +258,7 @@ def _trace_analysis(
 
 ## Current Validation Status
 
-This run completed the `{run_id}` A/B measurement: {summary['task_count']} paired tasks, {summary['arm_count']} Claude Code host runs, local BetterContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
+This run completed the `{run_id}` A/B measurement: {summary['task_count']} paired tasks, {summary['arm_count']} Claude Code host runs, local SuperContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
 
 The product signal is rubric-based, not a single scoreboard. Quality comes first: the judge preferred `mcp_off` overall on {summary['judge_winners'].get('mcp_off', 0)} tasks, `mcp_on` on {summary['judge_winners'].get('mcp_on', 0)} tasks, and marked {summary['judge_winners'].get('tie', 0)} ties. A cost, token, or latency win matters only after answer quality is at least tied.
 
@@ -272,7 +272,7 @@ The product signal is rubric-based, not a single scoreboard. Quality comes first
 
 ## Strongest Product-Value Signal
 
-Cost data was available for {available_cost_rows} of {summary['task_count']} rows. Token data was available for {available_token_rows} of {summary['task_count']} rows. Aggregate deltas use `off_minus_on`, so positive values mean BetterContext used less of that resource than the non-MCP arm.
+Cost data was available for {available_cost_rows} of {summary['task_count']} rows. Token data was available for {available_token_rows} of {summary['task_count']} rows. Aggregate deltas use `off_minus_on`, so positive values mean SuperContext used less of that resource than the non-MCP arm.
 
 - Total dollar delta: `{_format_number(total_dollar_delta)}` in favor of `mcp_on` overall. This is `n/a` unless every paired row has cost data.
 - Total token delta: `{_format_number(total_token_delta)}` in favor of `mcp_on` overall. This is `n/a` unless every paired row has token data.
@@ -309,7 +309,7 @@ Expected movement: after classification, choose one repeated failure family and 
 ## Verification Commands
 
 ```bash
-.venv/bin/python -m source.scripts.pull_ab_traces --project bettercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/{run_id}/traces.jsonl
+.venv/bin/python -m source.scripts.pull_ab_traces --project supercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/{run_id}/traces.jsonl
 .venv/bin/python -m source.scripts.compute_ab_deltas --traces data/ab_runs/{run_id}/traces.jsonl --out data/ab_runs/{run_id}/deltas.jsonl
 .venv/bin/python -m source.scripts.judge_ab_quality --judge-model {judge_model} --deltas data/ab_runs/{run_id}/deltas.jsonl --out data/ab_runs/{run_id}/judged-deltas.jsonl --seed {seed}
 .venv/bin/python -m source.scripts.aggregate_ab_report --deltas data/ab_runs/{run_id}/judged-deltas.jsonl --out data/ab_runs/{run_id}/report

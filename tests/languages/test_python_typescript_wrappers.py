@@ -127,7 +127,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
 
 def _repo_snapshot() -> RepoSnapshot:
     return RepoSnapshot(
-        root=Path("/tmp/bettercontext-language-test"),
+        root=Path("/tmp/supercontext-language-test"),
         name="repo",
         owner="test",
         commit_sha="sha",

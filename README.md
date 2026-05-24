@@ -1,6 +1,6 @@
-# BetterContext
+# SuperContext
 
-BetterContext builds a typed, evidence-backed knowledge graph from local source repositories. The current v0 focuses on change-safety questions for AI coding agents and engineering teams: callers/callees, import dependencies, endpoints, event channels, deploy/config facts, and multi-repo package links.
+SuperContext builds a typed, evidence-backed knowledge graph from local source repositories. The current v0 focuses on change-safety questions for AI coding agents and engineering teams: callers/callees, import dependencies, endpoints, event channels, deploy/config facts, and multi-repo package links.
 
 Status: pre-1.0 local KG harness. The JSONL snapshot store, local MCP server, Streamlit evaluator UI, and validation harness are implemented. Production storage, hosted auth, PR-bot integration, and broad language coverage are still in progress.
 
@@ -20,24 +20,26 @@ Install the CLI, register the default local MCP endpoint with available host age
 curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
 ```
 
-Then, inside each repo you want BetterContext to index:
+The install URL intentionally points at `roshansingh/bettercontext` until the GitHub repository itself is renamed. If you previously installed BetterContext, the installer warns about legacy `~/.bettercontext` state; remove old `bettercontext` MCP registrations and stale scripts after verifying `supercontext-init` works.
+
+Then, inside each repo you want SuperContext to index:
 
 ```bash
-bettercontext-init
+supercontext-init
 ```
 
 For an active local MCP server in that repo:
 
 ```bash
-bettercontext-init --serve
+supercontext-init --serve
 ```
 
-The install step is global because MCP registration and host-agent skills are reusable. The KG snapshot is local to each repo by default at `.bettercontext/kg`.
+The install step is global because MCP registration and host-agent skills are reusable. The KG snapshot is local to each repo by default at `.supercontext/kg`.
 
 If you need to register the local MCP endpoint manually:
 
 ```bash
-bettercontext-register-mcp --agent both
+supercontext-register-mcp --agent both
 ```
 
 Local editable development:
@@ -46,9 +48,9 @@ Local editable development:
 python -m pip install -e .
 npm ci
 
-bettercontext-init --repo /path/to/repo
-bettercontext-query-kg --snapshot /path/to/repo/.bettercontext/kg summary
-bettercontext-query-kg --snapshot /path/to/repo/.bettercontext/kg top-dependencies --limit 10
+supercontext-init --repo /path/to/repo
+supercontext-query-kg --snapshot /path/to/repo/.supercontext/kg summary
+supercontext-query-kg --snapshot /path/to/repo/.supercontext/kg top-dependencies --limit 10
 ```
 
 ## Build A KG
@@ -56,7 +58,7 @@ bettercontext-query-kg --snapshot /path/to/repo/.bettercontext/kg top-dependenci
 Build one repo:
 
 ```bash
-bettercontext-build-kg \
+supercontext-build-kg \
   --repo /path/to/repo \
   --out ./data/kg_runs/example
 ```
@@ -64,7 +66,7 @@ bettercontext-build-kg \
 Build multiple repos when repos depend on each other through package manifests:
 
 ```bash
-bettercontext-build-multi-kg \
+supercontext-build-multi-kg \
   --repo /path/to/service-a \
   --repo /path/to/service-b \
   --out ./data/kg_runs/example_org
@@ -77,18 +79,18 @@ Use `--strict-extractors` when extractor failures should fail the build.
 Run common direct queries against a snapshot:
 
 ```bash
-bettercontext-query-kg --snapshot ./data/kg_runs/example summary
-bettercontext-query-kg --snapshot ./data/kg_runs/example top-dependencies --limit 10
-bettercontext-query-kg --snapshot ./data/kg_runs/example modules-importing pandas --limit 5
-bettercontext-query-kg --snapshot ./data/kg_runs/example find-callers load_model --limit 5
-bettercontext-query-kg --snapshot ./data/kg_runs/example endpoints --path /api/token --limit 20
+supercontext-query-kg --snapshot ./data/kg_runs/example summary
+supercontext-query-kg --snapshot ./data/kg_runs/example top-dependencies --limit 10
+supercontext-query-kg --snapshot ./data/kg_runs/example modules-importing pandas --limit 5
+supercontext-query-kg --snapshot ./data/kg_runs/example find-callers load_model --limit 5
+supercontext-query-kg --snapshot ./data/kg_runs/example endpoints --path /api/token --limit 20
 ```
 
 Run multi-repo queries against a multi-repo snapshot:
 
 ```bash
-bettercontext-query-kg --snapshot ./data/kg_runs/example_org cross-repo-links --limit 10
-bettercontext-query-kg --snapshot ./data/kg_runs/example_org repo-dependencies service-b --limit 10
+supercontext-query-kg --snapshot ./data/kg_runs/example_org cross-repo-links --limit 10
+supercontext-query-kg --snapshot ./data/kg_runs/example_org repo-dependencies service-b --limit 10
 ```
 
 ## Generate Coverage Reports
@@ -113,7 +115,7 @@ Read `coverage-run.md` for the human report and `coverage-run.json` for the mach
 
 ## Evaluation Traces
 
-BetterContext evaluation code and trace-analysis skills are intended to be open and reproducible. Raw traces and repo-specific run outputs are private by default.
+SuperContext evaluation code and trace-analysis skills are intended to be open and reproducible. Raw traces and repo-specific run outputs are private by default.
 
 Local A/B harness records, downloaded LangSmith traces, SDK message streams, and intermediate deltas belong under `data/ab_runs/<run-id>/`. That path is gitignored because traces can contain prompts, final answers, file paths, snippets, model metadata, and tool-call payloads from the evaluated repo.
 
@@ -138,10 +140,10 @@ Do not publish:
 Run the local MCP v0 server for a repo:
 
 ```bash
-bettercontext-init --serve
+supercontext-init --serve
 ```
 
-The server is read-only and local-development oriented. `bettercontext-init --serve` is loopback-only; advanced public binds must use the MCP server directly with `--allow-public` on a trusted network.
+The server is read-only and local-development oriented. `supercontext-init --serve` is loopback-only; advanced public binds must use the MCP server directly with `--allow-public` on a trusted network.
 
 ## What It Extracts
 

@@ -12,7 +12,7 @@ from source.scripts import install_mcp_skills
 
 
 class McpSkillInstallerTest(unittest.TestCase):
-    def test_project_install_copies_only_bettercontext_mcp_skills(self) -> None:
+    def test_project_install_copies_only_supercontext_mcp_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             existing_codex = project / ".codex" / "skills" / "coverage-report"
@@ -26,29 +26,29 @@ class McpSkillInstallerTest(unittest.TestCase):
 
             self.assertEqual(
                 sorted(path.name for path in (project / ".codex" / "skills").iterdir()),
-                ["bettercontext-mcp", "coverage-report"],
+                ["coverage-report", "supercontext-mcp"],
             )
             self.assertEqual(
                 sorted(path.name for path in (project / ".claude" / "skills").iterdir()),
-                ["bettercontext-mcp", "coverage-report"],
+                ["coverage-report", "supercontext-mcp"],
             )
-            codex_skill = (project / ".codex" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(
+            codex_skill = (project / ".codex" / "skills" / "supercontext-mcp" / "SKILL.md").read_text(
                 encoding="utf-8"
             )
-            claude_skill = (project / ".claude" / "skills" / "bettercontext-mcp" / "SKILL.md").read_text(
+            claude_skill = (project / ".claude" / "skills" / "supercontext-mcp" / "SKILL.md").read_text(
                 encoding="utf-8"
             )
-            self.assertIn("name: bettercontext-mcp", codex_skill)
+            self.assertIn("name: supercontext-mcp", codex_skill)
             self.assertIn("Trace Evaluation", codex_skill)
             self.assertIn("where mcp hurts", codex_skill.casefold())
-            self.assertIn("name: bettercontext-mcp", claude_skill)
+            self.assertIn("name: supercontext-mcp", claude_skill)
             self.assertIn("Trace Evaluation", claude_skill)
             self.assertIn("tokens", claude_skill)
 
     def test_install_replaces_stale_files_inside_target_skill_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            target = project / ".codex" / "skills" / "bettercontext-mcp"
+            target = project / ".codex" / "skills" / "supercontext-mcp"
             sibling = project / ".codex" / "skills" / "coverage-report"
             target.mkdir(parents=True)
             sibling.mkdir()
@@ -64,7 +64,7 @@ class McpSkillInstallerTest(unittest.TestCase):
     def test_install_rejects_dangling_symlink_skill_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            target = project / ".codex" / "skills" / "bettercontext-mcp"
+            target = project / ".codex" / "skills" / "supercontext-mcp"
             target.parent.mkdir(parents=True)
             os.symlink(project / "missing-target", target)
 
@@ -95,8 +95,8 @@ class McpSkillInstallerTest(unittest.TestCase):
                 claude_tmp,
             )
 
-            self.assertTrue((Path(codex_tmp) / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
-            self.assertTrue((Path(claude_tmp) / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
+            self.assertTrue((Path(codex_tmp) / "skills" / "supercontext-mcp" / "SKILL.md").is_file())
+            self.assertTrue((Path(claude_tmp) / "skills" / "supercontext-mcp" / "SKILL.md").is_file())
 
     def test_global_install_allows_symlinked_agent_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,15 +107,15 @@ class McpSkillInstallerTest(unittest.TestCase):
 
             self._run_installer("--scope", "global", "--agent", "codex", "--codex-home", str(symlink_home))
 
-            self.assertTrue((real_home / "skills" / "bettercontext-mcp" / "SKILL.md").is_file())
+            self.assertTrue((real_home / "skills" / "supercontext-mcp" / "SKILL.md").is_file())
 
     def test_empty_global_home_env_values_fall_back_to_user_home(self) -> None:
         with tempfile.TemporaryDirectory() as home_tmp:
             with patch.dict(os.environ, {"CODEX_HOME": "", "CLAUDE_HOME": "", "HOME": home_tmp}):
                 output = self._run_installer("--scope", "global", "--agent", "both", "--dry-run")
 
-        self.assertIn(str(Path(home_tmp) / ".codex" / "skills" / "bettercontext-mcp"), output)
-        self.assertIn(str(Path(home_tmp) / ".claude" / "skills" / "bettercontext-mcp"), output)
+        self.assertIn(str(Path(home_tmp) / ".codex" / "skills" / "supercontext-mcp"), output)
+        self.assertIn(str(Path(home_tmp) / ".claude" / "skills" / "supercontext-mcp"), output)
 
     def test_explicit_empty_global_home_args_are_rejected(self) -> None:
         with self.assertRaises(SystemExit):

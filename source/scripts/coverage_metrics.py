@@ -13,7 +13,7 @@ from source.kg.metrics.types import METRIC_STATES, CellMetrics
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Compute BetterContext KG coverage metrics for a JSONL snapshot."
+        description="Compute SuperContext KG coverage metrics for a JSONL snapshot."
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--snapshot", help="Path to a KG snapshot directory.")

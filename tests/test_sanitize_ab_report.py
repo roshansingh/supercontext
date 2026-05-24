@@ -140,7 +140,7 @@ class SanitizeAbReportTest(unittest.TestCase):
         self.assertIn("`mcp_off` won on none.", combined_text)
         self.assertNotIn("| -0 |", combined_text)
         self.assertNotIn("None", combined_text)
-        self.assertIn("# BetterContext A/B Report - run-1 - 2026-05-23", combined_text)
+        self.assertIn("# SuperContext A/B Report - run-1 - 2026-05-23", combined_text)
         self.assertIn("# Trace Analysis - run-1 - 2026-05-23", combined_text)
         self.assertIn("Verification should rerun `run-1`", combined_text)
         self.assertIn("source.scripts.sanitize_ab_report", combined_text)

@@ -1,6 +1,6 @@
 ---
 name: coverage-report
-description: Use when the user asks to run, summarize, compare, or interpret BetterContext KG coverage metrics for a repo or fleet snapshot. Produces a deterministic `coverage-run.json` + `coverage-run.md` from the existing CLI and surfaces the smallest set of actionable findings (blocking contract flags, weakest cells, narrow next-PR recommendation). NOT for code-coverage tools like pytest-cov.
+description: Use when the user asks to run, summarize, compare, or interpret SuperContext KG coverage metrics for a repo or fleet snapshot. Produces a deterministic `coverage-run.json` + `coverage-run.md` from the existing CLI and surfaces the smallest set of actionable findings (blocking contract flags, weakest cells, narrow next-PR recommendation). NOT for code-coverage tools like pytest-cov.
 ---
 
 # KG Coverage Report
@@ -34,7 +34,7 @@ If any is missing, stop and tell the user: "Debate-19 metric infrastructure not 
 - `metrics.jsonl`, `coverage-run.json`, and `coverage-run.md` are **generated artifacts**. Never hand-edit a value or a reason string.
 - If `metrics.jsonl` exists and is newer than `entities.jsonl`/`facts.jsonl`/`coverage.jsonl`, skip recomputation — re-run only the report step.
 - For fleet runs always pass `--expected-repos N` when N is known (otherwise `M_inventory` falls back to "what was ingested," which is tautologically 1.0).
-- For incremental fleet runs (repo added to an existing fleet without re-running `build_multi_kg`), check for the `linker_stale` contract flag on `M_cross_repo_linkage`; if set, the right fix is `bettercontext-relink`, not adding more resolvers.
+- For incremental fleet runs (repo added to an existing fleet without re-running `build_multi_kg`), check for the `linker_stale` contract flag on `M_cross_repo_linkage`; if set, the right fix is `supercontext-relink`, not adding more resolvers.
 
 ## Standard workflow
 
@@ -114,7 +114,7 @@ A cell where one metric is `n_a` produces `cell_score: null`. That's correct beh
 
 | Flag | Meaning | Action |
 |------|---------|--------|
-| `linker_stale` on `M_cross_repo_linkage` | `_fleet/manifest.json` predates per-repo snapshots OR `repo_commit_sha_set` mismatch | Run `bettercontext-relink --snapshot-dir <fleet>`; do NOT propose adding resolvers |
+| `linker_stale` on `M_cross_repo_linkage` | `_fleet/manifest.json` predates per-repo snapshots OR `repo_commit_sha_set` mismatch | Run `supercontext-relink --snapshot-dir <fleet>`; do NOT propose adding resolvers |
 | `evidence_grounding_violation` on a fact | Surfaced fact lacks `bytes_ref` | File a fact-level fix; do NOT propose lowering metric threshold |
 | `silent_gap` on a safety-critical predicate | `M_silent_gap > 0` on `blast_radius` / `deploy_blockers_for` input | Tool refuses if missing scope is relevant; do NOT mark cell unmeasurable |
 
@@ -122,7 +122,7 @@ A cell where one metric is `n_a` produces `cell_score: null`. That's correct beh
 
 Apply in order; first match wins. Output one recommendation only.
 
-1. **Any `linker_stale=true`** → "Run `bettercontext-relink --snapshot-dir <fleet>` against the fleet directory. Re-render."
+1. **Any `linker_stale=true`** → "Run `supercontext-relink --snapshot-dir <fleet>` against the fleet directory. Re-render."
 2. **`M_evidence_grounding < 1.0` on surfaced facts** → "Fix per-fact citations in the offending adapter at `<adapter-path>`; not a metric problem."
 3. **Any `coverage_gaps[].reason == "unsupported_language"`** → "Add language support or an explicit matcher/refusal rule for `<language>`; start with the repos in `coverage_gaps` and the reported sample paths."
 4. **Any `coverage_gaps[].reason == "no_adapter_for_known_stack"`** → "Add or wire the extractor adapter for `<scope_ref.category>` / `<scope_ref.import_root>` in `<language>`."

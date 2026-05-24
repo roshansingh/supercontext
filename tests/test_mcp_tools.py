@@ -487,7 +487,7 @@ class McpToolsTest(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(initialized["result"]["serverInfo"]["name"], "bettercontext-local")
+        self.assertEqual(initialized["result"]["serverInfo"]["name"], "supercontext-local")
         self.assertEqual(initialized["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(ping["result"], {})
@@ -591,7 +591,7 @@ class McpToolsTest(unittest.TestCase):
         fake_handler = type("FakeHandler", (), {"server_version": handler.server_version})()
 
         self.assertEqual(handler.sys_version, "")
-        self.assertEqual(handler.version_string(fake_handler), "bettercontext-local/0.1.0")
+        self.assertEqual(handler.version_string(fake_handler), "supercontext-local/0.1.0")
 
 
 class _fixture_snapshot:

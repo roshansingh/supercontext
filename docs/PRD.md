@@ -289,7 +289,7 @@ Generate per-service migration PRs across the graph; integrate with release trai
 
 ## 14. Open questions
 
-1. **Naming.** Project directory is `bettercontext`; internal name is "SuperContext." Pick one before the website goes up.
+1. **GitHub repository rename timing.** Product name is "SuperContext"; when should the GitHub repository move from `bettercontext` to `supercontext`?
 2. **First-language priority.** TS/JS, Go, Java/Kotlin all matter. Which does the design partner run? Pick the one that gives us the cleanest demo for inbound prospects.
 3. **Tracing source for the MVP.** Datadog has the largest enterprise footprint but the weakest API for high-volume tail-reads; Tempo and Jaeger are easier. Do we pick one or build all three?
 4. **Pricing model.** Per-seat (matches Cursor/Copilot mental model), per-service (matches Backstage), or platform-team flat fee? Likely a hybrid; defer until two design partners are using it.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — Install Bettercontext CLI, host MCP registration, and global host-agent MCP skills.
+# install.sh — Install SuperContext CLI, host MCP registration, and global host-agent MCP skills.
 #
 # Usage:
 #   ./install.sh
@@ -14,7 +14,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-install.sh — Install Bettercontext CLI, host MCP registration, and global host-agent MCP skills.
+install.sh — Install SuperContext CLI, host MCP registration, and global host-agent MCP skills.
 
 Usage:
   ./install.sh
@@ -36,6 +36,7 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 fi
 TARGET_AGENT="both"
 PYTHON_BIN="${PYTHON:-python3}"
+USER_HOME="${HOME:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -74,17 +75,30 @@ case "$TARGET_AGENT" in
     ;;
 esac
 
-if [[ -z "${BETTERCONTEXT_HOME:-}" ]]; then
-  USER_HOME="${HOME:-}"
-  if [[ -z "$USER_HOME" ]]; then
-    USER_HOME="$("$PYTHON_BIN" - <<'PY'
+if [[ -z "$USER_HOME" ]]; then
+  USER_HOME="$("$PYTHON_BIN" - <<'PY'
 from pathlib import Path
 
 print(Path.home())
 PY
 )"
-  fi
-  BETTERCONTEXT_HOME="$USER_HOME/.bettercontext"
+fi
+
+if [[ -z "${SUPERCONTEXT_HOME:-}" ]]; then
+  SUPERCONTEXT_HOME="$USER_HOME/.supercontext"
+fi
+
+if [[ -n "${BETTERCONTEXT_HOME:-}" ]]; then
+  echo "Warning: BETTERCONTEXT_HOME is set but deprecated. Use SUPERCONTEXT_HOME for SuperContext installs." >&2
+fi
+
+LEGACY_HOME="${BETTERCONTEXT_HOME:-$USER_HOME/.bettercontext}"
+if [[ -d "$LEGACY_HOME" ]]; then
+  echo "Warning: detected legacy BetterContext install at $LEGACY_HOME" >&2
+  echo "         After verifying SuperContext, remove stale host registrations and scripts:" >&2
+  echo "           codex mcp remove bettercontext || true" >&2
+  echo "           claude mcp remove --scope user bettercontext || true" >&2
+  echo "           rm -rf \"$LEGACY_HOME\"" >&2
 fi
 
 LOCAL_MODE=false
@@ -92,16 +106,16 @@ if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/pyproject.toml" && -d "$SCRIPT_DIR/sou
   LOCAL_MODE=true
 fi
 
-VENV_DIR="$BETTERCONTEXT_HOME/venv"
+VENV_DIR="$SUPERCONTEXT_HOME/venv"
 echo ""
-echo "Preparing Bettercontext environment: $VENV_DIR"
+echo "Preparing SuperContext environment: $VENV_DIR"
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 INSTALL_PYTHON="$VENV_DIR/bin/python"
 SCRIPTS_DIR="$VENV_DIR/bin"
 "$INSTALL_PYTHON" -m pip install --upgrade pip
 
 echo ""
-echo "Installing Bettercontext..."
+echo "Installing SuperContext..."
 if [[ "$LOCAL_MODE" == true ]]; then
   echo "  Source: local repo ($SCRIPT_DIR)"
   "$INSTALL_PYTHON" -m pip install --upgrade "$SCRIPT_DIR"
@@ -115,25 +129,25 @@ if [[ -n "$SCRIPTS_DIR" ]]; then
     *":$SCRIPTS_DIR:"*) ;;
     *)
       echo ""
-      echo "Note: add Bettercontext's script directory to PATH if bettercontext-init is not found:"
+      echo "Note: add SuperContext's script directory to PATH if supercontext-init is not found:"
       echo "  export PATH=\"$SCRIPTS_DIR:\$PATH\""
       ;;
   esac
 fi
 
 echo ""
-echo "Installing global Bettercontext MCP skills..."
+echo "Installing global SuperContext MCP skills..."
 "$INSTALL_PYTHON" -P -m source.scripts.install_mcp_skills --scope global --agent "$TARGET_AGENT"
 
 echo ""
-echo "Registering local Bettercontext MCP endpoint with host agents..."
+echo "Registering local SuperContext MCP endpoint with host agents..."
 "$INSTALL_PYTHON" -P -m source.scripts.register_mcp --agent "$TARGET_AGENT" --on-error warn
 
 echo ""
 echo "Done."
 echo ""
 echo "Next, in each repo you want indexed:"
-echo "  bettercontext-init"
+echo "  supercontext-init"
 echo ""
 echo "For an active local MCP server in that repo:"
-echo "  bettercontext-init --serve"
+echo "  supercontext-init --serve"

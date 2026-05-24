@@ -8,7 +8,7 @@ from typing import Any
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pull BetterContext A/B LangSmith traces into local JSONL.")
+    parser = argparse.ArgumentParser(description="Pull SuperContext A/B LangSmith traces into local JSONL.")
     parser.add_argument("--project", required=True, help="LangSmith project name.")
     parser.add_argument("--run-group-ids", default="", help="Comma-separated run_group_id values to pull.")
     parser.add_argument("--harness-version", default="", help="Optional harness_version metadata filter.")

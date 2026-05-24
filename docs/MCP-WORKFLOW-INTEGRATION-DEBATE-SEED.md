@@ -1,10 +1,10 @@
 # MCP Workflow Integration Debate Seed
 
-Use this as a seed for a debate about making Bettercontext useful through MCP inside Claude Code, Codex, and similar coding agents.
+Use this as a seed for a debate about making SuperContext useful through MCP inside Claude Code, Codex, and similar coding agents.
 
 ## Question
 
-How should the MCP surface and agent-side usage hooks change so Bettercontext is used naturally during planning, code writing, and code review, without adding a separate UI or interrupting users?
+How should the MCP surface and agent-side usage hooks change so SuperContext is used naturally during planning, code writing, and code review, without adding a separate UI or interrupting users?
 
 The goal is not "more tools because tools are easy to add." The goal is a small, high-signal MCP contract that makes agents spend fewer tokens rediscovering known repo structure and gives them better evidence before they plan, edit, or review code.
 
@@ -16,7 +16,7 @@ Assumptions:
 
 - Users will not regularly open a separate Streamlit or web UI while coding.
 - Claude Code, Codex, Cursor-like agents, and PR-review bots are the actual UX.
-- Bettercontext should provide structured graph context, citations, and refusal metadata.
+- SuperContext should provide structured graph context, citations, and refusal metadata.
 - Agents should still use normal repo search/read tools when the KG cannot answer safely.
 - Feedback capture should not be a near-term priority because it interrupts users and will likely be ignored.
 
@@ -65,7 +65,7 @@ It can answer some exact questions, but it does not yet help enough with:
 - finding the relevant symbols/files/services from a vague task,
 - converting changed files or changed line ranges into impact context,
 - reviewing a diff for hidden callers, consumers, deployables, packages, and coverage gaps,
-- teaching Claude Code/Codex when to call Bettercontext instead of immediately searching the repo.
+- teaching Claude Code/Codex when to call SuperContext instead of immediately searching the repo.
 
 ## Desired Agent Workflows
 
@@ -86,7 +86,7 @@ A bare list of links forces Claude Code/Codex to open many files just to decide 
 
 ### Planning
 
-When the user asks for a change, the host agent should call Bettercontext before broad repo exploration if the task mentions a service, repo, package, symbol, endpoint, event, domain, deploy target, or changed file.
+When the user asks for a change, the host agent should call SuperContext before broad repo exploration if the task mentions a service, repo, package, symbol, endpoint, event, domain, deploy target, or changed file.
 
 Expected planning output:
 
@@ -101,7 +101,7 @@ Expected planning output:
 
 ### Code Writing
 
-While implementing, the agent should use Bettercontext for exact graph questions:
+While implementing, the agent should use SuperContext for exact graph questions:
 
 - "Who calls this symbol?"
 - "What does this symbol call?"
@@ -110,11 +110,11 @@ While implementing, the agent should use Bettercontext for exact graph questions
 - "Which endpoints/domains/deploy mappings touch this service?"
 - "Show evidence for this edge."
 
-The agent should then use normal file reads/grep for local code details. Bettercontext should not replace code reading. It should reduce the number of blind searches.
+The agent should then use normal file reads/grep for local code details. SuperContext should not replace code reading. It should reduce the number of blind searches.
 
 ### Code Review
 
-Before reviewing a PR or local diff, the agent should call Bettercontext with changed files and line ranges.
+Before reviewing a PR or local diff, the agent should call SuperContext with changed files and line ranges.
 
 Expected review output:
 
@@ -321,17 +321,17 @@ MCP tools alone are not enough. Claude Code/Codex need explicit instructions to 
 
 Add repo-distributed guidance for host agents. Current implementation ships this as installable skill templates:
 
-- `source/kg/product/mcp_skill_templates/claude/bettercontext-mcp/SKILL.md`
-- `source/kg/product/mcp_skill_templates/codex/bettercontext-mcp/SKILL.md`
-- installed by `bettercontext-install-mcp-skills`
+- `source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md`
+- `source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md`
+- installed by `supercontext-install-mcp-skills`
 
 The hook should be short and operational:
 
 1. Before planning a change, call `planning_context` when the task names a service, repo, path, symbol, package, endpoint, event, domain, or deploy target.
 2. Before editing a known symbol, call `lookup_symbol` if ambiguous and `find_callers`/`find_callees` if the change may affect behavior.
 3. Before reviewing a diff, call `review_context` with changed files and line ranges.
-4. Use normal `Read`/`Grep`/repo tools after Bettercontext narrows the search.
-5. If Bettercontext returns `unsupported_by_current_kg`, `ambiguous`, or partial coverage, say what is unknown and fall back to code search.
+4. Use normal `Read`/`Grep`/repo tools after SuperContext narrows the search.
+5. If SuperContext returns `unsupported_by_current_kg`, `ambiguous`, or partial coverage, say what is unknown and fall back to code search.
 6. Do not paste large MCP outputs into the final answer. Use the citations and conclusions.
 
 ## Response Shape Requirements
@@ -424,6 +424,6 @@ The implementation should be considered successful only if a host agent can do t
 
 Keep the ADR-0002 eight tools, but stop treating them as sufficient for the product goal.
 
-Add two workflow tools, `planning_context` and `review_context`, because planning and review are the actual agent moments where Bettercontext can change behavior. Add only a small number of exact query tools that agents frequently need during coding: `lookup_symbol`, `symbols_in_file`, `modules_importing`, `repo_dependencies`, and `evidence_for_call`.
+Add two workflow tools, `planning_context` and `review_context`, because planning and review are the actual agent moments where SuperContext can change behavior. Add only a small number of exact query tools that agents frequently need during coding: `lookup_symbol`, `symbols_in_file`, `modules_importing`, `repo_dependencies`, and `evidence_for_call`.
 
-Do not prioritize feedback capture or a UI. The next product risk is not lack of feedback forms; it is that agents will not know when to call Bettercontext, or will call it and get too narrow an answer for planning/review work.
+Do not prioritize feedback capture or a UI. The next product risk is not lack of feedback forms; it is that agents will not know when to call SuperContext, or will call it and get too narrow an answer for planning/review work.

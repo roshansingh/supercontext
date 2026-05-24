@@ -21,6 +21,12 @@ class McpRegistrationTest(unittest.TestCase):
         self.run_mock.assert_has_calls(
             [
                 call(
+                    ("codex", "mcp", "remove", "supercontext"),
+                    check=False,
+                    stdout=register_mcp.subprocess.DEVNULL,
+                    stderr=register_mcp.subprocess.DEVNULL,
+                ),
+                call(
                     ("codex", "mcp", "remove", "bettercontext"),
                     check=False,
                     stdout=register_mcp.subprocess.DEVNULL,
@@ -31,11 +37,17 @@ class McpRegistrationTest(unittest.TestCase):
                         "codex",
                         "mcp",
                         "add",
-                        "bettercontext",
+                        "supercontext",
                         "--url",
                         "http://127.0.0.1:3845/mcp",
                     ),
                     check=True,
+                ),
+                call(
+                    ("claude", "mcp", "remove", "--scope", "user", "supercontext"),
+                    check=False,
+                    stdout=register_mcp.subprocess.DEVNULL,
+                    stderr=register_mcp.subprocess.DEVNULL,
                 ),
                 call(
                     ("claude", "mcp", "remove", "--scope", "user", "bettercontext"),
@@ -52,7 +64,7 @@ class McpRegistrationTest(unittest.TestCase):
                         "user",
                         "--transport",
                         "http",
-                        "bettercontext",
+                        "supercontext",
                         "http://127.0.0.1:3845/mcp",
                     ),
                     check=True,
@@ -102,6 +114,7 @@ class McpRegistrationTest(unittest.TestCase):
         )
 
         self.assertIn("would remove existing claude MCP registration", output)
+        self.assertIn("would remove legacy claude MCP registration", output)
         self.assertIn("would add claude MCP registration", output)
         self.run_mock.assert_not_called()
 
@@ -128,7 +141,7 @@ class McpRegistrationTest(unittest.TestCase):
 
         self.assertIn("ran remove command for codex MCP server", output)
         self.run_mock.assert_called_once_with(
-            ("codex", "mcp", "remove", "bettercontext"),
+            ("codex", "mcp", "remove", "supercontext"),
             check=False,
             stdout=register_mcp.subprocess.DEVNULL,
             stderr=register_mcp.subprocess.DEVNULL,
@@ -142,7 +155,7 @@ class McpRegistrationTest(unittest.TestCase):
             which_side_effect=lambda executable: f"/bin/{executable}",
             run_side_effect=[
                 register_mcp.subprocess.CompletedProcess(
-                    ("codex", "mcp", "remove", "bettercontext"),
+                    ("codex", "mcp", "remove", "supercontext"),
                     1,
                 ),
             ],
@@ -162,7 +175,7 @@ class McpRegistrationTest(unittest.TestCase):
                 which_side_effect=lambda executable: f"/bin/{executable}",
                 run_side_effect=[
                     register_mcp.subprocess.CompletedProcess(
-                        ("codex", "mcp", "remove", "bettercontext"),
+                        ("codex", "mcp", "remove", "supercontext"),
                         1,
                     ),
                 ],
@@ -209,6 +222,10 @@ class McpRegistrationTest(unittest.TestCase):
             which_side_effect=lambda executable: f"/bin/{executable}",
             run_side_effect=[
                 register_mcp.subprocess.CompletedProcess(
+                    ("codex", "mcp", "remove", "supercontext"),
+                    1,
+                ),
+                register_mcp.subprocess.CompletedProcess(
                     ("codex", "mcp", "remove", "bettercontext"),
                     1,
                 ),
@@ -218,7 +235,7 @@ class McpRegistrationTest(unittest.TestCase):
                         "codex",
                         "mcp",
                         "add",
-                        "bettercontext",
+                        "supercontext",
                         "--url",
                         "http://127.0.0.1:3845/mcp",
                     ),
@@ -238,6 +255,10 @@ class McpRegistrationTest(unittest.TestCase):
                 which_side_effect=lambda executable: f"/bin/{executable}",
                 run_side_effect=[
                     register_mcp.subprocess.CompletedProcess(
+                        ("codex", "mcp", "remove", "supercontext"),
+                        1,
+                    ),
+                    register_mcp.subprocess.CompletedProcess(
                         ("codex", "mcp", "remove", "bettercontext"),
                         1,
                     ),
@@ -247,7 +268,7 @@ class McpRegistrationTest(unittest.TestCase):
                             "codex",
                             "mcp",
                             "add",
-                            "bettercontext",
+                            "supercontext",
                             "--url",
                             "http://127.0.0.1:3845/mcp",
                         ),
@@ -262,19 +283,27 @@ class McpRegistrationTest(unittest.TestCase):
             which_side_effect=lambda executable: f"/bin/{executable}",
             run_side_effect=[
                 register_mcp.subprocess.CompletedProcess(
-                    ("codex", "mcp", "remove", "bettercontext"),
+                    ("codex", "mcp", "remove", "supercontext"),
                     1,
+                ),
+                register_mcp.subprocess.CompletedProcess(
+                    ("codex", "mcp", "remove", "bettercontext"),
+                    0,
                 ),
                 register_mcp.subprocess.CompletedProcess(
                     (
                         "codex",
                         "mcp",
                         "add",
-                        "bettercontext",
+                        "supercontext",
                         "--url",
                         "http://127.0.0.1:3845/mcp",
                     ),
                     0,
+                ),
+                register_mcp.subprocess.CompletedProcess(
+                    ("claude", "mcp", "remove", "--scope", "user", "supercontext"),
+                    1,
                 ),
                 register_mcp.subprocess.CompletedProcess(
                     ("claude", "mcp", "remove", "--scope", "user", "bettercontext"),
@@ -290,7 +319,7 @@ class McpRegistrationTest(unittest.TestCase):
                         "user",
                         "--transport",
                         "http",
-                        "bettercontext",
+                        "supercontext",
                         "http://127.0.0.1:3845/mcp",
                     ),
                 ),

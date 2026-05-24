@@ -2,7 +2,7 @@
 
 ## Current Validation Status
 
-This run completed the `pr119-full-2026-05-23` A/B measurement: 18 paired tasks, 36 Claude Code host runs, local BetterContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
+This run completed the `pr119-full-2026-05-23` A/B measurement: 18 paired tasks, 36 Claude Code host runs, local SuperContext MCP server, LangSmith upload, pulled traces, paired deltas, and blinded quality judging.
 
 The product signal is rubric-based, not a single scoreboard. Quality comes first: the judge preferred `mcp_off` overall on 4 tasks, `mcp_on` on 11 tasks, and marked 3 ties. A cost, token, or latency win matters only after answer quality is at least tied.
 
@@ -21,7 +21,7 @@ The product signal is rubric-based, not a single scoreboard. Quality comes first
 
 ## Strongest Product-Value Signal
 
-Cost data was available for 18 of 18 rows. Token data was available for 18 of 18 rows. Aggregate deltas use `off_minus_on`, so positive values mean BetterContext used less of that resource than the non-MCP arm.
+Cost data was available for 18 of 18 rows. Token data was available for 18 of 18 rows. Aggregate deltas use `off_minus_on`, so positive values mean SuperContext used less of that resource than the non-MCP arm.
 
 - Total dollar delta: `0.383766` in favor of `mcp_on` overall. This is `n/a` unless every paired row has cost data.
 - Total token delta: `83298` in favor of `mcp_on` overall. This is `n/a` unless every paired row has token data.
@@ -56,6 +56,8 @@ Add a trace-inspection report that classifies each `mcp_on` loss into one of the
 Expected movement: after classification, choose one repeated failure family and fix either host skill guidance, MCP response shape, or KG retrieval. Verification should rerun `pr119-full-2026-05-23` and require quality movement first, with token/cost deltas reported only after quality is not worse.
 
 ## Verification Commands
+
+Historical note: this run was captured before the product rename. The original LangSmith project was `bettercontext-ab-eval`; use `supercontext-ab-eval` only for post-rename reruns.
 
 ```bash
 .venv/bin/python -m source.scripts.pull_ab_traces --project bettercontext-ab-eval --run-group-ids <18-run-group-ids> --limit 100 --out data/ab_runs/pr119-full-2026-05-23/traces.jsonl

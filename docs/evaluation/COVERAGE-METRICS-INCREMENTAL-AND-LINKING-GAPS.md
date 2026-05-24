@@ -32,7 +32,7 @@ KG row IDs are content-hashed via `stable_hash(...)` over the row's identifying 
 
 ## 2. Where incremental silently breaks — cross-repo linker
 
-`source/kg/build/relink.py` owns the **package linker** used by both `build_multi_kg` and `bettercontext-relink`. The linker produces cross-repo artifacts that depend on the **full set of repos given to it**:
+`source/kg/build/relink.py` owns the **package linker** used by both `build_multi_kg` and `supercontext-relink`. The linker produces cross-repo artifacts that depend on the **full set of repos given to it**:
 
 - `ExternalPackage` entity dedup across repos
 - `RESOLVES_TO_REPO` facts (e.g., a PyPI distribution imported in repo A maps to repo B if B publishes that distribution)
@@ -44,7 +44,7 @@ If the linker is run over `{1..10}` and later a snapshot for repo 11 is added wi
 - Repos 1–10's imports of packages exported by repo 11 → **unresolved** (snapshots 1–10 still hold the linker's view from when only 1–10 existed)
 - `ExternalPackage` dedup may miss the repo-11-published package, double-counting it as an external
 
-This PR adds a `bettercontext-relink` entry point so the linker can be refreshed without re-running extraction. Before this command existed, the only workaround was to re-run `build_multi_kg`, which re-extracts everything and defeats the point of incremental ingestion.
+This PR adds a `supercontext-relink` entry point so the linker can be refreshed without re-running extraction. Before this command existed, the only workaround was to re-run `build_multi_kg`, which re-extracts everything and defeats the point of incremental ingestion.
 
 Current storage shape matters here:
 
@@ -77,14 +77,14 @@ Three components, ordered by dependency:
 
 Concrete proposal:
 
-- **New CLI**: `bettercontext-relink --snapshot-dir <fleet-dir>`
+- **New CLI**: `supercontext-relink --snapshot-dir <fleet-dir>`
 - **Behavior**: reads each repo's existing `entities.jsonl` + `manifest.json`; **skips extraction**; runs only the linker step in `source/kg/build/relink.py`; writes fleet-level linker output next to the per-repo snapshots:
   - `_fleet/cross_repo_links.jsonl` for linker facts such as `RESOLVES_TO_REPO`
   - `_fleet/cross_repo_link_evidence.jsonl` for linker evidence
   - `_fleet/manifest.json` with linker `built_at`, `source_system`, `rule_version`, `repo_commit_fingerprints`, informational `repo_commit_sha_set`, `provider_count`, `link_count`, and `ambiguous_package_count`
 - **v1 constraint**: the original repo trees recorded in each snapshot `manifest.json.repo_path` must still exist. Relink reads package manifests (`pyproject.toml` / `package.json`) from that tree to identify provider aliases, and rejects git repos whose current `HEAD` no longer matches the snapshot `commit_sha`.
 - **Non-goal for v1**: do not write refreshed cross-repo facts back into each repo's `facts.jsonl`. Keep repo-local extraction snapshots immutable and fleet linking as a projection.
-- **Determinism guarantee**: `bettercontext-relink` over `{1..11}` must produce the same deterministic linker IDs and link semantics as `build_multi_kg` extracting + linking `{1..11}` from scratch at the same repo commits. Serialized timestamp fields such as `evidence.ingested_at` may differ.
+- **Determinism guarantee**: `supercontext-relink` over `{1..11}` must produce the same deterministic linker IDs and link semantics as `build_multi_kg` extracting + linking `{1..11}` from scratch at the same repo commits. Serialized timestamp fields such as `evidence.ingested_at` may differ.
 
 This PR implements the relink-only entry point and routes from-source multi-repo builds through the same linker code path. The remaining gap is consumer integration: metrics and query readers must merge the fleet-level `cross_repo_links.jsonl` projection when they need current cross-repo links.
 
@@ -104,8 +104,8 @@ This is additive to Debate 14's metric set — no new metric, just a flag on the
 
 Current behavior:
 
-- `bettercontext-coverage-metrics` writes `metrics.jsonl` (one record per metric per cell) next to `entities.jsonl` etc.
-- Delta mode: `bettercontext-coverage-metrics --compare snapshotA snapshotB` emits Δ per metric per cell
+- `supercontext-coverage-metrics` writes `metrics.jsonl` (one record per metric per cell) next to `entities.jsonl` etc.
+- Delta mode: `supercontext-coverage-metrics --compare snapshotA snapshotB` emits Δ per metric per cell
 
 Remaining relink-specific work is not persistence itself; it is making persisted M_cross_repo_linkage consume the fleet relink projection and record fingerprint-aware linker freshness.
 
@@ -117,21 +117,21 @@ ls data/kg_runs/
 # team-a/  team-b/  ...  team-j/  _fleet/
 
 # Add repo #11
-bettercontext-build-kg --repo /work/team-new --out data/kg_runs/team-new
+supercontext-build-kg --repo /work/team-new --out data/kg_runs/team-new
 
 # Refresh the cross-repo linker only — re-extraction skipped
-bettercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
+supercontext-relink --snapshot-dir data/kg_runs/ --out data/kg_runs/_fleet
 
 # Metrics over incremental per-repo snapshots plus _fleet are blocked on the
 # follow-up reader that merges _fleet/cross_repo_links.jsonl. Today's workaround
 # is a fresh combined build, then metrics over that combined output.
-#   bettercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/combined-parity
-#   bettercontext-coverage-metrics --snapshot data/kg_runs/combined-parity
+#   supercontext-build-multi-kg --repo /work/team-a --repo /work/team-b ... --out data/kg_runs/combined-parity
+#   supercontext-coverage-metrics --snapshot data/kg_runs/combined-parity
 
 # Relinked cross-repo link facts/evidence should match that combined build's linker slice.
 ```
 
-Without `bettercontext-relink`, the org's choice today is:
+Without `supercontext-relink`, the org's choice today is:
 
 - **Run full rebuild** every time a repo is added → O(N) extraction cost on every increment; correct
 - **Skip linker refresh** → cheap; M_cross_repo_linkage silently degrades, and the metric can't tell you why

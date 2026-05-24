@@ -8,14 +8,14 @@ from typing import Any
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compute paired BetterContext A/B deltas.")
+    parser = argparse.ArgumentParser(description="Compute paired SuperContext A/B deltas.")
     parser.add_argument("--traces", required=True, help="Input traces JSONL from pull_ab_traces.")
     parser.add_argument("--out", required=True, help="Output deltas JSONL path.")
     parser.add_argument("--allow-unpaired", action="store_true", help="Skip incomplete run pairs instead of failing.")
     parser.add_argument(
         "--allow-mcp-tool-failures",
         action="store_true",
-        help="Allow mcp_on rows with denied/errored BetterContext tool calls instead of failing closed.",
+        help="Allow mcp_on rows with denied/errored SuperContext tool calls instead of failing closed.",
     )
     args = parser.parse_args()
 
@@ -197,7 +197,7 @@ def _reject_mcp_on_tool_failures(on: dict[str, Any], *, run_group_id: str, task_
     if denial_count or error_count:
         raise ValueError(
             f"invalid mcp_on trace for run_group_id={run_group_id!r} task_id={task_id!r}: "
-            f"BetterContext MCP denials={denial_count} errors={error_count}"
+            f"SuperContext MCP denials={denial_count} errors={error_count}"
         )
 
 

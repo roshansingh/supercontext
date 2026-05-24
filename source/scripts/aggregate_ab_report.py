@@ -10,7 +10,7 @@ from source.scripts.compute_ab_deltas import load_jsonl
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render BetterContext A/B delta reports.")
+    parser = argparse.ArgumentParser(description="Render SuperContext A/B delta reports.")
     parser.add_argument("--deltas", required=True, help="Input deltas JSONL.")
     parser.add_argument("--out", required=True, help="Output report directory.")
     args = parser.parse_args()
@@ -30,7 +30,7 @@ def render_report(rows: list[dict[str, Any]], out_dir: Path) -> dict[str, Any]:
 def _markdown(report: dict[str, Any]) -> str:
     rows = report["rows"]
     lines = [
-        "# BetterContext A/B Report",
+        "# SuperContext A/B Report",
         "",
         "Quality is the gating dimension. Cost, token, and latency deltas are secondary unless answer quality is tied or better.",
         "",

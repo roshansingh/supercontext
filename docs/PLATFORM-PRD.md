@@ -254,7 +254,7 @@ This is broader than Product 1's incident metric and better matches the platform
 
 ## 14. Open questions
 
-1. What should the company-level name be: `SuperContext`, `BetterContext`, or something else?
+1. When should the GitHub repository move from `bettercontext` to `supercontext`?
 2. Should the long-term narrative lead with engineering context or broader enterprise context?
 3. Which non-code system should be the first expansion after Product 1: Confluence, Jira, or OneDrive / SharePoint?
 4. How much permission fidelity is required for the first enterprise expansion?

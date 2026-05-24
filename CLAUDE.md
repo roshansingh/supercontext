@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**SuperContext** (working name; directory is `bettercontext`) — Product 1 is a typed cross-service knowledge graph for AI coding agents in microservice organizations. The product wedge is change-safety: when an agent edits service A, SuperContext tells it which services B–Z will break before the diff is written.
+**SuperContext** — Product 1 is a typed cross-service knowledge graph for AI coding agents in microservice organizations. The product wedge is change-safety: when an agent edits service A, SuperContext tells it which services B–Z will break before the diff is written.
 
 Two layers exist concurrently:
 

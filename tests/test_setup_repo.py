@@ -19,10 +19,10 @@ class SetupRepoTest(unittest.TestCase):
 
         self.assertEqual(build_mock.call_count, 1)
         _, out = build_mock.call_args.args[:2]
-        self.assertEqual(out, repo.resolve() / ".bettercontext" / "kg")
-        self.assertIn("Bettercontext KG built:", stdout)
+        self.assertEqual(out, repo.resolve() / ".supercontext" / "kg")
+        self.assertIn("SuperContext KG built:", stdout)
         self.assertIn("-m source.scripts.mcp_server --snapshot", stdout)
-        self.assertIn("bettercontext-install-mcp-skills --scope global", stdout)
+        self.assertIn("supercontext-install-mcp-skills --scope global", stdout)
 
     def test_custom_out_and_strict_options_are_forwarded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,6 +42,18 @@ class SetupRepoTest(unittest.TestCase):
         self.assertEqual(build_mock.call_args.args[:2], (repo.resolve(), out.resolve()))
         self.assertEqual(build_mock.call_args.kwargs["tenant_id"], "tenant-a")
         self.assertTrue(build_mock.call_args.kwargs["strict_extractors"])
+
+    def test_default_init_warns_when_legacy_snapshot_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            legacy_snapshot = repo / ".bettercontext" / "kg"
+            legacy_snapshot.mkdir(parents=True)
+            (legacy_snapshot / "manifest.json").write_text("{}", encoding="utf-8")
+            stdout, build_mock, _ = self._run_setup("--repo", str(repo))
+
+        _, out = build_mock.call_args.args[:2]
+        self.assertEqual(out, repo.resolve() / ".supercontext" / "kg")
+        self.assertIn("detected legacy BetterContext KG snapshot", stdout)
 
     def test_serve_starts_mcp_after_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

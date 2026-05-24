@@ -11,7 +11,7 @@ class PullAbTracesTest(unittest.TestCase):
     def test_trace_from_langsmith_run_extracts_metadata_and_cost_status(self) -> None:
         run = SimpleNamespace(
             id="run-1",
-            name="bettercontext.ab_eval.Q003.mcp_on",
+            name="supercontext.ab_eval.Q003.mcp_on",
             run_type="chain",
             tags=("arm:mcp_on", "task_id:Q003"),
             extra={
@@ -24,12 +24,12 @@ class PullAbTracesTest(unittest.TestCase):
                     "repo_fixture": "$PY_REPO",
                     "difficulty": "Low",
                     "harness_version": "ab-eval-v1",
-                    "mcp_tools_called": ["mcp__bettercontext__find_callers"],
+                    "mcp_tools_called": ["mcp__supercontext__find_callers"],
                     "mcp_tool_attempt_count": 1,
                     "mcp_tool_success_count": 1,
                     "mcp_tool_denial_count": 0,
                     "mcp_tool_error_count": 0,
-                    "mcp_tool_successes": ["mcp__bettercontext__find_callers"],
+                    "mcp_tool_successes": ["mcp__supercontext__find_callers"],
                     "mcp_tool_denials": [],
                     "mcp_tool_errors": [],
                     "non_mcp_tools_called": ["Read"],
@@ -60,11 +60,11 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["id"], "run-1")
         self.assertEqual(trace["tags"], ["arm:mcp_on", "task_id:Q003"])
         self.assertEqual(trace["run_group_id"], "group-1")
-        self.assertEqual(trace["mcp_tools_called"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(trace["mcp_tools_called"], ["mcp__supercontext__find_callers"])
         self.assertEqual(trace["mcp_tool_attempt_count"], 1)
         self.assertEqual(trace["mcp_tool_success_count"], 1)
         self.assertEqual(trace["mcp_tool_denial_count"], 0)
-        self.assertEqual(trace["mcp_tool_successes"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(trace["mcp_tool_successes"], ["mcp__supercontext__find_callers"])
         self.assertEqual(trace["non_mcp_tool_attempt_count"], 2)
         self.assertEqual(trace["non_mcp_tool_attempts"], ["Read", "Read"])
         self.assertEqual(trace["cost_status"], "available")

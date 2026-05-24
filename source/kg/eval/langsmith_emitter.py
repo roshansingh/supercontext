@@ -15,11 +15,11 @@ def emit_run(record: RunRecord, messages_path: str | Path, *, run_tree_cls: type
 
     resolved_messages_path = Path(messages_path)
     messages = _load_jsonl(resolved_messages_path)
-    project_name = os.environ.get("LANGSMITH_PROJECT") or "bettercontext-ab-eval"
+    project_name = os.environ.get("LANGSMITH_PROJECT") or "supercontext-ab-eval"
     run_tree_type = run_tree_cls or _load_run_tree_type()
 
     root = run_tree_type(
-        name=f"bettercontext.ab_eval.{record.task_id}.{record.arm}",
+        name=f"supercontext.ab_eval.{record.task_id}.{record.arm}",
         run_type="chain",
         inputs={
             "task_id": record.task_id,

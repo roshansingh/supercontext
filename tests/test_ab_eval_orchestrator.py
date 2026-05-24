@@ -15,6 +15,7 @@ from source.kg.eval.runner import (
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
     _task_prompt,
+    _tool_calls,
 )
 from source.scripts.run_ab_eval import (
     _parse_arms,
@@ -105,7 +106,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                 expected_commands.append(call["post"])
         self.assertEqual(commands, expected_commands)
 
-    def test_mcp_off_rejects_bettercontext_tool_calls_and_restores_registration(self) -> None:
+    def test_mcp_off_rejects_supercontext_tool_calls_and_restores_registration(self) -> None:
         commands: list[tuple[str, ...]] = []
 
         def fake_run_task(
@@ -127,7 +128,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                 run_group_id=run_group_id,
                 pre=pre_arm_host_config_command,
                 post=post_arm_host_config_command,
-                mcp_tools=["mcp__bettercontext__planning_context"],
+                mcp_tools=["mcp__supercontext__planning_context"],
             )
 
         with self.assertRaisesRegex(RuntimeError, "mcp_off"):
@@ -314,9 +315,9 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertIn("Grep", on_tools)
         self.assertIn("Bash", on_tools)
         self.assertIn("ToolSearch", on_tools)
-        self.assertIn("mcp__bettercontext__find_callers", on_tools)
-        self.assertIn("mcp__bettercontext__review_context", on_tools)
-        self.assertNotIn("mcp__bettercontext__find_callers", off_tools)
+        self.assertIn("mcp__supercontext__find_callers", on_tools)
+        self.assertIn("mcp__supercontext__review_context", on_tools)
+        self.assertNotIn("mcp__supercontext__find_callers", off_tools)
 
     def test_mcp_tool_denials_are_counted_and_fail_closed(self) -> None:
         observations = _mcp_tool_observations(
@@ -327,7 +328,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "content": [
                             {
                                 "id": "toolu_1",
-                                "name": "mcp__bettercontext__find_callers",
+                                "name": "mcp__supercontext__find_callers",
                                 "input": {"symbol": "load_model"},
                             }
                         ]
@@ -340,7 +341,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                             {
                                 "tool_use_id": "toolu_1",
                                 "is_error": True,
-                                "content": "Claude requested permissions to use mcp__bettercontext__find_callers.",
+                                "content": "Claude requested permissions to use mcp__supercontext__find_callers.",
                             }
                         ]
                     },
@@ -352,7 +353,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "permission_denials": [
                             {
                                 "tool_use_id": "toolu_1",
-                                "tool_name": "mcp__bettercontext__find_callers",
+                                "tool_name": "mcp__supercontext__find_callers",
                             }
                         ],
                     },
@@ -360,9 +361,9 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(observations["attempts"], ["mcp__bettercontext__find_callers"])
-        self.assertEqual(observations["denials"], ["mcp__bettercontext__find_callers"])
-        with self.assertRaisesRegex(RuntimeError, "denied BetterContext MCP"):
+        self.assertEqual(observations["attempts"], ["mcp__supercontext__find_callers"])
+        self.assertEqual(observations["denials"], ["mcp__supercontext__find_callers"])
+        with self.assertRaisesRegex(RuntimeError, "denied SuperContext MCP"):
             _raise_for_mcp_tool_failures(observations)
 
     def test_mcp_tool_errors_are_counted_and_fail_closed(self) -> None:
@@ -374,7 +375,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "content": [
                             {
                                 "id": "toolu_1",
-                                "name": "mcp__bettercontext__review_context",
+                                "name": "mcp__supercontext__review_context",
                                 "input": {"changed_files": ["source/kg/eval/runner.py"]},
                             }
                         ]
@@ -395,9 +396,46 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(observations["errors"], ["mcp__bettercontext__review_context"])
-        with self.assertRaisesRegex(RuntimeError, "BetterContext MCP tool error"):
+        self.assertEqual(observations["errors"], ["mcp__supercontext__review_context"])
+        with self.assertRaisesRegex(RuntimeError, "SuperContext MCP tool error"):
             _raise_for_mcp_tool_failures(observations)
+
+    def test_legacy_bettercontext_tool_prefix_counts_as_supercontext_mcp(self) -> None:
+        messages = [
+            {
+                "type": "AssistantMessage",
+                "data": {
+                    "content": [
+                        {
+                            "id": "toolu_1",
+                            "name": "mcp__bettercontext__find_callers",
+                            "input": {"symbol": "load_model"},
+                        },
+                        {
+                            "id": "toolu_2",
+                            "name": "Read",
+                            "input": {"file_path": "source/kg/eval/runner.py"},
+                        },
+                    ]
+                },
+            },
+            {
+                "type": "UserMessage",
+                "data": {
+                    "content": [
+                        {"tool_use_id": "toolu_1", "is_error": False, "content": "ok"},
+                        {"tool_use_id": "toolu_2", "is_error": False, "content": "ok"},
+                    ]
+                },
+            },
+        ]
+
+        mcp_tools, non_mcp_tools = _tool_calls(messages)
+        observations = _mcp_tool_observations(messages)
+
+        self.assertEqual(mcp_tools, ["mcp__bettercontext__find_callers"])
+        self.assertEqual(non_mcp_tools, ["Read"])
+        self.assertEqual(observations["successes"], ["mcp__bettercontext__find_callers"])
 
     def test_permission_denial_metadata_prevents_error_double_count(self) -> None:
         observations = _mcp_tool_observations(
@@ -408,7 +446,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "content": [
                             {
                                 "id": "toolu_1",
-                                "name": "mcp__bettercontext__find_callers",
+                                "name": "mcp__supercontext__find_callers",
                                 "input": {"symbol": "load_model"},
                             }
                         ]
@@ -433,7 +471,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "permission_denials": [
                             {
                                 "tool_use_id": "toolu_1",
-                                "tool_name": "mcp__bettercontext__find_callers",
+                                "tool_name": "mcp__supercontext__find_callers",
                             }
                         ],
                     },
@@ -441,7 +479,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(observations["denials"], ["mcp__bettercontext__find_callers"])
+        self.assertEqual(observations["denials"], ["mcp__supercontext__find_callers"])
         self.assertEqual(observations["errors"], [])
 
     def test_successful_mcp_tool_result_is_counted(self) -> None:
@@ -453,7 +491,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "content": [
                             {
                                 "id": "toolu_1",
-                                "name": "mcp__bettercontext__find_callees",
+                                "name": "mcp__supercontext__find_callees",
                                 "input": {"symbol": "predict_on_session"},
                             }
                         ]
@@ -474,7 +512,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(observations["successes"], ["mcp__bettercontext__find_callees"])
+        self.assertEqual(observations["successes"], ["mcp__supercontext__find_callees"])
         _raise_for_mcp_tool_failures(observations)
 
     def test_repeated_mcp_tool_successes_remain_invocation_lists(self) -> None:
@@ -486,12 +524,12 @@ class AbEvalOrchestratorTest(unittest.TestCase):
                         "content": [
                             {
                                 "id": "toolu_1",
-                                "name": "mcp__bettercontext__find_callees",
+                                "name": "mcp__supercontext__find_callees",
                                 "input": {"symbol": "predict_on_session"},
                             },
                             {
                                 "id": "toolu_2",
-                                "name": "mcp__bettercontext__find_callees",
+                                "name": "mcp__supercontext__find_callees",
                                 "input": {"symbol": "score_session"},
                             },
                         ]
@@ -511,7 +549,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(
             observations["successes"],
-            ["mcp__bettercontext__find_callees", "mcp__bettercontext__find_callees"],
+            ["mcp__supercontext__find_callees", "mcp__supercontext__find_callees"],
         )
 
     def test_eval_runner_does_not_force_bare_claude_mode(self) -> None:

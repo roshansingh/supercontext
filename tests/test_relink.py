@@ -502,7 +502,7 @@ class RelinkOnlyTest(unittest.TestCase):
             build_kg(repo, snapshot)
             stderr = io.StringIO()
 
-            with patch.object(sys, "argv", ["bettercontext-relink", "--snapshot-dir", str(snapshot)]):
+            with patch.object(sys, "argv", ["supercontext-relink", "--snapshot-dir", str(snapshot)]):
                 with patch("sys.stderr", stderr):
                     with self.assertRaises(SystemExit) as raised:
                         relink_cli.main()

@@ -4,7 +4,7 @@
 
 The KG can answer single-repo questions reasonably well, but cross-repo dependency answers are still weak. In the latest LatticeAI 23-repo run, the snapshot had 937 `ExternalPackage` entities and only 2 `RESOLVES_TO_REPO` facts. That does not mean 935 links are definitely missing: many packages are stdlib, builtins, or third-party libraries. It does mean our current metric and linker do not yet separate "not supposed to link" from "probably internal but unresolved" cleanly enough.
 
-The goal is not to overfit LatticeAI. The goal is to make BetterContext better at fleet-level OSS questions such as:
+The goal is not to overfit LatticeAI. The goal is to make SuperContext better at fleet-level OSS questions such as:
 
 - "Which repos depend on this internal library?"
 - "If this package changes, which services might break?"

@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Iterable
 
 
-SKILL_NAME = "bettercontext-mcp"
+SKILL_NAME = "supercontext-mcp"
 TEMPLATE_ROOT = "mcp_skill_templates"
 SUPPORTED_AGENTS = ("codex", "claude")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Install Bettercontext MCP host-agent skills.")
+    parser = argparse.ArgumentParser(description="Install SuperContext MCP host-agent skills.")
     parser.add_argument(
         "--agent",
         choices=[*SUPPORTED_AGENTS, "both"],
@@ -69,7 +69,7 @@ def _template_dir(agent: str) -> Traversable:
     root = resources.files("source.kg.product")
     source = root.joinpath(TEMPLATE_ROOT, agent, SKILL_NAME)
     if not source.is_dir():
-        raise RuntimeError(f"Missing installable Bettercontext MCP skill template for {agent!r}")
+        raise RuntimeError(f"Missing installable SuperContext MCP skill template for {agent!r}")
     return source
 
 

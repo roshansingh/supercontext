@@ -60,7 +60,7 @@ class RunnerDimensionTaggingTest(unittest.TestCase):
 
     def test_malformed_dimension_rule_does_not_tag_known_stack_row(self) -> None:
         repo = RepoSnapshot(
-            root=Path("/tmp/bettercontext-runner-dimension-test"),
+            root=Path("/tmp/supercontext-runner-dimension-test"),
             name="repo",
             owner="test",
             commit_sha="sha",

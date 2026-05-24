@@ -13,7 +13,7 @@
 Three load-bearing threads merged into one implementation series:
 
 - **T1 — Debate-14 metric engine.** Converged on 11 coverage metrics across a fleet × per-repo × per-dimension matrix. `CellMetrics`/`MetricValue` output schema with `state ∈ {usable, partial, n_a}`.
-- **T2 — Incremental ingestion + linker-staleness gap.** Captured in `COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md`. Adds `bettercontext-relink` CLI + `_fleet/cross_repo_links.jsonl` artifacts + `linker_stale` contract flag on `M_cross_repo_linkage`.
+- **T2 — Incremental ingestion + linker-staleness gap.** Captured in `COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md`. Adds `supercontext-relink` CLI + `_fleet/cross_repo_links.jsonl` artifacts + `linker_stale` contract flag on `M_cross_repo_linkage`.
 - **T3 — Extractor gaps that limit metric meaningfulness.** Per-language `opportunity_detectors()` / `package_resolver()` / `dimension_rules()` / `useful_edges()` hooks all returned empty at start of series. Predicate-level extractor coverage was uneven.
 
 Debate-19 produced a 12-PR plan to land all three coherently. This doc preserves that contract because the source debate file is no longer in the working tree.
@@ -97,7 +97,7 @@ Branched from `main` (not `dotnet-support`). Each PR independently green via `py
 | PR-5 | Python HTTP-client opportunity detector (`httpx`/`requests`/`aiohttp`) | ✅ merged | PR #85 (`debate19-pr5-python-http-opportunities`) |
 | PR-6 | TS HTTP-client (`axios`/`fetch`) + Terraform domain-literal opportunity detectors | ✅ merged | PR #86 (`debate19-pr6-ts-terraform-opportunities`) |
 | PR-7 | `useful_edges.yaml` per-dim content; linker predicates marked `source: linker` | ✅ merged | PR #87 (`debate19-pr7-useful-edge-config`) |
-| PR-8 | Extract linker into `source/kg/build/relink.py` + `bettercontext-relink` CLI + `_fleet/` artifacts + `linker_stale` flag | ✅ merged | PR #88 (`debate19-pr8-relink-only`) — bundles the original PR-8 refactor + PR-9 CLI |
+| PR-8 | Extract linker into `source/kg/build/relink.py` + `supercontext-relink` CLI + `_fleet/` artifacts + `linker_stale` flag | ✅ merged | PR #88 (`debate19-pr8-relink-only`) — bundles the original PR-8 refactor + PR-9 CLI |
 | **PR-9** | Python PyPI package resolver | ✅ merged | PR #89 (`debate19-pr9-python-package-resolver`) — was PR-10 in the original plan |
 | **PR-10** | TS npm package resolver | ✅ merged | PR #90 (`debate19-pr10-typescript-package-resolver`) — was PR-11 in the original plan |
 | **PR-11** | BACKLOG-only — parked ontology/extractor follow-ups | ✅ merged | PR #91 (`debate19-pr11-backlog-followups`) — was PR-12 |

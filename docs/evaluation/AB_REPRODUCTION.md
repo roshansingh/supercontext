@@ -1,6 +1,6 @@
 # A/B Evaluation Reproduction
 
-This page explains how repo owners can recreate BetterContext MCP A/B reports.
+This page explains how repo owners can recreate SuperContext MCP A/B reports.
 
 ## Prerequisites
 
@@ -76,6 +76,6 @@ Git does not contain private repo snapshots, raw Claude SDK messages, raw answer
 
 ## Expected Checks
 
-- `compute_ab_deltas` should fail closed if any `mcp_on` row has BetterContext MCP denials or tool errors.
+- `compute_ab_deltas` should fail closed if any `mcp_on` row has SuperContext MCP denials or tool errors.
 - The final sanitized report should show `MCP Denied = 0`.
 - Interpret token, cost, and latency only after checking the quality rubric.
