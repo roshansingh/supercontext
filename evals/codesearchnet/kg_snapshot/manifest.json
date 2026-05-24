@@ -1,0 +1,27 @@
+{
+  "built_at": "2026-05-24T11:13:22.004536+00:00",
+  "commit_sha": "106e827405c968597da938f6b373d30183918869",
+  "counts": {
+    "coverage": 3,
+    "entities": 463,
+    "evidence": 1947,
+    "facts": 1108,
+    "files_by_language": {
+      "dotnet": 0,
+      "python": 60,
+      "typescript": 0
+    },
+    "unsupported_files_by_language": {}
+  },
+  "extractor": "static_config_v0+python_ast_v0",
+  "extractor_errors": [],
+  "extractors": [
+    "static_config_v0",
+    "python_ast_v0"
+  ],
+  "owner": "github",
+  "package_manifests": [],
+  "repo_name": "CodeSearchNet",
+  "repo_path": "/Users/abcom/Desktop/github/CodeSearchNet",
+  "tenant_id": "default"
+}

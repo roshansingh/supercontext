@@ -1,0 +1,894 @@
+{
+  "generated_at": "2026-05-24T16:53:59.107572+00:00",
+  "version": "v2_full_corpus",
+  "corpus_size": 457461,
+  "queries_evaluated": 92,
+  "queries_skipped": 7,
+  "elapsed_seconds": 211.4,
+  "our_results": {
+    "ndcg_within": {
+      "text_baseline_tfidf": 0.8263,
+      "supercontext_enhanced": 0.8234
+    },
+    "ndcg_all": {
+      "text_baseline_tfidf": 0.1069,
+      "supercontext_enhanced": 0.1076
+    },
+    "within_wins": {
+      "sc": 7,
+      "text": 5,
+      "tie": 80
+    },
+    "all_wins": {
+      "sc": 31,
+      "text": 10,
+      "tie": 51
+    }
+  },
+  "published_baselines_python": {
+    "ElasticSearch": {
+      "ndcg_within": 0.406,
+      "ndcg_all": 0.256
+    },
+    "Neural BoW": {
+      "ndcg_within": 0.279,
+      "ndcg_all": 0.223
+    },
+    "1D-CNN": {
+      "ndcg_within": 0.341,
+      "ndcg_all": 0.166
+    },
+    "biRNN": {
+      "ndcg_within": 0.169,
+      "ndcg_all": 0.064
+    }
+  },
+  "leaderboard_comparison": {
+    "ndcg_within": {
+      "biRNN": 0.169,
+      "Neural BoW": 0.279,
+      "1D-CNN": 0.341,
+      "ElasticSearch": 0.406,
+      "Our TF-IDF baseline": 0.8263,
+      "Our SC-enhanced": 0.8234
+    },
+    "ndcg_all": {
+      "biRNN": 0.064,
+      "Neural BoW": 0.223,
+      "1D-CNN": 0.166,
+      "ElasticSearch": 0.256,
+      "Our TF-IDF baseline": 0.1069,
+      "Our SC-enhanced": 0.1076
+    }
+  },
+  "per_query": [
+    {
+      "query": "aes encryption",
+      "n_annotations": 24,
+      "n_matched": 6,
+      "ndcg_within_text": 0.9763,
+      "ndcg_within_sc": 0.9763,
+      "ndcg_all_text": 0.2273,
+      "ndcg_all_sc": 0.227
+    },
+    {
+      "query": "all permutations of a list",
+      "n_annotations": 20,
+      "n_matched": 9,
+      "ndcg_within_text": 0.8588,
+      "ndcg_within_sc": 0.8588,
+      "ndcg_all_text": 0.1034,
+      "ndcg_all_sc": 0.104
+    },
+    {
+      "query": "binomial distribution",
+      "n_annotations": 26,
+      "n_matched": 7,
+      "ndcg_within_text": 0.9118,
+      "ndcg_within_sc": 0.9223,
+      "ndcg_all_text": 0.2426,
+      "ndcg_all_sc": 0.2396
+    },
+    {
+      "query": "buffered file reader read text",
+      "n_annotations": 17,
+      "n_matched": 4,
+      "ndcg_within_text": 0.8146,
+      "ndcg_within_sc": 0.8146,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "concatenate several file remove header lines",
+      "n_annotations": 18,
+      "n_matched": 7,
+      "ndcg_within_text": 0.9816,
+      "ndcg_within_sc": 0.9816,
+      "ndcg_all_text": 0.1969,
+      "ndcg_all_sc": 0.199
+    },
+    {
+      "query": "confusion matrix",
+      "n_annotations": 23,
+      "n_matched": 7,
+      "ndcg_within_text": 0.8266,
+      "ndcg_within_sc": 0.8266,
+      "ndcg_all_text": 0.2198,
+      "ndcg_all_sc": 0.2196
+    },
+    {
+      "query": "convert a date string into yyyymmdd",
+      "n_annotations": 20,
+      "n_matched": 8,
+      "ndcg_within_text": 0.9007,
+      "ndcg_within_sc": 0.7471,
+      "ndcg_all_text": 0.1472,
+      "ndcg_all_sc": 0.1536
+    },
+    {
+      "query": "convert a utc time to epoch",
+      "n_annotations": 24,
+      "n_matched": 9,
+      "ndcg_within_text": 0.7318,
+      "ndcg_within_sc": 0.7318,
+      "ndcg_all_text": 0.1215,
+      "ndcg_all_sc": 0.1219
+    },
+    {
+      "query": "convert decimal to hex",
+      "n_annotations": 21,
+      "n_matched": 9,
+      "ndcg_within_text": 0.8557,
+      "ndcg_within_sc": 0.939,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "convert html to pdf",
+      "n_annotations": 24,
+      "n_matched": 7,
+      "ndcg_within_text": 0.9607,
+      "ndcg_within_sc": 0.9607,
+      "ndcg_all_text": 0.1626,
+      "ndcg_all_sc": 0.1637
+    },
+    {
+      "query": "convert int to bool",
+      "n_annotations": 20,
+      "n_matched": 3,
+      "ndcg_within_text": 0.9828,
+      "ndcg_within_sc": 0.9828,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "convert int to string",
+      "n_annotations": 19,
+      "n_matched": 4,
+      "ndcg_within_text": 0.5151,
+      "ndcg_within_sc": 0.5151,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "convert json to csv",
+      "n_annotations": 23,
+      "n_matched": 9,
+      "ndcg_within_text": 0.6498,
+      "ndcg_within_sc": 0.6498,
+      "ndcg_all_text": 0.1509,
+      "ndcg_all_sc": 0.1512
+    },
+    {
+      "query": "convert string to number",
+      "n_annotations": 22,
+      "n_matched": 3,
+      "ndcg_within_text": 0.8076,
+      "ndcg_within_sc": 0.8076,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "converting uint8 array to image",
+      "n_annotations": 23,
+      "n_matched": 7,
+      "ndcg_within_text": 0.7924,
+      "ndcg_within_sc": 0.8229,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "copy to clipboard",
+      "n_annotations": 20,
+      "n_matched": 6,
+      "ndcg_within_text": 0.7512,
+      "ndcg_within_sc": 0.7512,
+      "ndcg_all_text": 0.1047,
+      "ndcg_all_sc": 0.1048
+    },
+    {
+      "query": "copying a file to a path",
+      "n_annotations": 22,
+      "n_matched": 5,
+      "ndcg_within_text": 0.7241,
+      "ndcg_within_sc": 0.7746,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "create cookie",
+      "n_annotations": 22,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9489,
+      "ndcg_within_sc": 0.9489,
+      "ndcg_all_text": 0.1541,
+      "ndcg_all_sc": 0.1907
+    },
+    {
+      "query": "custom http error response",
+      "n_annotations": 19,
+      "n_matched": 4,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "deducting the median from each column",
+      "n_annotations": 20,
+      "n_matched": 7,
+      "ndcg_within_text": 0.7739,
+      "ndcg_within_sc": 0.7739,
+      "ndcg_all_text": 0.1038,
+      "ndcg_all_sc": 0.1038
+    },
+    {
+      "query": "deserialize json",
+      "n_annotations": 20,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9451,
+      "ndcg_within_sc": 0.9451,
+      "ndcg_all_text": 0.1756,
+      "ndcg_all_sc": 0.1756
+    },
+    {
+      "query": "encode url",
+      "n_annotations": 18,
+      "n_matched": 4,
+      "ndcg_within_text": 0.8595,
+      "ndcg_within_sc": 0.8595,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "export to excel",
+      "n_annotations": 21,
+      "n_matched": 6,
+      "ndcg_within_text": 0.9198,
+      "ndcg_within_sc": 0.9198,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "extract data from html content",
+      "n_annotations": 21,
+      "n_matched": 4,
+      "ndcg_within_text": 0.8915,
+      "ndcg_within_sc": 0.8915,
+      "ndcg_all_text": 0.1077,
+      "ndcg_all_sc": 0.1077
+    },
+    {
+      "query": "extract latitude and longitude from given input",
+      "n_annotations": 26,
+      "n_matched": 7,
+      "ndcg_within_text": 0.7099,
+      "ndcg_within_sc": 0.7099,
+      "ndcg_all_text": 0.1314,
+      "ndcg_all_sc": 0.1314
+    },
+    {
+      "query": "extracting data from a text file",
+      "n_annotations": 19,
+      "n_matched": 7,
+      "ndcg_within_text": 0.8198,
+      "ndcg_within_sc": 0.8198,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "filter array",
+      "n_annotations": 25,
+      "n_matched": 3,
+      "ndcg_within_text": 0.0,
+      "ndcg_within_sc": 0.0,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "find int in string",
+      "n_annotations": 20,
+      "n_matched": 3,
+      "ndcg_within_text": 0.7098,
+      "ndcg_within_sc": 0.7098,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "finding time elapsed using a timer",
+      "n_annotations": 21,
+      "n_matched": 3,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1305,
+      "ndcg_all_sc": 0.1307
+    },
+    {
+      "query": "format date",
+      "n_annotations": 22,
+      "n_matched": 3,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1071,
+      "ndcg_all_sc": 0.1076
+    },
+    {
+      "query": "fuzzy match ranking",
+      "n_annotations": 19,
+      "n_matched": 4,
+      "ndcg_within_text": 0.9915,
+      "ndcg_within_sc": 0.9915,
+      "ndcg_all_text": 0.1416,
+      "ndcg_all_sc": 0.1417
+    },
+    {
+      "query": "get all parents of xml node",
+      "n_annotations": 22,
+      "n_matched": 3,
+      "ndcg_within_text": 0.5,
+      "ndcg_within_sc": 0.5,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "get current ip address",
+      "n_annotations": 24,
+      "n_matched": 7,
+      "ndcg_within_text": 0.7163,
+      "ndcg_within_sc": 0.671,
+      "ndcg_all_text": 0.1261,
+      "ndcg_all_sc": 0.1261
+    },
+    {
+      "query": "get current observable value",
+      "n_annotations": 20,
+      "n_matched": 4,
+      "ndcg_within_text": 0.9448,
+      "ndcg_within_sc": 0.9448,
+      "ndcg_all_text": 0.1309,
+      "ndcg_all_sc": 0.1307
+    },
+    {
+      "query": "get current process id",
+      "n_annotations": 18,
+      "n_matched": 4,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "get executable path",
+      "n_annotations": 18,
+      "n_matched": 9,
+      "ndcg_within_text": 0.9702,
+      "ndcg_within_sc": 0.9702,
+      "ndcg_all_text": 0.229,
+      "ndcg_all_sc": 0.2297
+    },
+    {
+      "query": "get inner html",
+      "n_annotations": 21,
+      "n_matched": 6,
+      "ndcg_within_text": 0.7136,
+      "ndcg_within_sc": 0.7136,
+      "ndcg_all_text": 0.1379,
+      "ndcg_all_sc": 0.1373
+    },
+    {
+      "query": "get name of enumerated value",
+      "n_annotations": 20,
+      "n_matched": 6,
+      "ndcg_within_text": 0.9608,
+      "ndcg_within_sc": 0.9608,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "get the description of a http status code",
+      "n_annotations": 20,
+      "n_matched": 7,
+      "ndcg_within_text": 0.6954,
+      "ndcg_within_sc": 0.6954,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "group by count",
+      "n_annotations": 18,
+      "n_matched": 4,
+      "ndcg_within_text": 0.5151,
+      "ndcg_within_sc": 0.5151,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "hash set for counting distinct elements",
+      "n_annotations": 22,
+      "n_matched": 6,
+      "ndcg_within_text": 0.7076,
+      "ndcg_within_sc": 0.7076,
+      "ndcg_all_text": 0.1105,
+      "ndcg_all_sc": 0.1094
+    },
+    {
+      "query": "heatmap from 3d coordinates",
+      "n_annotations": 18,
+      "n_matched": 8,
+      "ndcg_within_text": 0.8331,
+      "ndcg_within_sc": 0.8331,
+      "ndcg_all_text": 0.1108,
+      "ndcg_all_sc": 0.1124
+    },
+    {
+      "query": "how to check if a checkbox is checked",
+      "n_annotations": 19,
+      "n_matched": 5,
+      "ndcg_within_text": 0.8165,
+      "ndcg_within_sc": 0.8165,
+      "ndcg_all_text": 0.1063,
+      "ndcg_all_sc": 0.1063
+    },
+    {
+      "query": "how to determine a string is a valid word",
+      "n_annotations": 21,
+      "n_matched": 6,
+      "ndcg_within_text": 0.6952,
+      "ndcg_within_sc": 0.6952,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to empty array",
+      "n_annotations": 21,
+      "n_matched": 4,
+      "ndcg_within_text": 0.7277,
+      "ndcg_within_sc": 0.7277,
+      "ndcg_all_text": 0.1262,
+      "ndcg_all_sc": 0.1262
+    },
+    {
+      "query": "how to extract zip file recursively",
+      "n_annotations": 19,
+      "n_matched": 4,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1206,
+      "ndcg_all_sc": 0.1207
+    },
+    {
+      "query": "how to get current date",
+      "n_annotations": 22,
+      "n_matched": 8,
+      "ndcg_within_text": 0.6062,
+      "ndcg_within_sc": 0.6062,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to get database table name",
+      "n_annotations": 19,
+      "n_matched": 5,
+      "ndcg_within_text": 0.5413,
+      "ndcg_within_sc": 0.5413,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to get html of website",
+      "n_annotations": 24,
+      "n_matched": 5,
+      "ndcg_within_text": 0.5,
+      "ndcg_within_sc": 0.5,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to make the checkbox checked",
+      "n_annotations": 21,
+      "n_matched": 4,
+      "ndcg_within_text": 0.7648,
+      "ndcg_within_sc": 0.7648,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to randomly pick a number",
+      "n_annotations": 19,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9069,
+      "ndcg_within_sc": 0.9069,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to read .csv file in an efficient way?",
+      "n_annotations": 20,
+      "n_matched": 5,
+      "ndcg_within_text": 0.8288,
+      "ndcg_within_sc": 0.8288,
+      "ndcg_all_text": 0.1021,
+      "ndcg_all_sc": 0.1025
+    },
+    {
+      "query": "how to read the contents of a .gz compressed file?",
+      "n_annotations": 21,
+      "n_matched": 4,
+      "ndcg_within_text": 0.7191,
+      "ndcg_within_sc": 0.7191,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "how to reverse a string",
+      "n_annotations": 28,
+      "n_matched": 4,
+      "ndcg_within_text": 0.9832,
+      "ndcg_within_sc": 0.9832,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "html entities replace",
+      "n_annotations": 18,
+      "n_matched": 8,
+      "ndcg_within_text": 0.8906,
+      "ndcg_within_sc": 0.8906,
+      "ndcg_all_text": 0.1727,
+      "ndcg_all_sc": 0.1731
+    },
+    {
+      "query": "httpclient post json",
+      "n_annotations": 18,
+      "n_matched": 3,
+      "ndcg_within_text": 0.9197,
+      "ndcg_within_sc": 0.9197,
+      "ndcg_all_text": 0.1651,
+      "ndcg_all_sc": 0.1666
+    },
+    {
+      "query": "initializing array",
+      "n_annotations": 22,
+      "n_matched": 4,
+      "ndcg_within_text": 0.9639,
+      "ndcg_within_sc": 0.6399,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "json to xml conversion",
+      "n_annotations": 20,
+      "n_matched": 6,
+      "ndcg_within_text": 0.5095,
+      "ndcg_within_sc": 0.5095,
+      "ndcg_all_text": 0.1198,
+      "ndcg_all_sc": 0.1203
+    },
+    {
+      "query": "k means clustering",
+      "n_annotations": 20,
+      "n_matched": 7,
+      "ndcg_within_text": 0.9674,
+      "ndcg_within_sc": 0.9674,
+      "ndcg_all_text": 0.7038,
+      "ndcg_all_sc": 0.7038
+    },
+    {
+      "query": "linear regression",
+      "n_annotations": 23,
+      "n_matched": 7,
+      "ndcg_within_text": 0.932,
+      "ndcg_within_sc": 0.932,
+      "ndcg_all_text": 0.3809,
+      "ndcg_all_sc": 0.3809
+    },
+    {
+      "query": "map to json",
+      "n_annotations": 26,
+      "n_matched": 5,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1686,
+      "ndcg_all_sc": 0.1686
+    },
+    {
+      "query": "matrix multiply",
+      "n_annotations": 21,
+      "n_matched": 3,
+      "ndcg_within_text": 0.6806,
+      "ndcg_within_sc": 0.6806,
+      "ndcg_all_text": 0.1745,
+      "ndcg_all_sc": 0.1746
+    },
+    {
+      "query": "memoize to disk  - persistent memoization",
+      "n_annotations": 20,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9327,
+      "ndcg_within_sc": 0.9327,
+      "ndcg_all_text": 0.1399,
+      "ndcg_all_sc": 0.1399
+    },
+    {
+      "query": "nelder mead optimize",
+      "n_annotations": 21,
+      "n_matched": 6,
+      "ndcg_within_text": 0.8481,
+      "ndcg_within_sc": 0.8481,
+      "ndcg_all_text": 0.2754,
+      "ndcg_all_sc": 0.2774
+    },
+    {
+      "query": "normal distribution",
+      "n_annotations": 24,
+      "n_matched": 6,
+      "ndcg_within_text": 0.8118,
+      "ndcg_within_sc": 0.8458,
+      "ndcg_all_text": 0.213,
+      "ndcg_all_sc": 0.2148
+    },
+    {
+      "query": "output to html file",
+      "n_annotations": 20,
+      "n_matched": 5,
+      "ndcg_within_text": 0.8715,
+      "ndcg_within_sc": 0.8715,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "parse binary file to custom class",
+      "n_annotations": 19,
+      "n_matched": 6,
+      "ndcg_within_text": 0.6648,
+      "ndcg_within_sc": 0.722,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "parse json file",
+      "n_annotations": 21,
+      "n_matched": 3,
+      "ndcg_within_text": 0.8076,
+      "ndcg_within_sc": 0.8076,
+      "ndcg_all_text": 0.1238,
+      "ndcg_all_sc": 0.1241
+    },
+    {
+      "query": "parse query string in url",
+      "n_annotations": 23,
+      "n_matched": 5,
+      "ndcg_within_text": 0.8446,
+      "ndcg_within_sc": 0.8446,
+      "ndcg_all_text": 0.1352,
+      "ndcg_all_sc": 0.1357
+    },
+    {
+      "query": "positions of substrings in string",
+      "n_annotations": 21,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9217,
+      "ndcg_within_sc": 0.9217,
+      "ndcg_all_text": 0.1065,
+      "ndcg_all_sc": 0.1067
+    },
+    {
+      "query": "postgresql connection",
+      "n_annotations": 23,
+      "n_matched": 7,
+      "ndcg_within_text": 0.9348,
+      "ndcg_within_sc": 0.9348,
+      "ndcg_all_text": 0.2262,
+      "ndcg_all_sc": 0.2268
+    },
+    {
+      "query": "pretty print json",
+      "n_annotations": 19,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9697,
+      "ndcg_within_sc": 0.9697,
+      "ndcg_all_text": 0.1833,
+      "ndcg_all_sc": 0.187
+    },
+    {
+      "query": "print model summary",
+      "n_annotations": 19,
+      "n_matched": 6,
+      "ndcg_within_text": 0.7304,
+      "ndcg_within_sc": 0.7727,
+      "ndcg_all_text": 0.1443,
+      "ndcg_all_sc": 0.1461
+    },
+    {
+      "query": "priority queue",
+      "n_annotations": 23,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9515,
+      "ndcg_within_sc": 0.9515,
+      "ndcg_all_text": 0.175,
+      "ndcg_all_sc": 0.175
+    },
+    {
+      "query": "randomly extract x items from a list",
+      "n_annotations": 20,
+      "n_matched": 7,
+      "ndcg_within_text": 0.7163,
+      "ndcg_within_sc": 0.7163,
+      "ndcg_all_text": 0.1046,
+      "ndcg_all_sc": 0.1051
+    },
+    {
+      "query": "read properties file",
+      "n_annotations": 21,
+      "n_matched": 4,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1553,
+      "ndcg_all_sc": 0.1553
+    },
+    {
+      "query": "read text file line by line",
+      "n_annotations": 22,
+      "n_matched": 5,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "reading element from html - <td>",
+      "n_annotations": 21,
+      "n_matched": 6,
+      "ndcg_within_text": 0.8347,
+      "ndcg_within_sc": 0.8347,
+      "ndcg_all_text": 0.2665,
+      "ndcg_all_sc": 0.2665
+    },
+    {
+      "query": "readonly array",
+      "n_annotations": 19,
+      "n_matched": 3,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1526,
+      "ndcg_all_sc": 0.1519
+    },
+    {
+      "query": "regex case insensitive",
+      "n_annotations": 20,
+      "n_matched": 6,
+      "ndcg_within_text": 1.0,
+      "ndcg_within_sc": 1.0,
+      "ndcg_all_text": 0.1284,
+      "ndcg_all_sc": 0.1284
+    },
+    {
+      "query": "replace in file",
+      "n_annotations": 19,
+      "n_matched": 4,
+      "ndcg_within_text": 0.9324,
+      "ndcg_within_sc": 0.9324,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "save list to file",
+      "n_annotations": 20,
+      "n_matched": 5,
+      "ndcg_within_text": 0.6183,
+      "ndcg_within_sc": 0.5889,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "scatter plot",
+      "n_annotations": 23,
+      "n_matched": 6,
+      "ndcg_within_text": 0.9836,
+      "ndcg_within_sc": 0.9836,
+      "ndcg_all_text": 0.1726,
+      "ndcg_all_sc": 0.1721
+    },
+    {
+      "query": "sending binary data over a serial connection",
+      "n_annotations": 20,
+      "n_matched": 9,
+      "ndcg_within_text": 0.955,
+      "ndcg_within_sc": 0.955,
+      "ndcg_all_text": 0.1638,
+      "ndcg_all_sc": 0.1638
+    },
+    {
+      "query": "set working directory",
+      "n_annotations": 27,
+      "n_matched": 10,
+      "ndcg_within_text": 0.6217,
+      "ndcg_within_sc": 0.6217,
+      "ndcg_all_text": 0.1711,
+      "ndcg_all_sc": 0.1705
+    },
+    {
+      "query": "socket recv timeout",
+      "n_annotations": 19,
+      "n_matched": 5,
+      "ndcg_within_text": 0.8851,
+      "ndcg_within_sc": 0.8851,
+      "ndcg_all_text": 0.1369,
+      "ndcg_all_sc": 0.1386
+    },
+    {
+      "query": "sort string list",
+      "n_annotations": 21,
+      "n_matched": 5,
+      "ndcg_within_text": 0.8503,
+      "ndcg_within_sc": 0.8503,
+      "ndcg_all_text": 0.103,
+      "ndcg_all_sc": 0.1041
+    },
+    {
+      "query": "sorting multiple arrays based on another arrays sorted order",
+      "n_annotations": 24,
+      "n_matched": 4,
+      "ndcg_within_text": 0.6806,
+      "ndcg_within_sc": 0.6806,
+      "ndcg_all_text": 0.1314,
+      "ndcg_all_sc": 0.1314
+    },
+    {
+      "query": "string similarity levenshtein",
+      "n_annotations": 19,
+      "n_matched": 7,
+      "ndcg_within_text": 0.9791,
+      "ndcg_within_sc": 0.9595,
+      "ndcg_all_text": 0.1701,
+      "ndcg_all_sc": 0.1705
+    },
+    {
+      "query": "unique elements",
+      "n_annotations": 20,
+      "n_matched": 6,
+      "ndcg_within_text": 0.8642,
+      "ndcg_within_sc": 0.8642,
+      "ndcg_all_text": 0.1562,
+      "ndcg_all_sc": 0.1561
+    },
+    {
+      "query": "unzipping large files",
+      "n_annotations": 22,
+      "n_matched": 6,
+      "ndcg_within_text": 0.7106,
+      "ndcg_within_sc": 0.7106,
+      "ndcg_all_text": 0.0,
+      "ndcg_all_sc": 0.0
+    },
+    {
+      "query": "write csv",
+      "n_annotations": 22,
+      "n_matched": 5,
+      "ndcg_within_text": 0.9739,
+      "ndcg_within_sc": 0.9739,
+      "ndcg_all_text": 0.1851,
+      "ndcg_all_sc": 0.1851
+    }
+  ]
+}

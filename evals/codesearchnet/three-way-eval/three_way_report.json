@@ -1,0 +1,1727 @@
+{
+  "generated_at": "2026-05-24T13:59:26.792875+00:00",
+  "target_repo": "/Users/abcom/Desktop/github/CodeSearchNet",
+  "query_count": 16,
+  "summary": {
+    "wins": {
+      "supercontext": 15,
+      "claude_code": 1,
+      "grep": 0,
+      "tie": 0
+    },
+    "avg_tool_calls": {
+      "grep": 0.9,
+      "claude_code": 7.1,
+      "supercontext": 1.0
+    },
+    "avg_latency_ms": {
+      "grep": 9.0,
+      "claude_code": 23.2,
+      "supercontext": 135.8
+    },
+    "total_claude_code_tool_calls": 114
+  },
+  "comparisons": [
+    {
+      "query_id": "DEP-01",
+      "category": "dependency",
+      "description": "Which modules import tensorflow?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, typed metadata. Claude Code: 13 calls to get partial info. grep: flat file list.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "DEP-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'import tensorflow'",
+            "result_summary": "12 files",
+            "latency_ms": 15.74062486179173
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 15.7,
+        "result_count": 12,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "12 file paths, no import details"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "DEP-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'import tensorflow'",
+            "result_summary": "13 matching lines",
+            "latency_ms": 12.320165988057852
+          },
+          {
+            "tool": "read_file",
+            "args": "tfutils.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.08374988101422787
+          },
+          {
+            "tool": "read_file",
+            "args": "model.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.06954185664653778
+          },
+          {
+            "tool": "read_file",
+            "args": "model_restore_helper.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.018167076632380486
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.01770886592566967
+          },
+          {
+            "tool": "read_file",
+            "args": "self_att_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.015083001926541328
+          },
+          {
+            "tool": "read_file",
+            "args": "masked_seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.013916054740548134
+          },
+          {
+            "tool": "read_file",
+            "args": "nbow_seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.0135831069201231
+          },
+          {
+            "tool": "read_file",
+            "args": "bert_self_attention.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.05329214036464691
+          },
+          {
+            "tool": "read_file",
+            "args": "encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.021124957129359245
+          },
+          {
+            "tool": "read_file",
+            "args": "rnn_seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.020416919142007828
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_self_att_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.014875084161758423
+          },
+          {
+            "tool": "read_file",
+            "args": "seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.024625100195407867
+          }
+        ],
+        "total_tool_calls": 13,
+        "total_latency_ms": 12.7,
+        "result_count": 12,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "12 files with import form parsed"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "DEP-01",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "modules-importing tensorflow",
+            "result_summary": "13 typed imports",
+            "latency_ms": 158.48666592501104
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 158.5,
+        "result_count": 13,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "13 imports with alias, category, evidence, line numbers"
+      }
+    },
+    {
+      "query_id": "DEP-02",
+      "category": "dependency",
+      "description": "Which modules import wandb?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, typed metadata. Claude Code: 5 calls to get partial info. grep: flat file list.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "DEP-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'import wandb'",
+            "result_summary": "4 files",
+            "latency_ms": 10.866583092138171
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 10.9,
+        "result_count": 4,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "4 file paths, no import details"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "DEP-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'import wandb'",
+            "result_summary": "5 matching lines",
+            "latency_ms": 11.148749850690365
+          },
+          {
+            "tool": "read_file",
+            "args": "model_test.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.07783295586705208
+          },
+          {
+            "tool": "read_file",
+            "args": "predict.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.056165968999266624
+          },
+          {
+            "tool": "read_file",
+            "args": "model.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.095415860414505
+          },
+          {
+            "tool": "read_file",
+            "args": "train.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.0313750933855772
+          }
+        ],
+        "total_tool_calls": 5,
+        "total_latency_ms": 11.4,
+        "result_count": 4,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "4 files with import form parsed"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "DEP-02",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "modules-importing wandb",
+            "result_summary": "5 typed imports",
+            "latency_ms": 123.44245798885822
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 123.4,
+        "result_count": 5,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "5 imports with alias, category, evidence, line numbers"
+      }
+    },
+    {
+      "query_id": "DEP-03",
+      "category": "dependency",
+      "description": "Which modules import numpy?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, typed metadata. Claude Code: 9 calls to get partial info. grep: flat file list.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "DEP-03",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'import numpy'",
+            "result_summary": "8 files",
+            "latency_ms": 11.388750048354268
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 11.4,
+        "result_count": 8,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "8 file paths, no import details"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "DEP-03",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'import numpy'",
+            "result_summary": "8 matching lines",
+            "latency_ms": 11.60858292132616
+          },
+          {
+            "tool": "read_file",
+            "args": "relevanceeval.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.08754199370741844
+          },
+          {
+            "tool": "read_file",
+            "args": "model_test.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.031000003218650818
+          },
+          {
+            "tool": "read_file",
+            "args": "embeddingvis.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.022500054910779
+          },
+          {
+            "tool": "read_file",
+            "args": "tfutils.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.02041715197265148
+          },
+          {
+            "tool": "read_file",
+            "args": "nearestneighbor.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.019167084246873856
+          },
+          {
+            "tool": "read_file",
+            "args": "model.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.05962490104138851
+          },
+          {
+            "tool": "read_file",
+            "args": "masked_seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.014125136658549309
+          },
+          {
+            "tool": "read_file",
+            "args": "seq_encoder.py:1-20",
+            "result_summary": "Read import section",
+            "latency_ms": 0.021458836272358894
+          }
+        ],
+        "total_tool_calls": 9,
+        "total_latency_ms": 11.9,
+        "result_count": 8,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "8 files with import form parsed"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "DEP-03",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "modules-importing numpy",
+            "result_summary": "8 typed imports",
+            "latency_ms": 129.9970829859376
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 130.0,
+        "result_count": 8,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "8 imports with alias, category, evidence, line numbers"
+      }
+    },
+    {
+      "query_id": "DEP-04",
+      "category": "dependency",
+      "description": "What are the top internal module dependencies?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, pre-ranked. Claude Code: 1 calls + post-processing. grep: raw lines.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "DEP-04",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'from src.|import src.'",
+            "result_summary": "0 import lines",
+            "latency_ms": 11.499083135277033
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 11.5,
+        "result_count": 0,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "0 raw import lines \u2014 no ranking, no dedup"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "DEP-04",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "internal imports",
+            "result_summary": "25 lines",
+            "latency_ms": 11.447249911725521
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 11.4,
+        "result_count": 10,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "10 modules ranked by importer count via grep + manual parse"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "DEP-04",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "top-internal-dependencies",
+            "result_summary": "6 ranked modules",
+            "latency_ms": 131.04816689155996
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 131.0,
+        "result_count": 6,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "6 modules ranked with evidence samples and import details"
+      }
+    },
+    {
+      "query_id": "CALL-01",
+      "category": "call_graph",
+      "description": "Who calls get_shape_list?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, 7 precise callers. Claude Code: 3 calls, 7 callers (manual AST). grep: 1 noisy file matches.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "CALL-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'get_shape_list'",
+            "result_summary": "1 files",
+            "latency_ms": 8.849750040099025
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 8.8,
+        "result_count": 1,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "1 files mention 'get_shape_list' \u2014 includes defs, strings, comments"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "CALL-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'get_shape_list'",
+            "result_summary": "10 lines",
+            "latency_ms": 8.623125031590462
+          },
+          {
+            "tool": "grep",
+            "args": "'def get_shape_list'",
+            "result_summary": "1 definitions",
+            "latency_ms": 9.918333031237125
+          },
+          {
+            "tool": "read_file",
+            "args": "bert_self_attention.py:163-173",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.11716713197529316
+          }
+        ],
+        "total_tool_calls": 3,
+        "total_latency_ms": 18.7,
+        "result_count": 7,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "partial",
+        "answer_quality": "7 callers found via multi-step grep+AST (no method ownership)"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "CALL-01",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "find-callers get_shape_list",
+            "result_summary": "7 callers",
+            "latency_ms": 129.4034169986844
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 129.4,
+        "result_count": 7,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "7 callers with qualified names, evidence lines, commit SHA"
+      }
+    },
+    {
+      "query_id": "CALL-02",
+      "category": "call_graph",
+      "description": "Who calls create_initializer?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, 5 precise callers. Claude Code: 3 calls, 5 callers (manual AST). grep: 1 noisy file matches.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "CALL-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'create_initializer'",
+            "result_summary": "1 files",
+            "latency_ms": 9.547708090394735
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 9.5,
+        "result_count": 1,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "1 files mention 'create_initializer' \u2014 includes defs, strings, comments"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "CALL-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'create_initializer'",
+            "result_summary": "11 lines",
+            "latency_ms": 9.107749909162521
+          },
+          {
+            "tool": "grep",
+            "args": "'def create_initializer'",
+            "result_summary": "1 definitions",
+            "latency_ms": 9.910499909892678
+          },
+          {
+            "tool": "read_file",
+            "args": "bert_self_attention.py:237-247",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.10333303362131119
+          }
+        ],
+        "total_tool_calls": 3,
+        "total_latency_ms": 19.1,
+        "result_count": 5,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "partial",
+        "answer_quality": "5 callers found via multi-step grep+AST (no method ownership)"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "CALL-02",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "find-callers create_initializer",
+            "result_summary": "5 callers",
+            "latency_ms": 121.8141671270132
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 121.8,
+        "result_count": 5,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "5 callers with qualified names, evidence lines, commit SHA"
+      }
+    },
+    {
+      "query_id": "CALL-03",
+      "category": "call_graph",
+      "description": "Who calls dropout?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, 3 precise callers. Claude Code: 5 calls, 5 callers (manual AST). grep: 7 noisy file matches.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "CALL-03",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'dropout'",
+            "result_summary": "7 files",
+            "latency_ms": 9.146708063781261
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 9.1,
+        "result_count": 7,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "7 files mention 'dropout' \u2014 includes defs, strings, comments"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "CALL-03",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'dropout'",
+            "result_summary": "77 lines",
+            "latency_ms": 8.983165957033634
+          },
+          {
+            "tool": "grep",
+            "args": "'def dropout'",
+            "result_summary": "1 definitions",
+            "latency_ms": 9.315542178228498
+          },
+          {
+            "tool": "read_file",
+            "args": "model.py:83-93",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.13008387759327888
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_seq_encoder.py:48-58",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.0466248020529747
+          },
+          {
+            "tool": "read_file",
+            "args": "bert_self_attention.py:37-47",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.15212479047477245
+          }
+        ],
+        "total_tool_calls": 5,
+        "total_latency_ms": 18.6,
+        "result_count": 5,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "partial",
+        "answer_quality": "5 callers found via multi-step grep+AST (no method ownership)"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "CALL-03",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "find-callers dropout",
+            "result_summary": "3 callers",
+            "latency_ms": 179.1338340844959
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 179.1,
+        "result_count": 3,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "3 callers with qualified names, evidence lines, commit SHA"
+      }
+    },
+    {
+      "query_id": "CALL-04",
+      "category": "call_graph",
+      "description": "Who calls train_log?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, 3 precise callers. Claude Code: 4 calls, 4 callers (manual AST). grep: 2 noisy file matches.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "CALL-04",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'train_log'",
+            "result_summary": "2 files",
+            "latency_ms": 10.135499993339181
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 10.1,
+        "result_count": 2,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "2 files mention 'train_log' \u2014 includes defs, strings, comments"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "CALL-04",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'train_log'",
+            "result_summary": "15 lines",
+            "latency_ms": 9.033250156790018
+          },
+          {
+            "tool": "grep",
+            "args": "'def train_log'",
+            "result_summary": "1 definitions",
+            "latency_ms": 9.661374846473336
+          },
+          {
+            "tool": "read_file",
+            "args": "model.py:208-218",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.1355418935418129
+          },
+          {
+            "tool": "read_file",
+            "args": "train.py:60-70",
+            "result_summary": "Verify call context",
+            "latency_ms": 0.09666592814028263
+          }
+        ],
+        "total_tool_calls": 4,
+        "total_latency_ms": 18.9,
+        "result_count": 4,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "partial",
+        "answer_quality": "4 callers found via multi-step grep+AST (no method ownership)"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "CALL-04",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "find-callers train_log",
+            "result_summary": "3 callers",
+            "latency_ms": 142.63424999080598
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 142.6,
+        "result_count": 3,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "3 callers with qualified names, evidence lines, commit SHA"
+      }
+    },
+    {
+      "query_id": "CALL-05",
+      "category": "call_graph",
+      "description": "Which symbols have the most callers?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call instant. Claude Code: 31 tool calls across 30 files. grep: impossible.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "CALL-05",
+        "tool_calls": [],
+        "total_tool_calls": 0,
+        "total_latency_ms": 0,
+        "result_count": 0,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "none",
+        "answer_quality": "Not possible with grep \u2014 requires call graph analysis"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "CALL-05",
+        "tool_calls": [
+          {
+            "tool": "find",
+            "args": "*.py",
+            "result_summary": "60 files",
+            "latency_ms": 5.339166847988963
+          },
+          {
+            "tool": "read_file",
+            "args": "download_dataset.py",
+            "result_summary": "Read 757 chars",
+            "latency_ms": 0.05583302117884159
+          },
+          {
+            "tool": "read_file",
+            "args": "setup.py",
+            "result_summary": "Read 586 chars",
+            "latency_ms": 0.022750115022063255
+          },
+          {
+            "tool": "read_file",
+            "args": "commentutils.py",
+            "result_summary": "Read 825 chars",
+            "latency_ms": 0.02337503246963024
+          },
+          {
+            "tool": "read_file",
+            "args": "ruby_parser.py",
+            "result_summary": "Read 3585 chars",
+            "latency_ms": 0.021124957129359245
+          },
+          {
+            "tool": "read_file",
+            "args": "javascript_parser.py",
+            "result_summary": "Read 3828 chars",
+            "latency_ms": 0.020750099793076515
+          },
+          {
+            "tool": "read_file",
+            "args": "__init__.py",
+            "result_summary": "Read 0 chars",
+            "latency_ms": 0.015042023733258247
+          },
+          {
+            "tool": "read_file",
+            "args": "php_parser.py",
+            "result_summary": "Read 3671 chars",
+            "latency_ms": 0.018582912161946297
+          },
+          {
+            "tool": "read_file",
+            "args": "python_parser.py",
+            "result_summary": "Read 8710 chars",
+            "latency_ms": 0.03504101186990738
+          },
+          {
+            "tool": "read_file",
+            "args": "java_parser.py",
+            "result_summary": "Read 3954 chars",
+            "latency_ms": 0.023250002413988113
+          },
+          {
+            "tool": "read_file",
+            "args": "language_parser.py",
+            "result_summary": "Read 3230 chars",
+            "latency_ms": 0.023790867999196053
+          },
+          {
+            "tool": "read_file",
+            "args": "go_parser.py",
+            "result_summary": "Read 2354 chars",
+            "latency_ms": 0.019290950149297714
+          },
+          {
+            "tool": "read_file",
+            "args": "language_data.py",
+            "result_summary": "Read 961 chars",
+            "latency_ms": 0.018666032701730728
+          },
+          {
+            "tool": "read_file",
+            "args": "__init__.py",
+            "result_summary": "Read 0 chars",
+            "latency_ms": 0.013083918020129204
+          },
+          {
+            "tool": "read_file",
+            "args": "utils.py",
+            "result_summary": "Read 1716 chars",
+            "latency_ms": 0.018750084564089775
+          },
+          {
+            "tool": "read_file",
+            "args": "parser_cli.py",
+            "result_summary": "Read 721 chars",
+            "latency_ms": 0.016916077584028244
+          },
+          {
+            "tool": "read_file",
+            "args": "process_calls.py",
+            "result_summary": "Read 3464 chars",
+            "latency_ms": 0.018999911844730377
+          },
+          {
+            "tool": "read_file",
+            "args": "process.py",
+            "result_summary": "Read 11214 chars",
+            "latency_ms": 0.038207974284887314
+          },
+          {
+            "tool": "read_file",
+            "args": "fetch_licenses.py",
+            "result_summary": "Read 2760 chars",
+            "latency_ms": 0.02695806324481964
+          },
+          {
+            "tool": "read_file",
+            "args": "relevanceeval.py",
+            "result_summary": "Read 5852 chars",
+            "latency_ms": 0.031499890610575676
+          },
+          {
+            "tool": "read_file",
+            "args": "model_test.py",
+            "result_summary": "Read 12896 chars",
+            "latency_ms": 0.07004197686910629
+          },
+          {
+            "tool": "read_file",
+            "args": "predict.py",
+            "result_summary": "Read 7404 chars",
+            "latency_ms": 0.04145805723965168
+          },
+          {
+            "tool": "read_file",
+            "args": "__init__.py",
+            "result_summary": "Read 0 chars",
+            "latency_ms": 0.0211251899600029
+          },
+          {
+            "tool": "read_file",
+            "args": "embeddingvis.py",
+            "result_summary": "Read 3234 chars",
+            "latency_ms": 0.028499867767095566
+          },
+          {
+            "tool": "read_file",
+            "args": "general_utils.py",
+            "result_summary": "Read 461 chars",
+            "latency_ms": 0.02145790494978428
+          },
+          {
+            "tool": "read_file",
+            "args": "repo_helper.py",
+            "result_summary": "Read 2447 chars",
+            "latency_ms": 0.02141715958714485
+          },
+          {
+            "tool": "read_file",
+            "args": "tfutils.py",
+            "result_summary": "Read 6502 chars",
+            "latency_ms": 0.023667002096772194
+          },
+          {
+            "tool": "read_file",
+            "args": "__init__.py",
+            "result_summary": "Read 0 chars",
+            "latency_ms": 0.07395795546472073
+          },
+          {
+            "tool": "read_file",
+            "args": "py_utils.py",
+            "result_summary": "Read 2572 chars",
+            "latency_ms": 0.039833132177591324
+          },
+          {
+            "tool": "read_file",
+            "args": "nearestneighbor.py",
+            "result_summary": "Read 4617 chars",
+            "latency_ms": 0.07170881144702435
+          },
+          {
+            "tool": "read_file",
+            "args": "bpevocabulary.py",
+            "result_summary": "Read 9019 chars",
+            "latency_ms": 0.042791012674570084
+          }
+        ],
+        "total_tool_calls": 31,
+        "total_latency_ms": 6.3,
+        "result_count": 15,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "partial",
+        "answer_quality": "15 call-count ranked symbols via 31 file reads + AST parsing (no qualified names, no caller identity)"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "CALL-05",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "top-fan-in-symbols",
+            "result_summary": "93 symbols ranked",
+            "latency_ms": 125.28649996966124
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 125.3,
+        "result_count": 93,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "93 symbols with qualified names, caller identities, evidence samples"
+      }
+    },
+    {
+      "query_id": "SYM-01",
+      "category": "symbol",
+      "description": "Symbols in model.py?",
+      "winner": "supercontext",
+      "reason": "SC and Claude Code both use AST parsing. SC: pre-indexed, instant. Claude Code: 1 read + parse.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "SYM-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'def|class' model.py",
+            "result_summary": "42 defs",
+            "latency_ms": 3.2913328614085913
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 3.3,
+        "result_count": 42,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "42 def/class lines \u2014 no class membership, no qualified names"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "SYM-01",
+        "tool_calls": [
+          {
+            "tool": "read_file",
+            "args": "src/models/model.py",
+            "result_summary": "Read full file",
+            "latency_ms": 0.1824579667299986
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 0.2,
+        "result_count": 37,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "37 symbols with class membership via file read + AST"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "SYM-01",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "symbols-in-file src/models/model.py",
+            "result_summary": "37 symbols",
+            "latency_ms": 135.1520421449095
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 135.2,
+        "result_count": 37,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "37 symbols with qualified names, module path, evidence"
+      }
+    },
+    {
+      "query_id": "SYM-02",
+      "category": "symbol",
+      "description": "Symbols in seq_encoder.py?",
+      "winner": "supercontext",
+      "reason": "SC and Claude Code both use AST parsing. SC: pre-indexed, instant. Claude Code: 1 read + parse.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "SYM-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'def|class' seq_encoder.py",
+            "result_summary": "12 defs",
+            "latency_ms": 3.2556247897446156
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 3.3,
+        "result_count": 12,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "12 def/class lines \u2014 no class membership, no qualified names"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "SYM-02",
+        "tool_calls": [
+          {
+            "tool": "read_file",
+            "args": "src/encoders/seq_encoder.py",
+            "result_summary": "Read full file",
+            "latency_ms": 0.1194169744849205
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 0.1,
+        "result_count": 12,
+        "has_qualified_names": true,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "12 symbols with class membership via file read + AST"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "SYM-02",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "symbols-in-file src/encoders/seq_encoder.py",
+            "result_summary": "12 symbols",
+            "latency_ms": 128.5976250655949
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 128.6,
+        "result_count": 12,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "12 symbols with qualified names, module path, evidence"
+      }
+    },
+    {
+      "query_id": "BLAST-01",
+      "category": "blast_radius",
+      "description": "Blast radius of get_shape_list?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, 1 edges (instant). Claude Code: 4 calls, 3 affected (manual trace). grep: flat file list.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "BLAST-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'get_shape_list'",
+            "result_summary": "1 files",
+            "latency_ms": 9.7762499935925
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 9.8,
+        "result_count": 1,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "1 files mention 'get_shape_list' \u2014 no transitive analysis possible"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "BLAST-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'def get_shape_list'",
+            "result_summary": "1 defs",
+            "latency_ms": 11.295707896351814
+          },
+          {
+            "tool": "grep",
+            "args": "'get_shape_list'",
+            "result_summary": "10 references",
+            "latency_ms": 8.867749944329262
+          },
+          {
+            "tool": "read_file",
+            "args": "bert_self_attention.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.10916683822870255
+          },
+          {
+            "tool": "grep",
+            "args": "'import bert_self_attention'",
+            "result_summary": "2 importers",
+            "latency_ms": 11.43037504516542
+          }
+        ],
+        "total_tool_calls": 4,
+        "total_latency_ms": 31.7,
+        "result_count": 3,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": true,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "3 affected (2 transitive) via 4-step manual trace"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "BLAST-01",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "blast-radius get_shape_list",
+            "result_summary": "1 edges",
+            "latency_ms": 134.64283291250467
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 134.6,
+        "result_count": 1,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": true,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "1 dependency edges with full call chain and evidence"
+      }
+    },
+    {
+      "query_id": "BLAST-02",
+      "category": "blast_radius",
+      "description": "Blast radius of Model.train?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, 11 edges (instant). Claude Code: 15 calls, 12 affected (manual trace). grep: flat file list.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "BLAST-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'train'",
+            "result_summary": "18 files",
+            "latency_ms": 9.186000097543001
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 9.2,
+        "result_count": 18,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "18 files mention 'train' \u2014 no transitive analysis possible"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "BLAST-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'def train'",
+            "result_summary": "2 defs",
+            "latency_ms": 11.696624802425504
+          },
+          {
+            "tool": "grep",
+            "args": "'train'",
+            "result_summary": "146 references",
+            "latency_ms": 9.877583011984825
+          },
+          {
+            "tool": "read_file",
+            "args": "model.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.12937490828335285
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_self_att_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.027042115107178688
+          },
+          {
+            "tool": "read_file",
+            "args": "seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.026291003450751305
+          },
+          {
+            "tool": "read_file",
+            "args": "encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.020666979253292084
+          },
+          {
+            "tool": "read_file",
+            "args": "embeddingvis.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.018290942534804344
+          },
+          {
+            "tool": "read_file",
+            "args": "model_restore_helper.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.015041790902614594
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.020415987819433212
+          },
+          {
+            "tool": "read_file",
+            "args": "nearestneighbor.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.02374988980591297
+          },
+          {
+            "tool": "grep",
+            "args": "'import model'",
+            "result_summary": "29 importers",
+            "latency_ms": 12.241708813235164
+          },
+          {
+            "tool": "grep",
+            "args": "'import conv_self_att_encoder'",
+            "result_summary": "1 importers",
+            "latency_ms": 11.519124964252114
+          },
+          {
+            "tool": "grep",
+            "args": "'import seq_encoder'",
+            "result_summary": "9 importers",
+            "latency_ms": 12.002791976556182
+          },
+          {
+            "tool": "grep",
+            "args": "'import encoder'",
+            "result_summary": "20 importers",
+            "latency_ms": 11.581207858398557
+          },
+          {
+            "tool": "grep",
+            "args": "'import embeddingvis'",
+            "result_summary": "0 importers",
+            "latency_ms": 11.912374990060925
+          }
+        ],
+        "total_tool_calls": 15,
+        "total_latency_ms": 81.1,
+        "result_count": 12,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": true,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "12 affected (4 transitive) via 15-step manual trace"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "BLAST-02",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "blast-radius Model.train",
+            "result_summary": "11 edges",
+            "latency_ms": 138.0736669525504
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 138.1,
+        "result_count": 11,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": true,
+        "has_call_direction": true,
+        "precision": "exact",
+        "answer_quality": "11 dependency edges with full call chain and evidence"
+      }
+    },
+    {
+      "query_id": "BLAST-03",
+      "category": "blast_radius",
+      "description": "Blast radius of SeqEncoder?",
+      "winner": "claude_code",
+      "reason": "SC: 1 call, 0 edges (instant). Claude Code: 15 calls, 8 affected (manual trace). grep: flat file list.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "BLAST-03",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'SeqEncoder'",
+            "result_summary": "9 files",
+            "latency_ms": 8.86291591450572
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 8.9,
+        "result_count": 9,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "9 files mention 'SeqEncoder' \u2014 no transitive analysis possible"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "BLAST-03",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'def SeqEncoder'",
+            "result_summary": "1 defs",
+            "latency_ms": 12.06341595388949
+          },
+          {
+            "tool": "grep",
+            "args": "'SeqEncoder'",
+            "result_summary": "19 references",
+            "latency_ms": 8.284792071208358
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_self_att_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.1871250569820404
+          },
+          {
+            "tool": "read_file",
+            "args": "seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.056374818086624146
+          },
+          {
+            "tool": "read_file",
+            "args": "__init__.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.022458145394921303
+          },
+          {
+            "tool": "read_file",
+            "args": "conv_seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.020625069737434387
+          },
+          {
+            "tool": "read_file",
+            "args": "nbow_seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.017666956409811974
+          },
+          {
+            "tool": "read_file",
+            "args": "self_att_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.018290942534804344
+          },
+          {
+            "tool": "read_file",
+            "args": "masked_seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.016417121514678
+          },
+          {
+            "tool": "read_file",
+            "args": "rnn_seq_encoder.py:1-10",
+            "result_summary": "Read module header",
+            "latency_ms": 0.028458889573812485
+          },
+          {
+            "tool": "grep",
+            "args": "'import conv_self_att_encoder'",
+            "result_summary": "1 importers",
+            "latency_ms": 11.708291945979
+          },
+          {
+            "tool": "grep",
+            "args": "'import seq_encoder'",
+            "result_summary": "9 importers",
+            "latency_ms": 14.019209193065763
+          },
+          {
+            "tool": "grep",
+            "args": "'import __init__'",
+            "result_summary": "0 importers",
+            "latency_ms": 11.621458921581507
+          },
+          {
+            "tool": "grep",
+            "args": "'import conv_seq_encoder'",
+            "result_summary": "1 importers",
+            "latency_ms": 12.915582861751318
+          },
+          {
+            "tool": "grep",
+            "args": "'import nbow_seq_encoder'",
+            "result_summary": "1 importers",
+            "latency_ms": 11.521332897245884
+          }
+        ],
+        "total_tool_calls": 15,
+        "total_latency_ms": 82.5,
+        "result_count": 8,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "8 affected (0 transitive) via 15-step manual trace"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "BLAST-03",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "blast-radius SeqEncoder",
+            "result_summary": "0 edges",
+            "latency_ms": 137.9971660207957
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 138.0,
+        "result_count": 0,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": true,
+        "precision": "none",
+        "answer_quality": "Ambiguous symbol, fail-closed"
+      }
+    },
+    {
+      "query_id": "STRUCT-01",
+      "category": "structural",
+      "description": "Who imports src.models.model?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, grouped importers. Claude Code: 2 calls. grep: noisy matches.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "STRUCT-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'import model'",
+            "result_summary": "15 files",
+            "latency_ms": 11.386832920834422
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 11.4,
+        "result_count": 15,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "15 files \u2014 may include partial name matches"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "STRUCT-01",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'from src.models.model'",
+            "result_summary": "0 lines",
+            "latency_ms": 11.687667109072208
+          },
+          {
+            "tool": "grep",
+            "args": "path variants",
+            "result_summary": "9 lines",
+            "latency_ms": 11.782958172261715
+          }
+        ],
+        "total_tool_calls": 2,
+        "total_latency_ms": 23.5,
+        "result_count": 4,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "4 importing files via multi-pattern grep"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "STRUCT-01",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "who-imports src.models.model",
+            "result_summary": "3 importers",
+            "latency_ms": 123.11587482690811
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 123.1,
+        "result_count": 3,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "3 importers grouped by prefix with evidence"
+      }
+    },
+    {
+      "query_id": "STRUCT-02",
+      "category": "structural",
+      "description": "Who imports seq_encoder?",
+      "winner": "supercontext",
+      "reason": "SC: 1 call, grouped importers. Claude Code: 2 calls. grep: noisy matches.",
+      "grep": {
+        "approach": "grep",
+        "query_id": "STRUCT-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "-rl 'import seq_encoder'",
+            "result_summary": "7 files",
+            "latency_ms": 11.738208122551441
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 11.7,
+        "result_count": 7,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "noisy",
+        "answer_quality": "7 files \u2014 may include partial name matches"
+      },
+      "claude_code": {
+        "approach": "claude_code",
+        "query_id": "STRUCT-02",
+        "tool_calls": [
+          {
+            "tool": "grep",
+            "args": "'from src.encoders.seq_encoder'",
+            "result_summary": "0 lines",
+            "latency_ms": 11.620959034189582
+          },
+          {
+            "tool": "grep",
+            "args": "path variants",
+            "result_summary": "9 lines",
+            "latency_ms": 11.608625063672662
+          }
+        ],
+        "total_tool_calls": 2,
+        "total_latency_ms": 23.2,
+        "result_count": 7,
+        "has_qualified_names": false,
+        "has_evidence": false,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "partial",
+        "answer_quality": "7 importing files via multi-pattern grep"
+      },
+      "supercontext": {
+        "approach": "supercontext",
+        "query_id": "STRUCT-02",
+        "tool_calls": [
+          {
+            "tool": "kg_query",
+            "args": "who-imports src.encoders.seq_encoder",
+            "result_summary": "2 importers",
+            "latency_ms": 133.37570801377296
+          }
+        ],
+        "total_tool_calls": 1,
+        "total_latency_ms": 133.4,
+        "result_count": 2,
+        "has_qualified_names": true,
+        "has_evidence": true,
+        "has_transitive_deps": false,
+        "has_call_direction": false,
+        "precision": "exact",
+        "answer_quality": "2 importers grouped by prefix with evidence"
+      }
+    }
+  ]
+}
