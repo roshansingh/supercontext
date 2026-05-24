@@ -80,6 +80,8 @@ There is no full test suite yet. For now, verify changes with `compileall`, at l
 
 Use short imperative commit messages, matching the current history, for example `Add deterministic import normalization` or `Add parser-backed TypeScript extraction`. PR descriptions should include summary, scope, verification commands, and evaluation delta when behavior changes. Link relevant ADRs or docs when the PR implements an architectural decision.
 
+For implementation, integration, or evaluation branches, use product- or task-oriented branch names. Do not include agent-process terms such as `debate` in branch names.
+
 ## PR Review Loop
 
 Before creating a PR for the first time, after coding is finished, tests pass, and self-review is complete:
