@@ -183,6 +183,8 @@ def render_markdown(result: ClassificationResult) -> str:
         [
             "## Win Inventory",
             "",
+            "Rows preserve the source report order.",
+            "",
             "| Task | Phase | Confidence | MCP Tool Count | Raw |",
             "|---|---|---:|---:|---|",
         ]
@@ -392,6 +394,8 @@ def _load_post_pr119(paths: list[Path]) -> dict[str, FocusedRerunEvidence]:
                 raise ValueError(f"{path}:{line_number}.judge_winner unsupported value: {winner!r}")
             confidence = _require_number(row.get("judge_confidence"), f"{path}:{line_number}.judge_confidence")
             on = row.get("on")
+            if on is not None and not isinstance(on, dict):
+                raise ValueError(f"{path}:{line_number}.on must be an object")
             on_record = on if isinstance(on, dict) else {}
             mcp_tools = on_record.get("mcp_tools_called")
             mcp_attempts = on_record.get("mcp_tool_attempt_count")
@@ -464,7 +468,7 @@ def _is_caveat_header(line: str) -> bool:
     if not line.startswith("|"):
         return False
     cells = [cell.strip().lower() for cell in line.strip().strip("|").split("|")]
-    return cells == ["task", "result", "classification", "what happened"]
+    return len(cells) == 4 and cells[:3] == ["task", "result", "classification"] and bool(cells[3])
 
 
 def _is_markdown_separator_row(line: str) -> bool:

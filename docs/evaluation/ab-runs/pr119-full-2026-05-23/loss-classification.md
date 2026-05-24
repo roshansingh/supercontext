@@ -108,6 +108,8 @@ Generated from the sanitized pr119-full-2026-05-23 A/B report plus available loc
 
 ## Win Inventory
 
+Rows preserve the source report order.
+
 | Task | Phase | Confidence | MCP Tool Count | Raw |
 |---|---|---:|---:|---|
 | Q053 | review | 0.95 | 7 | missing |

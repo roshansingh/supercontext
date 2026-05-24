@@ -66,6 +66,28 @@ class ClassifyNonWinsTest(unittest.TestCase):
         self.assertEqual(result.non_wins[0].task_id, "Q001")
         self.assertEqual(result.non_wins[0].report_summary, "Separator skipped.")
 
+    def test_caveat_header_allows_alternate_summary_column_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            report_md = root / "ab-report.md"
+            _write_report(report_json, [_row("Q001", "mcp_off")])
+            report_md.write_text(
+                "\n".join(
+                    [
+                        "| Task | Result | Classification | Notes |",
+                        "|---|---|---|---|",
+                        "| Q001 | `mcp_off` won | Real MCP quality loss | Alternate header. |",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = classify_non_wins(report_json, report_md_path=report_md)
+
+        self.assertEqual(result.non_wins[0].report_summary, "Alternate header.")
+
     def test_blank_line_inside_caveat_table_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -234,6 +256,16 @@ class ClassifyNonWinsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Post-pr119 task_id not found"):
                 classify_non_wins(report_json, post_pr119_paths=[post_path])
 
+    def test_rendered_win_inventory_documents_source_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_json = Path(tmp) / "ab-report.json"
+            _write_report(report_json, [_row("Q099", "mcp_on"), _row("Q001", "mcp_on")])
+
+            markdown = render_markdown(classify_non_wins(report_json))
+
+        self.assertIn("Rows preserve the source report order.", markdown)
+        self.assertLess(markdown.index("| Q099 |"), markdown.index("| Q001 |"))
+
     def test_report_markdown_without_caveat_rows_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -254,6 +286,28 @@ class ClassifyNonWinsTest(unittest.TestCase):
             post_path.write_text("{not json}\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "post.jsonl:1 must be valid JSON"):
+                classify_non_wins(report_json, post_pr119_paths=[post_path])
+
+    def test_non_object_post_pr119_on_field_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "ab-report.json"
+            post_path = root / "post.jsonl"
+            _write_report(report_json, [_row("Q003", "mcp_off")])
+            post_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "Q003",
+                        "judge_winner": "mcp_on",
+                        "judge_confidence": 0.95,
+                        "on": "mcp_on",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, r"post\.jsonl:1\.on must be an object"):
                 classify_non_wins(report_json, post_pr119_paths=[post_path])
 
 
