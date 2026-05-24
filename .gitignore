@@ -4,10 +4,12 @@ data/ab_runs/
 .supercontext/
 .bettercontext/
 docs/plans/
+docs/next/
 docs/reviews/
 docs/evaluation/runs/
 # Private debate seed; reusable eval code/docs live in tracked source/README files.
 docs/MCP-AB-EVAL-DEBATE-SEED.md
+docs/ontology/implementation-taxonomy-borrow-notes.md
 .env
 __pycache__/
 *.pyc
