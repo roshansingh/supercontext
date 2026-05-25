@@ -56,7 +56,7 @@ Before reviewing a diff, call `review_context` with:
 - `changed_files`
 - `changed_ranges` when line ranges are known
 
-Use returned `changed_symbols`, `direct_callers`, `direct_callees`, and `repo_dependencies` to decide what to inspect next. Drill into primitive tools for concrete findings.
+Read `changed_surface`, `impact`, `runtime_surfaces`, `source_coordinates`, `answerability`, and `unsupported_review_scopes` before deciding what to inspect next. Use `source_coordinates` for targeted diff/source reads. Drill into primitive tools only for concrete follow-up findings or missing details.
 
 ## Trace Evaluation
 

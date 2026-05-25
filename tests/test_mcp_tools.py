@@ -117,6 +117,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["anchors"]["repo"], "payments")
         self.assertEqual(result["anchors"]["package"], "shared-lib")
         self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"IMPORTS", "RESOLVES_TO_REPO"})
+        self.assertEqual(result["snapshot_summary"]["entity_count"], 11)
+        self.assertEqual(result["snapshot_summary"]["fact_count"], 7)
+        self.assertEqual(result["snapshot_scope"]["repo"], "payments")
+        self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
+        self.assertGreater(result["snapshot_scope"]["fact_count"], 0)
 
     def test_planning_context_service_and_repo_narrow_without_scope_rejection(self) -> None:
         with _fixture_snapshot() as kg:
@@ -125,6 +130,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["status"], "found")
         self.assertEqual(len(result["services"]), 1)
         self.assertEqual(result["services"][0]["slug"], "payments")
+
+    def test_planning_context_repo_scope_hint_does_not_promote_missing_rows(self) -> None:
+        with _fixture_snapshot(extra_consumers=1) as kg:
+            result = call_tool(kg, "planning_context", {"repo": "consumer-0"})
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["answerability"]["status"], "not_answerable")
+        self.assertEqual(result["snapshot_scope"]["repo"], "consumer-0")
+        self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
+        self.assertTrue(any("snapshot_summary" in action for action in result["next_actions"]))
 
     def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
         with _fixture_snapshot() as kg:
@@ -201,6 +216,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(service_brief["summary"]["endpoint_fact_count"], result["summary"]["endpoint_fact_count"])
         self.assertEqual(service_brief["summary"]["event_fact_count"], result["summary"]["event_fact_count"])
         self.assertFalse(any(family == "deploy_mapping" for family in result["answerability"]["missing_fact_families"]))
+
+    def test_planning_context_service_anchor_includes_endpoint_consumers(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True) as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 1)
+        self.assertEqual(result["endpoint_consumers"][0]["consumer"]["slug"], "web")
+        self.assertEqual(result["related_facts"]["service_brief"]["summary"]["endpoint_consumer_fact_count"], 1)
+        self.assertEqual(result["related_facts"]["endpoint_consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
 
     def test_planning_context_symbol_anchor_returns_impact_and_coordinates(self) -> None:
         with _fixture_snapshot() as kg:
@@ -292,6 +317,38 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual({row["predicate"] for row in result["endpoints"]}, {"EXPOSES_ENDPOINT"})
         self.assertEqual({row["predicate"] for row in result["event_channels"]}, {"CONSUMES_EVENT", "PRODUCES_EVENT"})
 
+    def test_planning_context_service_enrichment_survives_secondary_anchor(self) -> None:
+        with _fixture_snapshot(extra_service_endpoint=True) as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments", "endpoint": "/checkout", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["endpoint_fact_count"], 2)
+        self.assertEqual({row["object"] for row in result["endpoints"]}, {"POST /checkout", "GET /refund"})
+
+    def test_planning_context_missing_identity_followups_are_actionable(self) -> None:
+        with _fixture_snapshot() as kg:
+            missing_service = call_tool(kg, "planning_context", {"service": "missing", "endpoint": "/checkout"})
+            missing_symbol = call_tool(kg, "planning_context", {"symbol": "missing", "endpoint": "/checkout"})
+
+        self.assertEqual(missing_service["answerability"]["missing_fact_families"], ["service_identity"])
+        self.assertTrue(any("search_services" in action for action in missing_service["answerability"]["recommended_followups"]))
+        self.assertEqual(missing_symbol["answerability"]["missing_fact_families"], ["symbol_identity"])
+        self.assertTrue(any("path" in action and "line" in action for action in missing_symbol["answerability"]["recommended_followups"]))
+
+    def test_planning_context_dedupes_same_location_bytes_ref_and_row_geometry(self) -> None:
+        with _fixture_snapshot(symbol_entity_evidence_duplicate_coordinates=True) as kg:
+            result = call_tool(kg, "planning_context", {"symbol": "handle_checkout"})
+
+        checkout_coordinates = [
+            coordinate
+            for coordinate in result["source_coordinates"]
+            if coordinate["path"] == "payments/checkout.py"
+            and coordinate["line_start"] == 10
+            and coordinate["line_end"] == 20
+        ]
+        self.assertEqual(len(checkout_coordinates), 1)
+        self.assertEqual(checkout_coordinates[0]["provenance"], "bytes_ref")
+
     def test_get_service_brief_dedupes_related_rows(self) -> None:
         with _fixture_snapshot(duplicate_endpoint_fact=True) as kg:
             result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
@@ -299,6 +356,33 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["status"], "found")
         self.assertEqual(result["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(len(result["endpoints"]), 1)
+
+    def test_get_service_brief_surfaces_bounded_endpoint_consumers(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 1)
+        self.assertEqual(result["summary"]["endpoint_consumer_service_count"], 1)
+        packet = result["endpoint_consumers"]
+        self.assertEqual(packet["summary"]["consumer_fact_count"], 1)
+        self.assertEqual(packet["summary"]["consumer_service_count"], 1)
+        self.assertEqual(packet["summary"]["host_resolution_kind_counts"], {"env_backed_unresolved": 1})
+        self.assertEqual(packet["consumers"][0]["consumer"]["slug"], "web")
+        self.assertEqual(packet["consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
+        self.assertEqual(packet["consumers"][0]["match_basis"], "normalized_endpoint_path_and_compatible_method")
+        self.assertTrue(any("endpoint_consumers" in action for action in result["next_actions"]))
+
+    def test_get_service_brief_treats_provider_any_method_as_compatible(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            provider_endpoint_method="ANY",
+            endpoint_consumer_method="GET",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 1)
+        self.assertEqual(result["endpoint_consumers"]["consumers"][0]["matched_provider_endpoint"]["methods"], ["ANY"])
 
     def test_review_context_aggregates_symbols_and_call_edges(self) -> None:
         with _fixture_snapshot() as kg:
@@ -317,7 +401,34 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
         self.assertEqual({row["predicate"] for row in result["direct_callees"]}, {"CALLS"})
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+        self.assertEqual(result["answerability"]["status"], "answerable")
+        self.assertEqual(result["summary"]["changed_file_count"], 1)
+        self.assertEqual(result["summary"]["changed_symbol_count"], 2)
+        self.assertEqual(result["changed_surface"]["files"][0]["symbol_count"], 2)
+        self.assertEqual(result["changed_surface"]["symbols"][0]["qualname"], "bootstrap_checkout")
+        self.assertEqual({row["predicate"] for row in result["impact"]["direct_callees"]}, {"CALLS"})
+        self.assertEqual({row["predicate"] for row in result["runtime_surfaces"]["endpoints"]}, {"EXPOSES_ENDPOINT"})
+        self.assertEqual(
+            {row["predicate"] for row in result["runtime_surfaces"]["event_channels"]},
+            {"CONSUMES_EVENT", "PRODUCES_EVENT"},
+        )
+        self.assertTrue(result["source_coordinates"])
+        self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
         _assert_additive_fields(self, result)
+
+    def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 1)
+        consumer = result["runtime_surfaces"]["endpoint_consumers"][0]
+        self.assertEqual(consumer["predicate"], "CALLS_ENDPOINT")
+        self.assertEqual(consumer["consumer"]["repo"], "web")
+        self.assertEqual(consumer["matched_provider_endpoint"]["methods"], ["POST"])
 
     def test_review_context_repo_filter_is_case_insensitive(self) -> None:
         with _fixture_snapshot() as kg:
@@ -374,6 +485,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["direct_callers"], [])
         self.assertEqual(result["direct_callees"], [])
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertEqual(result["answerability"]["missing_fact_families"], ["changed_symbols"])
+        self.assertEqual(result["changed_surface"]["files"][0]["symbol_count"], 0)
 
     def test_review_context_changed_ranges_fail_closed_for_non_overlapping_file(self) -> None:
         with _fixture_snapshot() as kg:
@@ -426,6 +540,7 @@ class McpToolsTest(unittest.TestCase):
             )
 
         self.assertEqual(default["unsupported_scopes"], [])
+        self.assertEqual(default["unsupported_review_scopes"], [])
         self.assertEqual(
             opted_in["unsupported_scopes"],
             [
@@ -436,6 +551,9 @@ class McpToolsTest(unittest.TestCase):
                 }
             ],
         )
+        self.assertEqual(opted_in["unsupported_review_scopes"], opted_in["unsupported_scopes"])
+        self.assertEqual(opted_in["answerability"]["status"], "partial")
+        self.assertEqual(opted_in["answerability"]["missing_fact_families"], ["deploy_blockers"])
 
     def test_search_services_and_service_brief_return_json_shapes(self) -> None:
         with _fixture_snapshot() as kg:
@@ -451,8 +569,12 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(brief["status"], "found")
         self.assertEqual(brief["service"]["slug"], "payments")
         self.assertEqual(brief["summary"]["endpoint_fact_count"], 1)
+        self.assertEqual(brief["answerability"]["status"], "partial")
+        self.assertEqual(brief["answerability"]["missing_fact_families"], ["deploy_mapping"])
+        self.assertTrue(brief["next_actions"])
         self.assertEqual(limited_brief["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
+        self.assertEqual(brief["summary"]["endpoint_consumer_fact_count"], 0)
         self.assertEqual(len(limited_brief["endpoints"]), 1)
         self.assertEqual(len(limited_brief["event_channels"]), 1)
         self.assertFalse(any(key.startswith("_") for key in brief["endpoints"][0]))
@@ -495,10 +617,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(any(row["qualname"] == "charge_card" for row in planning["symbols"]))
         self.assertEqual(callers["status"], "not_found")
         self.assertEqual(callers["target"]["confidence"], "not_found")
+        self.assertTrue(callers["next_actions"])
+        self.assertIn("not proof of absence", callers["next_actions"][0])
         self.assertEqual(callees["status"], "not_found")
         self.assertEqual(callees["source"]["confidence"], "not_found")
+        self.assertTrue(callees["next_actions"])
         self.assertEqual(radius["status"], "not_found")
         self.assertEqual(radius["source"]["confidence"], "not_found")
+        self.assertTrue(radius["next_actions"])
         self.assertEqual(dependency["status"], "not_found")
         self.assertEqual(dependency["source"]["confidence"], "not_found")
         self.assertEqual(evidence["status"], "not_found")
@@ -517,9 +643,21 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(producers["returned_count"], 1)
         self.assertEqual(producers["producers"][0]["predicate"], "PRODUCES_EVENT")
         self.assertEqual(limited_producers["status"], "found")
+        self.assertEqual(consumers["answerability"]["status"], "answerable")
+        self.assertEqual(consumers["answerability"]["missing_fact_families"], [])
+        self.assertTrue(any("time-window usage" in action for action in consumers["next_actions"]))
         _assert_additive_fields(self, consumers)
         _assert_additive_fields(self, producers)
         _assert_additive_fields(self, limited_producers)
+
+    def test_event_tools_not_found_distinguish_static_miss_from_runtime_proof(self) -> None:
+        with _fixture_snapshot() as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "missing-channel"})
+
+        self.assertEqual(consumers["status"], "not_found")
+        self.assertEqual(consumers["answerability"]["status"], "partial")
+        self.assertEqual(consumers["answerability"]["missing_fact_families"], ["static_event_facts"])
+        self.assertTrue(any("no indexed static event facts" in action for action in consumers["next_actions"]))
 
     def test_event_tools_scan_all_matching_facts_before_limiting(self) -> None:
         with _fixture_snapshot(extra_consumers=125) as kg:
@@ -537,6 +675,8 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "unsupported_by_current_kg")
         self.assertEqual(result["missing_contract"], "deploy_blockers_for")
+        self.assertTrue(result["unsupported_scopes"])
+        self.assertTrue(any("deployment manifests" in action for action in result["next_actions"]))
         _assert_additive_fields(self, result)
 
     def test_tool_arguments_fail_closed(self) -> None:
@@ -593,7 +733,13 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(initialized["result"]["serverInfo"]["name"], "supercontext-local")
         self.assertEqual(initialized["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
+        self.assertIn("instructions", initialized["result"])
+        instructions = initialized["result"]["instructions"]
+        self.assertIn("planning_context first", instructions)
+        self.assertIn("review_context first", instructions)
+        self.assertIn("inspect the relevant workspace source files", instructions)
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
+        self.assertEqual(initialized_with_client_version["result"]["instructions"], instructions)
         self.assertEqual(ping["result"], {})
         self.assertEqual(batch[0]["id"], 3)
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
@@ -705,11 +851,21 @@ class _fixture_snapshot:
         extra_package_importers: int = 0,
         extra_charge_card_symbol: bool = False,
         duplicate_endpoint_fact: bool = False,
+        extra_service_endpoint: bool = False,
+        endpoint_consumer: bool = False,
+        provider_endpoint_method: str = "POST",
+        endpoint_consumer_method: str = "POST",
+        symbol_entity_evidence_duplicate_coordinates: bool = False,
     ) -> None:
         self.extra_consumers = extra_consumers
         self.extra_package_importers = extra_package_importers
         self.extra_charge_card_symbol = extra_charge_card_symbol
         self.duplicate_endpoint_fact = duplicate_endpoint_fact
+        self.extra_service_endpoint = extra_service_endpoint
+        self.endpoint_consumer = endpoint_consumer
+        self.provider_endpoint_method = provider_endpoint_method
+        self.endpoint_consumer_method = endpoint_consumer_method
+        self.symbol_entity_evidence_duplicate_coordinates = symbol_entity_evidence_duplicate_coordinates
 
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -762,9 +918,35 @@ class _fixture_snapshot:
                 "tenant_id": "default",
                 "repo": "payments",
                 "protocol": "http",
-                "method": "POST",
+                "method": self.provider_endpoint_method,
                 "path": "/checkout",
                 "host": None,
+            },
+        )
+        extra_endpoint = Entity(
+            kind="Endpoint",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "protocol": "http",
+                "method": "GET",
+                "path": "/refund",
+                "host": None,
+            },
+        )
+        consumer_service = Entity(
+            kind="Service",
+            identity={"tenant_id": "default", "namespace": "default", "slug": "web", "repo": "web"},
+        )
+        consumer_endpoint = Entity(
+            kind="Endpoint",
+            identity={
+                "tenant_id": "default",
+                "repo": "web",
+                "protocol": "http",
+                "method": self.endpoint_consumer_method,
+                "path": "/checkout",
+                "host": "${env:PAYMENTS_API_BASE_URL}",
             },
         )
         channel = Entity(
@@ -818,7 +1000,32 @@ class _fixture_snapshot:
             provider_repo.entity_id,
             {"consumer_repo": "payments", "package_name": "shared-lib"},
         )
-        endpoint_fact = Fact("EXPOSES_ENDPOINT", service.entity_id, endpoint.entity_id, {"method": "POST", "path": "/checkout"})
+        endpoint_fact = Fact(
+            "EXPOSES_ENDPOINT",
+            service.entity_id,
+            endpoint.entity_id,
+            {"method": self.provider_endpoint_method, "path": "/checkout"},
+        )
+        extra_endpoint_fact = Fact(
+            "EXPOSES_ENDPOINT",
+            service.entity_id,
+            extra_endpoint.entity_id,
+            {"method": "GET", "path": "/refund"},
+        )
+        endpoint_consumer_fact = Fact(
+            "CALLS_ENDPOINT",
+            consumer_service.entity_id,
+            consumer_endpoint.entity_id,
+            {
+                "confidence": "host_unresolved_path_resolved",
+                "host_resolution_kind": "env_backed_unresolved",
+                "method": self.endpoint_consumer_method,
+                "path": "/checkout",
+                "raw_target": "${env:PAYMENTS_API_BASE_URL}/checkout",
+                "resolution_kind": "path_resolved",
+                "source_kind": "http_client",
+            },
+        )
         consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
         domain_fact = Fact("REFERENCES_DOMAIN", env_var.entity_id, domain.entity_id)
@@ -886,6 +1093,36 @@ class _fixture_snapshot:
                 confidence=1.0,
             ),
         ]
+        if self.symbol_entity_evidence_duplicate_coordinates:
+            evidence.append(
+                Evidence(
+                    target_type="entity",
+                    target_id=caller.entity_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "payments"},
+                    bytes_ref={
+                        "repo": "payments",
+                        "commit_sha": "fixture-sha",
+                        "path": "payments/checkout.py",
+                        "line_start": 10,
+                        "line_end": 20,
+                    },
+                    confidence=1.0,
+                )
+            )
+        if self.endpoint_consumer:
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=endpoint_consumer_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "web"},
+                    bytes_ref={"repo": "web", "path": "web/src/api.ts", "line_start": 42, "line_end": 42},
+                    confidence=0.8,
+                )
+            )
         entities = [
             service,
             caller,
@@ -893,6 +1130,8 @@ class _fixture_snapshot:
             module,
             callee,
             endpoint,
+            *([extra_endpoint] if self.extra_service_endpoint else []),
+            *([consumer_service, consumer_endpoint] if self.endpoint_consumer else []),
             channel,
             domain,
             env_var,
@@ -907,6 +1146,8 @@ class _fixture_snapshot:
             import_fact,
             repo_link_fact,
             endpoint_fact,
+            *([extra_endpoint_fact] if self.extra_service_endpoint else []),
+            *([endpoint_consumer_fact] if self.endpoint_consumer else []),
             consume_fact,
             produce_fact,
             domain_fact,

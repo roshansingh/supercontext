@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 import json
 import random
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
+from typing import cast, get_origin, get_type_hints
 from uuid import uuid4
 
 from source.kg.eval.corpus import DEFAULT_QUERY_SET, EvalTask, default_v1_tasks, parse_query_set
@@ -42,6 +44,15 @@ def main() -> None:
     )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
     parser.add_argument("--mcp-url", default=None, help="SuperContext HTTP MCP URL for mcp_on runs.")
+    parser.add_argument(
+        "--reuse-mcp-off-from",
+        default=None,
+        help=(
+            "Existing A/B run directory to reuse compatible mcp_off record.json files from. "
+            "Use only for iterative MCP-on experiments; omit for fresh merge-gating runs. "
+            "Only cached mcp_off host calls are skipped; mcp_on still applies its normal host setup."
+        ),
+    )
     parser.add_argument(
         "--parallelism",
         type=_positive_int,
@@ -85,6 +96,7 @@ def main() -> None:
         seed=args.seed,
         config=config,
         parallelism=args.parallelism,
+        reuse_mcp_off_from=Path(args.reuse_mcp_off_from) if args.reuse_mcp_off_from else None,
     )
     for record in records:
         payload = record.to_json()
@@ -157,11 +169,23 @@ def _run_paired_tasks(
     run_host_command=None,
     group_id_factory=uuid4,
     parallelism: int = 1,
+    reuse_mcp_off_from: Path | None = None,
 ) -> list[RunRecord]:
     if parallelism < 1:
         raise ValueError("parallelism must be at least 1")
     if run_host_command is None:
         run_host_command = _run_host_config_command
+    cached_mcp_off = (
+        _load_cached_mcp_off_records(
+            reuse_mcp_off_from,
+            tasks=tasks,
+            snapshot=snapshot,
+            host=host,
+            config=config,
+        )
+        if reuse_mcp_off_from is not None
+        else {}
+    )
     rng = random.Random(seed)
     jobs: list[tuple[int, EvalTask, str, Arm]] = []
     for task in tasks:
@@ -180,10 +204,21 @@ def _run_paired_tasks(
             config=config,
             run_task=run_task,
             parallelism=parallelism,
+            cached_mcp_off=cached_mcp_off,
         )
 
     records: list[RunRecord] = []
     for _, task, run_group_id, arm in jobs:
+        if arm == "mcp_off" and task.task_id in cached_mcp_off:
+            records.append(
+                _materialize_cached_mcp_off_record(
+                    cached_mcp_off[task.task_id],
+                    output_dir=output_dir,
+                    run_group_id=run_group_id,
+                    random_seed=seed,
+                )
+            )
+            continue
         pre_command = _pre_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
         post_command = _post_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
         primary_error: BaseException | None = None
@@ -228,8 +263,20 @@ def _run_paired_tasks_parallel(
     config: RunnerConfig,
     run_task,
     parallelism: int,
+    cached_mcp_off: dict[str, RunRecord],
 ) -> list[RunRecord]:
     records_by_index: dict[int, RunRecord] = {}
+    pending_jobs = []
+    for index, task, run_group_id, arm in jobs:
+        if arm == "mcp_off" and task.task_id in cached_mcp_off:
+            records_by_index[index] = _materialize_cached_mcp_off_record(
+                cached_mcp_off[task.task_id],
+                output_dir=output_dir,
+                run_group_id=run_group_id,
+                random_seed=seed,
+            )
+        else:
+            pending_jobs.append((index, task, run_group_id, arm))
     with ThreadPoolExecutor(max_workers=parallelism) as executor:
         futures = {
             executor.submit(
@@ -246,7 +293,7 @@ def _run_paired_tasks_parallel(
                 config=config,
                 run_task=run_task,
             ): index
-            for index, task, run_group_id, arm in jobs
+            for index, task, run_group_id, arm in pending_jobs
         }
         try:
             for future in as_completed(futures):
@@ -290,6 +337,140 @@ def _run_arm_task(
     if arm == "mcp_off" and record.mcp_tools_called:
         raise RuntimeError("mcp_off run unexpectedly called SuperContext MCP tools")
     return record
+
+
+def _load_cached_mcp_off_records(
+    cache_dir: Path,
+    *,
+    tasks: list[EvalTask],
+    snapshot: str | Path,
+    host: str,
+    config: RunnerConfig,
+) -> dict[str, RunRecord]:
+    if not cache_dir.exists():
+        raise ValueError(f"--reuse-mcp-off-from does not exist: {cache_dir}")
+    expected_tasks = {task.task_id: task for task in tasks}
+    records: dict[str, RunRecord] = {}
+    for record_path in sorted(cache_dir.glob("*/mcp_off/record.json")):
+        record = _read_run_record(record_path)
+        if record.task_id not in expected_tasks:
+            continue
+        if record.task_id in records:
+            raise ValueError(f"Multiple cached mcp_off records found for task {record.task_id}")
+        _validate_cached_mcp_off_record(
+            record,
+            record_path=record_path,
+            task=expected_tasks[record.task_id],
+            snapshot=snapshot,
+            host=host,
+            config=config,
+        )
+        records[record.task_id] = record
+
+    missing = sorted(set(expected_tasks) - set(records))
+    if missing:
+        raise ValueError(f"Missing cached mcp_off record(s) for task ID(s): {', '.join(missing)}")
+    return records
+
+
+def _read_run_record(record_path: Path) -> RunRecord:
+    try:
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("record JSON must be an object")
+        return _run_record_from_payload(payload)
+    except TypeError as exc:
+        raise ValueError(f"Cached run record has incompatible schema: {record_path}") from exc
+
+
+def _run_record_from_payload(payload: dict[str, object]) -> RunRecord:
+    normalized = dict(payload)
+    type_hints = get_type_hints(RunRecord)
+    for field_name, field_type in type_hints.items():
+        if get_origin(field_type) is not tuple or field_name not in normalized:
+            continue
+        value = normalized[field_name]
+        if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"Cached run record field {field_name!r} must be a list of strings")
+        normalized[field_name] = tuple(value)
+    return RunRecord(**normalized)
+
+
+def _validate_cached_mcp_off_record(
+    record: RunRecord,
+    *,
+    record_path: Path,
+    task: EvalTask,
+    snapshot: str | Path,
+    host: str,
+    config: RunnerConfig,
+) -> None:
+    if record.arm != "mcp_off":
+        raise ValueError(f"Cached record is not mcp_off: {record_path}")
+    if record.mcp_tools_called:
+        raise ValueError(f"Cached mcp_off record unexpectedly used MCP tools: {record_path}")
+    expected = {
+        "phase": task.phase,
+        "difficulty": task.difficulty,
+        "repo_fixture": task.fixture,
+        "task_prompt": task.prompt,
+        "host": host,
+        "model": config.model,
+    }
+    actual = {
+        "phase": record.phase,
+        "difficulty": record.difficulty,
+        "repo_fixture": record.repo_fixture,
+        "task_prompt": record.task_prompt,
+        "host": record.host,
+        "model": record.model,
+    }
+    for field, expected_value in expected.items():
+        if actual[field] != expected_value:
+            raise ValueError(
+                f"Cached mcp_off record {record_path} has incompatible {field}: "
+                f"{actual[field]!r} != {expected_value!r}"
+            )
+    if _resolved_path(record.snapshot_path) != _resolved_path(snapshot):
+        raise ValueError(
+            f"Cached mcp_off record {record_path} has incompatible snapshot: "
+            f"{record.snapshot_path!r} != {str(snapshot)!r}"
+        )
+
+
+def _materialize_cached_mcp_off_record(
+    cached: RunRecord,
+    *,
+    output_dir: str | Path,
+    run_group_id: str,
+    random_seed: int,
+) -> RunRecord:
+    arm_dir = Path(output_dir) / run_group_id / "mcp_off"
+    if arm_dir.exists():
+        raise ValueError(f"A/B eval output already exists for cached mcp_off arm: {arm_dir}")
+    arm_dir.mkdir(parents=True)
+    if not cached.host_session_log_path:
+        raise ValueError("Cached mcp_off record is missing host_session_log_path")
+    source_log = Path(cached.host_session_log_path).expanduser()
+    if not source_log.exists():
+        raise ValueError(f"Cached mcp_off host session log does not exist: {source_log}")
+    target_log = arm_dir / "messages.jsonl"
+    shutil.copyfile(source_log, target_log)
+    host_session_log_path = str(target_log)
+    record = replace(
+        cached,
+        run_group_id=run_group_id,
+        random_seed=random_seed,
+        pre_arm_host_config_command=(),
+        post_arm_host_config_command=(),
+        host_session_log_path=host_session_log_path,
+    )
+    (arm_dir / "record.json").write_text(json.dumps(record.to_json(), indent=2, sort_keys=True), encoding="utf-8")
+    return record
+
+
+def _resolved_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
 
 
 def _pre_arm_host_config_command(*, arm: Arm, host: str, mcp_url: str) -> tuple[str, ...]:

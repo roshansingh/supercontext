@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +24,7 @@ from source.scripts.run_ab_eval import (
     _positive_int,
     _post_arm_host_config_command,
     _pre_arm_host_config_command,
+    _read_run_record,
     _run_host_config_command,
     _run_paired_tasks,
 )
@@ -206,6 +209,116 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(commands, [])
+
+    def test_reuse_mcp_off_from_cache_materializes_record_and_skips_host_run(self) -> None:
+        task = _task()
+        commands: list[tuple[str, ...]] = []
+        calls: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_arm_dir = root / "cache" / "old-group" / "mcp_off"
+            cache_arm_dir.mkdir(parents=True)
+            cached_messages = cache_arm_dir / "messages.jsonl"
+            cached_messages.write_text('{"cached": true}\n', encoding="utf-8")
+            cached_payload = _record(
+                task=task,
+                arm="mcp_off",
+                run_group_id="old-group",
+                pre=("--remove",),
+                post=("restore",),
+            ).to_json()
+            cached_payload["host_session_log_path"] = str(cached_messages)
+            (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+
+            def fake_run_task(
+                task_arg: EvalTask,
+                *,
+                arm: str,
+                snapshot: str | Path,
+                output_dir: str | Path,
+                host: str,
+                run_group_id: str,
+                random_seed: int,
+                pre_arm_host_config_command: tuple[str, ...],
+                post_arm_host_config_command: tuple[str, ...],
+                config: RunnerConfig,
+            ) -> RunRecord:
+                calls.append(arm)
+                return _record(
+                    task=task_arg,
+                    arm=arm,
+                    run_group_id=run_group_id,
+                    pre=pre_arm_host_config_command,
+                    post=post_arm_host_config_command,
+                )
+
+            records = _run_paired_tasks(
+                [task],
+                arms=["mcp_on", "mcp_off"],
+                snapshot="snapshot-dir",
+                output_dir=root / "out",
+                host="claude_code",
+                seed=1,
+                config=RunnerConfig(model="test-model"),
+                run_task=fake_run_task,
+                run_host_command=commands.append,
+                group_id_factory=lambda: "new-group",
+                reuse_mcp_off_from=root / "cache",
+            )
+
+            self.assertEqual(calls, ["mcp_on"])
+            self.assertFalse(any("--remove" in command for command in commands))
+            self.assertEqual({record.arm for record in records}, {"mcp_on", "mcp_off"})
+            cached_record = next(record for record in records if record.arm == "mcp_off")
+            self.assertEqual(cached_record.run_group_id, "new-group")
+            self.assertEqual(cached_record.pre_arm_host_config_command, ())
+            self.assertEqual(cached_record.post_arm_host_config_command, ())
+            self.assertEqual(Path(cached_record.host_session_log_path).read_text(encoding="utf-8"), '{"cached": true}\n')
+            self.assertTrue((root / "out" / "new-group" / "mcp_off" / "record.json").exists())
+
+    def test_reuse_mcp_off_from_cache_rejects_missing_session_log(self) -> None:
+        task = _task()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_arm_dir = root / "cache" / "old-group" / "mcp_off"
+            cache_arm_dir.mkdir(parents=True)
+            cached_payload = _record(task=task, arm="mcp_off", run_group_id="old-group", pre=(), post=()).to_json()
+            cached_payload["host_session_log_path"] = str(cache_arm_dir / "missing-messages.jsonl")
+            (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "host session log does not exist"):
+                _run_paired_tasks(
+                    [task],
+                    arms=["mcp_off"],
+                    snapshot="snapshot-dir",
+                    output_dir=root / "out",
+                    host="claude_code",
+                    seed=1,
+                    config=RunnerConfig(model="test-model"),
+                    run_task=lambda *args, **kwargs: self.fail("cache hit should skip host run"),
+                    run_host_command=lambda command: self.fail(f"unexpected host command: {command}"),
+                    group_id_factory=lambda: "new-group",
+                    reuse_mcp_off_from=root / "cache",
+                )
+
+    def test_read_run_record_restores_tuple_command_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            record_path = Path(tmp) / "record.json"
+            payload = _record(
+                task=_task(),
+                arm="mcp_off",
+                run_group_id="group-1",
+                pre=("claude", "mcp", "remove"),
+                post=("claude", "mcp", "add"),
+            ).to_json()
+            record_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            record = _read_run_record(record_path)
+
+        self.assertEqual(record.pre_arm_host_config_command, ("claude", "mcp", "remove"))
+        self.assertEqual(record.post_arm_host_config_command, ("claude", "mcp", "add"))
 
     def test_mcp_off_rejects_supercontext_tool_calls_and_restores_registration(self) -> None:
         commands: list[tuple[str, ...]] = []

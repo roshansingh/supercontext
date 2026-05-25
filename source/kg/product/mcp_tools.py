@@ -104,6 +104,18 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     deploy_mappings = _planning_context_dedupe_rows(
         [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
     )
+    endpoint_consumer_packet = _endpoint_consumer_packet_for_service(kg, service, limit=limit)
+    missing_fact_families = []
+    next_actions = []
+    if not deploy_mappings:
+        missing_fact_families.append("deploy_mapping")
+        next_actions.append(
+            "No deploy-mapping facts are linked to this service; inspect deployment manifests or CI/CD config before making production/staging deployment claims."
+        )
+    if endpoint_consumer_packet["summary"]["consumer_fact_count"] > 0:
+        next_actions.append(
+            "endpoint_consumers are static path-matched CALLS_ENDPOINT facts; verify host/env resolution before treating them as runtime dependencies."
+        )
     return {
         "status": "found",
         "service": _service_row(kg, service),
@@ -111,41 +123,76 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "endpoint_fact_count": len(endpoints),
             "event_fact_count": len(events),
             "deploy_mapping_count": len(deploy_mappings),
+            "endpoint_consumer_fact_count": endpoint_consumer_packet["summary"]["consumer_fact_count"],
+            "endpoint_consumer_service_count": endpoint_consumer_packet["summary"]["consumer_service_count"],
         },
         "endpoints": endpoints[:limit],
         "event_channels": events[:limit],
         "deploy_mappings": deploy_mappings[:limit],
+        "endpoint_consumers": endpoint_consumer_packet,
+        "answerability": {
+            "status": "partial" if missing_fact_families else "answerable",
+            "missing_fact_families": missing_fact_families,
+            "recommended_followups": next_actions,
+        },
+        "next_actions": next_actions,
     }
 
 
 def _find_callers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return kg.find_callers(
-        _required_string(arguments, "symbol"),
-        limit=_limit(arguments),
-        path=_optional_string(arguments, "path"),
-        line=_optional_int(arguments, "line"),
-        include_all=_optional_bool(arguments, "include_all", default=False),
+    return _with_symbol_miss_next_actions(
+        kg.find_callers(
+            _required_string(arguments, "symbol"),
+            limit=_limit(arguments),
+            path=_optional_string(arguments, "path"),
+            line=_optional_int(arguments, "line"),
+            include_all=_optional_bool(arguments, "include_all", default=False),
+        ),
+        direction="callers",
     )
 
 
+def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> JsonObject:
+    if payload.get("status") != "not_found":
+        return payload
+    next_actions = list(payload.get("next_actions", []))
+    next_actions.extend(
+        [
+            f"Use source inspection to verify {direction}; this graph miss is not proof of absence.",
+            "If the symbol is imported from an external package, search workspace source files for call sites such as `symbol(`.",
+            "If the symbol is locally defined under a different qualified name, retry with `path` or `line` disambiguation.",
+        ]
+    )
+    return {
+        **payload,
+        "next_actions": next_actions,
+    }
+
+
 def _find_callees(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return kg.find_callees(
-        _required_string(arguments, "symbol"),
-        limit=_limit(arguments),
-        path=_optional_string(arguments, "path"),
-        line=_optional_int(arguments, "line"),
-        include_all=_optional_bool(arguments, "include_all", default=False),
+    return _with_symbol_miss_next_actions(
+        kg.find_callees(
+            _required_string(arguments, "symbol"),
+            limit=_limit(arguments),
+            path=_optional_string(arguments, "path"),
+            line=_optional_int(arguments, "line"),
+            include_all=_optional_bool(arguments, "include_all", default=False),
+        ),
+        direction="callees",
     )
 
 
 def _blast_radius(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return kg.blast_radius(
-        _required_string(arguments, "symbol"),
-        depth=_bounded_int(arguments.get("depth", 1), field="depth", minimum=1, maximum=6),
-        limit=_limit(arguments),
-        path=_optional_string(arguments, "path"),
-        line=_optional_int(arguments, "line"),
-        include_all=_optional_bool(arguments, "include_all", default=False),
+    return _with_symbol_miss_next_actions(
+        kg.blast_radius(
+            _required_string(arguments, "symbol"),
+            depth=_bounded_int(arguments.get("depth", 1), field="depth", minimum=1, maximum=6),
+            limit=_limit(arguments),
+            path=_optional_string(arguments, "path"),
+            line=_optional_int(arguments, "line"),
+            include_all=_optional_bool(arguments, "include_all", default=False),
+        ),
+        direction="static downstream impact",
     )
 
 
@@ -180,11 +227,23 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
             continue
         rows.append(_fact_result(kg, fact, subject, object_))
     returned = rows[:limit]
+    missing_fact_families = [] if rows else ["static_event_facts"]
     return {
         "status": "found" if rows else "not_found",
         "channel": channel,
         "event_fact_count": len(rows),
         "returned_count": len(returned),
+        "answerability": {
+            "status": "answerable" if rows else "partial",
+            "scope": "indexed static event-channel facts only",
+            "missing_fact_families": missing_fact_families,
+            "cannot_prove": [
+                "whether messages were published or consumed in a time window",
+                "whether there are runtime-only subscribers outside indexed source/config",
+                "whether a zero-consumer result means the event channel is unused",
+            ],
+        },
+        "next_actions": _event_next_actions(found=bool(rows), channel=channel),
         result_key: returned,
     }
 
@@ -203,15 +262,45 @@ def _event_channel_search_text(channel: JsonObject) -> str:
     )
 
 
+def _event_next_actions(*, found: bool, channel: str) -> list[str]:
+    actions = [
+        "For runtime claims such as `no consumers in the last 30 days`, inspect broker metrics, traces, logs, or deployment config; static KG event facts cannot prove time-window usage.",
+        "Inspect source/config around returned event evidence before finalizing schema, handler, retry, or delivery-semantics claims.",
+    ]
+    if not found:
+        actions.insert(
+            0,
+            f"Search source and deployment config for event channel {channel!r}; no indexed static event facts matched this query.",
+        )
+    return actions
+
+
 def _unsupported_by_current_kg(tool: str, reason: str) -> JsonObject:
     return {
         "status": "unsupported_by_current_kg",
         "reason": reason,
         "missing_contract": tool,
         "coverage_warnings": [],
-        "unsupported_scopes": [],
-        "next_actions": [],
+        "unsupported_scopes": [
+            {
+                "kind": tool,
+                "reason": reason,
+            }
+        ],
+        "next_actions": _unsupported_contract_next_actions(tool),
     }
+
+
+def _unsupported_contract_next_actions(tool: str) -> list[str]:
+    if tool == "deploy_blockers_for":
+        return [
+            "Inspect deployment manifests, CI/CD config, service ownership docs, and source-level runtime dependencies before making deploy-blocker claims.",
+            "Use `get_service_brief` or `planning_context` only as static context; absence of explicit deploy-blocker facts is not proof that deployment is safe.",
+        ]
+    return [
+        "Fall back to source, config, or operational evidence for this unsupported contract.",
+        "Treat this unsupported result as a coverage gap, not as evidence that the risk is absent.",
+    ]
 
 
 def _validate_declared_arguments(tool: McpTool, arguments: JsonObject) -> None:
@@ -287,6 +376,173 @@ def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_:
         "qualifier": fact.get("qualifier", {}),
         "evidence": kg.evidence_by_target.get(fact["fact_id"], []),
     }
+
+
+def _endpoint_consumer_packet_for_service(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
+    return _endpoint_consumer_packet(
+        kg,
+        _exposed_endpoint_rows_for_service_id(kg, str(service["entity_id"])),
+        limit=limit,
+    )
+
+
+def _endpoint_consumer_packet(kg: KgSnapshot, exposed_endpoint_rows: list[JsonObject], *, limit: int) -> JsonObject:
+    matched_rows = _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoint_rows)
+    public_rows = _planning_context_public_rows(matched_rows)
+    confidence_counts = _count_row_qualifier_values(public_rows, "confidence")
+    host_resolution_counts = _count_row_qualifier_values(public_rows, "host_resolution_kind")
+    consumer_keys = {
+        str(row.get("consumer", {}).get("service_id") or row.get("consumer", {}).get("name"))
+        for row in public_rows
+        if isinstance(row.get("consumer"), dict)
+    }
+    return {
+        "summary": {
+            "consumer_fact_count": len(public_rows),
+            "consumer_service_count": len(consumer_keys),
+            "confidence_counts": confidence_counts,
+            "host_resolution_kind_counts": host_resolution_counts,
+            "match_basis": "normalized_endpoint_path_and_compatible_method",
+            "section_limit": limit,
+        },
+        "consumers": public_rows[:limit],
+        "truncated": len(public_rows) > limit,
+        "coverage_note": (
+            "These rows are candidate inbound endpoint consumers from static CALLS_ENDPOINT facts. "
+            "Unresolved hosts require source or environment verification before runtime/deploy conclusions."
+        ),
+    }
+
+
+def _endpoint_consumer_rows_for_exposed_endpoints(
+    kg: KgSnapshot,
+    exposed_endpoint_rows: list[JsonObject],
+) -> list[JsonObject]:
+    provider_index = _provider_endpoint_index(exposed_endpoint_rows)
+    if not provider_index:
+        return []
+    provider_service_ids = {
+        str(row.get("_subject", {}).get("entity_id"))
+        for row in exposed_endpoint_rows
+        if isinstance(row.get("_subject"), dict) and row.get("_subject", {}).get("entity_id")
+    }
+    rows: list[JsonObject] = []
+    for fact in kg.facts:
+        if fact.get("predicate") != "CALLS_ENDPOINT":
+            continue
+        subject = kg.entities_by_id.get(fact.get("subject_id"))
+        endpoint = kg.entities_by_id.get(fact.get("object_id"))
+        if not subject or not endpoint or endpoint.get("kind") != "Endpoint":
+            continue
+        if str(subject.get("entity_id")) in provider_service_ids:
+            continue
+        endpoint_path = _endpoint_path(endpoint)
+        if endpoint_path is None or endpoint_path not in provider_index:
+            continue
+        endpoint_method = _endpoint_method(endpoint, fact)
+        provider_methods = provider_index[endpoint_path]
+        if not _endpoint_methods_are_compatible(endpoint_method, provider_methods):
+            continue
+        rows.append(
+            {
+                **_planning_context_fact_result(kg, fact, subject, endpoint),
+                "consumer": _endpoint_consumer_identity(subject),
+                "matched_provider_endpoint": {
+                    "path": endpoint_path,
+                    "methods": sorted(provider_methods),
+                },
+                "match_basis": "normalized_endpoint_path_and_compatible_method",
+            }
+        )
+    return _planning_context_dedupe_rows(rows)
+
+
+def _exposed_endpoint_rows_for_service_id(kg: KgSnapshot, service_id: str) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for fact in kg.facts:
+        if fact.get("predicate") != "EXPOSES_ENDPOINT" or fact.get("subject_id") != service_id:
+            continue
+        service = kg.entities_by_id.get(fact.get("subject_id"))
+        endpoint = kg.entities_by_id.get(fact.get("object_id"))
+        if not service or not endpoint or endpoint.get("kind") != "Endpoint":
+            continue
+        rows.append(_planning_context_fact_result(kg, fact, service, endpoint))
+    return rows
+
+
+def _provider_endpoint_index(exposed_endpoint_rows: list[JsonObject]) -> dict[str, set[str]]:
+    paths: dict[str, set[str]] = {}
+    for row in exposed_endpoint_rows:
+        endpoint = row.get("_object")
+        fact = row.get("_fact")
+        if not isinstance(endpoint, dict) or not isinstance(fact, dict):
+            continue
+        path = _endpoint_path(endpoint)
+        if path is None:
+            continue
+        methods = paths.setdefault(path, set())
+        method = _endpoint_method(endpoint, fact)
+        if method is not None:
+            methods.add(method)
+    return paths
+
+
+def _endpoint_path(endpoint: JsonObject) -> str | None:
+    identity = endpoint.get("identity", {})
+    if not isinstance(identity, dict):
+        return None
+    path = identity.get("path")
+    if not isinstance(path, str) or not path.strip():
+        return None
+    return _normalize_endpoint_query(path)
+
+
+def _endpoint_method(endpoint: JsonObject, fact: JsonObject | None = None) -> str | None:
+    identity = endpoint.get("identity", {})
+    method = identity.get("method") if isinstance(identity, dict) else None
+    if method is None and fact is not None:
+        qualifier = fact.get("qualifier", {})
+        method = qualifier.get("method") if isinstance(qualifier, dict) else None
+    if not isinstance(method, str) or not method.strip():
+        return None
+    return method.strip().upper()
+
+
+def _endpoint_methods_are_compatible(consumer_method: str | None, provider_methods: set[str]) -> bool:
+    if consumer_method is None or not provider_methods:
+        return True
+    return "ANY" in provider_methods or consumer_method in provider_methods
+
+
+def _endpoint_consumer_identity(subject: JsonObject) -> JsonObject:
+    identity = subject.get("identity", {})
+    properties = subject.get("properties", {})
+    if not isinstance(identity, dict):
+        identity = {}
+    if not isinstance(properties, dict):
+        properties = {}
+    return {
+        "service_id": subject.get("entity_id"),
+        "kind": subject.get("kind"),
+        "name": display_entity(subject),
+        "repo": identity.get("repo") or properties.get("repo"),
+        "namespace": identity.get("namespace"),
+        "slug": identity.get("slug"),
+    }
+
+
+def _count_row_qualifier_values(rows: list[JsonObject], key: str) -> JsonObject:
+    counts: dict[str, int] = {}
+    for row in rows:
+        qualifier = row.get("qualifier", {})
+        if not isinstance(qualifier, dict):
+            continue
+        value = qualifier.get(key)
+        if value is None:
+            continue
+        value_key = str(value)
+        counts[value_key] = counts.get(value_key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
 def _service_sort_key(service: JsonObject) -> tuple[str, str]:
@@ -489,6 +745,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     symbols: list[JsonObject] = []
     dependencies: list[JsonObject] = []
     endpoints: list[JsonObject] = []
+    endpoint_consumers: list[JsonObject] = []
     event_channels: list[JsonObject] = []
     domains: list[JsonObject] = []
     next_actions: list[str] = []
@@ -506,6 +763,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 symbols=symbols,
                 dependencies=dependencies,
                 endpoints=endpoints,
+                endpoint_consumers=endpoint_consumers,
                 event_channels=event_channels,
                 domains=domains,
                 next_actions=next_actions,
@@ -515,6 +773,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             related = _planning_context_service_related_rows(kg, matches[0], limit=limit)
             dependencies = _planning_context_dedupe_rows(dependencies + related["dependencies"])
             endpoints = _planning_context_dedupe_rows(endpoints + related["endpoints"])
+            endpoint_consumers = _planning_context_dedupe_rows(endpoint_consumers + related["endpoint_consumers"])
             event_channels = _planning_context_dedupe_rows(event_channels + related["event_channels"])
             domains = _planning_context_dedupe_rows(domains + related["domains"])
     if anchors["symbol"]:
@@ -530,6 +789,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 symbols=symbols,
                 dependencies=dependencies,
                 endpoints=endpoints,
+                endpoint_consumers=endpoint_consumers,
                 event_channels=event_channels,
                 domains=domains,
                 next_actions=next_actions,
@@ -547,11 +807,18 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             dependencies + _planning_context_collect_rows(_planning_context_package_matches(kg, anchors["package"]), limit=limit)
         )
     if anchors["endpoint"]:
-        endpoints = _planning_context_collect_rows(_planning_context_endpoint_matches(kg, anchors["endpoint"]), limit=limit)
+        endpoints = _planning_context_dedupe_rows(
+            endpoints + _planning_context_collect_rows(_planning_context_endpoint_matches(kg, anchors["endpoint"]), limit=limit)
+        )
     if anchors["event_channel"]:
-        event_channels = _planning_context_collect_rows(_planning_context_event_matches(kg, anchors["event_channel"]), limit=limit)
+        event_channels = _planning_context_dedupe_rows(
+            event_channels
+            + _planning_context_collect_rows(_planning_context_event_matches(kg, anchors["event_channel"]), limit=limit)
+        )
     if anchors["domain"]:
-        domains = _planning_context_collect_rows(_planning_context_domain_matches(kg, anchors["domain"]), limit=limit)
+        domains = _planning_context_dedupe_rows(
+            domains + _planning_context_collect_rows(_planning_context_domain_matches(kg, anchors["domain"]), limit=limit)
+        )
     if anchors["path"] and not anchors["symbol"]:
         path_symbols = kg.symbols_in_file(anchors["path"], limit=10_000)
         rows = list(path_symbols.get("symbols", []))
@@ -570,6 +837,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             symbols=symbols,
             dependencies=dependencies,
             endpoints=endpoints,
+            endpoint_consumers=endpoint_consumers,
             event_channels=event_channels,
             domains=domains,
             next_actions=next_actions,
@@ -604,6 +872,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         symbols=symbols,
         dependencies=dependencies,
         endpoints=endpoints,
+        endpoint_consumers=endpoint_consumers,
         event_channels=event_channels,
         domains=domains,
         next_actions=next_actions,
@@ -620,6 +889,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
 
     changed_symbols: list[JsonObject] = []
     range_filters = _changed_ranges_by_path(changed_ranges)
+    changed_symbols_by_path: dict[str, list[JsonObject]] = {}
 
     for changed_file in changed_files:
         symbol_rows = list(kg.symbols_in_file(changed_file, limit=10_000).get("symbols", []))
@@ -631,6 +901,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 symbol_rows = [row for row in symbol_rows if _review_context_symbol_overlaps_ranges(row, file_ranges)]
         for row in symbol_rows:
             changed_symbols.append(row)
+        changed_symbols_by_path[normalized_changed_file] = symbol_rows
 
     changed_symbols = _review_context_dedupe_rows(changed_symbols)[:limit]
     direct_callers: list[JsonObject] = []
@@ -660,6 +931,11 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     direct_callers = _review_context_dedupe_rows(direct_callers)[:limit]
     direct_callees = _review_context_dedupe_rows(direct_callees)[:limit]
     repo_dependencies = _review_context_dedupe_rows(repo_dependencies)[:limit]
+    runtime_surfaces = _review_context_runtime_surfaces(kg, repo=repo, changed_symbols=changed_symbols, limit=limit)
+    endpoint_rows = runtime_surfaces["endpoints"]
+    endpoint_consumer_rows = runtime_surfaces["endpoint_consumers"]
+    event_channel_rows = runtime_surfaces["event_channels"]
+    deploy_mapping_rows = runtime_surfaces["deploy_mappings"]
 
     unsupported_scopes: list[JsonObject] = []
     if include_deploy_blockers:
@@ -672,17 +948,84 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         )
 
     status = "found" if any((changed_symbols, direct_callers, direct_callees, repo_dependencies)) else "not_found"
+    changed_surface = _review_context_changed_surface(
+        changed_files=changed_files,
+        range_filters=range_filters,
+        symbols_by_path=changed_symbols_by_path,
+        changed_symbols=changed_symbols,
+    )
+    source_coordinates = _planning_context_source_coordinates(
+        changed_symbols,
+        direct_callers,
+        direct_callees,
+        repo_dependencies,
+        endpoint_rows,
+        endpoint_consumer_rows,
+        event_channel_rows,
+        deploy_mapping_rows,
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
+    answerability = _review_context_answerability(
+        status=status,
+        changed_symbols=changed_symbols,
+        include_deploy_blockers=include_deploy_blockers,
+    )
+    next_actions = _review_context_next_actions(answerability, unsupported_scopes=unsupported_scopes)
+    public_changed_symbols = _planning_context_public_rows(changed_symbols)
+    public_direct_callers = _planning_context_public_rows(direct_callers)
+    public_direct_callees = _planning_context_public_rows(direct_callees)
+    public_repo_dependencies = _planning_context_public_rows(repo_dependencies)
+    public_endpoints = _planning_context_public_rows(endpoint_rows)
+    public_endpoint_consumers = _planning_context_public_rows(endpoint_consumer_rows)
+    public_event_channels = _planning_context_public_rows(event_channel_rows)
+    public_deploy_mappings = _planning_context_public_rows(deploy_mapping_rows)
     return {
         "status": status,
         "repo": repo,
-        "changed_symbols": _planning_context_public_rows(changed_symbols),
-        "direct_callers": _planning_context_public_rows(direct_callers),
-        "direct_callees": _planning_context_public_rows(direct_callees),
-        "repo_dependencies": _planning_context_public_rows(repo_dependencies),
+        "summary": _review_context_summary(
+            changed_files=changed_files,
+            changed_symbols=public_changed_symbols,
+            direct_callers=public_direct_callers,
+            direct_callees=public_direct_callees,
+            repo_dependencies=public_repo_dependencies,
+            endpoints=public_endpoints,
+            endpoint_consumers=public_endpoint_consumers,
+            event_channels=public_event_channels,
+            deploy_mappings=public_deploy_mappings,
+            source_coordinates=source_coordinates,
+        ),
+        "changed_symbols": public_changed_symbols,
+        "direct_callers": public_direct_callers,
+        "direct_callees": public_direct_callees,
+        "repo_dependencies": public_repo_dependencies,
+        "changed_surface": changed_surface,
+        "impact": {
+            "direct_callers": public_direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "direct_callees": public_direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "repo_dependencies": public_repo_dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
+        },
+        "runtime_surfaces": {
+            "endpoints": public_endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "endpoint_consumers": public_endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "event_channels": public_event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "deploy_mappings": public_deploy_mappings[:PLANNING_CONTEXT_SECTION_LIMIT],
+        },
+        "source_coordinates": source_coordinates,
+        "answerability": answerability,
         "coverage_warnings": [],
         "unsupported_scopes": unsupported_scopes,
-        "evidence": _planning_context_evidence(changed_symbols, direct_callers, direct_callees, repo_dependencies),
-        "next_actions": [],
+        "unsupported_review_scopes": unsupported_scopes,
+        "evidence": _planning_context_evidence(
+            changed_symbols,
+            direct_callers,
+            direct_callees,
+            repo_dependencies,
+            endpoint_rows,
+            endpoint_consumer_rows,
+            event_channel_rows,
+            deploy_mapping_rows,
+        ),
+        "next_actions": next_actions,
     }
 
 
@@ -754,10 +1097,12 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
         endpoints: list[JsonObject] = rows if kind == "endpoint" else []
         event_channels: list[JsonObject] = rows if kind == "event_channel" else []
         domains: list[JsonObject] = rows if kind == "domain" else []
+        endpoint_consumers: list[JsonObject] = []
         if kind == "service" and len(service_matches) == 1:
             related = _planning_context_service_related_rows(kg, service_matches[0], limit=limit)
             dependencies = _planning_context_dedupe_rows(dependencies + related["dependencies"])
             endpoints = _planning_context_dedupe_rows(endpoints + related["endpoints"])
+            endpoint_consumers = _planning_context_dedupe_rows(endpoint_consumers + related["endpoint_consumers"])
             event_channels = _planning_context_dedupe_rows(event_channels + related["event_channels"])
             domains = _planning_context_dedupe_rows(domains + related["domains"])
         return _planning_context_output(
@@ -768,6 +1113,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
             symbols=rows if kind == "symbol" else [],
             dependencies=dependencies,
             endpoints=endpoints,
+            endpoint_consumers=endpoint_consumers,
             event_channels=event_channels,
             domains=domains,
             next_actions=[],
@@ -801,6 +1147,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
         symbols=symbol_rows[:limit],
         dependencies=dependencies,
         endpoints=endpoint_rows,
+        endpoint_consumers=[],
         event_channels=event_rows,
         domains=domain_rows,
         next_actions=next_actions,
@@ -1122,8 +1469,186 @@ def _review_context_dedupe_rows(rows: list[JsonObject]) -> list[JsonObject]:
     return deduped
 
 
+def _review_context_changed_surface(
+    *,
+    changed_files: list[str],
+    range_filters: dict[str, list[tuple[int, int]]],
+    symbols_by_path: dict[str, list[JsonObject]],
+    changed_symbols: list[JsonObject],
+) -> JsonObject:
+    files = []
+    for changed_file in changed_files:
+        normalized_path = _planning_context_normalize_path(changed_file)
+        ranges = [
+            {"start_line": start_line, "end_line": end_line}
+            for start_line, end_line in range_filters.get(normalized_path, [])
+        ]
+        files.append(
+            {
+                "path": changed_file,
+                "normalized_path": normalized_path,
+                "ranges": ranges,
+                "symbol_count": len(symbols_by_path.get(normalized_path, [])),
+            }
+        )
+    return {
+        "files": files,
+        "symbols": _planning_context_public_rows(changed_symbols)[:PLANNING_CONTEXT_SECTION_LIMIT],
+    }
+
+
+def _review_context_runtime_surfaces(
+    kg: KgSnapshot,
+    *,
+    repo: str,
+    changed_symbols: list[JsonObject],
+    limit: int,
+) -> dict[str, list[JsonObject]]:
+    changed_symbol_ids = {
+        str(row["symbol_id"]) for row in changed_symbols if isinstance(row.get("symbol_id"), str) and row["symbol_id"]
+    }
+    endpoints: list[JsonObject] = []
+    exposed_endpoints: list[JsonObject] = []
+    event_channels: list[JsonObject] = []
+    deploy_mappings: list[JsonObject] = []
+    for fact in kg.facts:
+        predicate = fact.get("predicate")
+        if predicate not in {
+            "EXPOSES_ENDPOINT",
+            "CALLS_ENDPOINT",
+            "DOCUMENTS_ENDPOINT",
+            "REFERENCES_EVENT_CHANNEL",
+            "CONSUMES_EVENT",
+            "PRODUCES_EVENT",
+            "ROUTES_DOMAIN_TO_DEPLOY",
+        }:
+            continue
+        subject = kg.entities_by_id.get(fact.get("subject_id"))
+        object_ = kg.entities_by_id.get(fact.get("object_id"))
+        if not subject or not object_:
+            continue
+        if not _review_context_fact_is_in_review_scope(
+            subject,
+            object_,
+            repo=repo,
+            changed_symbol_ids=changed_symbol_ids,
+        ):
+            continue
+        row = _fact_result(kg, fact, subject, object_)
+        if predicate in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}:
+            endpoints.append(row)
+            if predicate == "EXPOSES_ENDPOINT":
+                exposed_endpoints.append(_planning_context_fact_result(kg, fact, subject, object_))
+        elif predicate in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
+            event_channels.append(row)
+        elif predicate == "ROUTES_DOMAIN_TO_DEPLOY":
+            deploy_mappings.append(row)
+    endpoint_consumers = _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoints)
+    return {
+        "endpoints": _planning_context_dedupe_rows(endpoints)[:limit],
+        "endpoint_consumers": endpoint_consumers[:limit],
+        "event_channels": _planning_context_dedupe_rows(event_channels)[:limit],
+        "deploy_mappings": _planning_context_dedupe_rows(deploy_mappings)[:limit],
+    }
+
+
+def _review_context_fact_is_in_review_scope(
+    subject: JsonObject,
+    object_: JsonObject,
+    *,
+    repo: str,
+    changed_symbol_ids: set[str],
+) -> bool:
+    if subject.get("entity_id") in changed_symbol_ids or object_.get("entity_id") in changed_symbol_ids:
+        return True
+    repo_key = _normalize_repo_text(repo)
+    return any(_normalize_repo_text(_review_context_entity_repo(entity)) == repo_key for entity in (subject, object_))
+
+
+def _review_context_entity_repo(entity: JsonObject) -> str | None:
+    identity = entity.get("identity", {})
+    properties = entity.get("properties", {})
+    if not isinstance(identity, dict) or not isinstance(properties, dict):
+        return None
+    repo = identity.get("repo") or properties.get("repo")
+    return str(repo) if repo is not None else None
+
+
+def _review_context_summary(
+    *,
+    changed_files: list[str],
+    changed_symbols: list[JsonObject],
+    direct_callers: list[JsonObject],
+    direct_callees: list[JsonObject],
+    repo_dependencies: list[JsonObject],
+    endpoints: list[JsonObject],
+    endpoint_consumers: list[JsonObject],
+    event_channels: list[JsonObject],
+    deploy_mappings: list[JsonObject],
+    source_coordinates: list[JsonObject],
+) -> JsonObject:
+    return {
+        "changed_file_count": len(changed_files),
+        "changed_symbol_count": len(changed_symbols),
+        "direct_caller_count": len(direct_callers),
+        "direct_callee_count": len(direct_callees),
+        "repo_dependency_count": len(repo_dependencies),
+        "endpoint_fact_count": len(endpoints),
+        "endpoint_consumer_fact_count": len(endpoint_consumers),
+        "event_fact_count": len(event_channels),
+        "deploy_mapping_count": len(deploy_mappings),
+        "source_coordinate_count": len(source_coordinates),
+        "section_limit": PLANNING_CONTEXT_SECTION_LIMIT,
+    }
+
+
+def _review_context_answerability(
+    *,
+    status: str,
+    changed_symbols: list[JsonObject],
+    include_deploy_blockers: bool,
+) -> JsonObject:
+    if status == "not_found":
+        return {
+            "status": "not_answerable",
+            "missing_fact_families": ["review_anchor"],
+            "recommended_followups": ["Read the changed files directly or pass narrower changed_ranges."],
+        }
+    missing = []
+    if not changed_symbols:
+        missing.append("changed_symbols")
+    if include_deploy_blockers:
+        missing.append("deploy_blockers")
+    return {
+        "status": "partial" if missing else "answerable",
+        "missing_fact_families": missing,
+        "recommended_followups": _review_context_answerability_followups(missing),
+    }
+
+
+def _review_context_answerability_followups(missing: list[str]) -> list[str]:
+    actions = []
+    if "changed_symbols" in missing:
+        actions.append("Read the changed files directly; no indexed symbols overlapped the review scope.")
+    if "deploy_blockers" in missing:
+        actions.append("Use deployment manifests or source inspection; deploy-blocker facts are unsupported by the current KG.")
+    return actions
+
+
+def _review_context_next_actions(
+    answerability: JsonObject,
+    *,
+    unsupported_scopes: list[JsonObject],
+) -> list[str]:
+    actions = list(answerability.get("recommended_followups", []))
+    if unsupported_scopes:
+        actions.append("Treat unsupported_review_scopes as explicit coverage gaps, not as findings.")
+    return actions
+
+
 def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, *, limit: int) -> dict[str, list[JsonObject]]:
     related = _facts_touching_entity(kg, str(service["entity_id"]))
+    exposed_endpoint_rows = _exposed_endpoint_rows_for_service_id(kg, str(service["entity_id"]))
     return {
         "dependencies": [
             row
@@ -1135,6 +1660,7 @@ def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, 
             for row in related
             if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}
         ][:limit],
+        "endpoint_consumers": _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoint_rows)[:limit],
         "event_channels": [
             row
             for row in related
@@ -1157,6 +1683,7 @@ def _planning_context_output(
     symbols: list[JsonObject],
     dependencies: list[JsonObject],
     endpoints: list[JsonObject],
+    endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
     domains: list[JsonObject],
     next_actions: list[str],
@@ -1166,6 +1693,7 @@ def _planning_context_output(
     bounded_symbols = _planning_context_public_rows(symbols)
     bounded_dependencies = _planning_context_public_rows(dependencies)
     bounded_endpoints = _planning_context_public_rows(endpoints)
+    bounded_endpoint_consumers = _planning_context_public_rows(endpoint_consumers)
     bounded_event_channels = _planning_context_public_rows(event_channels)
     bounded_domains = _planning_context_public_rows(domains)
     groups = {
@@ -1173,6 +1701,7 @@ def _planning_context_output(
         "symbols": bounded_symbols,
         "dependencies": bounded_dependencies,
         "endpoints": bounded_endpoints,
+        "endpoint_consumers": bounded_endpoint_consumers,
         "event_channels": bounded_event_channels,
         "domains": bounded_domains,
     }
@@ -1182,6 +1711,7 @@ def _planning_context_output(
         symbols=bounded_symbols,
         dependencies=bounded_dependencies,
         endpoints=bounded_endpoints,
+        endpoint_consumers=bounded_endpoint_consumers,
         event_channels=bounded_event_channels,
         domains=bounded_domains,
         anchors=anchors,
@@ -1192,15 +1722,31 @@ def _planning_context_output(
         bounded_symbols,
         bounded_dependencies,
         bounded_endpoints,
+        bounded_endpoint_consumers,
         bounded_event_channels,
         bounded_domains,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
+    snapshot_scope = _planning_context_snapshot_scope(kg, anchors)
+    if status == "not_found" and _planning_context_has_indexed_scope(snapshot_scope):
+        next_actions = [
+            action
+            for action in next_actions
+            if "No deterministic planning anchor combination overlapped" not in action
+        ]
+        next_actions.append(
+            "The repo anchor has indexed snapshot scope but no matching first-class dependency, endpoint, event, domain, service, or symbol rows for the supplied filters."
+        )
+        next_actions.append(
+            "Use `snapshot_summary` and `snapshot_scope` for KG inventory counts, then inspect source or narrower anchors for behavioral claims."
+        )
     answerability = _planning_context_answerability(status=status, anchors=anchors, groups=groups)
     return {
         "status": status,
         "query": query,
         "summary": _planning_context_summary(groups, source_coordinates=source_coordinates),
+        "snapshot_summary": _planning_context_snapshot_summary(kg),
+        "snapshot_scope": snapshot_scope,
         "anchors": {
             "repo": anchors.get("repo"),
             "path": anchors.get("path"),
@@ -1215,6 +1761,7 @@ def _planning_context_output(
         "symbols": bounded_symbols,
         "dependencies": bounded_dependencies,
         "endpoints": bounded_endpoints,
+        "endpoint_consumers": bounded_endpoint_consumers,
         "event_channels": bounded_event_channels,
         "domains": bounded_domains,
         "entry_points": _planning_context_entry_points(groups),
@@ -1226,6 +1773,7 @@ def _planning_context_output(
             bounded_symbols,
             bounded_dependencies,
             bounded_endpoints,
+            bounded_endpoint_consumers,
             bounded_event_channels,
             bounded_domains,
         ),
@@ -1241,6 +1789,7 @@ def _planning_context_summary(groups: dict[str, list[JsonObject]], *, source_coo
         "symbol_count": len(groups["symbols"]),
         "dependency_count": len(groups["dependencies"]),
         "endpoint_fact_count": len(groups["endpoints"]),
+        "endpoint_consumer_fact_count": len(groups["endpoint_consumers"]),
         "event_fact_count": len(groups["event_channels"]),
         "domain_fact_count": len(groups["domains"]),
         "source_coordinate_count": len(source_coordinates),
@@ -1248,9 +1797,98 @@ def _planning_context_summary(groups: dict[str, list[JsonObject]], *, source_coo
     }
 
 
+def _planning_context_snapshot_summary(kg: KgSnapshot) -> JsonObject:
+    summary = kg.summary()
+    entity_kinds = _top_count_map(summary.get("entity_kinds", {}), limit=10)
+    predicates = _top_count_map(summary.get("predicates", {}), limit=10)
+    coverage = summary.get("coverage", [])
+    coverage_states: dict[str, int] = {}
+    if isinstance(coverage, list):
+        for row in coverage:
+            if not isinstance(row, dict):
+                continue
+            state = str(row.get("state") or "unknown")
+            coverage_states[state] = coverage_states.get(state, 0) + 1
+    return {
+        "entity_count": len(kg.entities),
+        "fact_count": len(kg.facts),
+        "evidence_count": len(kg.evidence),
+        "coverage_count": len(kg.coverage),
+        "top_entity_kinds": entity_kinds,
+        "top_predicates": predicates,
+        "coverage_states": dict(sorted(coverage_states.items())),
+    }
+
+
+def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | None]) -> JsonObject:
+    repo = anchors.get("repo")
+    if not repo:
+        return {}
+    repo_key = _normalize_repo_text(repo)
+    entity_count = sum(1 for entity in kg.entities if _planning_context_entity_repo(entity) == repo_key)
+    fact_count = 0
+    for fact in kg.facts:
+        subject = kg.entities_by_id.get(fact.get("subject_id"))
+        object_ = kg.entities_by_id.get(fact.get("object_id"))
+        if subject and _planning_context_entity_repo(subject) == repo_key:
+            fact_count += 1
+            continue
+        if object_ and _planning_context_entity_repo(object_) == repo_key:
+            fact_count += 1
+            continue
+        qualifier = fact.get("qualifier", {})
+        if isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key:
+            fact_count += 1
+    coverage_rows = [
+        row
+        for row in kg.coverage
+        if isinstance(row, dict) and _planning_context_coverage_row_matches_repo(row, repo_key)
+    ]
+    coverage_states: dict[str, int] = {}
+    coverage_predicates: dict[str, int] = {}
+    for row in coverage_rows:
+        state = str(row.get("state") or "unknown")
+        predicate = str(row.get("predicate") or "unknown")
+        coverage_states[state] = coverage_states.get(state, 0) + 1
+        coverage_predicates[predicate] = coverage_predicates.get(predicate, 0) + 1
+    return {
+        "repo": repo,
+        "entity_count": entity_count,
+        "fact_count": fact_count,
+        "coverage_count": len(coverage_rows),
+        "coverage_states": dict(sorted(coverage_states.items())),
+        "coverage_predicates": _top_count_map(coverage_predicates, limit=10),
+    }
+
+
+def _planning_context_has_indexed_scope(snapshot_scope: JsonObject) -> bool:
+    return any(
+        isinstance(snapshot_scope.get(field), int) and int(snapshot_scope[field]) > 0
+        for field in ("entity_count", "fact_count", "coverage_count")
+    )
+
+
+def _planning_context_coverage_row_matches_repo(row: JsonObject, repo_key: str) -> bool:
+    scope_ref = row.get("scope_ref")
+    if not isinstance(scope_ref, dict):
+        return False
+    return _normalize_repo_text(scope_ref.get("repo")) == repo_key
+
+
+def _top_count_map(raw_counts: object, *, limit: int) -> JsonObject:
+    if not isinstance(raw_counts, dict):
+        return {}
+    rows = []
+    for key, value in raw_counts.items():
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        rows.append((str(key), value))
+    return dict(sorted(rows, key=lambda item: (-item[1], item[0]))[:limit])
+
+
 def _planning_context_entry_points(groups: dict[str, list[JsonObject]]) -> list[JsonObject]:
     rows: list[JsonObject] = []
-    for kind in ("services", "symbols", "endpoints", "event_channels", "dependencies", "domains"):
+    for kind in ("services", "symbols", "endpoints", "endpoint_consumers", "event_channels", "dependencies", "domains"):
         for row in groups[kind]:
             entry = {key: value for key, value in row.items() if key != "evidence"}
             entry["section"] = kind
@@ -1267,16 +1905,18 @@ def _planning_context_related_facts(
     symbols: list[JsonObject],
     dependencies: list[JsonObject],
     endpoints: list[JsonObject],
+    endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
     domains: list[JsonObject],
     anchors: dict[str, str | None],
     status: str,
 ) -> JsonObject:
     return {
-        "service_brief": _planning_context_service_brief(services, endpoints, event_channels, domains),
+        "service_brief": _planning_context_service_brief(services, endpoints, endpoint_consumers, event_channels, domains),
         "symbol_impact": _planning_context_symbol_impact(kg, symbols, anchors=anchors, status=status),
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
         "deploy_mappings": [
             row for row in domains if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"
@@ -1288,6 +1928,7 @@ def _planning_context_related_facts(
 def _planning_context_service_brief(
     services: list[JsonObject],
     endpoints: list[JsonObject],
+    endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
     domains: list[JsonObject],
 ) -> JsonObject:
@@ -1297,10 +1938,12 @@ def _planning_context_service_brief(
         "summary": {
             "service_count": len(services),
             "endpoint_fact_count": len(endpoints),
+            "endpoint_consumer_fact_count": len(endpoint_consumers),
             "event_fact_count": len(event_channels),
             "deploy_mapping_count": len(deploy_mappings),
         },
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
         "deploy_mappings": deploy_mappings[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
@@ -1388,6 +2031,10 @@ def _planning_context_missing_fact_families(
 
 def _planning_context_answerability_followups(missing: list[str]) -> list[str]:
     actions = []
+    if "service_identity" in missing:
+        actions.append("Use `search_services` to find candidate service slugs or retry with the exact service repo/name.")
+    if "symbol_identity" in missing:
+        actions.append("Retry with an exact qualified symbol name, or add `path` and `line` to disambiguate the source anchor.")
     if "dependency_edges" in missing:
         actions.append("Use `repo` or `package` alone to inspect dependency edges, or fall back to source inspection.")
     if "endpoint_facts" in missing:
@@ -1434,8 +2081,20 @@ def _planning_context_row_source_coordinates(row: JsonObject) -> list[JsonObject
             coordinates.append(coordinate)
     coordinate = _planning_context_coordinate_from_row(row)
     if coordinate is not None:
+        geometry_key = _coordinate_location_key(coordinate)
+        if any(_coordinate_location_key(existing) == geometry_key for existing in coordinates):
+            return coordinates
         coordinates.append(coordinate)
     return coordinates
+
+
+def _coordinate_location_key(coordinate: JsonObject) -> tuple[object, object, object, object]:
+    return (
+        coordinate.get("repo"),
+        coordinate.get("path"),
+        coordinate.get("line_start"),
+        coordinate.get("line_end"),
+    )
 
 
 def _planning_context_coordinate_from_bytes_ref(bytes_ref: JsonObject, *, evidence: JsonObject) -> JsonObject | None:
@@ -1753,9 +2412,10 @@ _TOOLS: dict[str, McpTool] = {
     "get_service_brief": McpTool(
         name="get_service_brief",
         description=(
-            "Returns a compact service brief plus related endpoint, event-channel, and deploy-mapping facts for one matched service. "
+            "Returns a compact service brief plus related endpoint, path-matched endpoint-consumer, event-channel, and deploy-mapping facts for one matched service. "
             "Use it after you know the target service and want a bounded operational summary of what the KG has linked to it. "
-            "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime contracts."
+            "endpoint_consumers are static CALLS_ENDPOINT candidates matched by normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
+            "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime/deploy contracts; if deploy mappings are absent, inspect manifests before making environment claims."
         ),
         input_schema=_object_schema(
             {"service": _string_schema("Service name, slug, namespace, or repo."), "limit": _limit_schema()},
@@ -1768,7 +2428,8 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns static CALLS edges whose downstream target matches the requested symbol, with optional path and line disambiguation. "
             "Use it when you need reverse call impact for a known function, method, or symbol in the indexed codebase. "
-            "Does not include transitive closure, runtime dispatch, cross-repo execution paths, or endpoint/service-level rollups."
+            "Does not include transitive closure, runtime dispatch, cross-repo execution paths, endpoint/service-level rollups, or unresolved external-package call sites. "
+            "A not_found result is not proof of absence; inspect source before finalizing."
         ),
         input_schema=_object_schema(_symbol_properties(), required=["symbol"]),
         handler=_find_callers,
@@ -1778,7 +2439,8 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns static CALLS edges whose upstream subject matches the requested symbol, with optional path and line disambiguation. "
             "Use it when you want the immediate downstream call surface of a known symbol before expanding to blast radius. "
-            "Does not return reverse callers, transitive closure, runtime-only invocations, or service and endpoint boundaries."
+            "Does not return reverse callers, transitive closure, runtime-only invocations, service and endpoint boundaries, or unresolved external-package calls. "
+            "A not_found result is not proof of absence; inspect source before finalizing."
         ),
         input_schema=_object_schema(_symbol_properties(), required=["symbol"]),
         handler=_find_callees,
@@ -1788,7 +2450,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns facts whose subject consumes an event channel matching the provided queue, topic, ARN, or channel substring. "
             "Use it when you know the event channel and want the indexed static consumers attached to that channel. "
-            "Does not infer delivery guarantees, runtime subscribers, message schemas, or cross-environment broker state."
+            "Does not infer delivery guarantees, runtime subscribers, message schemas, time-window usage, or cross-environment broker state."
         ),
         input_schema=_object_schema(
             {"channel": _string_schema("Event channel name, queue, topic, or ARN substring."), "limit": _limit_schema()},
@@ -1801,7 +2463,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns facts whose subject produces an event channel matching the provided queue, topic, ARN, or channel substring. "
             "Use it when you know the event channel and need the indexed static producers that emit onto it. "
-            "Does not prove messages were published at runtime, identify consumers, or recover schema and deployment guarantees."
+            "Does not prove messages were published at runtime or in a time window, identify consumers, or recover schema and deployment guarantees."
         ),
         input_schema=_object_schema(
             {"channel": _string_schema("Event channel name, queue, topic, or ARN substring."), "limit": _limit_schema()},
@@ -1814,7 +2476,8 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns downstream static CALLS closure from an anchor symbol up to `depth`. "
             "Use only when you know the exact edit-site symbol and want to enumerate intra-repo callees. "
-            "Does not include reverse callers, cross-repo edges, service or endpoint boundaries, or runtime calls."
+            "Does not include reverse callers, cross-repo edges, service or endpoint boundaries, runtime calls, or unresolved external-package calls. "
+            "A not_found result is not proof of absence; inspect source before finalizing."
         ),
         input_schema=_object_schema(
             {**_symbol_properties(), "depth": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1}},
@@ -1827,7 +2490,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns deploy-blocker information for a named service when the current KG implements that contract. "
             "Use it only when you need explicit deploy-blocker facts for a known service and can tolerate refusal when the graph lacks that relation. "
-            "Does not infer blockers from callers, events, config drift, or undeclared operational dependencies."
+            "Does not infer blockers from callers, events, config drift, or undeclared operational dependencies; unsupported results require manifest/source inspection."
         ),
         input_schema=_object_schema({"service": _string_schema("Service name or slug."), "limit": _limit_schema()}, required=["service"]),
         handler=_deploy_blockers_for,
@@ -1836,7 +2499,8 @@ _TOOLS: dict[str, McpTool] = {
         name="planning_context",
         description=(
             "Returns bounded planning context for one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
-            "Includes additive grouped context: summary, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
+            "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
+            "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Use it first for broad planning, architecture, dependency, or impact questions on deterministic anchors before selecting narrower MCP tools. "
             "For exact caller, callee, service-brief, or event producer/consumer questions, prefer the exact primitive tool. "
@@ -1848,7 +2512,9 @@ _TOOLS: dict[str, McpTool] = {
     "review_context": McpTool(
         name="review_context",
         description=(
-            "Returns bounded review context for one repo plus a changed-file set by composing indexed file symbols, direct callers, direct callees, and repo dependency links. "
+            "Returns bounded review context for one repo plus a changed-file set by composing changed_surface, impact, runtime_surfaces, source_coordinates, and answerability metadata. "
+            "Existing top-level changed_symbols, direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
+            "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "Use it when you know the changed files and need deterministic static review context before drilling into narrower MCP tools. "
             "Does not infer deploy blockers unless explicitly requested, summarize diffs with an LLM, or invent cross-repo and runtime-only impact."
         ),
