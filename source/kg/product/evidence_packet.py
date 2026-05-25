@@ -175,6 +175,8 @@ def _claim_for_row(row: JsonObject) -> str:
         return f"{prefix}{subject} references environment variable {object_}."
     if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
         return f"{prefix}{subject} routes to deploy target {object_}."
+    if predicate == "DEPLOYS_VIA_CONFIG":
+        return f"{prefix}{subject} deploys via config target {object_}."
     if predicate == "EXPOSES_ENDPOINT":
         return f"{prefix}{subject} exposes endpoint {object_}."
     if predicate == "CALLS_ENDPOINT":

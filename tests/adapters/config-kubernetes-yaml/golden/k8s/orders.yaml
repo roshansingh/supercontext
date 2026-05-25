@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+spec:
+  template:
+    metadata:
+      labels:
+        app: orders-api
+    spec:
+      containers:
+      - name: orders-api
+        image: registry.example.com/orders_api:sha
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api-service
+spec:
+  selector:
+    app: orders-api
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orders-ingress
+spec:
+  rules:
+  - host: orders.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          service:
+            name: orders-api-service

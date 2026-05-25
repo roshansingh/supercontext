@@ -3,22 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from source.kg.core.repo_source import RepoSnapshot
-from source.kg.file_formats.adapters.config_shared import scan_coverage_rows, scannable_config_files
+from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.file_formats._shared.common import ConfigKgBuild
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
-from source.kg.file_formats.zappa import extract_zappa_event_sources
-from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
+from source.kg.file_formats.adapters.config_shared import scan_coverage_rows, scannable_config_files
+from source.kg.file_formats.kubernetes_yaml import extract_kubernetes_manifests
 
 
 @dataclass(frozen=True)
-class ConfigZappaAdapter:
+class ConfigKubernetesYamlAdapter:
     capability = AdapterCapability(
-        name="config-zappa",
+        name="config-kubernetes-yaml",
         languages=("config",),
-        file_kinds=("json",),
-        framework_tags=("zappa",),
-        produces_predicates=("CONSUMES_EVENT", "DEPLOYS_VIA_CONFIG", "REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"),
-        produces_entity_kinds=("EventChannel", "DeployTarget", "Domain"),
+        file_kinds=("yaml", "yml"),
+        framework_tags=("kubernetes", "k8s"),
+        produces_predicates=("DEPLOYS_VIA_CONFIG", "REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"),
+        produces_entity_kinds=("DeployTarget", "Domain"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )
@@ -30,8 +30,7 @@ class ConfigZappaAdapter:
         build = ConfigKgBuild()
         service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
         for scanned in scannable_config_files(repo, ctx):
-            if scanned.path.name == "zappa_settings.json":
-                extract_zappa_event_sources(repo, scanned, service_entity, build, ctx.tenant_id)
+            extract_kubernetes_manifests(repo, scanned, service_entity, build, ctx.tenant_id)
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),
@@ -40,4 +39,4 @@ class ConfigZappaAdapter:
         )
 
 
-CONFIG_ZAPPA_ADAPTER = ConfigZappaAdapter()
+CONFIG_KUBERNETES_YAML_ADAPTER = ConfigKubernetesYamlAdapter()

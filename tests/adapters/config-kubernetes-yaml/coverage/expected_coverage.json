@@ -1,0 +1,10 @@
+[
+  {
+    "predicate": "DEPLOYS_VIA_CONFIG",
+    "state": "uninstrumented",
+    "scope_ref": {
+      "file_path": "kubernetes/bad.yaml",
+      "reason": "kubernetes_yaml_parse_error"
+    }
+  }
+]

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from source.kg.build import relink
+from source.kg.build import runtime_link
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
@@ -28,6 +29,8 @@ class MultiRepoBuild:
     link_count: int
     ambiguous_package_count: int
     package_classifications: tuple[JsonObject, ...]
+    runtime_link_count: int
+    runtime_ambiguous_link_count: int
 
 
 def build_multi_kg(
@@ -62,6 +65,12 @@ def build_multi_kg(
             "ambiguous_package_count": build.ambiguous_package_count,
             "package_classification_count": len(build.package_classifications),
         },
+        "runtime_linker": {
+            "source_system": runtime_link.RUNTIME_LINKER_SOURCE_SYSTEM,
+            "rule_version": runtime_link.RUNTIME_LINKER_RULE_VERSION,
+            "link_count": build.runtime_link_count,
+            "ambiguous_link_count": build.runtime_ambiguous_link_count,
+        },
         "extractor_errors": build.extractor_errors,
         "counts": {
             "files_by_language": _files_by_language_counts(repos),
@@ -94,16 +103,20 @@ def build_multi(
     coverage = []
     extractor_errors: list[JsonObject] = []
     linker_inputs: list[relink.LinkerInput] = []
+    runtime_inputs: list[runtime_link.RuntimeLinkerInput] = []
 
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     for repo in repos:
         repo_build = extract_repo(repo, tenant_id=resolved_tenant_id)
         repo_identity = relink.repo_identity(repo, resolved_tenant_id)
         repo_entities = list(repo_build.entities)
-        linker_inputs.append(relink.LinkerInput(repo, repo_identity, tuple(repo_entities)))
+        repo_facts = list(repo_build.facts)
+        repo_evidence = relink.repo_identity_evidence(repo_build.evidence, repo, repo_identity)
+        linker_inputs.append(relink.LinkerInput(repo, repo_identity, tuple(repo_entities), tuple(repo_facts), tuple(repo_evidence)))
+        runtime_inputs.append(runtime_link.RuntimeLinkerInput(repo, tuple(repo_entities), tuple(repo_facts), tuple(repo_evidence)))
         entities.extend(repo_build.entities)
         facts.extend(repo_build.facts)
-        evidence.extend(relink.repo_identity_evidence(repo_build.evidence, repo, repo_identity))
+        evidence.extend(repo_evidence)
         coverage.extend(repo_build.coverage)
         extractor_errors.extend(
             {
@@ -119,9 +132,13 @@ def build_multi(
         raise RuntimeError(_multi_extractor_error_message(extractor_errors))
 
     link_result = relink.link_external_packages(linker_inputs)
+    runtime_result = runtime_link.link_runtime_targets(runtime_inputs)
     facts.extend(link_result.facts)
+    facts.extend(runtime_result.facts)
     evidence.extend(link_result.evidence)
+    evidence.extend(runtime_result.evidence)
     coverage.extend(link_result.coverage)
+    coverage.extend(runtime_result.coverage)
     return MultiRepoBuild(
         entities=entities,
         facts=facts,
@@ -132,6 +149,8 @@ def build_multi(
         link_count=len(link_result.facts),
         ambiguous_package_count=link_result.ambiguous_package_count,
         package_classifications=link_result.package_classifications,
+        runtime_link_count=len(runtime_result.facts),
+        runtime_ambiguous_link_count=runtime_result.ambiguous_link_count,
     )
 
 

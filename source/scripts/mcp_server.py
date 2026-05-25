@@ -17,6 +17,27 @@ from source.scripts.mcp_host import format_host_for_url, is_loopback_host
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
 REQUEST_READ_TIMEOUT_SECONDS = 5.0
+SUPERCONTEXT_MCP_INSTRUCTIONS = """# SuperContext - repository knowledge graph
+
+SuperContext provides deterministic, source-cited context from the indexed repository graph. Use it as an early map, then verify with ordinary source inspection when the graph is partial or when code details matter.
+
+## Tool selection by intent
+
+- Broad planning, architecture, dependency, or impact question with a repo, service, symbol, package, endpoint, event channel, domain, or path anchor -> planning_context first.
+- PR or code review question with changed files or line ranges -> review_context first, then targeted primitive tools or source reads.
+- Exact reverse callers for a known symbol -> find_callers.
+- Exact downstream callees for a known symbol -> find_callees.
+- Static downstream call closure from an exact edit-site symbol -> blast_radius.
+- Service endpoint/event/deploy fact sheet -> get_service_brief.
+- Exact event channel producers or consumers -> get_event_producers or get_event_consumers.
+- KG inventory or repo coverage summary -> planning_context and read snapshot_summary/snapshot_scope.
+
+## Answerability
+
+Read answerability, coverage_warnings, unsupported_scopes, and next_actions before finalizing. If a SuperContext result is partial, ambiguous, unsupported_by_current_kg, or not_found, say what the graph could not prove and inspect the relevant workspace source files with ordinary Read/Grep before finalizing. For runtime event time windows and deploy-safety claims, static graph facts are context only; inspect operational/config/source evidence. Do not treat a graph miss as proof of absence.
+
+For service operational evidence, read operational_surfaces.evidence_partition or service_operational_surfaces.evidence_partition. Keep known_linked, unlinked_evidence, and missing_contracts separate: known_linked is exact KG/repo-linked evidence, unlinked_evidence is source leads only, and missing_contracts are claims the KG cannot prove. Treat deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof.
+"""
 
 
 def main() -> None:
@@ -225,6 +246,7 @@ def _initialize_result(params: JsonObject) -> JsonObject:
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {}},
         "serverInfo": {"name": "supercontext-local", "version": "0.1.0"},
+        "instructions": SUPERCONTEXT_MCP_INSTRUCTIONS,
     }
 
 

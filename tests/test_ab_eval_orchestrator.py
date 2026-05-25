@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -18,10 +20,14 @@ from source.kg.eval.runner import (
     _tool_calls,
 )
 from source.scripts.run_ab_eval import (
+    _local_mcp_server,
+    _managed_mcp_url,
+    _mcp_health_url,
     _parse_arms,
     _positive_int,
     _post_arm_host_config_command,
     _pre_arm_host_config_command,
+    _read_run_record,
     _run_host_config_command,
     _run_paired_tasks,
 )
@@ -207,6 +213,116 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(commands, [])
 
+    def test_reuse_mcp_off_from_cache_materializes_record_and_skips_host_run(self) -> None:
+        task = _task()
+        commands: list[tuple[str, ...]] = []
+        calls: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_arm_dir = root / "cache" / "old-group" / "mcp_off"
+            cache_arm_dir.mkdir(parents=True)
+            cached_messages = cache_arm_dir / "messages.jsonl"
+            cached_messages.write_text('{"cached": true}\n', encoding="utf-8")
+            cached_payload = _record(
+                task=task,
+                arm="mcp_off",
+                run_group_id="old-group",
+                pre=("--remove",),
+                post=("restore",),
+            ).to_json()
+            cached_payload["host_session_log_path"] = str(cached_messages)
+            (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+
+            def fake_run_task(
+                task_arg: EvalTask,
+                *,
+                arm: str,
+                snapshot: str | Path,
+                output_dir: str | Path,
+                host: str,
+                run_group_id: str,
+                random_seed: int,
+                pre_arm_host_config_command: tuple[str, ...],
+                post_arm_host_config_command: tuple[str, ...],
+                config: RunnerConfig,
+            ) -> RunRecord:
+                calls.append(arm)
+                return _record(
+                    task=task_arg,
+                    arm=arm,
+                    run_group_id=run_group_id,
+                    pre=pre_arm_host_config_command,
+                    post=post_arm_host_config_command,
+                )
+
+            records = _run_paired_tasks(
+                [task],
+                arms=["mcp_on", "mcp_off"],
+                snapshot="snapshot-dir",
+                output_dir=root / "out",
+                host="claude_code",
+                seed=1,
+                config=RunnerConfig(model="test-model"),
+                run_task=fake_run_task,
+                run_host_command=commands.append,
+                group_id_factory=lambda: "new-group",
+                reuse_mcp_off_from=root / "cache",
+            )
+
+            self.assertEqual(calls, ["mcp_on"])
+            self.assertFalse(any("--remove" in command for command in commands))
+            self.assertEqual({record.arm for record in records}, {"mcp_on", "mcp_off"})
+            cached_record = next(record for record in records if record.arm == "mcp_off")
+            self.assertEqual(cached_record.run_group_id, "new-group")
+            self.assertEqual(cached_record.pre_arm_host_config_command, ())
+            self.assertEqual(cached_record.post_arm_host_config_command, ())
+            self.assertEqual(Path(cached_record.host_session_log_path).read_text(encoding="utf-8"), '{"cached": true}\n')
+            self.assertTrue((root / "out" / "new-group" / "mcp_off" / "record.json").exists())
+
+    def test_reuse_mcp_off_from_cache_rejects_missing_session_log(self) -> None:
+        task = _task()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_arm_dir = root / "cache" / "old-group" / "mcp_off"
+            cache_arm_dir.mkdir(parents=True)
+            cached_payload = _record(task=task, arm="mcp_off", run_group_id="old-group", pre=(), post=()).to_json()
+            cached_payload["host_session_log_path"] = str(cache_arm_dir / "missing-messages.jsonl")
+            (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "host session log does not exist"):
+                _run_paired_tasks(
+                    [task],
+                    arms=["mcp_off"],
+                    snapshot="snapshot-dir",
+                    output_dir=root / "out",
+                    host="claude_code",
+                    seed=1,
+                    config=RunnerConfig(model="test-model"),
+                    run_task=lambda *args, **kwargs: self.fail("cache hit should skip host run"),
+                    run_host_command=lambda command: self.fail(f"unexpected host command: {command}"),
+                    group_id_factory=lambda: "new-group",
+                    reuse_mcp_off_from=root / "cache",
+                )
+
+    def test_read_run_record_restores_tuple_command_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            record_path = Path(tmp) / "record.json"
+            payload = _record(
+                task=_task(),
+                arm="mcp_off",
+                run_group_id="group-1",
+                pre=("claude", "mcp", "remove"),
+                post=("claude", "mcp", "add"),
+            ).to_json()
+            record_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            record = _read_run_record(record_path)
+
+        self.assertEqual(record.pre_arm_host_config_command, ("claude", "mcp", "remove"))
+        self.assertEqual(record.post_arm_host_config_command, ("claude", "mcp", "add"))
+
     def test_mcp_off_rejects_supercontext_tool_calls_and_restores_registration(self) -> None:
         commands: list[tuple[str, ...]] = []
 
@@ -287,6 +403,57 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertEqual(_positive_int("2"), 2)
         with self.assertRaisesRegex(Exception, "at least 1"):
             _positive_int("0")
+
+    def test_mcp_health_url_targets_loopback_health_endpoint(self) -> None:
+        self.assertEqual(
+            _mcp_health_url("http://127.0.0.1:3845/mcp?ignored=true"),
+            "http://127.0.0.1:3845/health",
+        )
+        with self.assertRaisesRegex(ValueError, "HTTP"):
+            _mcp_health_url("stdio://supercontext")
+
+    def test_managed_mcp_url_health_checks_explicit_url_without_starting_server(self) -> None:
+        with patch("source.scripts.run_ab_eval._wait_for_mcp_health") as health_mock:
+            with _managed_mcp_url(
+                snapshot="snapshot-dir",
+                arms=["mcp_on"],
+                explicit_mcp_url="http://127.0.0.1:9999/mcp",
+            ) as mcp_url:
+                self.assertEqual(mcp_url, "http://127.0.0.1:9999/mcp")
+
+        health_mock.assert_called_once_with("http://127.0.0.1:9999/mcp", timeout_seconds=10.0)
+
+    def test_local_mcp_server_starts_for_snapshot_and_stops_on_exit(self) -> None:
+        process = _FakeProcess()
+        commands: list[tuple[str, ...]] = []
+        health_calls: list[tuple[str, object]] = []
+
+        def fake_popen(command: tuple[str, ...], **kwargs: object) -> _FakeProcess:
+            commands.append(command)
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertTrue(kwargs["text"])
+            return process
+
+        def fake_health(mcp_url: str, *, process: object) -> None:
+            health_calls.append((mcp_url, process))
+
+        with _local_mcp_server(
+            "snapshot-dir",
+            port_factory=lambda: 4545,
+            popen=fake_popen,
+            health_check=fake_health,
+        ) as mcp_url:
+            self.assertEqual(mcp_url, "http://127.0.0.1:4545/mcp")
+            self.assertFalse(process.terminated)
+
+        self.assertTrue(process.terminated)
+        self.assertEqual(health_calls, [("http://127.0.0.1:4545/mcp", process)])
+        self.assertIn("source.scripts.mcp_server", commands[0])
+        self.assertIn("--snapshot", commands[0])
+        self.assertIn("snapshot-dir", commands[0])
+        self.assertIn("--port", commands[0])
+        self.assertIn("4545", commands[0])
 
     def test_host_config_commands_use_claude_registration_contract(self) -> None:
         on_command = _pre_arm_host_config_command(
@@ -761,6 +928,36 @@ def _record(
         pre_arm_host_config_command=pre,
         post_arm_host_config_command=post,
     )
+
+
+class _FakeStderr:
+    def __init__(self, text: str = "") -> None:
+        self.text = text
+
+    def read(self) -> str:
+        return self.text
+
+
+class _FakeProcess:
+    def __init__(self, returncode: int | None = None, stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stderr = _FakeStderr(stderr)
+        self.terminated = False
+        self.killed = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode or 0
 
 
 if __name__ == "__main__":
