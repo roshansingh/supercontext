@@ -28,6 +28,7 @@ SUPPORTED_ENTITY_KINDS: frozenset[str] = frozenset(
         "CodeModule",
         "CodeSymbol",
         "ExternalPackage",
+        "ExternalSymbol",
         "Endpoint",
         "Domain",
         "EnvVar",
@@ -42,5 +43,6 @@ BYTES_REF_OPTIONAL_SOURCE_SYSTEMS: frozenset[str] = frozenset(
         "git",
         "pyproject",
         "package_json",
+        "python_runtime",
     }
 )

@@ -980,11 +980,28 @@ class KgSnapshot:
         return retry
 
     def _symbol_entities(self) -> list[JsonObject]:
-        return [entity for entity in self.entities if entity["kind"] == "CodeSymbol"]
+        return [entity for entity in self.entities if entity["kind"] in {"CodeSymbol", "ExternalSymbol"}]
 
     def _symbol_result(self, entity: JsonObject) -> JsonObject:
         identity = entity["identity"]
         properties = entity.get("properties", {})
+        if entity["kind"] == "ExternalSymbol":
+            module = identity.get("module")
+            name = identity.get("name")
+            qualified_name = f"{module}.{name}" if module and name else str(name or "")
+            return {
+                "symbol_id": entity["entity_id"],
+                "display_name": self._display(entity),
+                "qualified_name": qualified_name,
+                "repo": identity.get("repo"),
+                "module": module,
+                "qualname": name,
+                "symbol_kind": identity.get("symbol_kind"),
+                "path": properties.get("path"),
+                "line": properties.get("line"),
+                "end_line": properties.get("end_line"),
+                "evidence": self.evidence_by_target.get(entity["entity_id"], []),
+            }
         return {
             "symbol_id": entity["entity_id"],
             "display_name": self._display(entity),
@@ -1032,6 +1049,13 @@ class KgSnapshot:
         )
 
     def _symbol_query_matches_entity(self, symbol_query: str, entity: JsonObject) -> bool:
+        if entity["kind"] == "ExternalSymbol":
+            query = symbol_query.strip().lower()
+            identity = entity["identity"]
+            name = str(identity.get("name", "")).lower()
+            module = str(identity.get("module", "")).lower()
+            qualified = f"{module}.{name}" if module and name else name
+            return query in {name, qualified}
         if entity["kind"] != "CodeSymbol":
             return False
         query = symbol_query.strip().lower()

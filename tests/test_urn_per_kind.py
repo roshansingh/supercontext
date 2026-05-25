@@ -24,6 +24,17 @@ class PerKindUrnTest(unittest.TestCase):
             ),
             ("ExternalPackage", {"tenant_id": "tenant-a", "repo": "repo", "name": "requests"}),
             (
+                "ExternalSymbol",
+                {
+                    "tenant_id": "tenant-a",
+                    "repo": "repo",
+                    "language": "python",
+                    "module": "builtins",
+                    "name": "print",
+                    "symbol_kind": "builtin",
+                },
+            ),
+            (
                 "Endpoint",
                 {
                     "tenant_id": "tenant-a",

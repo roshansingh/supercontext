@@ -10,6 +10,10 @@ def display_entity(entity: JsonObject) -> str:
         return f"{identity.get('module')}.{identity.get('qualname')}"
     if kind == "CodeModule":
         return str(identity.get("module"))
+    if kind == "ExternalSymbol":
+        module = identity.get("module")
+        name = identity.get("name")
+        return f"{module}.{name}" if module and name else str(name or identity)
     if kind == "Endpoint":
         host = identity.get("host")
         prefix = f"{host} " if host else ""

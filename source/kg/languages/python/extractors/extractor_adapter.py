@@ -44,6 +44,7 @@ PYTHON_AST_ADAPTER = ExtractorAdapter(
             "CodeModule",
             "CodeSymbol",
             "ExternalPackage",
+            "ExternalSymbol",
             "Endpoint",
         ),
         ontology_scope="mixed",

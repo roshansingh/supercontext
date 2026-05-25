@@ -45,6 +45,12 @@ def urn_for_kind(kind: str, identity: JsonObject) -> str:
         return _structured_urn("code-symbol", identity, ("tenant_id", "repo", "module", "qualname", "symbol_kind"))
     if kind == "ExternalPackage":
         return _structured_urn("external-package", identity, ("tenant_id", "repo", "name"))
+    if kind == "ExternalSymbol":
+        return _structured_urn(
+            "external-symbol",
+            identity,
+            ("tenant_id", "repo", "language", "module", "name", "symbol_kind"),
+        )
     if kind == "Endpoint":
         return _endpoint_urn(identity)
     if kind == "Domain":

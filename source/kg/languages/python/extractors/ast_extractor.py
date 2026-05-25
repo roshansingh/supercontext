@@ -26,6 +26,11 @@ from source.kg.languages.python.extractors.receiver_calls import (
     PythonReceiverCallResolver,
     ResolvedPythonCalls,
 )
+from source.kg.languages.python.extractors.runtime_calls import (
+    RuntimeCall,
+    collect_builtin_runtime_calls,
+    module_bound_builtin_names,
+)
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.languages.python.normalization.imports import NormalizedImport, PythonImportNormalizer
@@ -95,6 +100,7 @@ class PythonAstExtractor:
             collected_symbols[file_path] = (symbols, function_defs)
             all_symbols.extend(symbols)
         receiver_call_index = PythonReceiverCallIndex(self._indexed_symbol(symbol) for symbol in all_symbols)
+        emitted_runtime_symbol_ids: set[str] = set()
 
         for file_path in repo.files_by_language.get("python", ()):
             self._extract_file(
@@ -110,6 +116,7 @@ class PythonAstExtractor:
                 build,
                 ctx,
                 tenant_id,
+                emitted_runtime_symbol_ids,
             )
 
         build.coverage.append(
@@ -186,6 +193,7 @@ class PythonAstExtractor:
         build: KgBuild,
         ctx: ExtractionContext | None,
         tenant_id: str,
+        emitted_runtime_symbol_ids: set[str],
     ) -> None:
         tree = parsed.tree
         if tree is None:
@@ -278,6 +286,7 @@ class PythonAstExtractor:
             imports=imports,
         )
         if isinstance(tree, ast.Module):
+            module_builtin_shadows = module_bound_builtin_names(tree)
             self._add_resolved_python_calls(
                 build,
                 emitted_call_keys,
@@ -285,6 +294,8 @@ class PythonAstExtractor:
                 repo,
                 file_path,
             )
+        else:
+            module_builtin_shadows = set()
         for caller_node in ast.walk(tree):
             if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -333,6 +344,16 @@ class PythonAstExtractor:
                         getattr(call_node, "col_offset", -1),
                         qualifier={"call": call_name},
                     )
+            self._add_runtime_builtin_calls(
+                build,
+                emitted_call_keys,
+                collect_builtin_runtime_calls(caller_node, module_bound_names=module_builtin_shadows),
+                caller.entity,
+                repo,
+                file_path,
+                tenant_id,
+                emitted_runtime_symbol_ids,
+            )
             self._add_resolved_python_calls(
                 build,
                 emitted_call_keys,
@@ -560,6 +581,40 @@ class PythonAstExtractor:
                 },
             )
 
+    def _add_runtime_builtin_calls(
+        self,
+        build: KgBuild,
+        emitted_call_keys: set[tuple[str, str, int, int]],
+        runtime_calls: list[RuntimeCall],
+        caller: Entity,
+        repo: RepoSnapshot,
+        file_path: Path,
+        tenant_id: str,
+        emitted_runtime_symbol_ids: set[str],
+    ) -> None:
+        for runtime_call in runtime_calls:
+            callee = self._external_symbol(repo, runtime_call.name, tenant_id)
+            if callee.entity_id not in emitted_runtime_symbol_ids:
+                emitted_runtime_symbol_ids.add(callee.entity_id)
+                build.entities.append(callee)
+                build.evidence.append(self._external_symbol_evidence(callee))
+            self._add_call_fact_once(
+                build,
+                emitted_call_keys,
+                caller,
+                callee,
+                repo,
+                file_path,
+                runtime_call.line,
+                runtime_call.column,
+                qualifier={
+                    "call": runtime_call.raw_call,
+                    "runtime": "python",
+                    "module": "builtins",
+                    "resolution_kind": "python_builtin_call",
+                },
+            )
+
     def _function_bound_names(self, node: FunctionDefNode) -> set[str]:
         names = {arg.arg for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]}
         if node.args.vararg is not None:
@@ -639,6 +694,36 @@ class PythonAstExtractor:
                 "import_root": import_ref.import_root,
                 "distribution_name": import_ref.distribution_name,
             },
+        )
+
+    def _external_symbol(self, repo: RepoSnapshot, name: str, tenant_id: str) -> Entity:
+        return Entity(
+            kind="ExternalSymbol",
+            identity={
+                "tenant_id": tenant_id,
+                "repo": repo.name,
+                "language": "python",
+                "module": "builtins",
+                "name": name,
+                "symbol_kind": "builtin",
+            },
+            properties={"category": "python_builtin"},
+        )
+
+    def _external_symbol_evidence(self, entity: Entity) -> Evidence:
+        identity = entity.identity
+        return Evidence(
+            target_type="entity",
+            target_id=entity.entity_id,
+            derivation_class="authoritative_static",
+            source_system="python_runtime",
+            source_ref={
+                "language": identity.get("language"),
+                "module": identity.get("module"),
+                "name": identity.get("name"),
+                "symbol_kind": identity.get("symbol_kind"),
+            },
+            confidence=1.0,
         )
 
     def _import_qualifier(self, import_ref: NormalizedImport) -> JsonObject:
