@@ -45,12 +45,18 @@ class McpToolsTest(unittest.TestCase):
         definitions = tool_definitions()
         self.assertEqual([row["name"] for row in definitions], [*TOOL_NAMES, *EXTENSION_TOOL_NAMES])
         schemas = {row["name"]: row["inputSchema"] for row in definitions}
+        descriptions = {row["name"]: row["description"] for row in definitions}
         self.assertEqual(schemas["search_services"]["properties"]["query"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["path"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["line"]["type"], ["integer", "null"])
         self.assertEqual(schemas["planning_context"]["properties"]["symbol"]["type"], ["string", "null"])
         self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
         self.assertNotIn("depth", schemas["review_context"]["properties"])
+        self.assertIn("operational_surfaces.evidence_partition", descriptions["get_service_brief"])
+        self.assertIn("service_operational_surfaces.evidence_partition", descriptions["planning_context"])
+        self.assertIn("known_linked", descriptions["planning_context"])
+        self.assertIn("unlinked_evidence", descriptions["planning_context"])
+        self.assertIn("missing_contracts", descriptions["planning_context"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:
@@ -813,6 +819,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("planning_context first", instructions)
         self.assertIn("review_context first", instructions)
         self.assertIn("inspect the relevant workspace source files", instructions)
+        self.assertIn("service_operational_surfaces.evidence_partition", instructions)
+        self.assertIn("known_linked", instructions)
+        self.assertIn("unlinked_evidence", instructions)
+        self.assertIn("missing_contracts", instructions)
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(initialized_with_client_version["result"]["instructions"], instructions)
         self.assertEqual(ping["result"], {})

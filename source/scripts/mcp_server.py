@@ -35,6 +35,8 @@ SuperContext provides deterministic, source-cited context from the indexed repos
 ## Answerability
 
 Read answerability, coverage_warnings, unsupported_scopes, and next_actions before finalizing. If a SuperContext result is partial, ambiguous, unsupported_by_current_kg, or not_found, say what the graph could not prove and inspect the relevant workspace source files with ordinary Read/Grep before finalizing. For runtime event time windows and deploy-safety claims, static graph facts are context only; inspect operational/config/source evidence. Do not treat a graph miss as proof of absence.
+
+For service operational evidence, read operational_surfaces.evidence_partition or service_operational_surfaces.evidence_partition. Keep known_linked, unlinked_evidence, and missing_contracts separate: known_linked is exact KG/repo-linked evidence, unlinked_evidence is source leads only, and missing_contracts are claims the KG cannot prove.
 """
 
 
