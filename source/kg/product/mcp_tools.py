@@ -2944,6 +2944,7 @@ _TOOLS: dict[str, McpTool] = {
             "Use it after you know the target service and want a bounded operational summary of what the KG has linked to it. "
             "endpoint_consumers are static CALLS_ENDPOINT candidates matched by normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
             "Read operational_surfaces.evidence_partition: known_linked uses exact repo-identity joins, unlinked_evidence is source leads only, and missing_contracts lists deploy/runtime claims the KG cannot prove. "
+            "Treat operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
             "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime/deploy contracts; if deploy mappings are absent, inspect manifests before making environment claims."
         ),
         input_schema=_object_schema(
@@ -3031,6 +3032,7 @@ _TOOLS: dict[str, McpTool] = {
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
+            "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
             "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Use it first for broad planning, architecture, dependency, or impact questions on deterministic anchors before selecting narrower MCP tools. "

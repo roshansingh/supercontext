@@ -30,7 +30,7 @@ Use structured anchors when known:
 - `service`, `repo`, `symbol`, `path`, `line`
 - `package`, `endpoint`, `event_channel`, `domain`
 
-Read `summary`, `inventory`, `entry_points`, `related_facts`, `source_coordinates`, and `answerability` before deciding what to inspect next. For dependency questions, check `related_facts.dependency_importers`; for service planning, check `service_operational_surfaces.evidence_partition` and keep its buckets separate: `known_linked` is exact KG/repo-linked evidence, `unlinked_evidence` is source leads only, and `missing_contracts` are claims SuperContext cannot prove. Use `source_coordinates` for targeted source reads instead of starting with broad grep.
+Read `summary`, `inventory`, `entry_points`, `related_facts`, `source_coordinates`, and `answerability` before deciding what to inspect next. For dependency questions, check `related_facts.dependency_importers`; for service planning, check `service_operational_surfaces.evidence_partition` and keep its buckets separate: `known_linked` is exact KG/repo-linked evidence, `unlinked_evidence` is source leads only, and `missing_contracts` are claims SuperContext cannot prove. Treat `service_operational_surfaces.deploy_link_facts` / `DEPLOYS_VIA_CONFIG` as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. Use `source_coordinates` for targeted source reads instead of starting with broad grep.
 
 The primary `limit` controls top-level result rows. Nested packets such as `entry_points`, `related_facts`, and `source_coordinates` are intentionally capped by the returned `summary.section_limit` to keep planning context compact.
 
@@ -43,7 +43,7 @@ Use SuperContext for exact graph questions while editing:
 - `find_callers` before changing a known symbol with downstream users.
 - `find_callees` to understand immediate dependencies of a changed symbol.
 - `blast_radius` only for static downstream CALLS closure from an exact symbol.
-- `get_service_brief` for a concise service fact sheet when no broader planning or impact context is needed; read `operational_surfaces.evidence_partition` and do not promote `unlinked_evidence` into deploy/runtime proof.
+- `get_service_brief` for a concise service fact sheet when no broader planning or impact context is needed; read `operational_surfaces.evidence_partition` and `operational_surfaces.deploy_link_facts`, and do not promote `unlinked_evidence` into deploy/runtime proof.
 - `get_event_consumers` and `get_event_producers` for exact known async channel impact.
 
 Still read the relevant source files before editing. Do not treat SuperContext as a replacement for code inspection.
