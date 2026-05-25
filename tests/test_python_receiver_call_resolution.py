@@ -464,6 +464,28 @@ class PythonReceiverCallResolutionTest(unittest.TestCase):
         self.assertEqual(result["status"], "not_found")
         self.assertEqual(result["caller_count"], 0)
 
+    def test_constructor_call_fails_closed_when_nested_class_shadows_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "app" / "features.py"
+            module.parent.mkdir()
+            module.write_text(
+                "class build_features:\n"
+                "    pass\n\n"
+                "def run():\n"
+                "    class build_features:\n"
+                "        pass\n"
+                "    return build_features()\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, (module,))
+
+        result = kg.find_callers("build_features", path="app/features.py", line=1)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["caller_count"], 0)
+
 
 def _snapshot(root: Path, files: tuple[Path, ...]) -> KgSnapshot:
     repo = RepoSnapshot(

@@ -544,6 +544,28 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
 
+    def test_review_context_repo_filter_accepts_owner_repo_query(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "latticeai/payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+
+    def test_review_context_repo_filter_accepts_bare_repo_for_owner_repo_rows(self) -> None:
+        with _fixture_snapshot(symbol_repo="latticeai/payments") as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+
     def test_review_context_changed_ranges_filter_symbols(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(
@@ -558,6 +580,90 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "found")
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+        self.assertEqual(result["changed_symbols"][0]["line_start"], 10)
+        self.assertEqual(result["changed_symbols"][0]["line_end"], 20)
+        self.assertTrue(any(row["qualname"] == "bootstrap_checkout" for row in result["changed_file_symbols"]))
+        self.assertEqual(result["summary"]["changed_file_symbol_count"], 2)
+        self.assertIn("scope_contract", result)
+        self.assertEqual(result["scope_contract"]["changed_symbol_count"], 1)
+
+    def test_review_context_changed_ranges_use_symbol_evidence_span(self) -> None:
+        with _fixture_snapshot(
+            symbol_without_end_line=True,
+            symbol_entity_evidence_duplicate_coordinates=True,
+        ) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 15, "end_line": 15}],
+                },
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_changed_ranges_keep_most_specific_nested_symbol(self) -> None:
+        with _fixture_snapshot(containing_checkout_class=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 15, "end_line": 15}],
+                },
+            )
+
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["CheckoutHandler.handle_checkout"])
+        self.assertTrue(any(row["qualname"] == "CheckoutHandler" for row in result["changed_file_symbols"]))
+
+    def test_review_context_includes_transitive_callers_for_changed_symbols(self) -> None:
+        with _fixture_snapshot(upstream_checkout_caller=True, upstream_checkout_grandcaller=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["summary"]["transitive_caller_count"], 2)
+        self.assertEqual(
+            [(row["subject"], row["depth"]) for row in result["transitive_callers"]],
+            [
+                ("payments.api.submit_checkout", 1),
+                ("payments.worker.enqueue_checkout", 2),
+            ],
+        )
+        self.assertEqual(result["impact"]["transitive_callers"][0]["subject"], "payments.api.submit_checkout")
+
+    def test_review_context_transitive_callers_handles_cycles(self) -> None:
+        with _fixture_snapshot(upstream_checkout_caller=True, upstream_checkout_cycle=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["summary"]["transitive_caller_count"], 2)
+        self.assertEqual(
+            {(row["subject"], row["object"], row["depth"]) for row in result["transitive_callers"]},
+            {
+                ("payments.api.submit_checkout", "payments.checkout.handle_checkout", 1),
+                ("payments.checkout.handle_checkout", "payments.api.submit_checkout", 2),
+            },
+        )
 
     def test_review_context_changed_ranges_only_narrow_matching_files(self) -> None:
         with _fixture_snapshot() as kg:
@@ -999,6 +1105,12 @@ class _fixture_snapshot:
         operational_deploy_same_repo: bool = False,
         operational_deploy_link: bool = False,
         symbol_entity_evidence_duplicate_coordinates: bool = False,
+        symbol_without_end_line: bool = False,
+        upstream_checkout_caller: bool = False,
+        upstream_checkout_grandcaller: bool = False,
+        upstream_checkout_cycle: bool = False,
+        containing_checkout_class: bool = False,
+        symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
         self.extra_package_importers = extra_package_importers
@@ -1012,6 +1124,12 @@ class _fixture_snapshot:
         self.operational_deploy_same_repo = operational_deploy_same_repo
         self.operational_deploy_link = operational_deploy_link
         self.symbol_entity_evidence_duplicate_coordinates = symbol_entity_evidence_duplicate_coordinates
+        self.symbol_without_end_line = symbol_without_end_line
+        self.upstream_checkout_caller = upstream_checkout_caller
+        self.upstream_checkout_grandcaller = upstream_checkout_grandcaller
+        self.upstream_checkout_cycle = upstream_checkout_cycle
+        self.containing_checkout_class = containing_checkout_class
+        self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -1024,18 +1142,33 @@ class _fixture_snapshot:
             kind="CodeSymbol",
             identity={
                 "tenant_id": "default",
-                "repo": "payments",
+                "repo": self.symbol_repo,
                 "module": "payments.checkout",
-                "qualname": "handle_checkout",
+                "qualname": "CheckoutHandler.handle_checkout" if self.containing_checkout_class else "handle_checkout",
                 "symbol_kind": "function",
             },
-            properties={"path": "payments/checkout.py", "line": 10, "end_line": 20},
+            properties=(
+                {"path": "payments/checkout.py", "line": 10}
+                if self.symbol_without_end_line
+                else {"path": "payments/checkout.py", "line": 10, "end_line": 20}
+            ),
+        )
+        containing_class = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": self.symbol_repo,
+                "module": "payments.checkout",
+                "qualname": "CheckoutHandler",
+                "symbol_kind": "class",
+            },
+            properties={"path": "payments/checkout.py", "line": 1, "end_line": 30},
         )
         earlier_symbol = Entity(
             kind="CodeSymbol",
             identity={
                 "tenant_id": "default",
-                "repo": "payments",
+                "repo": self.symbol_repo,
                 "module": "payments.checkout",
                 "qualname": "bootstrap_checkout",
                 "symbol_kind": "function",
@@ -1057,6 +1190,28 @@ class _fixture_snapshot:
                 "symbol_kind": "function",
             },
             properties={"path": "payments/gateway.py", "line": 5, "end_line": 12},
+        )
+        upstream_caller = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.api",
+                "qualname": "submit_checkout",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/api.py", "line": 30, "end_line": 35},
+        )
+        upstream_grandcaller = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.worker",
+                "qualname": "enqueue_checkout",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/worker.py", "line": 40, "end_line": 45},
         )
         endpoint = Entity(
             kind="Endpoint",
@@ -1143,6 +1298,9 @@ class _fixture_snapshot:
             properties={"path": "payments/alt_gateway.py", "line": 7, "end_line": 9},
         )
         call_fact = Fact("CALLS", caller.entity_id, callee.entity_id)
+        upstream_call_fact = Fact("CALLS", upstream_caller.entity_id, caller.entity_id)
+        upstream_grandcall_fact = Fact("CALLS", upstream_grandcaller.entity_id, upstream_caller.entity_id)
+        upstream_cycle_fact = Fact("CALLS", caller.entity_id, upstream_caller.entity_id)
         import_fact = Fact(
             "IMPORTS",
             module.entity_id,
@@ -1311,12 +1469,15 @@ class _fixture_snapshot:
             )
         entities = [
             service,
+            *([containing_class] if self.containing_checkout_class else []),
             caller,
             earlier_symbol,
             module,
             callee,
             endpoint,
             *([extra_endpoint] if self.extra_service_endpoint else []),
+            *([upstream_caller] if self.upstream_checkout_caller else []),
+            *([upstream_grandcaller] if self.upstream_checkout_grandcaller else []),
             *([consumer_service, consumer_endpoint] if self.endpoint_consumer else []),
             channel,
             domain,
@@ -1330,6 +1491,9 @@ class _fixture_snapshot:
         ]
         facts = [
             call_fact,
+            *([upstream_call_fact] if self.upstream_checkout_caller else []),
+            *([upstream_grandcall_fact] if self.upstream_checkout_grandcaller else []),
+            *([upstream_cycle_fact] if self.upstream_checkout_cycle else []),
             import_fact,
             repo_link_fact,
             endpoint_fact,

@@ -189,6 +189,8 @@ class _ReceiverCallCollector(ast.NodeVisitor):
 
     def _process_statement(self, statement: ast.stmt) -> None:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if self.local_imports_shadow:
+                self.local_classes[statement.name] = None
             return
         if isinstance(statement, ast.Assign):
             self.visit(statement.value)

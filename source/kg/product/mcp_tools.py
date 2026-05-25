@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from source.kg.core.display import display_entity
-from source.kg.core.models import JsonObject
+from source.kg.core.models import JsonObject, canonical_json
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -1139,20 +1139,26 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     changed_symbols: list[JsonObject] = []
     range_filters = _changed_ranges_by_path(changed_ranges)
     changed_symbols_by_path: dict[str, list[JsonObject]] = {}
+    file_symbols_by_path: dict[str, list[JsonObject]] = {}
 
     for changed_file in changed_files:
         symbol_rows = list(kg.symbols_in_file(changed_file, limit=10_000).get("symbols", []))
-        symbol_rows = [row for row in symbol_rows if _normalize_repo_text(row.get("repo")) == _normalize_repo_text(repo)]
+        symbol_rows = [row for row in symbol_rows if _review_context_repo_matches(row.get("repo"), repo)]
         normalized_changed_file = _planning_context_normalize_path(changed_file)
+        file_symbols_by_path[normalized_changed_file] = symbol_rows
         if changed_ranges:
             file_ranges = range_filters.get(normalized_changed_file, [])
             if file_ranges:
                 symbol_rows = [row for row in symbol_rows if _review_context_symbol_overlaps_ranges(row, file_ranges)]
+                symbol_rows = _review_context_most_specific_symbols(symbol_rows)
         for row in symbol_rows:
             changed_symbols.append(row)
         changed_symbols_by_path[normalized_changed_file] = symbol_rows
 
     changed_symbols = _review_context_dedupe_rows(changed_symbols)[:limit]
+    changed_file_symbols = _review_context_dedupe_rows(
+        [row for rows in file_symbols_by_path.values() for row in rows]
+    )[:limit]
     direct_callers: list[JsonObject] = []
     direct_callees: list[JsonObject] = []
     for row in changed_symbols:
@@ -1179,6 +1185,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     repo_dependencies = list(repo_dependency_result.get("dependencies", []))
     direct_callers = _review_context_dedupe_rows(direct_callers)[:limit]
     direct_callees = _review_context_dedupe_rows(direct_callees)[:limit]
+    transitive_callers = _review_context_transitive_callers(kg, changed_symbols=changed_symbols, depth=3, limit=limit)
     repo_dependencies = _review_context_dedupe_rows(repo_dependencies)[:limit]
     runtime_surfaces = _review_context_runtime_surfaces(kg, repo=repo, changed_symbols=changed_symbols, limit=limit)
     endpoint_rows = runtime_surfaces["endpoints"]
@@ -1220,9 +1227,11 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         include_deploy_blockers=include_deploy_blockers,
     )
     next_actions = _review_context_next_actions(answerability, unsupported_scopes=unsupported_scopes)
-    public_changed_symbols = _planning_context_public_rows(changed_symbols)
+    public_changed_symbols = _review_context_public_symbol_rows(changed_symbols)
+    public_changed_file_symbols = _review_context_public_symbol_rows(changed_file_symbols)
     public_direct_callers = _planning_context_public_rows(direct_callers)
     public_direct_callees = _planning_context_public_rows(direct_callees)
+    public_transitive_callers = _planning_context_public_rows(transitive_callers)
     public_repo_dependencies = _planning_context_public_rows(repo_dependencies)
     public_endpoints = _planning_context_public_rows(endpoint_rows)
     public_endpoint_consumers = _planning_context_public_rows(endpoint_consumer_rows)
@@ -1242,15 +1251,27 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             event_channels=public_event_channels,
             deploy_mappings=public_deploy_mappings,
             source_coordinates=source_coordinates,
+            changed_file_symbols=public_changed_file_symbols,
+            transitive_callers=public_transitive_callers,
         ),
         "changed_symbols": public_changed_symbols,
+        "changed_file_symbols": public_changed_file_symbols,
         "direct_callers": public_direct_callers,
         "direct_callees": public_direct_callees,
+        "direct_callers_of_changed_symbols": public_direct_callers,
+        "direct_callees_from_changed_symbols": public_direct_callees,
+        "transitive_callers": public_transitive_callers,
         "repo_dependencies": public_repo_dependencies,
         "changed_surface": changed_surface,
+        "scope_contract": _review_context_scope_contract(
+            changed_ranges=changed_ranges,
+            changed_symbols=public_changed_symbols,
+            changed_file_symbols=public_changed_file_symbols,
+        ),
         "impact": {
             "direct_callers": public_direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
             "direct_callees": public_direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "transitive_callers": public_transitive_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
             "repo_dependencies": public_repo_dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         },
         "runtime_surfaces": {
@@ -1679,15 +1700,72 @@ def _changed_ranges_by_path(changed_ranges: list[JsonObject]) -> dict[str, list[
 
 
 def _review_context_symbol_overlaps_ranges(symbol: JsonObject, ranges: list[tuple[int, int]]) -> bool:
-    start = symbol.get("line")
-    if not isinstance(start, int):
+    bounds = _review_context_symbol_bounds(symbol)
+    if bounds is None:
         return False
-    end = symbol.get("end_line")
-    line_end = end if isinstance(end, int) else start
+    line_start, line_end = bounds
     for range_start, range_end in ranges:
-        if start <= range_end and range_start <= line_end:
+        if line_start <= range_end and range_start <= line_end:
             return True
     return False
+
+
+def _review_context_symbol_bounds(symbol: JsonObject) -> tuple[int, int] | None:
+    line = symbol.get("line")
+    if isinstance(line, bool) or not isinstance(line, int):
+        return None
+    end_line = symbol.get("end_line")
+    if isinstance(end_line, bool) or not isinstance(end_line, int) or end_line < line:
+        end_line = None
+    if end_line is not None:
+        return line, end_line
+    for evidence in symbol.get("evidence", []):
+        if not isinstance(evidence, dict):
+            continue
+        bytes_ref = evidence.get("bytes_ref")
+        if not isinstance(bytes_ref, dict):
+            continue
+        evidence_start = bytes_ref.get("line_start")
+        evidence_end = bytes_ref.get("line_end")
+        if (
+            isinstance(evidence_start, int)
+            and not isinstance(evidence_start, bool)
+            and isinstance(evidence_end, int)
+            and not isinstance(evidence_end, bool)
+            and evidence_start <= line <= evidence_end
+        ):
+            return evidence_start, evidence_end
+    return line, line
+
+
+def _review_context_most_specific_symbols(symbols: list[JsonObject]) -> list[JsonObject]:
+    if len(symbols) <= 1:
+        return symbols
+    kept: list[JsonObject] = []
+    for index, symbol in enumerate(symbols):
+        bounds = _review_context_symbol_bounds(symbol)
+        path = _planning_context_normalize_path(str(symbol.get("path") or ""))
+        if bounds is None:
+            kept.append(symbol)
+            continue
+        start, end = bounds
+        contained_by_more_specific = False
+        for other_index, other in enumerate(symbols):
+            if index == other_index:
+                continue
+            other_path = _planning_context_normalize_path(str(other.get("path") or ""))
+            if other_path != path:
+                continue
+            other_bounds = _review_context_symbol_bounds(other)
+            if other_bounds is None:
+                continue
+            other_start, other_end = other_bounds
+            if start <= other_start and other_end <= end and (other_start, other_end) != (start, end):
+                contained_by_more_specific = True
+                break
+        if not contained_by_more_specific:
+            kept.append(symbol)
+    return kept
 
 
 def _optional_symbol_path(symbol: JsonObject) -> str | None:
@@ -1718,6 +1796,27 @@ def _review_context_dedupe_rows(rows: list[JsonObject]) -> list[JsonObject]:
     return deduped
 
 
+def _review_context_public_symbol_rows(rows: list[JsonObject]) -> list[JsonObject]:
+    public_rows = _planning_context_public_rows(rows)
+    for row in public_rows:
+        bounds = _review_context_symbol_bounds(row)
+        if bounds is None:
+            continue
+        row["line_start"] = bounds[0]
+        row["line_end"] = bounds[1]
+    return public_rows
+
+
+def _review_context_repo_matches(row_repo: object, requested_repo: object) -> bool:
+    row_key = _normalize_repo_text(row_repo)
+    requested_key = _normalize_repo_text(requested_repo)
+    if not row_key or not requested_key:
+        return False
+    if row_key == requested_key:
+        return True
+    return requested_key.rsplit("/", 1)[-1] == row_key.rsplit("/", 1)[-1]
+
+
 def _review_context_changed_surface(
     *,
     changed_files: list[str],
@@ -1744,6 +1843,88 @@ def _review_context_changed_surface(
         "files": files,
         "symbols": _planning_context_public_rows(changed_symbols)[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
+
+
+def _review_context_scope_contract(
+    *,
+    changed_ranges: list[JsonObject],
+    changed_symbols: list[JsonObject],
+    changed_file_symbols: list[JsonObject],
+) -> JsonObject:
+    return {
+        "changed_symbols": (
+            "Symbols whose source span overlaps changed_ranges. "
+            "When changed_ranges are omitted, this is the changed-file symbol set."
+            if changed_ranges
+            else "No changed_ranges were supplied; changed_symbols equals the bounded changed-file symbol set."
+        ),
+        "changed_file_symbols": "Bounded symbol inventory for the changed files; these are context, not all changed symbols.",
+        "direct_callers_of_changed_symbols": "Incoming CALLS edges for changed_symbols only.",
+        "direct_callees_from_changed_symbols": "Outgoing CALLS edges from changed_symbols only.",
+        "transitive_callers": "Bounded reverse CALLS closure from changed_symbols up to depth 3; limit is a total edge cap, not per-depth.",
+        "changed_symbol_count": len(changed_symbols),
+        "changed_file_symbol_count": len(changed_file_symbols),
+    }
+
+
+def _review_context_transitive_callers(
+    kg: KgSnapshot,
+    *,
+    changed_symbols: list[JsonObject],
+    depth: int,
+    limit: int,
+) -> list[JsonObject]:
+    root_ids = {
+        str(row["symbol_id"]) for row in changed_symbols if isinstance(row.get("symbol_id"), str) and row["symbol_id"]
+    }
+    if not root_ids:
+        return []
+    incoming: dict[str, list[JsonObject]] = {}
+    for fact in kg.facts:
+        if fact.get("predicate") != "CALLS":
+            continue
+        object_id = fact.get("object_id")
+        if not isinstance(object_id, str):
+            continue
+        incoming.setdefault(object_id, []).append(fact)
+    seen_nodes = set(root_ids)
+    queued: list[tuple[str, int]] = [(root_id, 0) for root_id in root_ids]
+    results: list[JsonObject] = []
+    seen_edges: set[str] = set()
+    while queued and len(results) < limit:
+        current_id, current_depth = queued.pop(0)
+        if current_depth >= depth:
+            continue
+        for fact in incoming.get(current_id, []):
+            caller = kg.entities_by_id.get(fact.get("subject_id"))
+            callee = kg.entities_by_id.get(fact.get("object_id"))
+            if not caller or not callee:
+                continue
+            edge_key = str(
+                fact.get("fact_id")
+                or canonical_json(
+                    {
+                        "subject_id": fact.get("subject_id"),
+                        "object_id": fact.get("object_id"),
+                        "predicate": fact.get("predicate"),
+                        "qualifier": fact.get("qualifier", {}),
+                        "fact": fact,
+                    }
+                )
+            )
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            row = _fact_result(kg, fact, caller, callee)
+            row["depth"] = current_depth + 1
+            results.append(row)
+            caller_id = caller.get("entity_id")
+            if isinstance(caller_id, str) and caller_id not in seen_nodes:
+                seen_nodes.add(caller_id)
+                queued.append((caller_id, current_depth + 1))
+            if len(results) >= limit:
+                break
+    return results
 
 
 def _review_context_runtime_surfaces(
@@ -1811,8 +1992,7 @@ def _review_context_fact_is_in_review_scope(
 ) -> bool:
     if subject.get("entity_id") in changed_symbol_ids or object_.get("entity_id") in changed_symbol_ids:
         return True
-    repo_key = _normalize_repo_text(repo)
-    return any(_normalize_repo_text(_review_context_entity_repo(entity)) == repo_key for entity in (subject, object_))
+    return any(_review_context_repo_matches(_review_context_entity_repo(entity), repo) for entity in (subject, object_))
 
 
 def _review_context_entity_repo(entity: JsonObject) -> str | None:
@@ -1830,8 +2010,10 @@ def _review_context_summary(
     *,
     changed_files: list[str],
     changed_symbols: list[JsonObject],
+    changed_file_symbols: list[JsonObject],
     direct_callers: list[JsonObject],
     direct_callees: list[JsonObject],
+    transitive_callers: list[JsonObject],
     repo_dependencies: list[JsonObject],
     endpoints: list[JsonObject],
     endpoint_consumers: list[JsonObject],
@@ -1842,8 +2024,10 @@ def _review_context_summary(
     return {
         "changed_file_count": len(changed_files),
         "changed_symbol_count": len(changed_symbols),
+        "changed_file_symbol_count": len(changed_file_symbols),
         "direct_caller_count": len(direct_callers),
         "direct_callee_count": len(direct_callees),
+        "transitive_caller_count": len(transitive_callers),
         "repo_dependency_count": len(repo_dependencies),
         "endpoint_fact_count": len(endpoints),
         "endpoint_consumer_fact_count": len(endpoint_consumers),
@@ -3050,7 +3234,8 @@ _TOOLS: dict[str, McpTool] = {
     "review_context": McpTool(
         name="review_context",
         description=(
-            "Returns bounded review context for one repo plus a changed-file set by composing changed_surface, impact, runtime_surfaces, source_coordinates, and answerability metadata. "
+            "Returns bounded review context for one repo plus a changed-file set by composing changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, source_coordinates, and answerability metadata. "
+            "Use scope_contract to keep changed_symbols distinct from changed_file_symbols: file inventory is context, not proof every symbol changed. "
             "Existing top-level changed_symbols, direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
             "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "Use it when you know the changed files and need deterministic static review context before drilling into narrower MCP tools. "
