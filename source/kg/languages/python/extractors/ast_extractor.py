@@ -31,6 +31,7 @@ from source.kg.languages.python.extractors.runtime_calls import (
     collect_builtin_runtime_calls,
     module_bound_builtin_names,
 )
+from source.kg.languages.python.extractors.source_context import source_excerpt, source_line
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.languages.python.normalization.imports import NormalizedImport, PythonImportNormalizer
@@ -62,6 +63,7 @@ FunctionDefNode = ast.FunctionDef | ast.AsyncFunctionDef
 class ParsedPythonFile:
     tree: ast.AST | None
     line_count: int
+    source_text: str
     syntax_error: SyntaxError | None = None
 
 
@@ -290,7 +292,7 @@ class PythonAstExtractor:
             self._add_resolved_python_calls(
                 build,
                 emitted_call_keys,
-                receiver_resolver.calls_in_body(tree.body, caller=module_entity),
+                receiver_resolver.calls_in_body(tree.body, caller=module_entity, source_text=parsed.source_text),
                 repo,
                 file_path,
             )
@@ -325,6 +327,7 @@ class PythonAstExtractor:
                         file_path,
                         line,
                         getattr(call_node, "col_offset", -1),
+                        qualifier=self._call_site_qualifier(call_node, parsed.source_text),
                     )
                     continue
                 root = call_name.split(".", 1)[0]
@@ -342,12 +345,16 @@ class PythonAstExtractor:
                         file_path,
                         line,
                         getattr(call_node, "col_offset", -1),
-                        qualifier={"call": call_name},
+                        qualifier=self._call_site_qualifier(call_node, parsed.source_text, {"call": call_name}),
                     )
             self._add_runtime_builtin_calls(
                 build,
                 emitted_call_keys,
-                collect_builtin_runtime_calls(caller_node, module_bound_names=module_builtin_shadows),
+                collect_builtin_runtime_calls(
+                    caller_node,
+                    module_bound_names=module_builtin_shadows,
+                    source_text=parsed.source_text,
+                ),
                 caller.entity,
                 repo,
                 file_path,
@@ -362,6 +369,7 @@ class PythonAstExtractor:
                     caller=caller.entity,
                     shadowed_names=self._function_bound_names(caller_node),
                     local_imports_shadow=True,
+                    source_text=parsed.source_text,
                 ),
                 repo,
                 file_path,
@@ -443,8 +451,8 @@ class PythonAstExtractor:
                 warnings.simplefilter("ignore", SyntaxWarning)
                 tree = ast.parse(source, filename=str(file_path))
         except SyntaxError as exc:
-            return ParsedPythonFile(tree=None, line_count=line_count, syntax_error=exc)
-        return ParsedPythonFile(tree=tree, line_count=line_count)
+            return ParsedPythonFile(tree=None, line_count=line_count, source_text=source, syntax_error=exc)
+        return ParsedPythonFile(tree=tree, line_count=line_count, source_text=source)
 
     def _literal_index(self, repo: RepoSnapshot, parsed_files: dict[Path, ParsedPythonFile]) -> LiteralIndex:
         values: dict[LiteralRef, ast.AST] = {}
@@ -539,6 +547,24 @@ class PythonAstExtractor:
         emitted_call_keys.add(key)
         self._add_fact(build, "CALLS", subject, object_, repo, file_path, line, line, qualifier=qualifier)
 
+    def _call_site_qualifier(self, call_node: ast.Call, source_text: str, base: JsonObject | None = None) -> JsonObject:
+        qualifier = dict(base or {})
+        line_text = source_line(source_text, getattr(call_node, "lineno", 1))
+        excerpt = source_excerpt(source_text, call_node)
+        if line_text is not None:
+            qualifier["source_line"] = line_text
+        if excerpt is not None:
+            qualifier["source_excerpt"] = excerpt
+        return qualifier
+
+    def _source_qualifier(self, line_text: str | None, excerpt: str | None) -> JsonObject:
+        qualifier: JsonObject = {}
+        if line_text is not None:
+            qualifier["source_line"] = line_text
+        if excerpt is not None:
+            qualifier["source_excerpt"] = excerpt
+        return qualifier
+
     def _add_resolved_python_calls(
         self,
         build: KgBuild,
@@ -561,6 +587,7 @@ class PythonAstExtractor:
                     "call": constructor_call.raw_call,
                     "constructor_class": constructor_call.constructor_class,
                     "resolution_kind": "python_constructor_call",
+                    **self._source_qualifier(constructor_call.source_line, constructor_call.source_excerpt),
                 },
             )
         for receiver_call in resolved_calls.receiver_calls:
@@ -578,6 +605,7 @@ class PythonAstExtractor:
                     "receiver": receiver_call.receiver_name,
                     "receiver_class": receiver_call.receiver_class,
                     "resolution_kind": "python_local_instance_receiver",
+                    **self._source_qualifier(receiver_call.source_line, receiver_call.source_excerpt),
                 },
             )
 
@@ -612,6 +640,7 @@ class PythonAstExtractor:
                     "runtime": "python",
                     "module": "builtins",
                     "resolution_kind": "python_builtin_call",
+                    **self._source_qualifier(runtime_call.source_line, runtime_call.source_excerpt),
                 },
             )
 

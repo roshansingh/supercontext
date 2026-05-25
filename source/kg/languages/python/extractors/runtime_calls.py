@@ -4,6 +4,8 @@ import ast
 import builtins
 from dataclasses import dataclass
 
+from source.kg.languages.python.extractors.source_context import source_excerpt, source_line
+
 
 PYTHON_BUILTIN_CALLABLES: frozenset[str] = frozenset(
     name for name in dir(builtins) if not name.startswith("_") and callable(getattr(builtins, name))
@@ -16,19 +18,22 @@ class RuntimeCall:
     line: int
     column: int
     raw_call: str
+    source_line: str | None = None
+    source_excerpt: str | None = None
 
 
 def collect_builtin_runtime_calls(
     function_node: ast.FunctionDef | ast.AsyncFunctionDef,
     *,
     module_bound_names: set[str] | None = None,
+    source_text: str | None = None,
 ) -> list[RuntimeCall]:
     shadowed_names = _function_bound_names(function_node)
     # Python decides local names statically for the whole function body, so a
     # later assignment still shadows earlier reads of that name.
     shadowed_names.update(_local_bound_names(function_node.body))
     shadowed_names.update(module_bound_names or set())
-    collector = _BuiltinCallCollector(shadowed_names=shadowed_names)
+    collector = _BuiltinCallCollector(shadowed_names=shadowed_names, source_text=source_text)
     for statement in function_node.body:
         collector.visit(statement)
     return collector.calls
@@ -47,8 +52,9 @@ def module_bound_builtin_names(tree: ast.AST) -> set[str]:
 
 
 class _BuiltinCallCollector(ast.NodeVisitor):
-    def __init__(self, *, shadowed_names: set[str]) -> None:
+    def __init__(self, *, shadowed_names: set[str], source_text: str | None = None) -> None:
         self.shadowed_names = shadowed_names
+        self.source_text = source_text
         self.calls: list[RuntimeCall] = []
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -63,6 +69,8 @@ class _BuiltinCallCollector(ast.NodeVisitor):
                     line=getattr(node, "lineno", 1),
                     column=getattr(node, "col_offset", -1),
                     raw_call=_expression(node.func),
+                    source_line=source_line(self.source_text, getattr(node, "lineno", 1)),
+                    source_excerpt=source_excerpt(self.source_text, node),
                 )
             )
         for arg in node.args:
@@ -112,7 +120,7 @@ class _BuiltinCallCollector(ast.NodeVisitor):
             self.visit(default)
 
     def _visit_comprehension(self, generators: list[ast.comprehension], *, value_nodes: tuple[ast.AST, ...]) -> None:
-        branch = _BuiltinCallCollector(shadowed_names=set(self.shadowed_names))
+        branch = _BuiltinCallCollector(shadowed_names=set(self.shadowed_names), source_text=self.source_text)
         for generator in generators:
             branch.visit(generator.iter)
             branch.shadowed_names.update(_target_names(generator.target))

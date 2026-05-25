@@ -40,6 +40,8 @@ class PythonReceiverCallResolutionTest(unittest.TestCase):
         self.assertEqual(result["callers"][0]["subject"], "app.runner.run")
         self.assertEqual(result["callers"][0]["qualifier"]["receiver_class"], "app.model.Predictor")
         self.assertEqual(result["callers"][0]["qualifier"]["resolution_kind"], "python_local_instance_receiver")
+        self.assertEqual(result["callers"][0]["call_site"]["source_line"], "return predictor.predict_on_session()")
+        self.assertEqual(result["callers"][0]["call_site"]["source_excerpt"], "predictor.predict_on_session()")
 
     def test_dotted_module_import_constructor_resolves_by_full_attribute(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -319,6 +321,8 @@ class PythonReceiverCallResolutionTest(unittest.TestCase):
         self.assertEqual(result["callers"][0]["subject"], "app.features.run")
         self.assertEqual(result["callers"][0]["qualifier"]["constructor_class"], "app.features.build_features")
         self.assertEqual(result["callers"][0]["qualifier"]["resolution_kind"], "python_constructor_call")
+        self.assertEqual(result["callers"][0]["call_site"]["source_line"], "return build_features()")
+        self.assertEqual(result["callers"][0]["call_site"]["source_excerpt"], "build_features()")
 
     def test_imported_constructor_call_emits_cross_file_class_caller(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

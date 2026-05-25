@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from source.kg.core.models import Entity
+from source.kg.languages.python.extractors.source_context import source_excerpt, source_line
 from source.kg.languages.python.normalization.imports import NormalizedImport
 
 
@@ -25,6 +26,8 @@ class ResolvedReceiverCall:
     raw_call: str
     receiver_name: str
     receiver_class: str
+    source_line: str | None = None
+    source_excerpt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,8 @@ class ResolvedConstructorCall:
     column: int
     raw_call: str
     constructor_class: str
+    source_line: str | None = None
+    source_excerpt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,8 +103,9 @@ class PythonReceiverCallResolver:
         *,
         caller: Entity,
         shadowed_names: set[str] | None = None,
+        source_text: str | None = None,
     ) -> list[ResolvedReceiverCall]:
-        return self.calls_in_body(body, caller=caller, shadowed_names=shadowed_names).receiver_calls
+        return self.calls_in_body(body, caller=caller, shadowed_names=shadowed_names, source_text=source_text).receiver_calls
 
     def calls_in_body(
         self,
@@ -108,8 +114,14 @@ class PythonReceiverCallResolver:
         caller: Entity,
         shadowed_names: set[str] | None = None,
         local_imports_shadow: bool = False,
+        source_text: str | None = None,
     ) -> ResolvedPythonCalls:
-        collector = _ReceiverCallCollector(self, caller, local_imports_shadow=local_imports_shadow)
+        collector = _ReceiverCallCollector(
+            self,
+            caller,
+            local_imports_shadow=local_imports_shadow,
+            source_text=source_text,
+        )
         for name in shadowed_names or set():
             collector.local_classes[name] = None
         collector.process_statements(body)
@@ -175,10 +187,12 @@ class _ReceiverCallCollector(ast.NodeVisitor):
         caller: Entity,
         *,
         local_imports_shadow: bool = False,
+        source_text: str | None = None,
     ) -> None:
         self.resolver = resolver
         self.caller = caller
         self.local_imports_shadow = local_imports_shadow
+        self.source_text = source_text
         self.receiver_calls: list[ResolvedReceiverCall] = []
         self.constructor_calls: list[ResolvedConstructorCall] = []
         self.local_classes: dict[str, IndexedSymbol | None] = {}
@@ -293,6 +307,8 @@ class _ReceiverCallCollector(ast.NodeVisitor):
             raw_call=_expression(node.func),
             receiver_name=receiver.id,
             receiver_class=f"{class_symbol.module_name}.{class_symbol.qualname}",
+            source_line=source_line(self.source_text, getattr(node, "lineno", 1)),
+            source_excerpt=source_excerpt(self.source_text, node),
         )
 
     def _constructor_call(self, node: ast.Call) -> ResolvedConstructorCall | None:
@@ -306,6 +322,8 @@ class _ReceiverCallCollector(ast.NodeVisitor):
             column=getattr(node, "col_offset", -1),
             raw_call=_expression(node.func),
             constructor_class=f"{class_symbol.module_name}.{class_symbol.qualname}",
+            source_line=source_line(self.source_text, getattr(node, "lineno", 1)),
+            source_excerpt=source_excerpt(self.source_text, node),
         )
 
     def _resolved_constructor_class(self, func: ast.AST) -> IndexedSymbol | None:
@@ -346,6 +364,7 @@ class _ReceiverCallCollector(ast.NodeVisitor):
             self.resolver,
             self.caller,
             local_imports_shadow=self.local_imports_shadow,
+            source_text=self.source_text,
         )
         branch.local_classes = dict(self.local_classes)
         return branch

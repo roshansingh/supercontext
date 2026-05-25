@@ -131,7 +131,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"IMPORTS", "RESOLVES_TO_REPO"})
         self.assertEqual(result["snapshot_summary"]["entity_count"], 11)
         self.assertEqual(result["snapshot_summary"]["fact_count"], 7)
+        self.assertEqual(result["snapshot_summary"]["scope"], {"kind": "fleet"})
+        self.assertIn("full loaded KG snapshot", result["snapshot_summary"]["count_contract"])
         self.assertEqual(result["snapshot_scope"]["repo"], "payments")
+        self.assertEqual(result["snapshot_scope"]["scope"], {"kind": "repo", "repo": "payments"})
+        self.assertIn("scoped to repo payments", result["snapshot_scope"]["count_contract"])
+        self.assertEqual(result["inventory"]["scope"], {"kind": "repo", "repo": "payments"})
+        self.assertIn("scoped to repo payments", result["inventory"]["count_contract"])
         self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
         self.assertGreater(result["snapshot_scope"]["fact_count"], 0)
 
@@ -245,6 +251,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "found")
         self.assertEqual(result["inventory"]["scope"], {"kind": "fleet"})
+        self.assertIn("full loaded KG snapshot", result["inventory"]["count_contract"])
         self.assertEqual(result["related_facts"]["dependency_importers"]["summary"]["importer_fact_count"], 3)
         self.assertEqual(result["related_facts"]["dependency_importers"]["repo_counts"], {"payments": 3})
         self.assertEqual(result["related_facts"]["dependency_importers"]["packages"][0]["name"], "shared-lib")

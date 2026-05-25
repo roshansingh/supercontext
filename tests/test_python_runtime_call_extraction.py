@@ -7,6 +7,7 @@ from pathlib import Path
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import JsonlKgStore
 from source.kg.languages.python.extractors.ast_extractor import KgBuild, PythonAstExtractor
+from source.kg.product.mcp_tools import call_tool
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -38,6 +39,10 @@ class PythonRuntimeCallExtractionTest(unittest.TestCase):
         self.assertIn("builtins.print", callees)
         self.assertIn("builtins.len", callees)
         self.assertEqual(callees["builtins.print"]["qualifier"]["resolution_kind"], "python_builtin_call")
+        self.assertEqual(
+            callees["builtins.print"]["call_site"],
+            {"source_line": "print('loading')", "source_excerpt": "print('loading')"},
+        )
         self.assertEqual(builtin_entities["print"].identity["language"], "python")
         self.assertEqual(builtin_entities["print"].identity["symbol_kind"], "builtin")
         builtin_evidence = [
@@ -48,6 +53,28 @@ class PythonRuntimeCallExtractionTest(unittest.TestCase):
         self.assertEqual(len(builtin_evidence), 1)
         self.assertEqual(builtin_evidence[0].source_system, "python_runtime")
         self.assertIsNone(builtin_evidence[0].bytes_ref)
+
+    def test_direct_local_calls_include_call_site_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "app" / "pipeline.py"
+            module.parent.mkdir()
+            module.write_text(
+                "def normalize(value):\n"
+                "    return value\n\n"
+                "def run(value):\n"
+                "    return normalize(value)\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, _build(root, (module,)))
+
+        result = call_tool(kg, "find_callees", {"symbol": "run", "path": "app/pipeline.py", "line": 4})
+        callees = {row["object"]: row for row in result["callees"]}
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(callees["app.pipeline.normalize"]["call_site"]["source_line"], "return normalize(value)")
+        self.assertEqual(callees["app.pipeline.normalize"]["call_site"]["source_excerpt"], "normalize(value)")
 
     def test_builtin_calls_are_queryable_in_reverse(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

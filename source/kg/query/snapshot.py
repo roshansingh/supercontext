@@ -9,6 +9,7 @@ from source.kg.core.models import JsonObject
 from source.kg.core.store import read_jsonl
 
 from . import aggregations, path_search
+from .call_site import call_site_from_qualifier
 
 
 class KgSnapshot:
@@ -1074,7 +1075,7 @@ class KgSnapshot:
         return aggregations.import_matches_target(fact, package, package_name)
 
     def _fact_result(self, fact: JsonObject, subject: JsonObject, object_: JsonObject, **extra: Any) -> JsonObject:
-        return {
+        row = {
             **extra,
             "fact_id": fact["fact_id"],
             "predicate": fact["predicate"],
@@ -1083,6 +1084,10 @@ class KgSnapshot:
             "qualifier": fact.get("qualifier", {}),
             "evidence": self.evidence_by_target.get(fact["fact_id"], []),
         }
+        call_site = call_site_from_qualifier(fact.get("qualifier", {}))
+        if call_site is not None:
+            row["call_site"] = call_site
+        return row
 
     def _display(self, entity: JsonObject) -> str:
         return display_entity(entity)

@@ -5,6 +5,7 @@ from typing import Callable
 
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject, canonical_json
+from source.kg.query.call_site import call_site_from_qualifier
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -397,7 +398,7 @@ def _service_search_text(service: JsonObject) -> str:
 
 
 def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_: JsonObject) -> JsonObject:
-    return {
+    row = {
         "fact_id": fact["fact_id"],
         "predicate": fact["predicate"],
         "subject": display_entity(subject),
@@ -405,6 +406,10 @@ def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_:
         "qualifier": fact.get("qualifier", {}),
         "evidence": kg.evidence_by_target.get(fact["fact_id"], []),
     }
+    call_site = call_site_from_qualifier(fact.get("qualifier", {}))
+    if call_site is not None:
+        row["call_site"] = call_site
+    return row
 
 
 def _endpoint_consumer_packet_for_service(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
@@ -2356,6 +2361,8 @@ def _planning_context_snapshot_summary(kg: KgSnapshot) -> JsonObject:
             state = str(row.get("state") or "unknown")
             coverage_states[state] = coverage_states.get(state, 0) + 1
     return {
+        "scope": {"kind": "fleet"},
+        "count_contract": "snapshot_summary counts cover the full loaded KG snapshot across all indexed repos.",
         "entity_count": len(kg.entities),
         "fact_count": len(kg.facts),
         "evidence_count": len(kg.evidence),
@@ -2386,8 +2393,14 @@ def _snapshot_inventory_packet(
     coverage_reason_counts = _coverage_counts(coverage_rows, "reason", limit=10)
     runtime_counts = _runtime_inventory_counts(kg, repo_key=repo_key if scoped else None)
     gap_samples = _coverage_gap_samples(coverage_rows, limit=limit)
+    scope = {"kind": "repo", "repo": repo} if scoped else {"kind": "fleet"}
     return {
-        "scope": {"kind": "repo", "repo": repo} if scoped else {"kind": "fleet"},
+        "scope": scope,
+        "count_contract": (
+            f"inventory.summary counts are scoped to repo {repo}."
+            if scoped
+            else "inventory.summary counts cover the full loaded KG snapshot across all indexed repos."
+        ),
         "summary": {
             "entity_count": _inventory_entity_count(kg, repo_key=repo_key if scoped else None),
             "fact_count": _inventory_fact_count(kg, repo_key=repo_key if scoped else None),
@@ -2561,6 +2574,8 @@ def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | No
         coverage_predicates[predicate] = coverage_predicates.get(predicate, 0) + 1
     return {
         "repo": repo,
+        "scope": {"kind": "repo", "repo": repo},
+        "count_contract": f"snapshot_scope counts are scoped to repo {repo}.",
         "entity_count": entity_count,
         "fact_count": fact_count,
         "coverage_count": len(coverage_rows),
@@ -3219,6 +3234,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns bounded planning context for one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
+            "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
