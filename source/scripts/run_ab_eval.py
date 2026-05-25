@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 import json
 import random
 import shutil
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import cast, get_origin, get_type_hints
+from urllib.error import URLError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import urlopen
 from uuid import uuid4
 
 from source.kg.eval.corpus import DEFAULT_QUERY_SET, EvalTask, default_v1_tasks, parse_query_set
@@ -20,9 +26,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run SuperContext MCP A/B evaluation tasks.",
         epilog=(
-            "Sequential execution sets Claude Code SuperContext MCP registration before each arm "
-            "and leaves SuperContext registered when the run completes. Parallel execution uses "
-            "per-run SDK MCP config and does not mutate shared Claude registration."
+            "When mcp_on is selected without --mcp-url, the harness starts a local MCP server "
+            "for the supplied snapshot. Sequential execution still sets Claude Code "
+            "SuperContext MCP registration before each arm. Parallel execution uses per-run "
+            "SDK MCP config and does not mutate shared Claude registration."
         ),
     )
     parser.add_argument("--query-set", default=str(DEFAULT_QUERY_SET), help="Product query set markdown path.")
@@ -81,23 +88,24 @@ def main() -> None:
     if not args.snapshot:
         parser.error("--snapshot is required unless --print-tasks is used")
 
-    config_kwargs = {}
-    if args.model:
-        config_kwargs["model"] = args.model
-    if args.mcp_url:
-        config_kwargs["mcp_url"] = args.mcp_url
-    config = RunnerConfig(**config_kwargs)
-    records = _run_paired_tasks(
-        tasks,
-        arms=arms,
-        snapshot=args.snapshot,
-        output_dir=args.out,
-        host=args.host,
-        seed=args.seed,
-        config=config,
-        parallelism=args.parallelism,
-        reuse_mcp_off_from=Path(args.reuse_mcp_off_from) if args.reuse_mcp_off_from else None,
-    )
+    with _managed_mcp_url(snapshot=args.snapshot, arms=arms, explicit_mcp_url=args.mcp_url) as mcp_url:
+        config_kwargs = {}
+        if args.model:
+            config_kwargs["model"] = args.model
+        if mcp_url:
+            config_kwargs["mcp_url"] = mcp_url
+        config = RunnerConfig(**config_kwargs)
+        records = _run_paired_tasks(
+            tasks,
+            arms=arms,
+            snapshot=args.snapshot,
+            output_dir=args.out,
+            host=args.host,
+            seed=args.seed,
+            config=config,
+            parallelism=args.parallelism,
+            reuse_mcp_off_from=Path(args.reuse_mcp_off_from) if args.reuse_mcp_off_from else None,
+        )
     for record in records:
         payload = record.to_json()
         if args.upload_to_langsmith:
@@ -154,6 +162,114 @@ def _positive_int(value: str) -> int:
     if parsed < 1:
         raise argparse.ArgumentTypeError("--parallelism must be at least 1")
     return parsed
+
+
+@contextmanager
+def _managed_mcp_url(
+    *,
+    snapshot: str | Path,
+    arms: list[Arm],
+    explicit_mcp_url: str | None,
+):
+    if "mcp_on" not in arms:
+        yield explicit_mcp_url
+        return
+    if explicit_mcp_url:
+        _wait_for_mcp_health(explicit_mcp_url, timeout_seconds=10.0)
+        yield explicit_mcp_url
+        return
+    with _local_mcp_server(snapshot) as mcp_url:
+        yield mcp_url
+
+
+@contextmanager
+def _local_mcp_server(
+    snapshot: str | Path,
+    *,
+    port_factory=None,
+    popen=subprocess.Popen,
+    health_check=None,
+):
+    port = (port_factory or _free_loopback_port)()
+    mcp_url = f"http://127.0.0.1:{port}/mcp"
+    command = (
+        sys.executable,
+        "-m",
+        "source.scripts.mcp_server",
+        "--snapshot",
+        str(snapshot),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    )
+    process = popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+    checker = health_check or _wait_for_mcp_health
+    try:
+        checker(mcp_url, process=process)
+        yield mcp_url
+    finally:
+        _stop_mcp_server(process)
+
+
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_mcp_health(mcp_url: str, *, timeout_seconds: float = 10.0, process=None) -> None:
+    health_url = _mcp_health_url(mcp_url)
+    deadline = time.monotonic() + timeout_seconds
+    last_error: str | None = None
+    while time.monotonic() < deadline:
+        if process is not None:
+            returncode = process.poll()
+            if returncode is not None:
+                detail = _read_process_stderr(process)
+                suffix = f": {detail}" if detail else ""
+                raise RuntimeError(f"SuperContext MCP server exited before becoming healthy{suffix}")
+        try:
+            with urlopen(health_url, timeout=1.0) as response:
+                if response.status == 200:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    if isinstance(payload, dict) and payload.get("status") == "ok":
+                        return
+                    last_error = f"unexpected health payload: {payload!r}"
+                else:
+                    last_error = f"unexpected HTTP status {response.status}"
+        except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
+        time.sleep(0.1)
+    raise RuntimeError(f"SuperContext MCP server is not healthy at {health_url}: {last_error or 'timed out'}")
+
+
+def _mcp_health_url(mcp_url: str) -> str:
+    parsed = urlsplit(mcp_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"SuperContext MCP URL must be HTTP(S) with a host: {mcp_url!r}")
+    return urlunsplit((parsed.scheme, parsed.netloc, "/health", "", ""))
+
+
+def _stop_mcp_server(process) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _read_process_stderr(process) -> str:
+    stderr = getattr(process, "stderr", None)
+    if stderr is None:
+        return ""
+    try:
+        return (stderr.read() or "").strip()
+    except OSError:
+        return ""
 
 
 def _run_paired_tasks(

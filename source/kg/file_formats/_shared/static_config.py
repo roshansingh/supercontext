@@ -18,6 +18,7 @@ from source.kg.file_formats.apache_vhost import extract_apache_vhost_routes
 from source.kg.file_formats._shared.deploy_events import extract_deploy_events
 from source.kg.file_formats.domain_env import extract_domain_env
 from source.kg.file_formats.dotenv import extract_dotenv
+from source.kg.file_formats.kubernetes_yaml import extract_kubernetes_manifests, is_likely_kubernetes_manifest
 from source.kg.file_formats._shared.endpoints import extract_endpoints
 from source.kg.file_formats.serverless_yaml import extract_serverless_yaml_routes, is_serverless_yaml_filename
 from source.kg.file_formats.terraform import extract_terraform
@@ -69,6 +70,8 @@ class StaticConfigExtractor:
         if self.include_deploy_events:
             for scanned in files:
                 extract_apache_vhost_routes(repo, scanned, service_entity, build, resolved_tenant_id)
+                if is_likely_kubernetes_manifest(scanned):
+                    extract_kubernetes_manifests(repo, scanned, service_entity, build, resolved_tenant_id)
                 if scanned.path.name == "zappa_settings.json":
                     extract_zappa_event_sources(repo, scanned, service_entity, build, resolved_tenant_id)
             extract_deploy_events(

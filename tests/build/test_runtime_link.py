@@ -78,6 +78,19 @@ class RuntimeLinkTest(unittest.TestCase):
 
         self.assertEqual(len(result.facts), 1)
 
+    def test_wsgi_target_without_coordinate_evidence_emits_no_link(self) -> None:
+        target = _deploy_target("infra", "/srv/apps/api/app/wsgi.py")
+        result = link_runtime_targets(
+            (
+                _input("infra", (target,), evidence=(_evidence_without_bytes_for(target),)),
+                _input("api", (_service("api"), _module("api", "app/wsgi.py"))),
+            )
+        )
+
+        self.assertEqual(result.facts, ())
+        self.assertEqual(result.evidence, ())
+        self.assertIn("no_target_bytes_ref_evidence", {row.scope_ref["reason"] for row in result.coverage})
+
     def test_zappa_lambda_target_is_handled_by_direct_extractor_not_cross_repo_linker(self) -> None:
         service = _service("api")
         target = _deploy_target("api", "prod:api.app", target_type="zappa_lambda")
@@ -138,6 +151,18 @@ def _evidence_for(entity: Entity) -> Evidence:
         source_system="static_config_v0",
         source_ref={"entity_kind": entity.kind},
         bytes_ref={"repo": "infra", "commit_sha": "sha", "path": "apache/site.conf", "line_start": 7, "line_end": 8},
+        confidence=1.0,
+    )
+
+
+def _evidence_without_bytes_for(entity: Entity) -> Evidence:
+    return Evidence(
+        target_type="entity",
+        target_id=entity.entity_id,
+        derivation_class="deterministic_static",
+        source_system="static_config_v0",
+        source_ref={"entity_kind": entity.kind},
+        bytes_ref=None,
         confidence=1.0,
     )
 

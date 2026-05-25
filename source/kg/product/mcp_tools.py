@@ -431,7 +431,7 @@ def _endpoint_consumer_packet(kg: KgSnapshot, exposed_endpoint_rows: list[JsonOb
             "consumer_service_count": len(consumer_keys),
             "confidence_counts": confidence_counts,
             "host_resolution_kind_counts": host_resolution_counts,
-            "match_basis": "normalized_endpoint_path_and_compatible_method",
+            "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
             "section_limit": limit,
         },
         "consumers": public_rows[:limit],
@@ -480,7 +480,7 @@ def _endpoint_consumer_rows_for_exposed_endpoints(
                     "path": endpoint_path,
                     "methods": sorted(provider_methods),
                 },
-                "match_basis": "normalized_endpoint_path_and_compatible_method",
+                "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
             }
         )
     return _planning_context_dedupe_rows(rows)
@@ -2942,7 +2942,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns a compact service brief plus related endpoint, path-matched endpoint-consumer, event-channel, deploy-mapping, and operational domain/deploy-target candidate facts for one matched service. "
             "Use it after you know the target service and want a bounded operational summary of what the KG has linked to it. "
-            "endpoint_consumers are static CALLS_ENDPOINT candidates matched by normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
+            "endpoint_consumers are static CALLS_ENDPOINT candidates matched by literal normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
             "Read operational_surfaces.evidence_partition: known_linked uses exact repo-identity joins, unlinked_evidence is source leads only, and missing_contracts lists deploy/runtime claims the KG cannot prove. "
             "Treat operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
             "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime/deploy contracts; if deploy mappings are absent, inspect manifests before making environment claims."

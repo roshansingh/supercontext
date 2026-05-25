@@ -406,7 +406,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(packet["summary"]["host_resolution_kind_counts"], {"env_backed_unresolved": 1})
         self.assertEqual(packet["consumers"][0]["consumer"]["slug"], "web")
         self.assertEqual(packet["consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
-        self.assertEqual(packet["consumers"][0]["match_basis"], "normalized_endpoint_path_and_compatible_method")
+        self.assertEqual(packet["consumers"][0]["match_basis"], "literal_normalized_endpoint_path_and_compatible_method")
         self.assertTrue(any("endpoint_consumers" in action for action in result["next_actions"]))
 
     def test_get_service_brief_surfaces_operational_deploy_candidates(self) -> None:

@@ -100,10 +100,12 @@ def link_runtime_targets(inputs: list[RuntimeLinkerInput] | tuple[RuntimeLinkerI
                 "rule_version": RUNTIME_LINKER_RULE_VERSION,
             },
         )
-        emitted[fact.fact_id] = fact
         evidence_row = _runtime_link_evidence(fact, target, evidence_by_target)
-        if evidence_row is not None:
-            emitted_evidence[evidence_row.evidence_id] = evidence_row
+        if evidence_row is None:
+            issues.append(_RuntimeLinkIssue(target, "no_target_bytes_ref_evidence"))
+            continue
+        emitted[fact.fact_id] = fact
+        emitted_evidence[evidence_row.evidence_id] = evidence_row
 
     coverage = tuple(_coverage_rows(inputs, issues))
     return RuntimeLinkerResult(

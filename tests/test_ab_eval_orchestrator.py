@@ -20,6 +20,9 @@ from source.kg.eval.runner import (
     _tool_calls,
 )
 from source.scripts.run_ab_eval import (
+    _local_mcp_server,
+    _managed_mcp_url,
+    _mcp_health_url,
     _parse_arms,
     _positive_int,
     _post_arm_host_config_command,
@@ -400,6 +403,57 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertEqual(_positive_int("2"), 2)
         with self.assertRaisesRegex(Exception, "at least 1"):
             _positive_int("0")
+
+    def test_mcp_health_url_targets_loopback_health_endpoint(self) -> None:
+        self.assertEqual(
+            _mcp_health_url("http://127.0.0.1:3845/mcp?ignored=true"),
+            "http://127.0.0.1:3845/health",
+        )
+        with self.assertRaisesRegex(ValueError, "HTTP"):
+            _mcp_health_url("stdio://supercontext")
+
+    def test_managed_mcp_url_health_checks_explicit_url_without_starting_server(self) -> None:
+        with patch("source.scripts.run_ab_eval._wait_for_mcp_health") as health_mock:
+            with _managed_mcp_url(
+                snapshot="snapshot-dir",
+                arms=["mcp_on"],
+                explicit_mcp_url="http://127.0.0.1:9999/mcp",
+            ) as mcp_url:
+                self.assertEqual(mcp_url, "http://127.0.0.1:9999/mcp")
+
+        health_mock.assert_called_once_with("http://127.0.0.1:9999/mcp", timeout_seconds=10.0)
+
+    def test_local_mcp_server_starts_for_snapshot_and_stops_on_exit(self) -> None:
+        process = _FakeProcess()
+        commands: list[tuple[str, ...]] = []
+        health_calls: list[tuple[str, object]] = []
+
+        def fake_popen(command: tuple[str, ...], **kwargs: object) -> _FakeProcess:
+            commands.append(command)
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertTrue(kwargs["text"])
+            return process
+
+        def fake_health(mcp_url: str, *, process: object) -> None:
+            health_calls.append((mcp_url, process))
+
+        with _local_mcp_server(
+            "snapshot-dir",
+            port_factory=lambda: 4545,
+            popen=fake_popen,
+            health_check=fake_health,
+        ) as mcp_url:
+            self.assertEqual(mcp_url, "http://127.0.0.1:4545/mcp")
+            self.assertFalse(process.terminated)
+
+        self.assertTrue(process.terminated)
+        self.assertEqual(health_calls, [("http://127.0.0.1:4545/mcp", process)])
+        self.assertIn("source.scripts.mcp_server", commands[0])
+        self.assertIn("--snapshot", commands[0])
+        self.assertIn("snapshot-dir", commands[0])
+        self.assertIn("--port", commands[0])
+        self.assertIn("4545", commands[0])
 
     def test_host_config_commands_use_claude_registration_contract(self) -> None:
         on_command = _pre_arm_host_config_command(
@@ -874,6 +928,36 @@ def _record(
         pre_arm_host_config_command=pre,
         post_arm_host_config_command=post,
     )
+
+
+class _FakeStderr:
+    def __init__(self, text: str = "") -> None:
+        self.text = text
+
+    def read(self) -> str:
+        return self.text
+
+
+class _FakeProcess:
+    def __init__(self, returncode: int | None = None, stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stderr = _FakeStderr(stderr)
+        self.terminated = False
+        self.killed = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode or 0
 
 
 if __name__ == "__main__":

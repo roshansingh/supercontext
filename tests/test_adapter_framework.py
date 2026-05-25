@@ -19,6 +19,7 @@ from source.kg.file_formats._shared.extractor_adapter import STATIC_CONFIG_ADAPT
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.file_formats.adapters import config_shared
 from source.kg.file_formats.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
+from source.kg.file_formats.adapters.config_kubernetes_yaml import CONFIG_KUBERNETES_YAML_ADAPTER
 from source.kg.file_formats.adapters.config_serverless_yaml import CONFIG_SERVERLESS_YAML_ADAPTER
 from source.kg.file_formats.adapters.config_terraform import CONFIG_TERRAFORM_ADAPTER
 from source.kg.file_formats.adapters.config_zappa import CONFIG_ZAPPA_ADAPTER
@@ -432,6 +433,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         capabilities = {adapter.capability.name: adapter.capability for adapter in file_format_adapters()}
 
         self.assertIn("yml", capabilities["config-openapi"].file_kinds)
+        self.assertIn("yml", capabilities["config-kubernetes-yaml"].file_kinds)
         self.assertIn("yml", capabilities["config-serverless-yaml"].file_kinds)
 
     def test_domain_env_adapter_uses_config_language_bucket(self) -> None:
@@ -447,6 +449,7 @@ class AdapterFrameworkTest(unittest.TestCase):
             "config-apache-vhost",
             "config-domain-env",
             "config-dotenv",
+            "config-kubernetes-yaml",
             "config-openapi",
             "config-serverless-yaml",
             "config-terraform",
@@ -497,6 +500,15 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertIn("Endpoint", capability.produces_entity_kinds)
         self.assertIn("EventChannel", capability.produces_entity_kinds)
 
+    def test_kubernetes_yaml_adapter_claims_parser_backed_public_scope(self) -> None:
+        capability = CONFIG_KUBERNETES_YAML_ADAPTER.capability
+
+        self.assertIn("kubernetes", capability.framework_tags)
+        self.assertIn("DEPLOYS_VIA_CONFIG", capability.produces_predicates)
+        self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
+        self.assertIn("DeployTarget", capability.produces_entity_kinds)
+        self.assertIn("Domain", capability.produces_entity_kinds)
+
     def test_typescript_route_adapter_claims_supported_web_frameworks(self) -> None:
         capability = TYPESCRIPT_EXPRESS_ROUTES_ADAPTER.capability
 
@@ -529,6 +541,22 @@ class AdapterFrameworkTest(unittest.TestCase):
                 "}\n",
                 encoding="utf-8",
             )
+            (root / "kubernetes.yaml").write_text(
+                "apiVersion: apps/v1\n"
+                "kind: Deployment\n"
+                "metadata:\n"
+                "  name: config-split\n"
+                "spec:\n"
+                "  template:\n"
+                "    metadata:\n"
+                "      labels:\n"
+                "        app: config-split\n"
+                "    spec:\n"
+                "      containers:\n"
+                "      - name: config-split\n"
+                "        image: registry.example.com/config-split:sha\n",
+                encoding="utf-8",
+            )
             repo = RepoSnapshot(
                 root=root,
                 name="config-split",
@@ -544,6 +572,16 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(_fact_ids(split.facts), _fact_ids(expected.facts))
         self.assertEqual(_evidence_ids(split.evidence), _evidence_ids(expected.evidence))
         self.assertEqual(_coverage_ids(split.coverage), _coverage_ids(expected.coverage))
+        k8s_targets = [
+            entity.entity_id
+            for entity in split.entities
+            if entity.kind == "DeployTarget" and entity.identity.get("type") == "kubernetes_deployment"
+        ]
+        deploy_facts = [fact.fact_id for fact in split.facts if fact.predicate == "DEPLOYS_VIA_CONFIG"]
+        self.assertEqual(len(k8s_targets), len(set(k8s_targets)))
+        self.assertEqual(len(deploy_facts), len(set(deploy_facts)))
+        self.assertEqual(len(k8s_targets), 1)
+        self.assertEqual(len(deploy_facts), 1)
 
     def test_config_split_adapters_share_one_config_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
