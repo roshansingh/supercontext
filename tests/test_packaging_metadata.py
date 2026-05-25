@@ -101,6 +101,14 @@ class PackagingMetadataTest(unittest.TestCase):
         )
         self.assertIn("Trace Evaluation", codex_skill)
         self.assertIn("Trace Evaluation", claude_skill)
+        self.assertIn("answerability.status", codex_skill)
+        self.assertIn("source_coordinates", codex_skill)
+        self.assertIn("summary.section_limit", codex_skill)
+        self.assertIn("exact primitive tools", codex_skill)
+        self.assertIn("answerability.status", claude_skill)
+        self.assertIn("source_coordinates", claude_skill)
+        self.assertIn("summary.section_limit", claude_skill)
+        self.assertIn("exact primitive tools", claude_skill)
 
     def test_eval_yaml_is_packaged(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

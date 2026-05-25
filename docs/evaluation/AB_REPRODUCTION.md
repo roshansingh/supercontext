@@ -27,6 +27,7 @@ set -a; source .env; set +a
 .venv/bin/python -m source.scripts.run_ab_eval \
   --query-set docs/evaluation/PRODUCT-QUERY-SET.md \
   --snapshot <snapshot-dir> \
+  --fixture-overrides docs/evaluation/default-v1-fixture-overrides.yaml \
   --tasks default-v1 \
   --arms mcp_on,mcp_off \
   --out data/ab_runs/<run-id> \
@@ -73,6 +74,18 @@ Pull traces, compute deltas, judge, and render:
 Git contains the harness, report generators, default-v1 task manifest, and sanitized reports.
 
 Git does not contain private repo snapshots, raw Claude SDK messages, raw answers, judge reasoning, LangSmith URLs, or API keys.
+
+## Current Clean Baseline
+
+For context-tool improvement work, compare against the clean local baseline generated after PR #124:
+
+- `data/ab_runs/eval-harness-baseline-full-2026-05-24/report/ab-report.md`
+- Seed: `119`
+- Fixture overrides: `docs/evaluation/default-v1-fixture-overrides.yaml`
+- Result: `mcp_on=4`, `mcp_off=6`, `tie=8`
+- Integrity checks: zero MCP denials, zero MCP errors, zero judge errors
+
+Historical sanitized reports under `docs/evaluation/ab-runs/` are retained for provenance and should not be deleted just because a newer clean baseline exists.
 
 ## Expected Checks
 

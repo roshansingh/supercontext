@@ -8,7 +8,7 @@ from pathlib import Path
 
 from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
-from source.kg.product.mcp_tools import TOOL_NAMES, call_tool, tool_definitions
+from source.kg.product.mcp_tools import TOOL_NAMES, _planning_context_symbol_impact, call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
     _JsonPayloadError,
@@ -181,7 +181,90 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["status"], "found")
         self.assertEqual(len(result["services"]), 1)
         self.assertEqual(result["services"][0]["slug"], "payments")
-        self.assertEqual(result["dependencies"], [])
+        self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"RESOLVES_TO_REPO"})
+
+    def test_planning_context_service_anchor_returns_composed_context(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["answerability"]["status"], "answerable")
+        self.assertEqual(result["answerability"]["missing_fact_families"], [])
+        self.assertEqual(result["summary"]["service_count"], 1)
+        self.assertEqual(result["summary"]["endpoint_fact_count"], 1)
+        self.assertEqual(result["summary"]["event_fact_count"], 1)
+        self.assertTrue(any(row["section"] == "services" for row in result["entry_points"]))
+        service_brief = result["related_facts"]["service_brief"]
+        self.assertEqual(service_brief["summary"]["endpoint_fact_count"], 1)
+        self.assertEqual(service_brief["summary"]["event_fact_count"], 1)
+        self.assertEqual(service_brief["summary"]["deploy_mapping_count"], 0)
+        self.assertEqual(service_brief["summary"]["endpoint_fact_count"], result["summary"]["endpoint_fact_count"])
+        self.assertEqual(service_brief["summary"]["event_fact_count"], result["summary"]["event_fact_count"])
+        self.assertFalse(any(family == "deploy_mapping" for family in result["answerability"]["missing_fact_families"]))
+
+    def test_planning_context_symbol_anchor_returns_impact_and_coordinates(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"symbol": "handle_checkout"})
+
+        self.assertEqual(result["status"], "found")
+        symbol_impact = result["related_facts"]["symbol_impact"]
+        self.assertEqual(symbol_impact["status"], "found")
+        self.assertEqual(symbol_impact["symbol"]["qualname"], "handle_checkout")
+        self.assertEqual({row["predicate"] for row in symbol_impact["direct_callees"]}, {"CALLS"})
+        self.assertEqual(result["source_coordinates"][0]["repo"], "payments")
+        self.assertIsNone(result["source_coordinates"][0]["commit_sha"])
+        self.assertEqual(result["source_coordinates"][0]["provenance"], "row_geometry")
+        self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
+        self.assertEqual(result["source_coordinates"][0]["line_start"], 10)
+        self.assertEqual(result["source_coordinates"][0]["line_end"], 20)
+
+    def test_planning_context_symbol_impact_fails_closed_without_resolved_name(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = _planning_context_symbol_impact(
+                kg,
+                [{"path": "payments/checkout.py", "line": 10}],
+                anchors={"symbol": "handle_checkout"},
+                status="found",
+            )
+
+        self.assertEqual(result["status"], "not_computed")
+        self.assertEqual(result["reason"], "resolved symbol missing qualified name")
+
+    def test_planning_context_source_coordinates_include_bytes_ref_provenance(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"package": "shared-lib", "line": 2})
+
+        self.assertEqual(result["status"], "found")
+        coordinates = result["source_coordinates"]
+        self.assertTrue(coordinates)
+        self.assertEqual(coordinates[0]["repo"], "payments")
+        self.assertEqual(coordinates[0]["commit_sha"], "fixture-sha")
+        self.assertEqual(coordinates[0]["provenance"], "bytes_ref")
+        self.assertEqual(coordinates[0]["path"], "payments/checkout.py")
+        self.assertEqual(coordinates[0]["line_start"], 2)
+        self.assertEqual(coordinates[0]["line_end"], 2)
+
+    def test_planning_context_answerability_distinguishes_partial_and_not_answerable(self) -> None:
+        with _fixture_snapshot() as kg:
+            partial = call_tool(kg, "planning_context", {"service": "payments", "package": "missing-package"})
+            missing = call_tool(kg, "planning_context", {"service": "missing"})
+
+        self.assertEqual(partial["status"], "found")
+        self.assertEqual(partial["answerability"]["status"], "partial")
+        self.assertEqual(partial["answerability"]["missing_fact_families"], ["dependency_edges"])
+        self.assertTrue(partial["answerability"]["recommended_followups"])
+        self.assertEqual(missing["status"], "not_found")
+        self.assertEqual(missing["answerability"]["status"], "not_answerable")
+        self.assertEqual(missing["answerability"]["missing_fact_families"], ["primary_anchor"])
+
+    def test_planning_context_related_sections_are_capped(self) -> None:
+        with _fixture_snapshot(extra_consumers=125) as kg:
+            result = call_tool(kg, "planning_context", {"event_channel": "orders-created", "limit": 100})
+
+        self.assertEqual(result["status"], "found")
+        self.assertGreater(result["summary"]["event_fact_count"], 5)
+        self.assertEqual(len(result["related_facts"]["event_channels"]), 5)
+        self.assertEqual(result["summary"]["section_limit"], 5)
 
     def test_planning_context_structured_endpoint_event_and_domain_anchors(self) -> None:
         with _fixture_snapshot() as kg:
@@ -195,6 +278,27 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual({row["predicate"] for row in event["event_channels"]}, {"CONSUMES_EVENT", "PRODUCES_EVENT"})
         self.assertEqual(domain["status"], "found")
         self.assertEqual({row["predicate"] for row in domain["domains"]}, {"REFERENCES_DOMAIN"})
+
+    def test_planning_context_cross_family_anchors_keep_each_family_context(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "planning_context",
+                {"endpoint": "/checkout", "event_channel": "orders-created"},
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["answerability"]["status"], "answerable")
+        self.assertEqual({row["predicate"] for row in result["endpoints"]}, {"EXPOSES_ENDPOINT"})
+        self.assertEqual({row["predicate"] for row in result["event_channels"]}, {"CONSUMES_EVENT", "PRODUCES_EVENT"})
+
+    def test_get_service_brief_dedupes_related_rows(self) -> None:
+        with _fixture_snapshot(duplicate_endpoint_fact=True) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["endpoint_fact_count"], 1)
+        self.assertEqual(len(result["endpoints"]), 1)
 
     def test_review_context_aggregates_symbols_and_call_edges(self) -> None:
         with _fixture_snapshot() as kg:
@@ -600,10 +704,12 @@ class _fixture_snapshot:
         extra_consumers: int = 0,
         extra_package_importers: int = 0,
         extra_charge_card_symbol: bool = False,
+        duplicate_endpoint_fact: bool = False,
     ) -> None:
         self.extra_consumers = extra_consumers
         self.extra_package_importers = extra_package_importers
         self.extra_charge_card_symbol = extra_charge_card_symbol
+        self.duplicate_endpoint_fact = duplicate_endpoint_fact
 
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -770,7 +876,13 @@ class _fixture_snapshot:
                 derivation_class="deterministic_static",
                 source_system="test",
                 source_ref={"repo": "payments"},
-                bytes_ref={"repo": "payments", "path": "payments/checkout.py", "line_start": 2, "line_end": 2},
+                bytes_ref={
+                    "repo": "payments",
+                    "commit_sha": "fixture-sha",
+                    "path": "payments/checkout.py",
+                    "line_start": 2,
+                    "line_end": 2,
+                },
                 confidence=1.0,
             ),
         ]
@@ -798,6 +910,7 @@ class _fixture_snapshot:
             consume_fact,
             produce_fact,
             domain_fact,
+            *([endpoint_fact] if self.duplicate_endpoint_fact else []),
             *extra_consume_facts,
             *extra_import_facts,
         ]

@@ -19,6 +19,8 @@ TOOL_NAMES = (
     "deploy_blockers_for",
 )
 
+PLANNING_CONTEXT_SECTION_LIMIT = 5
+
 
 @dataclass(frozen=True)
 class McpTool:
@@ -93,9 +95,15 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     service = matches[0]
     service_id = service["entity_id"]
     related = _facts_touching_entity(kg, service_id)
-    endpoints = [row for row in related if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}]
-    events = [row for row in related if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}]
-    deploy_mappings = [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
+    endpoints = _planning_context_dedupe_rows(
+        [row for row in related if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}]
+    )
+    events = _planning_context_dedupe_rows(
+        [row for row in related if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}]
+    )
+    deploy_mappings = _planning_context_dedupe_rows(
+        [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
+    )
     return {
         "status": "found",
         "service": _service_row(kg, service),
@@ -491,6 +499,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         if len(matches) > 1:
             next_actions.extend(_service_refinement_actions(services))
             return _planning_context_output(
+                kg=kg,
                 query=query,
                 anchors=anchors,
                 services=services,
@@ -502,12 +511,19 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 next_actions=next_actions,
                 status="ambiguous",
             )
+        if len(matches) == 1:
+            related = _planning_context_service_related_rows(kg, matches[0], limit=limit)
+            dependencies = _planning_context_dedupe_rows(dependencies + related["dependencies"])
+            endpoints = _planning_context_dedupe_rows(endpoints + related["endpoints"])
+            event_channels = _planning_context_dedupe_rows(event_channels + related["event_channels"])
+            domains = _planning_context_dedupe_rows(domains + related["domains"])
     if anchors["symbol"]:
         resolution = kg.lookup_symbol(anchors["symbol"], limit=limit, path=anchors["path"], line=line)
         if resolution["status"] == "ambiguous":
             symbols = list(resolution.get("candidates", []))[:limit]
             next_actions.extend(_symbol_refinement_actions(symbols))
             return _planning_context_output(
+                kg=kg,
                 query=query,
                 anchors=anchors,
                 services=services,
@@ -547,6 +563,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     ):
         next_actions.append("Add `path` or `symbol` with `line` to target a concrete source location.")
         return _planning_context_output(
+            kg=kg,
             query=query,
             anchors=anchors,
             services=services,
@@ -562,46 +579,16 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     base_category = _planning_context_base_category(anchors)
     if base_category == "services":
         services = _planning_context_filter_rows("services", services, anchors, line=line)[:limit]
-        symbols = []
-        dependencies = []
-        endpoints = []
-        event_channels = []
-        domains = []
     elif base_category == "symbols":
         symbols = _planning_context_filter_rows("symbols", symbols, anchors, line=line)[:limit]
-        services = []
-        dependencies = []
-        endpoints = []
-        event_channels = []
-        domains = []
     elif base_category == "dependencies":
         dependencies = _planning_context_filter_rows("dependencies", dependencies, anchors, line=line)[:limit]
-        services = []
-        symbols = []
-        endpoints = []
-        event_channels = []
-        domains = []
     elif base_category == "endpoints":
         endpoints = _planning_context_filter_rows("endpoints", endpoints, anchors, line=line)[:limit]
-        services = []
-        symbols = []
-        dependencies = []
-        event_channels = []
-        domains = []
     elif base_category == "event_channels":
         event_channels = _planning_context_filter_rows("event_channels", event_channels, anchors, line=line)[:limit]
-        services = []
-        symbols = []
-        dependencies = []
-        endpoints = []
-        domains = []
     elif base_category == "domains":
         domains = _planning_context_filter_rows("domains", domains, anchors, line=line)[:limit]
-        services = []
-        symbols = []
-        dependencies = []
-        endpoints = []
-        event_channels = []
 
     status = "found" if any((services, symbols, dependencies, endpoints, event_channels, domains)) else "not_found"
     if status == "not_found":
@@ -610,6 +597,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "Try a broader primary anchor or remove one narrowing field."
         )
     return _planning_context_output(
+        kg=kg,
         query=query,
         anchors=anchors,
         services=services,
@@ -762,15 +750,26 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
     if len(hit_resolvers) == 1 and len(unique_matches) == 1:
         kind, rows = next(iter(unique_matches.items()))
         query_anchors[kind] = query
+        dependencies: list[JsonObject] = rows if kind in {"repo", "package"} else []
+        endpoints: list[JsonObject] = rows if kind == "endpoint" else []
+        event_channels: list[JsonObject] = rows if kind == "event_channel" else []
+        domains: list[JsonObject] = rows if kind == "domain" else []
+        if kind == "service" and len(service_matches) == 1:
+            related = _planning_context_service_related_rows(kg, service_matches[0], limit=limit)
+            dependencies = _planning_context_dedupe_rows(dependencies + related["dependencies"])
+            endpoints = _planning_context_dedupe_rows(endpoints + related["endpoints"])
+            event_channels = _planning_context_dedupe_rows(event_channels + related["event_channels"])
+            domains = _planning_context_dedupe_rows(domains + related["domains"])
         return _planning_context_output(
+            kg=kg,
             query=query,
             anchors=query_anchors,
             services=service_rows if kind == "service" else [],
             symbols=rows if kind == "symbol" else [],
-            dependencies=rows if kind in {"repo", "package"} else [],
-            endpoints=rows if kind == "endpoint" else [],
-            event_channels=rows if kind == "event_channel" else [],
-            domains=rows if kind == "domain" else [],
+            dependencies=dependencies,
+            endpoints=endpoints,
+            event_channels=event_channels,
+            domains=domains,
             next_actions=[],
             status="found",
         )
@@ -795,6 +794,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
         next_actions.append(f"Use `domain={query}` to inspect matching domain references.")
 
     return _planning_context_output(
+        kg=kg,
         query=query,
         anchors=query_anchors,
         services=service_rows,
@@ -831,11 +831,24 @@ def _planning_context_filter_rows(
     *,
     line: int | None,
 ) -> list[JsonObject]:
+    category_anchors = _planning_context_category_anchors(category, anchors)
     if category == "services":
-        return [row for row in rows if _planning_context_service_row_matches(row, anchors)]
+        return [row for row in rows if _planning_context_service_row_matches(row, category_anchors)]
     if category == "symbols":
-        return [row for row in rows if _planning_context_symbol_row_matches(row, anchors, line=line)]
-    return [row for row in rows if _planning_context_fact_row_matches(row, anchors, line=line)]
+        return [row for row in rows if _planning_context_symbol_row_matches(row, category_anchors, line=line)]
+    return [row for row in rows if _planning_context_fact_row_matches(row, category_anchors, line=line)]
+
+
+def _planning_context_category_anchors(category: str, anchors: dict[str, str | None]) -> dict[str, str | None]:
+    relevant = {
+        "services": {"service", "repo"},
+        "symbols": {"symbol", "path", "repo"},
+        "dependencies": {"repo", "package", "service", "path"},
+        "endpoints": {"repo", "service", "endpoint", "path"},
+        "event_channels": {"repo", "service", "event_channel", "path"},
+        "domains": {"repo", "service", "domain", "path"},
+    }.get(category, set())
+    return {key: value if key in relevant else None for key, value in anchors.items()}
 
 
 def _planning_context_service_row_matches(row: JsonObject, anchors: dict[str, str | None]) -> bool:
@@ -1109,8 +1122,35 @@ def _review_context_dedupe_rows(rows: list[JsonObject]) -> list[JsonObject]:
     return deduped
 
 
+def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, *, limit: int) -> dict[str, list[JsonObject]]:
+    related = _facts_touching_entity(kg, str(service["entity_id"]))
+    return {
+        "dependencies": [
+            row
+            for row in related
+            if row.get("predicate") in {"IMPORTS", "RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"}
+        ][:limit],
+        "endpoints": [
+            row
+            for row in related
+            if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}
+        ][:limit],
+        "event_channels": [
+            row
+            for row in related
+            if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}
+        ][:limit],
+        "domains": [
+            row
+            for row in related
+            if row.get("predicate") in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}
+        ][:limit],
+    }
+
+
 def _planning_context_output(
     *,
+    kg: KgSnapshot,
     query: str | None,
     anchors: dict[str, str | None],
     services: list[JsonObject],
@@ -1128,9 +1168,39 @@ def _planning_context_output(
     bounded_endpoints = _planning_context_public_rows(endpoints)
     bounded_event_channels = _planning_context_public_rows(event_channels)
     bounded_domains = _planning_context_public_rows(domains)
+    groups = {
+        "services": bounded_services,
+        "symbols": bounded_symbols,
+        "dependencies": bounded_dependencies,
+        "endpoints": bounded_endpoints,
+        "event_channels": bounded_event_channels,
+        "domains": bounded_domains,
+    }
+    related_facts = _planning_context_related_facts(
+        kg=kg,
+        services=bounded_services,
+        symbols=bounded_symbols,
+        dependencies=bounded_dependencies,
+        endpoints=bounded_endpoints,
+        event_channels=bounded_event_channels,
+        domains=bounded_domains,
+        anchors=anchors,
+        status=status,
+    )
+    source_coordinates = _planning_context_source_coordinates(
+        bounded_services,
+        bounded_symbols,
+        bounded_dependencies,
+        bounded_endpoints,
+        bounded_event_channels,
+        bounded_domains,
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
+    answerability = _planning_context_answerability(status=status, anchors=anchors, groups=groups)
     return {
         "status": status,
         "query": query,
+        "summary": _planning_context_summary(groups, source_coordinates=source_coordinates),
         "anchors": {
             "repo": anchors.get("repo"),
             "path": anchors.get("path"),
@@ -1147,6 +1217,10 @@ def _planning_context_output(
         "endpoints": bounded_endpoints,
         "event_channels": bounded_event_channels,
         "domains": bounded_domains,
+        "entry_points": _planning_context_entry_points(groups),
+        "related_facts": related_facts,
+        "source_coordinates": source_coordinates,
+        "answerability": answerability,
         "evidence": _planning_context_evidence(
             bounded_services,
             bounded_symbols,
@@ -1158,6 +1232,250 @@ def _planning_context_output(
         "coverage_warnings": [],
         "unsupported_scopes": [],
         "next_actions": next_actions,
+    }
+
+
+def _planning_context_summary(groups: dict[str, list[JsonObject]], *, source_coordinates: list[JsonObject]) -> JsonObject:
+    return {
+        "service_count": len(groups["services"]),
+        "symbol_count": len(groups["symbols"]),
+        "dependency_count": len(groups["dependencies"]),
+        "endpoint_fact_count": len(groups["endpoints"]),
+        "event_fact_count": len(groups["event_channels"]),
+        "domain_fact_count": len(groups["domains"]),
+        "source_coordinate_count": len(source_coordinates),
+        "section_limit": PLANNING_CONTEXT_SECTION_LIMIT,
+    }
+
+
+def _planning_context_entry_points(groups: dict[str, list[JsonObject]]) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for kind in ("services", "symbols", "endpoints", "event_channels", "dependencies", "domains"):
+        for row in groups[kind]:
+            entry = {key: value for key, value in row.items() if key != "evidence"}
+            entry["section"] = kind
+            rows.append(entry)
+            if len(rows) >= PLANNING_CONTEXT_SECTION_LIMIT:
+                return rows
+    return rows
+
+
+def _planning_context_related_facts(
+    *,
+    kg: KgSnapshot,
+    services: list[JsonObject],
+    symbols: list[JsonObject],
+    dependencies: list[JsonObject],
+    endpoints: list[JsonObject],
+    event_channels: list[JsonObject],
+    domains: list[JsonObject],
+    anchors: dict[str, str | None],
+    status: str,
+) -> JsonObject:
+    return {
+        "service_brief": _planning_context_service_brief(services, endpoints, event_channels, domains),
+        "symbol_impact": _planning_context_symbol_impact(kg, symbols, anchors=anchors, status=status),
+        "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "deploy_mappings": [
+            row for row in domains if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"
+        ][:PLANNING_CONTEXT_SECTION_LIMIT],
+        "domains": domains[:PLANNING_CONTEXT_SECTION_LIMIT],
+    }
+
+
+def _planning_context_service_brief(
+    services: list[JsonObject],
+    endpoints: list[JsonObject],
+    event_channels: list[JsonObject],
+    domains: list[JsonObject],
+) -> JsonObject:
+    deploy_mappings = [row for row in domains if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
+    return {
+        "services": services[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "summary": {
+            "service_count": len(services),
+            "endpoint_fact_count": len(endpoints),
+            "event_fact_count": len(event_channels),
+            "deploy_mapping_count": len(deploy_mappings),
+        },
+        "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "deploy_mappings": deploy_mappings[:PLANNING_CONTEXT_SECTION_LIMIT],
+    }
+
+
+def _planning_context_symbol_impact(
+    kg: KgSnapshot,
+    symbols: list[JsonObject],
+    *,
+    anchors: dict[str, str | None],
+    status: str,
+) -> JsonObject:
+    if status != "found" or not anchors.get("symbol") or len(symbols) != 1:
+        return {"status": "not_computed", "reason": "symbol impact requires one resolved symbol anchor"}
+    symbol_name = symbols[0].get("qualified_name") or symbols[0].get("qualname")
+    if not isinstance(symbol_name, str) or not symbol_name:
+        return {"status": "not_computed", "reason": "resolved symbol missing qualified name"}
+    return {
+        "status": "found",
+        "symbol": symbols[0],
+        "direct_callers": list(
+            kg.find_callers(
+                symbol_name,
+                path=_optional_symbol_path(symbols[0]),
+                line=_optional_symbol_line(symbols[0]),
+                limit=PLANNING_CONTEXT_SECTION_LIMIT,
+            ).get("callers", [])
+        ),
+        "direct_callees": list(
+            kg.find_callees(
+                symbol_name,
+                path=_optional_symbol_path(symbols[0]),
+                line=_optional_symbol_line(symbols[0]),
+                limit=PLANNING_CONTEXT_SECTION_LIMIT,
+            ).get("callees", [])
+        ),
+    }
+
+
+def _planning_context_answerability(
+    *,
+    status: str,
+    anchors: dict[str, str | None],
+    groups: dict[str, list[JsonObject]],
+) -> JsonObject:
+    if status == "ambiguous":
+        return {
+            "status": "not_answerable",
+            "missing_fact_families": ["unambiguous_primary_anchor"],
+            "recommended_followups": ["Refine the query with a structured anchor or source coordinate."],
+        }
+    if status == "not_found":
+        return {
+            "status": "not_answerable",
+            "missing_fact_families": ["primary_anchor"],
+            "recommended_followups": ["Broaden or correct the supplied planning anchor."],
+        }
+    missing = _planning_context_missing_fact_families(anchors, groups)
+    return {
+        "status": "partial" if missing else "answerable",
+        "missing_fact_families": missing,
+        "recommended_followups": _planning_context_answerability_followups(missing),
+    }
+
+
+def _planning_context_missing_fact_families(
+    anchors: dict[str, str | None],
+    groups: dict[str, list[JsonObject]],
+) -> list[str]:
+    missing = []
+    if anchors.get("service") and not groups["services"]:
+        missing.append("service_identity")
+    if (anchors.get("symbol") or anchors.get("path")) and not groups["symbols"]:
+        missing.append("symbol_identity")
+    if (anchors.get("repo") or anchors.get("package")) and not groups["dependencies"]:
+        missing.append("dependency_edges")
+    if anchors.get("endpoint") and not groups["endpoints"]:
+        missing.append("endpoint_facts")
+    if anchors.get("event_channel") and not groups["event_channels"]:
+        missing.append("event_facts")
+    if anchors.get("domain") and not groups["domains"]:
+        missing.append("domain_facts")
+    return missing
+
+
+def _planning_context_answerability_followups(missing: list[str]) -> list[str]:
+    actions = []
+    if "dependency_edges" in missing:
+        actions.append("Use `repo` or `package` alone to inspect dependency edges, or fall back to source inspection.")
+    if "endpoint_facts" in missing:
+        actions.append("Use endpoint-specific tools or source inspection to verify route ownership.")
+    if "event_facts" in missing:
+        actions.append("Use event producer/consumer tools or source inspection to verify event flow.")
+    if "domain_facts" in missing:
+        actions.append("Use domain lookup or source inspection to verify runtime host references.")
+    return actions
+
+
+def _planning_context_source_coordinates(*groups: list[JsonObject], limit: int) -> list[JsonObject]:
+    coordinates: list[JsonObject] = []
+    seen: set[tuple[object, object, object, object, object]] = set()
+    for group in groups:
+        for row in group:
+            for coordinate in _planning_context_row_source_coordinates(row):
+                key = (
+                    coordinate.get("repo"),
+                    coordinate.get("commit_sha"),
+                    coordinate.get("path"),
+                    coordinate.get("line_start"),
+                    coordinate.get("line_end"),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                coordinates.append(coordinate)
+                if len(coordinates) >= limit:
+                    return coordinates
+    return coordinates
+
+
+def _planning_context_row_source_coordinates(row: JsonObject) -> list[JsonObject]:
+    coordinates: list[JsonObject] = []
+    for evidence in row.get("evidence", []):
+        if not isinstance(evidence, dict):
+            continue
+        bytes_ref = evidence.get("bytes_ref")
+        if not isinstance(bytes_ref, dict):
+            continue
+        coordinate = _planning_context_coordinate_from_bytes_ref(bytes_ref, evidence=evidence)
+        if coordinate is not None:
+            coordinates.append(coordinate)
+    coordinate = _planning_context_coordinate_from_row(row)
+    if coordinate is not None:
+        coordinates.append(coordinate)
+    return coordinates
+
+
+def _planning_context_coordinate_from_bytes_ref(bytes_ref: JsonObject, *, evidence: JsonObject) -> JsonObject | None:
+    path = bytes_ref.get("path")
+    line_start = bytes_ref.get("line_start")
+    if not isinstance(path, str) or not path.strip():
+        return None
+    if isinstance(line_start, bool) or not isinstance(line_start, int) or line_start < 1:
+        return None
+    line_end = bytes_ref.get("line_end")
+    if isinstance(line_end, bool) or not isinstance(line_end, int) or line_end < line_start:
+        line_end = line_start
+    source_ref = evidence.get("source_ref") if isinstance(evidence.get("source_ref"), dict) else {}
+    return {
+        "repo": bytes_ref.get("repo") or source_ref.get("repo"),
+        "commit_sha": bytes_ref.get("commit_sha") or source_ref.get("commit_sha"),
+        "provenance": "bytes_ref",
+        "path": path,
+        "line_start": line_start,
+        "line_end": line_end,
+    }
+
+
+def _planning_context_coordinate_from_row(row: JsonObject) -> JsonObject | None:
+    path = row.get("path")
+    line = row.get("line")
+    if not isinstance(path, str) or not path.strip():
+        return None
+    if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+        return None
+    end_line = row.get("end_line")
+    if isinstance(end_line, bool) or not isinstance(end_line, int) or end_line < line:
+        end_line = line
+    return {
+        "repo": row.get("repo"),
+        "commit_sha": row.get("commit_sha"),
+        "provenance": "row_geometry",
+        "path": path,
+        "line_start": line,
+        "line_end": end_line,
     }
 
 
@@ -1518,7 +1836,10 @@ _TOOLS: dict[str, McpTool] = {
         name="planning_context",
         description=(
             "Returns bounded planning context for one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
-            "Use it to ground a workflow on a deterministic anchor before selecting narrower MCP tools. "
+            "Includes additive grouped context: summary, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
+            "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
+            "Use it first for broad planning, architecture, dependency, or impact questions on deterministic anchors before selecting narrower MCP tools. "
+            "For exact caller, callee, service-brief, or event producer/consumer questions, prefer the exact primitive tool. "
             "Does not expand free-form natural language, call an LLM, or fan one query across multiple ambiguous resolver paths."
         ),
         input_schema=_object_schema(_planning_context_properties()),

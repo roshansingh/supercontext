@@ -41,9 +41,17 @@ class McpSkillInstallerTest(unittest.TestCase):
             self.assertIn("name: supercontext-mcp", codex_skill)
             self.assertIn("Trace Evaluation", codex_skill)
             self.assertIn("where mcp hurts", codex_skill.casefold())
+            self.assertIn("answerability.status", codex_skill)
+            self.assertIn("source_coordinates", codex_skill)
+            self.assertIn("summary.section_limit", codex_skill)
+            self.assertIn("exact primitive tools", codex_skill)
             self.assertIn("name: supercontext-mcp", claude_skill)
             self.assertIn("Trace Evaluation", claude_skill)
             self.assertIn("tokens", claude_skill)
+            self.assertIn("answerability.status", claude_skill)
+            self.assertIn("source_coordinates", claude_skill)
+            self.assertIn("summary.section_limit", claude_skill)
+            self.assertIn("exact primitive tools", claude_skill)
 
     def test_install_replaces_stale_files_inside_target_skill_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
