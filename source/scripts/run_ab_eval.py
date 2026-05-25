@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import random
 import subprocess
@@ -17,12 +18,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run SuperContext MCP A/B evaluation tasks.",
         epilog=(
-            "Execution sets Claude Code SuperContext MCP registration before each arm and leaves "
-            "SuperContext registered when the run completes."
+            "Sequential execution sets Claude Code SuperContext MCP registration before each arm "
+            "and leaves SuperContext registered when the run completes. Parallel execution uses "
+            "per-run SDK MCP config and does not mutate shared Claude registration."
         ),
     )
     parser.add_argument("--query-set", default=str(DEFAULT_QUERY_SET), help="Product query set markdown path.")
     parser.add_argument("--snapshot", help="KG snapshot path. Required unless --print-tasks is used.")
+    parser.add_argument(
+        "--fixture-overrides",
+        default=None,
+        help="Optional YAML file with private fixture bindings and fixture_input overrides keyed by task ID.",
+    )
     parser.add_argument("--host", choices=["claude_code"], default="claude_code")
     parser.add_argument("--tasks", default="default-v1", help="Comma-separated task IDs or default-v1.")
     parser.add_argument("--arms", default="mcp_on,mcp_off", help="Comma-separated arms: mcp_on, mcp_off.")
@@ -35,11 +42,25 @@ def main() -> None:
     )
     parser.add_argument("--model", default=None, help="Claude model for host-agent execution.")
     parser.add_argument("--mcp-url", default=None, help="SuperContext HTTP MCP URL for mcp_on runs.")
+    parser.add_argument(
+        "--parallelism",
+        type=_positive_int,
+        default=1,
+        help=(
+            "Maximum concurrent arm runs. Values greater than 1 skip shared Claude MCP "
+            "registration and rely on per-run SDK MCP config to avoid cross-arm races."
+        ),
+    )
     parser.add_argument("--upload-to-langsmith", action="store_true", help="Upload the local run record to LangSmith.")
     parser.add_argument("--print-tasks", action="store_true", help="Print selected tasks and exit.")
     args = parser.parse_args()
 
-    tasks = _select_tasks(query_set=Path(args.query_set), tasks_arg=args.tasks, seed=args.seed)
+    tasks = _select_tasks(
+        query_set=Path(args.query_set),
+        tasks_arg=args.tasks,
+        seed=args.seed,
+        fixture_overrides_path=Path(args.fixture_overrides) if args.fixture_overrides else None,
+    )
     if args.print_tasks:
         for task in tasks:
             print(f"{task.task_id}\t{task.difficulty}\t{task.phase}")
@@ -63,6 +84,7 @@ def main() -> None:
         host=args.host,
         seed=args.seed,
         config=config,
+        parallelism=args.parallelism,
     )
     for record in records:
         payload = record.to_json()
@@ -71,8 +93,18 @@ def main() -> None:
         print(json.dumps(payload, sort_keys=True))
 
 
-def _select_tasks(*, query_set: Path, tasks_arg: str, seed: int) -> list[EvalTask]:
-    manifest_tasks = default_v1_tasks(query_set_path=query_set, seed=seed)
+def _select_tasks(
+    *,
+    query_set: Path,
+    tasks_arg: str,
+    seed: int,
+    fixture_overrides_path: Path | None = None,
+) -> list[EvalTask]:
+    manifest_tasks = default_v1_tasks(
+        query_set_path=query_set,
+        fixture_overrides_path=fixture_overrides_path,
+        seed=seed,
+    )
     if tasks_arg == "default-v1":
         return manifest_tasks
 
@@ -105,6 +137,13 @@ def _parse_arms(arms_arg: str) -> list[Arm]:
     return cast(list[Arm], arms)
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("--parallelism must be at least 1")
+    return parsed
+
+
 def _run_paired_tasks(
     tasks: list[EvalTask],
     *,
@@ -117,49 +156,140 @@ def _run_paired_tasks(
     run_task=run_single_task,
     run_host_command=None,
     group_id_factory=uuid4,
+    parallelism: int = 1,
 ) -> list[RunRecord]:
+    if parallelism < 1:
+        raise ValueError("parallelism must be at least 1")
     if run_host_command is None:
         run_host_command = _run_host_config_command
     rng = random.Random(seed)
-    records: list[RunRecord] = []
+    jobs: list[tuple[int, EvalTask, str, Arm]] = []
     for task in tasks:
         run_group_id = str(group_id_factory())
         ordered_arms = list(arms)
         rng.shuffle(ordered_arms)
         for arm in ordered_arms:
-            pre_command = _pre_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
-            post_command = _post_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
-            primary_error: BaseException | None = None
-            try:
-                run_host_command(pre_command)
-                record = run_task(
-                    task,
-                    arm=arm,
-                    snapshot=snapshot,
-                    output_dir=output_dir,
-                    host=host,
-                    run_group_id=run_group_id,
-                    random_seed=seed,
-                    pre_arm_host_config_command=pre_command,
-                    post_arm_host_config_command=post_command,
-                    config=config,
-                )
-                if arm == "mcp_off" and record.mcp_tools_called:
-                    raise RuntimeError("mcp_off run unexpectedly called SuperContext MCP tools")
-                records.append(record)
-            except BaseException as exc:
-                primary_error = exc
-                raise
-            finally:
-                if post_command:
-                    try:
-                        run_host_command(post_command)
-                    except Exception as cleanup_error:
-                        if primary_error is not None:
-                            primary_error.add_note(f"post-arm host config command failed: {cleanup_error}")
-                        else:
-                            raise
+            jobs.append((len(jobs), task, run_group_id, arm))
+    if parallelism > 1:
+        return _run_paired_tasks_parallel(
+            jobs,
+            snapshot=snapshot,
+            output_dir=output_dir,
+            host=host,
+            seed=seed,
+            config=config,
+            run_task=run_task,
+            parallelism=parallelism,
+        )
+
+    records: list[RunRecord] = []
+    for _, task, run_group_id, arm in jobs:
+        pre_command = _pre_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
+        post_command = _post_arm_host_config_command(arm=arm, host=host, mcp_url=config.mcp_url)
+        primary_error: BaseException | None = None
+        try:
+            run_host_command(pre_command)
+            record = _run_arm_task(
+                task,
+                arm=arm,
+                snapshot=snapshot,
+                output_dir=output_dir,
+                host=host,
+                run_group_id=run_group_id,
+                random_seed=seed,
+                pre_arm_host_config_command=pre_command,
+                post_arm_host_config_command=post_command,
+                config=config,
+                run_task=run_task,
+            )
+            records.append(record)
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            if post_command:
+                try:
+                    run_host_command(post_command)
+                except Exception as cleanup_error:
+                    if primary_error is not None:
+                        primary_error.add_note(f"post-arm host config command failed: {cleanup_error}")
+                    else:
+                        raise
     return records
+
+
+def _run_paired_tasks_parallel(
+    jobs: list[tuple[int, EvalTask, str, Arm]],
+    *,
+    snapshot: str | Path,
+    output_dir: str | Path,
+    host: str,
+    seed: int,
+    config: RunnerConfig,
+    run_task,
+    parallelism: int,
+) -> list[RunRecord]:
+    records_by_index: dict[int, RunRecord] = {}
+    with ThreadPoolExecutor(max_workers=parallelism) as executor:
+        futures = {
+            executor.submit(
+                _run_arm_task,
+                task,
+                arm=arm,
+                snapshot=snapshot,
+                output_dir=output_dir,
+                host=host,
+                run_group_id=run_group_id,
+                random_seed=seed,
+                pre_arm_host_config_command=(),
+                post_arm_host_config_command=(),
+                config=config,
+                run_task=run_task,
+            ): index
+            for index, task, run_group_id, arm in jobs
+        }
+        try:
+            for future in as_completed(futures):
+                index = futures[future]
+                records_by_index[index] = future.result()
+        except BaseException:
+            for future in futures:
+                # Running arms cannot be cancelled; the executor context waits for them.
+                # This only prevents queued arms from starting after the first failure.
+                future.cancel()
+            raise
+    return [records_by_index[index] for index in range(len(jobs))]
+
+
+def _run_arm_task(
+    task: EvalTask,
+    *,
+    arm: Arm,
+    snapshot: str | Path,
+    output_dir: str | Path,
+    host: str,
+    run_group_id: str,
+    random_seed: int,
+    pre_arm_host_config_command: tuple[str, ...],
+    post_arm_host_config_command: tuple[str, ...],
+    config: RunnerConfig,
+    run_task,
+) -> RunRecord:
+    record = run_task(
+        task,
+        arm=arm,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        host=host,
+        run_group_id=run_group_id,
+        random_seed=random_seed,
+        pre_arm_host_config_command=pre_arm_host_config_command,
+        post_arm_host_config_command=post_arm_host_config_command,
+        config=config,
+    )
+    if arm == "mcp_off" and record.mcp_tools_called:
+        raise RuntimeError("mcp_off run unexpectedly called SuperContext MCP tools")
+    return record
 
 
 def _pre_arm_host_config_command(*, arm: Arm, host: str, mcp_url: str) -> tuple[str, ...]:
