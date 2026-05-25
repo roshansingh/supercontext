@@ -179,9 +179,9 @@ def fixture_defaults_from_query_set(path: str | Path = DEFAULT_QUERY_SET) -> dic
             continue
         row = dict(zip(header, cells, strict=True))
         variable = _clean(row.get("variable", ""))
-        value = _clean(row.get("mercury v0 value", ""))
-        if _is_fixture_variable(variable) and _is_concrete_fixture_value(value):
-            defaults[variable] = value
+        concrete_value = _concrete_fixture_value(row.get("mercury v0 value", ""))
+        if _is_fixture_variable(variable) and concrete_value is not None:
+            defaults[variable] = concrete_value
     return defaults
 
 
@@ -226,9 +226,11 @@ def _load_fixture_overrides(path: str | Path | None) -> dict[str, dict[str, obje
             raise ValueError(f"default-v1 fixture override row {index} has invalid task ID: {task_id!r}")
         if task_id in overrides:
             raise ValueError(f"default-v1 fixture overrides have duplicate task ID: {task_id}")
-        _optional_string(row, "fixture_input", row_number=index)
-        _optional_fixture_bindings(row, row_number=index)
-        overrides[task_id] = row
+        overrides[task_id] = {
+            "id": task_id,
+            "fixture_input": _optional_string(row, "fixture_input", row_number=index),
+            "fixture_bindings": _optional_fixture_bindings(row, row_number=index),
+        }
     return overrides
 
 
@@ -279,9 +281,17 @@ def _is_fixture_variable(value: str) -> bool:
     return bool(FIXTURE_VARIABLE_PATTERN.fullmatch(value))
 
 
-def _is_concrete_fixture_value(value: str) -> bool:
-    lowered = value.casefold()
-    return bool(value) and " or " not in lowered and "fixture" not in lowered
+def _concrete_fixture_value(value: object) -> str | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.count("`") == 2 and text[0] == "`" and text[-1] == "`":
+        cleaned = _clean(text)
+        return cleaned if cleaned else None
+    if "`" in text:
+        return None
+    cleaned = _clean(text)
+    return cleaned if cleaned else None
 
 
 def _fixture_bindings(row: CorpusRow, fixture_defaults: dict[str, str]) -> tuple[tuple[str, str], ...]:
@@ -314,10 +324,19 @@ def _fixture_assignments(text: str) -> list[dict[str, str]]:
 
 def _fixture_tokens(text: str) -> list[str]:
     tokens = []
+    previous_assignment: str | None = None
     for part in text.split(","):
         cleaned = _clean(part)
         if cleaned.startswith("$"):
             tokens.append(cleaned)
+            previous_assignment = cleaned if "=" in cleaned else None
+        elif previous_assignment is not None and cleaned:
+            raise ValueError(
+                f"fixture assignment {previous_assignment!r} contains a comma; "
+                "put comma-containing values in fixture_bindings instead"
+            )
+        else:
+            previous_assignment = None
     return tokens
 
 

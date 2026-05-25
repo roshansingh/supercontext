@@ -9,7 +9,14 @@ from pathlib import Path
 
 import yaml
 
-from source.kg.eval.corpus import DEFAULT_QUERY_SET, _clean, default_v1_tasks, fixture_defaults_from_query_set, parse_query_set
+from source.kg.eval.corpus import (
+    DEFAULT_QUERY_SET,
+    _clean,
+    _fixture_assignments,
+    default_v1_tasks,
+    fixture_defaults_from_query_set,
+    parse_query_set,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +91,32 @@ class AbEvalCorpusTest(unittest.TestCase):
         self.assertEqual(defaults["$CALLER_SYMBOL"], "load_model")
         self.assertEqual(defaults["$ENTRY_SYMBOL_LINE"], "70")
         self.assertNotIn("$SERVICE", defaults)
+
+    def test_fixture_defaults_keep_single_code_span_values_verbatim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            query_set = Path(tmp) / "query_set.md"
+            query_set.write_text(
+                "\n".join(
+                    [
+                        "| Variable | Mercury v0 value | Portable meaning |",
+                        "|---|---|---|",
+                        "| `$TOOL` | `fixture-loader` | Concrete value containing fixture. |",
+                        "| `$GATE` | `alpha or beta gate` | Concrete value containing or. |",
+                        "| `$SERVICE` | `payments` or `checkout-service` | Non-concrete alternatives. |",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            defaults = fixture_defaults_from_query_set(query_set)
+
+        self.assertEqual(defaults["$TOOL"], "fixture-loader")
+        self.assertEqual(defaults["$GATE"], "alpha or beta gate")
+        self.assertNotIn("$SERVICE", defaults)
+
+    def test_fixture_assignment_rejects_comma_truncated_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "contains a comma"):
+            _fixture_assignments("$EVENT=order, created")
 
     def test_default_v1_rejects_manifest_rows_not_in_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

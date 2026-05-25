@@ -254,6 +254,8 @@ def _run_paired_tasks_parallel(
                 records_by_index[index] = future.result()
         except BaseException:
             for future in futures:
+                # Running arms cannot be cancelled; the executor context waits for them.
+                # This only prevents queued arms from starting after the first failure.
                 future.cancel()
             raise
     return [records_by_index[index] for index in range(len(jobs))]
