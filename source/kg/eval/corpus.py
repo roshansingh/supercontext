@@ -34,6 +34,8 @@ class EvalTask:
     row: CorpusRow
     phase: str
     note: str = ""
+    # Supplemental JSON or text fixture payload. This is intentionally literal:
+    # bind variables in query text and fixture_bindings, not inside fixture_input.
     fixture_input: str = ""
     fixture_bindings: tuple[tuple[str, str], ...] = ()
 
@@ -127,7 +129,7 @@ def default_v1_tasks(
             or _optional_string(manifest_row, "fixture_input", row_number=index)
         )
         manifest_fixture_bindings = _optional_fixture_bindings(manifest_row, row_number=index)
-        override_fixture_bindings = _optional_fixture_bindings(override_row, row_number=index)
+        override_fixture_bindings = _normalized_override_fixture_bindings(override_row, row_number=index)
         if not _is_task_id(task_id):
             raise ValueError(f"default-v1 row {index} has invalid task ID: {task_id!r}")
         if task_id in seen:
@@ -232,6 +234,22 @@ def _load_fixture_overrides(path: str | Path | None) -> dict[str, dict[str, obje
             "fixture_bindings": _optional_fixture_bindings(row, row_number=index),
         }
     return overrides
+
+
+def _normalized_override_fixture_bindings(row: dict[str, object], *, row_number: int) -> dict[str, str]:
+    value = row.get("fixture_bindings")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"default-v1 row {row_number} fixture_bindings must be a mapping")
+    bindings: dict[str, str] = {}
+    for key, binding_value in value.items():
+        if not isinstance(key, str) or not _is_fixture_variable(key):
+            raise ValueError(f"default-v1 row {row_number} fixture binding key must look like $VAR: {key!r}")
+        if not isinstance(binding_value, str) or not binding_value.strip():
+            raise ValueError(f"default-v1 row {row_number} fixture binding value for {key} must be a non-empty string")
+        bindings[key] = binding_value
+    return bindings
 
 
 def _validate_default_distribution(tasks: list[EvalTask]) -> None:

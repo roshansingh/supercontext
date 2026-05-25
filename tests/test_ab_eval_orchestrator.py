@@ -683,6 +683,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertIn('"repo": "backend_api"', prompt)
         self.assertIn('"changed_files": ["api/auth/routes.py", "api/accounts/views.py"]', prompt)
         self.assertLess(prompt.index("Fixture input:"), prompt.index("User question:"))
+        self.assertNotIn("Arm: mcp_on\n\n\n", prompt)
 
     def test_task_prompt_includes_resolved_fixture_bindings(self) -> None:
         task = EvalTask(
@@ -708,6 +709,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertIn("- $CALLER_SYMBOL = load_model", prompt)
         self.assertIn("Who calls `load_model`?", prompt)
         self.assertIn("caller list for `load_model`", prompt)
+        self.assertNotIn("load_model\n\n\nUser question:", prompt)
 
 
 def _task(task_id: str = "Q003") -> EvalTask:
