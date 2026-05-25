@@ -13,7 +13,17 @@ RUNTIME_LINKS_FILENAME = "cross_repo_runtime_links.jsonl"
 RUNTIME_LINK_EVIDENCE_FILENAME = "cross_repo_runtime_link_evidence.jsonl"
 RUNTIME_LINK_COVERAGE_FILENAME = "cross_repo_runtime_link_coverage.jsonl"
 CROSS_REPO_LINKABLE_DEPLOY_TARGET_TYPES = frozenset(("wsgi",))
-DIRECT_DEPLOY_TARGET_TYPES = frozenset(("zappa_lambda",))
+DIRECT_DEPLOY_TARGET_TYPES = frozenset(
+    (
+        "zappa_lambda",
+        "kubernetes_cron_job",
+        "kubernetes_daemon_set",
+        "kubernetes_deployment",
+        "kubernetes_job",
+        "kubernetes_replica_set",
+        "kubernetes_stateful_set",
+    )
+)
 SUPPORTED_DEPLOY_TARGET_TYPES = CROSS_REPO_LINKABLE_DEPLOY_TARGET_TYPES | DIRECT_DEPLOY_TARGET_TYPES
 _MIN_WSGI_SUFFIX_PARTS = 2
 

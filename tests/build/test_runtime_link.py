@@ -105,6 +105,24 @@ class RuntimeLinkTest(unittest.TestCase):
         self.assertEqual(result.ambiguous_link_count, 0)
         self.assertNotIn("unsupported_deploy_target_type", {row.scope_ref["reason"] for row in result.coverage})
 
+    def test_kubernetes_target_is_handled_by_direct_extractor_not_cross_repo_linker(self) -> None:
+        service = _service("api")
+        target = _deploy_target(
+            "api",
+            "deployment/kubernetes/staging/api.yaml#default/deployment/api",
+            target_type="kubernetes_deployment",
+        )
+        deploy_fact = Fact("DEPLOYS_VIA_CONFIG", service.entity_id, target.entity_id)
+        result = link_runtime_targets(
+            (
+                _input("api", (service, target), (deploy_fact,), (_evidence_for(target),)),
+            )
+        )
+
+        self.assertEqual(result.facts, ())
+        self.assertEqual(result.ambiguous_link_count, 0)
+        self.assertNotIn("unsupported_deploy_target_type", {row.scope_ref["reason"] for row in result.coverage})
+
 
 def _input(
     repo_name: str,
