@@ -20,6 +20,11 @@ from source.kg.languages.python.extractors.transport_extractor import (
     extract_transport_events,
     module_transport_context,
 )
+from source.kg.languages.python.extractors.receiver_calls import (
+    IndexedSymbol,
+    PythonReceiverCallIndex,
+    PythonReceiverCallResolver,
+)
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.languages.python.normalization.imports import NormalizedImport, PythonImportNormalizer
@@ -79,12 +84,24 @@ class PythonAstExtractor:
         import_normalizer = PythonImportNormalizer(repo)
         parsed_files = self._parsed_files(repo, ctx)
         literal_index = self._literal_index_for_context(repo, parsed_files, ctx)
+        collected_symbols: dict[Path, tuple[list[SymbolDef], dict[str, FunctionDefNode]]] = {}
+        all_symbols: list[SymbolDef] = []
+        for file_path, parsed in parsed_files.items():
+            if parsed.tree is None:
+                continue
+            module_name = self._module_name(repo, file_path)
+            symbols, function_defs = self._collect_symbols(repo, file_path, module_name, parsed.tree, tenant_id)
+            collected_symbols[file_path] = (symbols, function_defs)
+            all_symbols.extend(symbols)
+        receiver_call_index = PythonReceiverCallIndex(self._indexed_symbol(symbol) for symbol in all_symbols)
 
         for file_path in repo.files_by_language.get("python", ()):
             self._extract_file(
                 repo,
                 file_path,
                 parsed_files[file_path],
+                collected_symbols.get(file_path, ([], {})),
+                receiver_call_index,
                 repo_entity,
                 service_entity,
                 import_normalizer,
@@ -159,6 +176,8 @@ class PythonAstExtractor:
         repo: RepoSnapshot,
         file_path: Path,
         parsed: ParsedPythonFile,
+        collected_symbols: tuple[list[SymbolDef], dict[str, FunctionDefNode]],
+        receiver_call_index: PythonReceiverCallIndex,
         repo_entity: Entity,
         service_entity: Entity,
         import_normalizer: PythonImportNormalizer,
@@ -215,7 +234,7 @@ class PythonAstExtractor:
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
-        symbols, function_defs = self._collect_symbols(repo, file_path, module_name, tree, tenant_id)
+        symbols, function_defs = collected_symbols
         by_qualname = {symbol.qualname: symbol for symbol in symbols}
         by_short_name = {symbol.qualname.rsplit(".", 1)[-1]: symbol for symbol in symbols}
         function_defs_by_short_name = {
@@ -251,6 +270,30 @@ class PythonAstExtractor:
             imports_by_root.setdefault(import_ref.import_root, import_ref)
 
         module_context = module_transport_context(tree if isinstance(tree, ast.Module) else None, imports)
+        emitted_call_keys: set[tuple[str, str, int, int]] = set()
+        receiver_resolver = PythonReceiverCallResolver(
+            index=receiver_call_index,
+            current_module=module_name,
+            imports=imports,
+        )
+        if isinstance(tree, ast.Module):
+            for receiver_call in receiver_resolver.receiver_calls_in_body(tree.body, caller=module_entity):
+                self._add_call_fact_once(
+                    build,
+                    emitted_call_keys,
+                    receiver_call.caller,
+                    receiver_call.callee,
+                    repo,
+                    file_path,
+                    receiver_call.line,
+                    receiver_call.column,
+                    qualifier={
+                        "call": receiver_call.raw_call,
+                        "receiver": receiver_call.receiver_name,
+                        "receiver_class": receiver_call.receiver_class,
+                        "resolution_kind": "python_local_instance_receiver",
+                    },
+                )
         for caller_node in ast.walk(tree):
             if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -263,25 +306,55 @@ class PythonAstExtractor:
                 if not call_name:
                     continue
                 line = getattr(call_node, "lineno", caller.line)
-                local_callee = by_short_name.get(call_name.split(".")[-1])
+                local_callee = (
+                    by_short_name.get(call_name.split(".")[-1])
+                    if self._can_bind_call_by_short_name(call_node.func)
+                    else None
+                )
                 if local_callee is not None and local_callee.entity.entity_id != caller.entity.entity_id:
-                    self._add_fact(build, "CALLS", caller.entity, local_callee.entity, repo, file_path, line, line)
+                    self._add_call_fact_once(
+                        build,
+                        emitted_call_keys,
+                        caller.entity,
+                        local_callee.entity,
+                        repo,
+                        file_path,
+                        line,
+                        getattr(call_node, "col_offset", -1),
+                    )
                     continue
                 root = call_name.split(".", 1)[0]
                 if root in imports_by_root:
                     package_entity = self._dependency_entity(repo, imports_by_root[root], tenant_id)
                     build.entities.append(package_entity)
-                    self._add_fact(
+                    self._add_call_fact_once(
                         build,
-                        "CALLS",
+                        emitted_call_keys,
                         caller.entity,
                         package_entity,
                         repo,
                         file_path,
                         line,
-                        line,
+                        getattr(call_node, "col_offset", -1),
                         qualifier={"call": call_name},
                     )
+            for receiver_call in receiver_resolver.receiver_calls_in_body(caller_node.body, caller=caller.entity):
+                self._add_call_fact_once(
+                    build,
+                    emitted_call_keys,
+                    receiver_call.caller,
+                    receiver_call.callee,
+                    repo,
+                    file_path,
+                    receiver_call.line,
+                    receiver_call.column,
+                    qualifier={
+                        "call": receiver_call.raw_call,
+                        "receiver": receiver_call.receiver_name,
+                        "receiver_class": receiver_call.receiver_class,
+                        "resolution_kind": "python_local_instance_receiver",
+                    },
+                )
             if self.include_transport:
                 extract_transport_events(
                     repo,
@@ -404,6 +477,14 @@ class PythonAstExtractor:
             visit(tree.body)
         return symbols, function_defs
 
+    def _indexed_symbol(self, symbol: SymbolDef) -> IndexedSymbol:
+        return IndexedSymbol(
+            entity=symbol.entity,
+            module_name=symbol.module_name,
+            qualname=symbol.qualname,
+            symbol_kind=symbol.symbol_kind,
+        )
+
     def _symbol(
         self,
         repo: RepoSnapshot,
@@ -428,6 +509,24 @@ class PythonAstExtractor:
             properties={"path": str(file_path.relative_to(repo.root)), "line": line},
         )
         return SymbolDef(entity, module_name, qualname, symbol_kind, line, end_line)
+
+    def _add_call_fact_once(
+        self,
+        build: KgBuild,
+        emitted_call_keys: set[tuple[str, str, int, int]],
+        subject: Entity,
+        object_: Entity,
+        repo: RepoSnapshot,
+        file_path: Path,
+        line: int,
+        column: int,
+        qualifier: JsonObject | None = None,
+    ) -> None:
+        key = (subject.entity_id, object_.entity_id, line, column)
+        if key in emitted_call_keys:
+            return
+        emitted_call_keys.add(key)
+        self._add_fact(build, "CALLS", subject, object_, repo, file_path, line, line, qualifier=qualifier)
 
     def _add_fact(
         self,
@@ -592,6 +691,17 @@ class PythonAstExtractor:
             parent = self._call_name(node.value)
             return f"{parent}.{node.attr}" if parent else node.attr
         return None
+
+    def _call_root(self, node: ast.AST) -> str | None:
+        current = node
+        while isinstance(current, ast.Attribute):
+            current = current.value
+        return current.id if isinstance(current, ast.Name) else None
+
+    def _can_bind_call_by_short_name(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Name):
+            return True
+        return isinstance(node, ast.Attribute) and self._call_root(node) in {"self", "cls"}
 
     def _qualname_for_node(self, tree: ast.AST, target: ast.AST) -> str:
         path: list[str] = []
