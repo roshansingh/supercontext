@@ -78,6 +78,36 @@ class ZappaExtractionTest(unittest.TestCase):
         self.assertEqual(build.facts, [])
         self.assertEqual(build.evidence, [])
 
+    def test_stage_domain_and_app_function_emit_deploy_and_route(self) -> None:
+        build = _extract('{"prod": {"app_function": "app.app", "domain": "api.example.com"}}')
+
+        self.assertEqual(_entity_count(build, "DeployTarget"), 1)
+        self.assertEqual(_entity_count(build, "Domain"), 1)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 1)
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+        deploy = next(fact for fact in build.facts if fact.predicate == "DEPLOYS_VIA_CONFIG")
+        route = next(fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY")
+        self.assertEqual(deploy.object_id, route.object_id)
+        self.assertEqual(deploy.qualifier["target_type"], "zappa_lambda")
+        self.assertEqual(route.qualifier["stage"], "prod")
+
+    def test_disabled_apigateway_emits_deploy_only(self) -> None:
+        build = _extract(
+            '{"prod": {"app_function": "app.app", "domain": "api.example.com", "apigateway_enabled": false}}'
+        )
+
+        self.assertEqual(_entity_count(build, "DeployTarget"), 1)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+
+    def test_non_string_domain_fails_closed_for_route(self) -> None:
+        build = _extract('{"prod": {"app_function": "app.app", "domain": ["api.example.com"]}}')
+
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 1)
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 0)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+
 
 def _extract(text: str) -> ConfigKgBuild:
     with tempfile.TemporaryDirectory() as tmpdir:

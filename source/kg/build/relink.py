@@ -14,6 +14,7 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import read_jsonl
 from source.kg.core.tenant import DEFAULT_TENANT_ID, resolve_tenant_id
 from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS
+from source.kg.build import runtime_link
 from source.kg.languages import REGISTERED_LANGUAGES
 from source.kg.languages.types import (
     ConsumerDependency,
@@ -33,6 +34,9 @@ RELINK_OUTPUT_FILES = frozenset(
     (
         "cross_repo_links.jsonl",
         "cross_repo_link_evidence.jsonl",
+        runtime_link.RUNTIME_LINKS_FILENAME,
+        runtime_link.RUNTIME_LINK_EVIDENCE_FILENAME,
+        runtime_link.RUNTIME_LINK_COVERAGE_FILENAME,
         RELINK_PACKAGE_CLASSIFICATIONS_FILENAME,
         RELINK_PACKAGE_COVERAGE_FILENAME,
         "manifest.json",
@@ -73,6 +77,8 @@ class LinkerInput:
     repo: RepoSnapshot
     repo_identity: RepoIdentity
     entities: tuple[Entity, ...]
+    facts: tuple[Fact, ...] = ()
+    evidence: tuple[Evidence, ...] = ()
     validate_package_manifests: bool = False
     snapshot_dir: Path | None = None
 
@@ -157,6 +163,17 @@ def relink_snapshot_dirs(
         raise ValueError(f"relink output_dir must not be one of the input snapshot directories: {out}")
 
     result = link_external_packages(inputs)
+    runtime_result = runtime_link.link_runtime_targets(
+        tuple(
+            runtime_link.RuntimeLinkerInput(
+                input_repo.repo,
+                input_repo.entities,
+                input_repo.facts,
+                input_repo.evidence,
+            )
+            for input_repo in inputs
+        )
+    )
     out.mkdir(parents=True, exist_ok=True)
     _validate_stale_snapshot_outputs(out)
     manifest: JsonObject = {
@@ -198,10 +215,16 @@ def relink_snapshot_dirs(
         "consumer_dependency_count": len(result.consumer_dependencies),
         "consumer_manifest_issue_count": len(result.consumer_manifest_issues),
         "package_classification_count": len(result.package_classifications),
+        "runtime_linker": {
+            "source_system": runtime_link.RUNTIME_LINKER_SOURCE_SYSTEM,
+            "rule_version": runtime_link.RUNTIME_LINKER_RULE_VERSION,
+            "link_count": len(runtime_result.facts),
+            "ambiguous_link_count": runtime_result.ambiguous_link_count,
+        },
         "counts": {
-            "facts": len({fact.fact_id for fact in result.facts}),
-            "evidence": len({row.evidence_id for row in result.evidence}),
-            "coverage": len({row.coverage_id for row in result.coverage}),
+            "facts": len({fact.fact_id for fact in (*result.facts, *runtime_result.facts)}),
+            "evidence": len({row.evidence_id for row in (*result.evidence, *runtime_result.evidence)}),
+            "coverage": len({row.coverage_id for row in (*result.coverage, *runtime_result.coverage)}),
         },
     }
     with tempfile.TemporaryDirectory(prefix=f".{out.name}.", dir=out.parent) as staging:
@@ -211,6 +234,21 @@ def relink_snapshot_dirs(
             staged / "cross_repo_link_evidence.jsonl",
             (row.to_record() for row in result.evidence),
             "evidence_id",
+        )
+        _write_jsonl(
+            staged / runtime_link.RUNTIME_LINKS_FILENAME,
+            (fact.to_record() for fact in runtime_result.facts),
+            "fact_id",
+        )
+        _write_jsonl(
+            staged / runtime_link.RUNTIME_LINK_EVIDENCE_FILENAME,
+            (row.to_record() for row in runtime_result.evidence),
+            "evidence_id",
+        )
+        _write_jsonl(
+            staged / runtime_link.RUNTIME_LINK_COVERAGE_FILENAME,
+            (row.to_record() for row in runtime_result.coverage),
+            "coverage_id",
         )
         _write_jsonl(
             staged / RELINK_PACKAGE_CLASSIFICATIONS_FILENAME,
@@ -238,6 +276,9 @@ def _publish_relink_outputs(out: Path, staged: Path) -> None:
     filenames = (
         "cross_repo_links.jsonl",
         "cross_repo_link_evidence.jsonl",
+        runtime_link.RUNTIME_LINKS_FILENAME,
+        runtime_link.RUNTIME_LINK_EVIDENCE_FILENAME,
+        runtime_link.RUNTIME_LINK_COVERAGE_FILENAME,
         RELINK_PACKAGE_CLASSIFICATIONS_FILENAME,
         RELINK_PACKAGE_COVERAGE_FILENAME,
         "manifest.json",
@@ -451,6 +492,11 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         _entity_from_record(row, root / "entities.jsonl")
         for row in _read_entity_rows(root / "entities.jsonl")
     )
+    facts = tuple(_fact_from_record(row, root / "facts.jsonl") for row in _read_fact_rows(root / "facts.jsonl"))
+    evidence = tuple(
+        _evidence_from_record(row, root / "evidence.jsonl")
+        for row in _read_evidence_rows(root / "evidence.jsonl")
+    )
     _validate_unique_entity_ids(entities, root / "entities.jsonl")
     resolved_tenant = _snapshot_tenant_id(manifest, tenant_id, entities)
     _validate_entity_tenants(entities, resolved_tenant, root / "entities.jsonl")
@@ -458,6 +504,8 @@ def _load_linker_input(snapshot_dir: Path, *, tenant_id: str | None) -> LinkerIn
         repo=repo,
         repo_identity=repo_identity(repo, resolved_tenant),
         entities=entities,
+        facts=facts,
+        evidence=evidence,
         validate_package_manifests=True,
         snapshot_dir=root,
     )
@@ -502,6 +550,26 @@ def _snapshot_tenant_id(manifest: JsonObject, tenant_id: str | None, entities: t
 def _read_entity_rows(path: Path) -> tuple[JsonObject, ...]:
     if not path.is_file():
         raise ValueError(f"{path}: entities.jsonl must be a JSONL file")
+    rows = read_jsonl(path)
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: row {index + 1} must be a JSON object")
+    return tuple(rows)
+
+
+def _read_fact_rows(path: Path) -> tuple[JsonObject, ...]:
+    if not path.is_file():
+        return ()
+    rows = read_jsonl(path)
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: row {index + 1} must be a JSON object")
+    return tuple(rows)
+
+
+def _read_evidence_rows(path: Path) -> tuple[JsonObject, ...]:
+    if not path.is_file():
+        return ()
     rows = read_jsonl(path)
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -560,6 +628,74 @@ def _entity_from_record(row: JsonObject, path: Path) -> Entity:
     if expected_id != entity.entity_id:
         raise ValueError(f"{path}: entity_id does not match kind and identity: {expected_id}")
     return entity
+
+
+def _fact_from_record(row: JsonObject, path: Path) -> Fact:
+    predicate = row.get("predicate")
+    subject_id = row.get("subject_id")
+    object_id = row.get("object_id")
+    qualifier = row.get("qualifier", {})
+    canonical_status = row.get("canonical_status", "canonical")
+    if not isinstance(predicate, str) or not predicate:
+        raise ValueError(f"{path}: fact predicate must be a non-empty string")
+    if not isinstance(subject_id, str) or not subject_id:
+        raise ValueError(f"{path}: fact subject_id must be a non-empty string")
+    if not isinstance(object_id, str) or not object_id:
+        raise ValueError(f"{path}: fact object_id must be a non-empty string")
+    if not isinstance(qualifier, dict):
+        raise ValueError(f"{path}: fact qualifier must be an object")
+    if not isinstance(canonical_status, str) or canonical_status not in {"canonical", "candidate", "demoted"}:
+        raise ValueError(f"{path}: fact canonical_status is unsupported: {canonical_status}")
+    fact = Fact(predicate, subject_id, object_id, qualifier, canonical_status=canonical_status)
+    expected_id = row.get("fact_id")
+    if not isinstance(expected_id, str) or not expected_id:
+        raise ValueError(f"{path}: fact_id must be a non-empty string")
+    if expected_id != fact.fact_id:
+        raise ValueError(f"{path}: fact_id does not match predicate and endpoints: {expected_id}")
+    return fact
+
+
+def _evidence_from_record(row: JsonObject, path: Path) -> Evidence:
+    target_type = row.get("target_type")
+    target_id = row.get("target_id")
+    derivation_class = row.get("derivation_class")
+    source_system = row.get("source_system")
+    source_ref = row.get("source_ref")
+    bytes_ref = row.get("bytes_ref")
+    confidence = row.get("confidence")
+    ingested_at = row.get("ingested_at")
+    if target_type not in {"entity", "fact"}:
+        raise ValueError(f"{path}: evidence target_type is unsupported: {target_type}")
+    if not isinstance(target_id, str) or not target_id:
+        raise ValueError(f"{path}: evidence target_id must be a non-empty string")
+    if not isinstance(derivation_class, str) or not derivation_class:
+        raise ValueError(f"{path}: evidence derivation_class must be a non-empty string")
+    if not isinstance(source_system, str) or not source_system:
+        raise ValueError(f"{path}: evidence source_system must be a non-empty string")
+    if not isinstance(source_ref, dict):
+        raise ValueError(f"{path}: evidence source_ref must be an object")
+    if bytes_ref is not None and not isinstance(bytes_ref, dict):
+        raise ValueError(f"{path}: evidence bytes_ref must be an object when present")
+    if confidence is not None and not isinstance(confidence, (int, float)):
+        raise ValueError(f"{path}: evidence confidence must be numeric when present")
+    if not isinstance(ingested_at, str) or not ingested_at:
+        raise ValueError(f"{path}: evidence ingested_at must be a non-empty string")
+    evidence = Evidence(
+        target_type=target_type,
+        target_id=target_id,
+        derivation_class=derivation_class,
+        source_system=source_system,
+        source_ref=source_ref,
+        bytes_ref=bytes_ref,
+        confidence=float(confidence) if confidence is not None else None,
+        ingested_at=ingested_at,
+    )
+    expected_id = row.get("evidence_id")
+    if not isinstance(expected_id, str) or not expected_id:
+        raise ValueError(f"{path}: evidence_id must be a non-empty string")
+    if expected_id != evidence.evidence_id:
+        raise ValueError(f"{path}: evidence_id does not match evidence content: {expected_id}")
+    return evidence
 
 
 def _validate_unique_entity_ids(entities: tuple[Entity, ...], path: Path) -> None:

@@ -14,6 +14,7 @@ SUPPORTED_FACT_PREDICATES: frozenset[str] = frozenset(
         "REFERENCES_ENV_VAR",
         "REFERENCES_EVENT_CHANNEL",
         "ROUTES_DOMAIN_TO_DEPLOY",
+        "DEPLOYS_VIA_CONFIG",
         "PRODUCES_EVENT",
         "CONSUMES_EVENT",
     }

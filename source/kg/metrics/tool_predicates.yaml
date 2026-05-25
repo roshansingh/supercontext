@@ -16,6 +16,7 @@ tools:
       - CONSUMES_EVENT
       - PRODUCES_EVENT
       - ROUTES_DOMAIN_TO_DEPLOY
+      - DEPLOYS_VIA_CONFIG
   find_callers:
     subject_kinds:
       - CodeSymbol
@@ -46,3 +47,4 @@ tools:
       - Service
     predicates:
       - ROUTES_DOMAIN_TO_DEPLOY
+      - DEPLOYS_VIA_CONFIG

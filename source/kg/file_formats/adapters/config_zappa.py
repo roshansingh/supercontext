@@ -17,8 +17,8 @@ class ConfigZappaAdapter:
         languages=("config",),
         file_kinds=("json",),
         framework_tags=("zappa",),
-        produces_predicates=("CONSUMES_EVENT",),
-        produces_entity_kinds=("EventChannel",),
+        produces_predicates=("CONSUMES_EVENT", "DEPLOYS_VIA_CONFIG", "REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"),
+        produces_entity_kinds=("EventChannel", "DeployTarget", "Domain"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )

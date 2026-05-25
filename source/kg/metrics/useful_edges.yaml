@@ -52,6 +52,9 @@ dimensions:
       subject_kinds: [Service]
     - predicate: ROUTES_DOMAIN_TO_DEPLOY
       subject_kinds: [Domain]
+    - predicate: DEPLOYS_VIA_CONFIG
+      subject_kinds: [Service]
+      object_kinds: [DeployTarget]
   data-pipeline:
     - predicate: IMPLEMENTS
       object_kinds: [Service]
@@ -95,9 +98,6 @@ dimensions:
       subject_kinds: [Service]
 
 adr_followups:
-  - predicate: DEPLOYS_VIA_CONFIG
-    dimension: iac
-    adr_followup_required: true
   - predicate: PROVIDES_RESOURCE
     dimension: iac
     adr_followup_required: true

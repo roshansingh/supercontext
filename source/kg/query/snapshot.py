@@ -654,13 +654,13 @@ class KgSnapshot:
         limit = self._clamp_limit(limit, max_limit=100)
         rows = []
         for fact in self.facts:
-            if fact["predicate"] != "ROUTES_DOMAIN_TO_DEPLOY":
+            if fact["predicate"] not in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}:
                 continue
             subject = self.entities_by_id.get(fact["subject_id"])
             target = self.entities_by_id.get(fact["object_id"])
             if not subject or not target:
                 continue
-            haystack = f"{self._display(subject)} {self._display(target)} {fact.get('qualifier', {})}".lower()
+            haystack = f"{self._display(subject)} {self._display(target)} {fact.get('predicate')} {fact.get('qualifier', {})}".lower()
             if target_query and target_query.lower() not in haystack:
                 continue
             rows.append(self._fact_result(fact, subject, target))

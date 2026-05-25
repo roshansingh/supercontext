@@ -127,7 +127,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         [row for row in related if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}]
     )
     deploy_mappings = _planning_context_dedupe_rows(
-        [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
+        [row for row in related if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}]
     )
     endpoint_consumer_packet = _endpoint_consumer_packet_for_service(kg, service, limit=limit)
     operational_surfaces = _service_operational_surfaces(kg, service, limit=limit)
@@ -576,10 +576,19 @@ def _count_row_qualifier_values(rows: list[JsonObject], key: str) -> JsonObject:
 
 def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
     repo = _planning_context_entity_repo(service)
+    service_id = service.get("entity_id")
     direct_domain_rows: list[JsonObject] = []
     deploy_target_rows: list[JsonObject] = []
+    deploy_link_rows: list[JsonObject] = []
     domain_route_rows: list[JsonObject] = []
     unlinked_domain_route_rows: list[JsonObject] = []
+    service_deploy_targets = {
+        fact.get("object_id")
+        for fact in kg.facts
+        if fact.get("predicate") == "DEPLOYS_VIA_CONFIG"
+        and fact.get("subject_id") == service_id
+        and isinstance(fact.get("object_id"), str)
+    }
 
     for entity in kg.entities:
         if entity.get("kind") != "DeployTarget":
@@ -592,13 +601,21 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
 
     for fact in kg.facts:
         predicate = fact.get("predicate")
-        if predicate not in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}:
+        if predicate not in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}:
             continue
         subject = kg.entities_by_id.get(fact.get("subject_id"))
         object_ = kg.entities_by_id.get(fact.get("object_id"))
         if not subject or not object_:
             continue
         row = _fact_result(kg, fact, subject, object_)
+        if predicate == "DEPLOYS_VIA_CONFIG" and subject.get("entity_id") == service_id:
+            deploy_link_rows.append(
+                {
+                    **row,
+                    "match_basis": "service_deploys_via_config",
+                }
+            )
+            continue
         if _planning_context_entity_repo(subject) == repo or _planning_context_entity_repo(object_) == repo:
             direct_domain_rows.append(row)
             if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
@@ -609,7 +626,14 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
                     }
                 )
             continue
-        if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
+        if predicate == "ROUTES_DOMAIN_TO_DEPLOY" and fact.get("object_id") in service_deploy_targets:
+            domain_route_rows.append(
+                {
+                    **row,
+                    "match_basis": "route_deploy_target_linked_to_service",
+                }
+            )
+        elif predicate == "ROUTES_DOMAIN_TO_DEPLOY":
             unlinked_domain_route_rows.append(
                 {
                     **row,
@@ -620,12 +644,16 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
     direct_domain_rows = _planning_context_dedupe_rows(direct_domain_rows)
     domain_route_rows = _planning_context_dedupe_rows(domain_route_rows)
     deploy_target_rows = _planning_context_dedupe_rows(deploy_target_rows)
+    deploy_link_rows = _planning_context_dedupe_rows(deploy_link_rows)
     unlinked_domain_route_rows = _planning_context_dedupe_rows(unlinked_domain_route_rows)
+    deploy_evidence_count = len(deploy_target_rows) + len(deploy_link_rows)
     return {
         "summary": {
             "direct_domain_reference_count": len(direct_domain_rows),
             "domain_route_candidate_count": len(domain_route_rows),
-            "deploy_target_candidate_count": len(deploy_target_rows),
+            "deploy_target_candidate_count": deploy_evidence_count,
+            "deploy_target_entity_count": len(deploy_target_rows),
+            "deploy_link_fact_count": len(deploy_link_rows),
             "unlinked_domain_route_count": len(unlinked_domain_route_rows),
             "match_basis": "structured_repo_identity_only",
             "section_limit": limit,
@@ -636,19 +664,27 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
             direct_domain_rows=direct_domain_rows,
             domain_route_rows=domain_route_rows,
             deploy_target_rows=deploy_target_rows,
+            deploy_link_rows=deploy_link_rows,
             unlinked_domain_route_rows=unlinked_domain_route_rows,
             limit=limit,
         ),
         "direct_domain_references": direct_domain_rows[:limit],
         "domain_route_candidates": domain_route_rows[:limit],
         "deploy_target_candidates": deploy_target_rows[:limit],
+        "deploy_link_facts": deploy_link_rows[:limit],
         "unlinked_domain_route_samples": unlinked_domain_route_rows[:limit],
         "truncated": any(
             len(rows) > limit
-            for rows in (direct_domain_rows, domain_route_rows, deploy_target_rows, unlinked_domain_route_rows)
+            for rows in (
+                direct_domain_rows,
+                domain_route_rows,
+                deploy_target_rows,
+                deploy_link_rows,
+                unlinked_domain_route_rows,
+            )
         ),
         "coverage_note": (
-            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
+            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; deploy_link_facts require service-to-target evidence; unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
         ),
     }
 
@@ -658,10 +694,11 @@ def _operational_evidence_partition(
     direct_domain_rows: list[JsonObject],
     domain_route_rows: list[JsonObject],
     deploy_target_rows: list[JsonObject],
+    deploy_link_rows: list[JsonObject],
     unlinked_domain_route_rows: list[JsonObject],
     limit: int,
 ) -> JsonObject:
-    known_count = len(direct_domain_rows) + len(domain_route_rows) + len(deploy_target_rows)
+    known_count = len(direct_domain_rows) + len(domain_route_rows) + len(deploy_target_rows) + len(deploy_link_rows)
     return {
         OPERATIONAL_KNOWN_LINKED: {
             "status": "found" if known_count else "empty",
@@ -669,10 +706,13 @@ def _operational_evidence_partition(
             "direct_domain_references": direct_domain_rows[:limit],
             "domain_routes": domain_route_rows[:limit],
             "deploy_targets": deploy_target_rows[:limit],
+            "deploy_links": deploy_link_rows[:limit],
             "counts": {
                 "direct_domain_reference_count": len(direct_domain_rows),
                 "domain_route_count": len(domain_route_rows),
-                "deploy_target_count": len(deploy_target_rows),
+                "deploy_target_count": len(deploy_target_rows) + len(deploy_link_rows),
+                "deploy_target_entity_count": len(deploy_target_rows),
+                "deploy_link_fact_count": len(deploy_link_rows),
             },
         },
         OPERATIONAL_UNLINKED_EVIDENCE: {
@@ -689,6 +729,7 @@ def _operational_evidence_partition(
             "items": _operational_missing_contracts(
                 domain_route_rows=domain_route_rows,
                 deploy_target_rows=deploy_target_rows,
+                deploy_link_rows=deploy_link_rows,
                 unlinked_domain_route_rows=unlinked_domain_route_rows,
             ),
         },
@@ -699,6 +740,7 @@ def _operational_missing_contracts(
     *,
     domain_route_rows: list[JsonObject],
     deploy_target_rows: list[JsonObject],
+    deploy_link_rows: list[JsonObject],
     unlinked_domain_route_rows: list[JsonObject],
 ) -> list[JsonObject]:
     missing = [
@@ -717,7 +759,7 @@ def _operational_missing_contracts(
             ),
         },
     ]
-    if not domain_route_rows and not deploy_target_rows:
+    if not domain_route_rows and not deploy_target_rows and not deploy_link_rows:
         missing.append(
             {
                 "contract": "service_to_deploy_target",
@@ -1726,6 +1768,7 @@ def _review_context_runtime_surfaces(
             "CONSUMES_EVENT",
             "PRODUCES_EVENT",
             "ROUTES_DOMAIN_TO_DEPLOY",
+            "DEPLOYS_VIA_CONFIG",
         }:
             continue
         subject = kg.entities_by_id.get(fact.get("subject_id"))
@@ -1746,7 +1789,7 @@ def _review_context_runtime_surfaces(
                 exposed_endpoints.append(_planning_context_fact_result(kg, fact, subject, object_))
         elif predicate in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
             event_channels.append(row)
-        elif predicate == "ROUTES_DOMAIN_TO_DEPLOY":
+        elif predicate in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}:
             deploy_mappings.append(row)
     endpoint_consumers = _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoints)
     return {
@@ -1978,7 +2021,7 @@ def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, 
         "domains": [
             row
             for row in related
-            if row.get("predicate") in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}
+            if row.get("predicate") in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}
         ][:limit],
     }
 
@@ -2252,6 +2295,7 @@ def _runtime_inventory_counts(kg: KgSnapshot, *, repo_key: str | None) -> JsonOb
         "CONSUMES_EVENT",
         "REFERENCES_DOMAIN",
         "ROUTES_DOMAIN_TO_DEPLOY",
+        "DEPLOYS_VIA_CONFIG",
     }
     entities: dict[str, int] = {}
     facts: dict[str, int] = {}
@@ -2403,7 +2447,7 @@ def _planning_context_related_facts(
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
         "deploy_mappings": [
-            row for row in domains if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"
+            row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}
         ][:PLANNING_CONTEXT_SECTION_LIMIT],
         "domains": domains[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
@@ -2416,7 +2460,7 @@ def _planning_context_service_brief(
     event_channels: list[JsonObject],
     domains: list[JsonObject],
 ) -> JsonObject:
-    deploy_mappings = [row for row in domains if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
+    deploy_mappings = [row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}]
     return {
         "services": services[:PLANNING_CONTEXT_SECTION_LIMIT],
         "summary": {

@@ -447,6 +447,21 @@ class McpToolsTest(unittest.TestCase):
             )
         )
 
+    def test_get_service_brief_uses_deploy_link_to_promote_route_to_known_linked(self) -> None:
+        with _fixture_snapshot(operational_deploy_mapping=True, operational_deploy_link=True) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        surfaces = result["operational_surfaces"]
+        self.assertEqual(result["summary"]["deploy_mapping_count"], 1)
+        self.assertEqual(result["summary"]["domain_route_candidate_count"], 1)
+        self.assertEqual(surfaces["summary"]["unlinked_domain_route_count"], 0)
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["counts"]["domain_route_count"], 1)
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["counts"]["deploy_target_count"], 1)
+        self.assertEqual(surfaces["summary"]["deploy_link_fact_count"], 1)
+        self.assertEqual(surfaces["domain_route_candidates"][0]["match_basis"], "route_deploy_target_linked_to_service")
+        self.assertEqual(surfaces["deploy_target_candidates"], [])
+        self.assertEqual(surfaces["deploy_link_facts"][0]["predicate"], "DEPLOYS_VIA_CONFIG")
+
     def test_get_service_brief_treats_provider_any_method_as_compatible(self) -> None:
         with _fixture_snapshot(
             endpoint_consumer=True,
@@ -942,6 +957,7 @@ class _fixture_snapshot:
         endpoint_consumer_method: str | None = "POST",
         operational_deploy_mapping: bool = False,
         operational_deploy_same_repo: bool = False,
+        operational_deploy_link: bool = False,
         symbol_entity_evidence_duplicate_coordinates: bool = False,
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -954,6 +970,7 @@ class _fixture_snapshot:
         self.endpoint_consumer_method = endpoint_consumer_method
         self.operational_deploy_mapping = operational_deploy_mapping
         self.operational_deploy_same_repo = operational_deploy_same_repo
+        self.operational_deploy_link = operational_deploy_link
         self.symbol_entity_evidence_duplicate_coordinates = symbol_entity_evidence_duplicate_coordinates
 
     def __enter__(self) -> KgSnapshot:
@@ -1128,6 +1145,12 @@ class _fixture_snapshot:
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
         domain_fact = Fact("REFERENCES_DOMAIN", env_var.entity_id, domain.entity_id)
         route_fact = Fact("ROUTES_DOMAIN_TO_DEPLOY", route_domain.entity_id, deploy_target.entity_id, {"source_kind": "fixture_vhost"})
+        deploy_link_fact = Fact(
+            "DEPLOYS_VIA_CONFIG",
+            service.entity_id,
+            deploy_target.entity_id,
+            {"source_kind": "runtime_linker", "resolved_by": "fixture"},
+        )
         extra_services = [
             Entity(
                 kind="Service",
@@ -1234,6 +1257,18 @@ class _fixture_snapshot:
                     confidence=1.0,
                 )
             )
+        if self.operational_deploy_link:
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=deploy_link_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="runtime_linker",
+                    source_ref={"repo": "ops"},
+                    bytes_ref={"repo": "ops", "path": "ops/payments.conf", "line_start": 5, "line_end": 5},
+                    confidence=1.0,
+                )
+            )
         entities = [
             service,
             caller,
@@ -1264,6 +1299,7 @@ class _fixture_snapshot:
             produce_fact,
             domain_fact,
             *([route_fact] if self.operational_deploy_mapping else []),
+            *([deploy_link_fact] if self.operational_deploy_link else []),
             *([endpoint_fact] if self.duplicate_endpoint_fact else []),
             *extra_consume_facts,
             *extra_import_facts,
