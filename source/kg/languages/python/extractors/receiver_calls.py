@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from source.kg.core.models import Entity
 from source.kg.languages.python.normalization.imports import NormalizedImport
@@ -25,6 +25,22 @@ class ResolvedReceiverCall:
     raw_call: str
     receiver_name: str
     receiver_class: str
+
+
+@dataclass(frozen=True)
+class ResolvedConstructorCall:
+    caller: Entity
+    callee: Entity
+    line: int
+    column: int
+    raw_call: str
+    constructor_class: str
+
+
+@dataclass(frozen=True)
+class ResolvedPythonCalls:
+    receiver_calls: list[ResolvedReceiverCall]
+    constructor_calls: list[ResolvedConstructorCall]
 
 
 class PythonReceiverCallIndex:
@@ -81,10 +97,26 @@ class PythonReceiverCallResolver:
         body: list[ast.stmt],
         *,
         caller: Entity,
+        shadowed_names: set[str] | None = None,
     ) -> list[ResolvedReceiverCall]:
-        collector = _ReceiverCallCollector(self, caller)
+        return self.calls_in_body(body, caller=caller, shadowed_names=shadowed_names).receiver_calls
+
+    def calls_in_body(
+        self,
+        body: list[ast.stmt],
+        *,
+        caller: Entity,
+        shadowed_names: set[str] | None = None,
+        local_imports_shadow: bool = False,
+    ) -> ResolvedPythonCalls:
+        collector = _ReceiverCallCollector(self, caller, local_imports_shadow=local_imports_shadow)
+        for name in shadowed_names or set():
+            collector.local_classes[name] = None
         collector.process_statements(body)
-        return collector.calls
+        return ResolvedPythonCalls(
+            receiver_calls=collector.receiver_calls,
+            constructor_calls=collector.constructor_calls,
+        )
 
     def class_from_constructor(self, node: ast.AST) -> IndexedSymbol | None:
         if isinstance(node, ast.Name):
@@ -137,10 +169,18 @@ class PythonReceiverCallResolver:
 
 
 class _ReceiverCallCollector(ast.NodeVisitor):
-    def __init__(self, resolver: PythonReceiverCallResolver, caller: Entity) -> None:
+    def __init__(
+        self,
+        resolver: PythonReceiverCallResolver,
+        caller: Entity,
+        *,
+        local_imports_shadow: bool = False,
+    ) -> None:
         self.resolver = resolver
         self.caller = caller
-        self.calls: list[ResolvedReceiverCall] = []
+        self.local_imports_shadow = local_imports_shadow
+        self.receiver_calls: list[ResolvedReceiverCall] = []
+        self.constructor_calls: list[ResolvedConstructorCall] = []
         self.local_classes: dict[str, IndexedSymbol | None] = {}
 
     def process_statements(self, statements: list[ast.stmt]) -> None:
@@ -168,6 +208,18 @@ class _ReceiverCallCollector(ast.NodeVisitor):
             self.visit(statement.value)
             self._bind_target(statement.target, None)
             return
+        if isinstance(statement, ast.Import):
+            if self.local_imports_shadow:
+                for alias in statement.names:
+                    self.local_classes[alias.asname or alias.name.split(".", 1)[0]] = None
+            return
+        if isinstance(statement, ast.ImportFrom):
+            if self.local_imports_shadow:
+                for alias in statement.names:
+                    if alias.name == "*":
+                        continue
+                    self.local_classes[alias.asname or alias.name] = None
+            return
         if isinstance(statement, (ast.For, ast.AsyncFor)):
             self.visit(statement.iter)
             self._process_branch(statement.body, unknown_target=statement.target)
@@ -181,7 +233,8 @@ class _ReceiverCallCollector(ast.NodeVisitor):
                 if item.optional_vars is not None:
                     branch._bind_target(item.optional_vars, None)
             branch.process_statements(statement.body)
-            self.calls.extend(branch.calls)
+            self.receiver_calls.extend(branch.receiver_calls)
+            self.constructor_calls.extend(branch.constructor_calls)
             return
         if isinstance(statement, ast.If):
             self.visit(statement.test)
@@ -198,9 +251,12 @@ class _ReceiverCallCollector(ast.NodeVisitor):
         self.visit(statement)
 
     def visit_Call(self, node: ast.Call) -> None:
-        resolved = self._receiver_call(node)
-        if resolved is not None:
-            self.calls.append(resolved)
+        constructor_call = self._constructor_call(node)
+        if constructor_call is not None:
+            self.constructor_calls.append(constructor_call)
+        receiver_call = self._receiver_call(node)
+        if receiver_call is not None:
+            self.receiver_calls.append(receiver_call)
         for arg in node.args:
             self.visit(arg)
         for keyword in node.keywords:
@@ -237,15 +293,38 @@ class _ReceiverCallCollector(ast.NodeVisitor):
             receiver_class=f"{class_symbol.module_name}.{class_symbol.qualname}",
         )
 
+    def _constructor_call(self, node: ast.Call) -> ResolvedConstructorCall | None:
+        class_symbol = self._resolved_constructor_class(node.func)
+        if class_symbol is None:
+            return None
+        return ResolvedConstructorCall(
+            caller=self.caller,
+            callee=class_symbol.entity,
+            line=getattr(node, "lineno", 1),
+            column=getattr(node, "col_offset", -1),
+            raw_call=_expression(node.func),
+            constructor_class=f"{class_symbol.module_name}.{class_symbol.qualname}",
+        )
+
+    def _resolved_constructor_class(self, func: ast.AST) -> IndexedSymbol | None:
+        if isinstance(func, ast.Name) and func.id in self.local_classes:
+            return self.local_classes[func.id]
+        if isinstance(func, ast.Name):
+            return self.resolver.class_from_constructor(func)
+        if isinstance(func, ast.Attribute):
+            return self.resolver.class_from_constructor(func)
+        return None
+
     def _resolved_class_from_assigned_value(self, value: ast.AST) -> IndexedSymbol | None:
         if isinstance(value, ast.Call):
             if isinstance(value.func, ast.Name):
-                local_class = self.local_classes.get(value.func.id)
-                if local_class is not None:
-                    return local_class
+                if value.func.id in self.local_classes:
+                    return self.local_classes[value.func.id]
             return self.resolver.class_from_constructor(value.func)
         if isinstance(value, ast.Name):
-            return self.local_classes.get(value.id) or self.resolver.class_bindings.get(value.id)
+            if value.id in self.local_classes:
+                return self.local_classes[value.id]
+            return self.resolver.class_bindings.get(value.id)
         return None
 
     def _bind_target(self, target: ast.AST, resolved_class: IndexedSymbol | None) -> None:
@@ -257,10 +336,15 @@ class _ReceiverCallCollector(ast.NodeVisitor):
         if unknown_target is not None:
             branch._bind_target(unknown_target, None)
         branch.process_statements(statements)
-        self.calls.extend(branch.calls)
+        self.receiver_calls.extend(branch.receiver_calls)
+        self.constructor_calls.extend(branch.constructor_calls)
 
     def _copy_for_branch(self) -> _ReceiverCallCollector:
-        branch = _ReceiverCallCollector(self.resolver, self.caller)
+        branch = _ReceiverCallCollector(
+            self.resolver,
+            self.caller,
+            local_imports_shadow=self.local_imports_shadow,
+        )
         branch.local_classes = dict(self.local_classes)
         return branch
 

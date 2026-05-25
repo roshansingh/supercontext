@@ -297,6 +297,173 @@ class PythonReceiverCallResolutionTest(unittest.TestCase):
 
         self.assertEqual(len(call_facts), 2)
 
+    def test_same_file_constructor_call_emits_class_caller(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "app" / "features.py"
+            module.parent.mkdir()
+            module.write_text(
+                "class build_features:\n"
+                "    pass\n\n"
+                "def run():\n"
+                "    return build_features()\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, (module,))
+
+        result = kg.find_callers("build_features", path="app/features.py", line=1)
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["caller_count"], 1)
+        self.assertEqual(result["callers"][0]["subject"], "app.features.run")
+        self.assertEqual(result["callers"][0]["qualifier"]["constructor_class"], "app.features.build_features")
+        self.assertEqual(result["callers"][0]["qualifier"]["resolution_kind"], "python_constructor_call")
+
+    def test_imported_constructor_call_emits_cross_file_class_caller(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model = root / "app" / "features.py"
+            runner = root / "app" / "runner.py"
+            model.parent.mkdir()
+            model.write_text(
+                "class build_features:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            runner.write_text(
+                "from app.features import build_features\n\n"
+                "def run():\n"
+                "    return build_features()\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, (model, runner))
+
+        result = kg.find_callers("build_features", path="app/features.py", line=1)
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["caller_count"], 1)
+        self.assertEqual(result["callers"][0]["subject"], "app.runner.run")
+
+    def test_dotted_module_constructor_call_emits_class_caller_without_package_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model = root / "app" / "features.py"
+            runner = root / "app" / "runner.py"
+            model.parent.mkdir()
+            model.write_text(
+                "class build_features:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            runner.write_text(
+                "import app.features\n\n"
+                "def run():\n"
+                "    return app.features.build_features()\n",
+                encoding="utf-8",
+            )
+
+            build = PythonAstExtractor(include_transport=False).extract(
+                RepoSnapshot(
+                    root=root,
+                    name="app",
+                    owner="test",
+                    commit_sha="sha",
+                    files_by_language={"python": (model, runner), "typescript": ()},
+                )
+            )
+
+        class_id = next(
+            entity.entity_id
+            for entity in build.entities
+            if entity.kind == "CodeSymbol" and entity.identity.get("qualname") == "build_features"
+        )
+        run_id = next(
+            entity.entity_id
+            for entity in build.entities
+            if entity.kind == "CodeSymbol" and entity.identity.get("qualname") == "run"
+        )
+        constructor_facts = [
+            fact
+            for fact in build.facts
+            if fact.predicate == "CALLS" and fact.subject_id == run_id and fact.object_id == class_id
+        ]
+        package_facts = [
+            fact
+            for fact in build.facts
+            if fact.predicate == "CALLS"
+            and fact.subject_id == run_id
+            and fact.qualifier.get("call") == "app.features.build_features"
+            and fact.object_id != class_id
+        ]
+
+        self.assertEqual(len(constructor_facts), 1)
+        self.assertEqual(constructor_facts[0].qualifier["call"], "app.features.build_features")
+        self.assertEqual(package_facts, [])
+
+    def test_constructor_call_fails_closed_when_parameter_shadows_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "app" / "features.py"
+            module.parent.mkdir()
+            module.write_text(
+                "class build_features:\n"
+                "    pass\n\n"
+                "def run(build_features):\n"
+                "    return build_features()\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, (module,))
+
+        result = kg.find_callers("build_features", path="app/features.py", line=1)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["caller_count"], 0)
+
+    def test_constructor_call_fails_closed_after_unknown_reassignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "app" / "features.py"
+            module.parent.mkdir()
+            module.write_text(
+                "class build_features:\n"
+                "    pass\n\n"
+                "def run(factory):\n"
+                "    build_features = factory()\n"
+                "    return build_features()\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, (module,))
+
+        result = kg.find_callers("build_features", path="app/features.py", line=1)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["caller_count"], 0)
+
+    def test_constructor_call_fails_closed_when_local_import_shadows_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "app" / "features.py"
+            module.parent.mkdir()
+            module.write_text(
+                "class build_features:\n"
+                "    pass\n\n"
+                "def run():\n"
+                "    import external.factory as build_features\n"
+                "    return build_features()\n",
+                encoding="utf-8",
+            )
+
+            kg = _snapshot(root, (module,))
+
+        result = kg.find_callers("build_features", path="app/features.py", line=1)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["caller_count"], 0)
+
 
 def _snapshot(root: Path, files: tuple[Path, ...]) -> KgSnapshot:
     repo = RepoSnapshot(

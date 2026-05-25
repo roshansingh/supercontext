@@ -24,6 +24,7 @@ from source.kg.languages.python.extractors.receiver_calls import (
     IndexedSymbol,
     PythonReceiverCallIndex,
     PythonReceiverCallResolver,
+    ResolvedPythonCalls,
 )
 from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.core.tenant import resolve_tenant_id
@@ -277,23 +278,13 @@ class PythonAstExtractor:
             imports=imports,
         )
         if isinstance(tree, ast.Module):
-            for receiver_call in receiver_resolver.receiver_calls_in_body(tree.body, caller=module_entity):
-                self._add_call_fact_once(
-                    build,
-                    emitted_call_keys,
-                    receiver_call.caller,
-                    receiver_call.callee,
-                    repo,
-                    file_path,
-                    receiver_call.line,
-                    receiver_call.column,
-                    qualifier={
-                        "call": receiver_call.raw_call,
-                        "receiver": receiver_call.receiver_name,
-                        "receiver_class": receiver_call.receiver_class,
-                        "resolution_kind": "python_local_instance_receiver",
-                    },
-                )
+            self._add_resolved_python_calls(
+                build,
+                emitted_call_keys,
+                receiver_resolver.calls_in_body(tree.body, caller=module_entity),
+                repo,
+                file_path,
+            )
         for caller_node in ast.walk(tree):
             if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -311,6 +302,8 @@ class PythonAstExtractor:
                     if self._can_bind_call_by_short_name(call_node.func)
                     else None
                 )
+                if local_callee is not None and local_callee.symbol_kind == "class":
+                    continue
                 if local_callee is not None and local_callee.entity.entity_id != caller.entity.entity_id:
                     self._add_call_fact_once(
                         build,
@@ -324,6 +317,8 @@ class PythonAstExtractor:
                     )
                     continue
                 root = call_name.split(".", 1)[0]
+                if receiver_resolver.class_from_constructor(call_node.func) is not None:
+                    continue
                 if root in imports_by_root:
                     package_entity = self._dependency_entity(repo, imports_by_root[root], tenant_id)
                     build.entities.append(package_entity)
@@ -338,23 +333,18 @@ class PythonAstExtractor:
                         getattr(call_node, "col_offset", -1),
                         qualifier={"call": call_name},
                     )
-            for receiver_call in receiver_resolver.receiver_calls_in_body(caller_node.body, caller=caller.entity):
-                self._add_call_fact_once(
-                    build,
-                    emitted_call_keys,
-                    receiver_call.caller,
-                    receiver_call.callee,
-                    repo,
-                    file_path,
-                    receiver_call.line,
-                    receiver_call.column,
-                    qualifier={
-                        "call": receiver_call.raw_call,
-                        "receiver": receiver_call.receiver_name,
-                        "receiver_class": receiver_call.receiver_class,
-                        "resolution_kind": "python_local_instance_receiver",
-                    },
-                )
+            self._add_resolved_python_calls(
+                build,
+                emitted_call_keys,
+                receiver_resolver.calls_in_body(
+                    caller_node.body,
+                    caller=caller.entity,
+                    shadowed_names=self._function_bound_names(caller_node),
+                    local_imports_shadow=True,
+                ),
+                repo,
+                file_path,
+            )
             if self.include_transport:
                 extract_transport_events(
                     repo,
@@ -527,6 +517,56 @@ class PythonAstExtractor:
             return
         emitted_call_keys.add(key)
         self._add_fact(build, "CALLS", subject, object_, repo, file_path, line, line, qualifier=qualifier)
+
+    def _add_resolved_python_calls(
+        self,
+        build: KgBuild,
+        emitted_call_keys: set[tuple[str, str, int, int]],
+        resolved_calls: ResolvedPythonCalls,
+        repo: RepoSnapshot,
+        file_path: Path,
+    ) -> None:
+        for constructor_call in resolved_calls.constructor_calls:
+            self._add_call_fact_once(
+                build,
+                emitted_call_keys,
+                constructor_call.caller,
+                constructor_call.callee,
+                repo,
+                file_path,
+                constructor_call.line,
+                constructor_call.column,
+                qualifier={
+                    "call": constructor_call.raw_call,
+                    "constructor_class": constructor_call.constructor_class,
+                    "resolution_kind": "python_constructor_call",
+                },
+            )
+        for receiver_call in resolved_calls.receiver_calls:
+            self._add_call_fact_once(
+                build,
+                emitted_call_keys,
+                receiver_call.caller,
+                receiver_call.callee,
+                repo,
+                file_path,
+                receiver_call.line,
+                receiver_call.column,
+                qualifier={
+                    "call": receiver_call.raw_call,
+                    "receiver": receiver_call.receiver_name,
+                    "receiver_class": receiver_call.receiver_class,
+                    "resolution_kind": "python_local_instance_receiver",
+                },
+            )
+
+    def _function_bound_names(self, node: FunctionDefNode) -> set[str]:
+        names = {arg.arg for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]}
+        if node.args.vararg is not None:
+            names.add(node.args.vararg.arg)
+        if node.args.kwarg is not None:
+            names.add(node.args.kwarg.arg)
+        return names
 
     def _add_fact(
         self,
