@@ -20,6 +20,31 @@ TOOL_NAMES = (
 )
 
 PLANNING_CONTEXT_SECTION_LIMIT = 5
+PLANNING_CONTEXT_NO_OVERLAP_ACTION = (
+    "No deterministic planning anchor combination overlapped after applying the supplied filters. "
+    "Try a broader primary anchor or remove one narrowing field."
+)
+OPERATIONAL_KNOWN_LINKED = "known_linked"
+OPERATIONAL_UNLINKED_EVIDENCE = "unlinked_evidence"
+OPERATIONAL_MISSING_CONTRACTS = "missing_contracts"
+OPERATIONAL_EVIDENCE_BUCKETS = (
+    OPERATIONAL_KNOWN_LINKED,
+    OPERATIONAL_UNLINKED_EVIDENCE,
+    OPERATIONAL_MISSING_CONTRACTS,
+)
+OPERATIONAL_BUCKET_DESCRIPTIONS = {
+    OPERATIONAL_KNOWN_LINKED: (
+        "Operational rows connected to the service by exact KG identity or exact repo identity. "
+        "These are evidence candidates, not deploy-blocker proof."
+    ),
+    OPERATIONAL_UNLINKED_EVIDENCE: (
+        "Fleet operational config rows not linked to this service by the current KG. "
+        "Use only as source leads; do not attribute them to the service without separate verification."
+    ),
+    OPERATIONAL_MISSING_CONTRACTS: (
+        "Deploy/runtime contracts the current KG cannot prove. These gaps must stay explicit in answers."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -105,6 +130,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         [row for row in related if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY"]
     )
     endpoint_consumer_packet = _endpoint_consumer_packet_for_service(kg, service, limit=limit)
+    operational_surfaces = _service_operational_surfaces(kg, service, limit=limit)
     missing_fact_families = []
     next_actions = []
     if not deploy_mappings:
@@ -125,11 +151,14 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "deploy_mapping_count": len(deploy_mappings),
             "endpoint_consumer_fact_count": endpoint_consumer_packet["summary"]["consumer_fact_count"],
             "endpoint_consumer_service_count": endpoint_consumer_packet["summary"]["consumer_service_count"],
+            "domain_route_candidate_count": operational_surfaces["summary"]["domain_route_candidate_count"],
+            "deploy_target_candidate_count": operational_surfaces["summary"]["deploy_target_candidate_count"],
         },
         "endpoints": endpoints[:limit],
         "event_channels": events[:limit],
         "deploy_mappings": deploy_mappings[:limit],
         "endpoint_consumers": endpoint_consumer_packet,
+        "operational_surfaces": operational_surfaces,
         "answerability": {
             "status": "partial" if missing_fact_families else "answerable",
             "missing_fact_families": missing_fact_families,
@@ -510,7 +539,7 @@ def _endpoint_method(endpoint: JsonObject, fact: JsonObject | None = None) -> st
 
 def _endpoint_methods_are_compatible(consumer_method: str | None, provider_methods: set[str]) -> bool:
     if consumer_method is None or not provider_methods:
-        return True
+        return False
     return "ANY" in provider_methods or consumer_method in provider_methods
 
 
@@ -543,6 +572,185 @@ def _count_row_qualifier_values(rows: list[JsonObject], key: str) -> JsonObject:
         value_key = str(value)
         counts[value_key] = counts.get(value_key, 0) + 1
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
+    repo = _planning_context_entity_repo(service)
+    direct_domain_rows: list[JsonObject] = []
+    deploy_target_rows: list[JsonObject] = []
+    domain_route_rows: list[JsonObject] = []
+    unlinked_domain_route_rows: list[JsonObject] = []
+
+    for entity in kg.entities:
+        if entity.get("kind") != "DeployTarget":
+            continue
+        if _planning_context_entity_repo(entity) != repo:
+            continue
+        deploy_target_rows.append(
+            _operational_entity_row(kg, entity, match_basis="deploy_target_repo_equals_service_repo")
+        )
+
+    for fact in kg.facts:
+        predicate = fact.get("predicate")
+        if predicate not in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}:
+            continue
+        subject = kg.entities_by_id.get(fact.get("subject_id"))
+        object_ = kg.entities_by_id.get(fact.get("object_id"))
+        if not subject or not object_:
+            continue
+        row = _fact_result(kg, fact, subject, object_)
+        if _planning_context_entity_repo(subject) == repo or _planning_context_entity_repo(object_) == repo:
+            direct_domain_rows.append(row)
+            if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
+                domain_route_rows.append(
+                    {
+                        **row,
+                        "match_basis": "domain_or_deploy_target_repo_equals_service_repo",
+                    }
+                )
+            continue
+        if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
+            unlinked_domain_route_rows.append(
+                {
+                    **row,
+                    "relationship_to_service": "unlinked_fleet_route",
+                }
+            )
+
+    direct_domain_rows = _planning_context_dedupe_rows(direct_domain_rows)
+    domain_route_rows = _planning_context_dedupe_rows(domain_route_rows)
+    deploy_target_rows = _planning_context_dedupe_rows(deploy_target_rows)
+    unlinked_domain_route_rows = _planning_context_dedupe_rows(unlinked_domain_route_rows)
+    return {
+        "summary": {
+            "direct_domain_reference_count": len(direct_domain_rows),
+            "domain_route_candidate_count": len(domain_route_rows),
+            "deploy_target_candidate_count": len(deploy_target_rows),
+            "unlinked_domain_route_count": len(unlinked_domain_route_rows),
+            "match_basis": "structured_repo_identity_only",
+            "section_limit": limit,
+        },
+        "evidence_buckets": list(OPERATIONAL_EVIDENCE_BUCKETS),
+        "bucket_descriptions": OPERATIONAL_BUCKET_DESCRIPTIONS,
+        "evidence_partition": _operational_evidence_partition(
+            direct_domain_rows=direct_domain_rows,
+            domain_route_rows=domain_route_rows,
+            deploy_target_rows=deploy_target_rows,
+            unlinked_domain_route_rows=unlinked_domain_route_rows,
+            limit=limit,
+        ),
+        "direct_domain_references": direct_domain_rows[:limit],
+        "domain_route_candidates": domain_route_rows[:limit],
+        "deploy_target_candidates": deploy_target_rows[:limit],
+        "unlinked_domain_route_samples": unlinked_domain_route_rows[:limit],
+        "truncated": any(
+            len(rows) > limit
+            for rows in (direct_domain_rows, domain_route_rows, deploy_target_rows, unlinked_domain_route_rows)
+        ),
+        "coverage_note": (
+            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
+        ),
+    }
+
+
+def _operational_evidence_partition(
+    *,
+    direct_domain_rows: list[JsonObject],
+    domain_route_rows: list[JsonObject],
+    deploy_target_rows: list[JsonObject],
+    unlinked_domain_route_rows: list[JsonObject],
+    limit: int,
+) -> JsonObject:
+    known_count = len(direct_domain_rows) + len(domain_route_rows) + len(deploy_target_rows)
+    return {
+        OPERATIONAL_KNOWN_LINKED: {
+            "status": "found" if known_count else "empty",
+            "interpretation": OPERATIONAL_BUCKET_DESCRIPTIONS[OPERATIONAL_KNOWN_LINKED],
+            "direct_domain_references": direct_domain_rows[:limit],
+            "domain_routes": domain_route_rows[:limit],
+            "deploy_targets": deploy_target_rows[:limit],
+            "counts": {
+                "direct_domain_reference_count": len(direct_domain_rows),
+                "domain_route_count": len(domain_route_rows),
+                "deploy_target_count": len(deploy_target_rows),
+            },
+        },
+        OPERATIONAL_UNLINKED_EVIDENCE: {
+            "status": "found" if unlinked_domain_route_rows else "empty",
+            "interpretation": OPERATIONAL_BUCKET_DESCRIPTIONS[OPERATIONAL_UNLINKED_EVIDENCE],
+            "domain_route_samples": unlinked_domain_route_rows[:limit],
+            "counts": {
+                "domain_route_sample_count": len(unlinked_domain_route_rows),
+            },
+        },
+        OPERATIONAL_MISSING_CONTRACTS: {
+            "status": "present",
+            "interpretation": OPERATIONAL_BUCKET_DESCRIPTIONS[OPERATIONAL_MISSING_CONTRACTS],
+            "items": _operational_missing_contracts(
+                domain_route_rows=domain_route_rows,
+                deploy_target_rows=deploy_target_rows,
+                unlinked_domain_route_rows=unlinked_domain_route_rows,
+            ),
+        },
+    }
+
+
+def _operational_missing_contracts(
+    *,
+    domain_route_rows: list[JsonObject],
+    deploy_target_rows: list[JsonObject],
+    unlinked_domain_route_rows: list[JsonObject],
+) -> list[JsonObject]:
+    missing = [
+        {
+            "contract": "canonical_service_deploy_blocker",
+            "status": "unsupported_by_current_kg",
+            "meaning": (
+                "The current KG has no canonical relation proving another service must deploy before this service."
+            ),
+        },
+        {
+            "contract": "runtime_host_resolution",
+            "status": "not_proven",
+            "meaning": (
+                "Static endpoint/domain/config evidence does not prove which runtime host or environment a client uses."
+            ),
+        },
+    ]
+    if not domain_route_rows and not deploy_target_rows:
+        missing.append(
+            {
+                "contract": "service_to_deploy_target",
+                "status": "missing",
+                "meaning": (
+                    "No exact repo-linked DeployTarget or ROUTES_DOMAIN_TO_DEPLOY row is connected to this service."
+                ),
+            }
+        )
+    if unlinked_domain_route_rows:
+        missing.append(
+            {
+                "contract": "unlinked_route_to_service",
+                "status": "not_proven",
+                "meaning": (
+                    "Fleet domain-route evidence exists, but the current KG does not connect it to this service."
+                ),
+            }
+        )
+    return missing
+
+
+def _operational_entity_row(kg: KgSnapshot, entity: JsonObject, *, match_basis: str) -> JsonObject:
+    return {
+        "entity_id": entity.get("entity_id"),
+        "kind": entity.get("kind"),
+        "name": display_entity(entity),
+        "urn": entity.get("urn"),
+        "identity": entity.get("identity", {}),
+        "properties": entity.get("properties", {}),
+        "match_basis": match_basis,
+        "evidence": kg.evidence_by_target.get(entity.get("entity_id"), []),
+    }
 
 
 def _service_sort_key(service: JsonObject) -> tuple[str, str]:
@@ -860,10 +1068,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
 
     status = "found" if any((services, symbols, dependencies, endpoints, event_channels, domains)) else "not_found"
     if status == "not_found":
-        next_actions.append(
-            "No deterministic planning anchor combination overlapped after applying the supplied filters. "
-            "Try a broader primary anchor or remove one narrowing field."
-        )
+        next_actions.append(PLANNING_CONTEXT_NO_OVERLAP_ACTION)
     return _planning_context_output(
         kg=kg,
         query=query,
@@ -1566,10 +1771,12 @@ def _review_context_fact_is_in_review_scope(
 
 
 def _review_context_entity_repo(entity: JsonObject) -> str | None:
-    identity = entity.get("identity", {})
-    properties = entity.get("properties", {})
-    if not isinstance(identity, dict) or not isinstance(properties, dict):
-        return None
+    identity = entity.get("identity")
+    properties = entity.get("properties")
+    if not isinstance(identity, dict):
+        identity = {}
+    if not isinstance(properties, dict):
+        properties = {}
     repo = identity.get("repo") or properties.get("repo")
     return str(repo) if repo is not None else None
 
@@ -1646,6 +1853,108 @@ def _review_context_next_actions(
     return actions
 
 
+def _dependency_importer_packet(kg: KgSnapshot, dependencies: list[JsonObject], *, limit: int) -> JsonObject:
+    package_ids = _dependency_package_ids(kg, dependencies)
+    if not package_ids:
+        return {
+            "summary": {
+                "package_count": 0,
+                "importer_fact_count": 0,
+                "importer_repo_count": 0,
+                "section_limit": limit,
+            },
+            "packages": [],
+            "importers": [],
+            "repo_counts": {},
+            "truncated": False,
+        }
+    packages = [
+        kg.entities_by_id[package_id]
+        for package_id in sorted(package_ids)
+        if package_id in kg.entities_by_id
+    ]
+    importers: list[JsonObject] = []
+    repo_counts: dict[str, int] = {}
+    for fact in kg.facts:
+        if fact.get("predicate") != "IMPORTS" or fact.get("object_id") not in package_ids:
+            continue
+        module = kg.entities_by_id.get(fact.get("subject_id"))
+        package = kg.entities_by_id.get(fact.get("object_id"))
+        if not module or not package:
+            continue
+        repo = _planning_context_entity_repo(module) or "unknown"
+        repo_counts[repo] = repo_counts.get(repo, 0) + 1
+        importers.append(_fact_result(kg, fact, module, package))
+    importers = _planning_context_dedupe_rows(importers)
+    return {
+        "summary": {
+            "package_count": len(packages),
+            "importer_fact_count": len(importers),
+            "importer_repo_count": len(repo_counts),
+            "section_limit": limit,
+        },
+        "packages": [
+            {
+                "package_id": package.get("entity_id"),
+                "name": display_entity(package),
+                "identity": package.get("identity", {}),
+                "properties": package.get("properties", {}),
+            }
+            for package in packages[:limit]
+        ],
+        "importers": importers[:limit],
+        "repo_counts": dict(sorted(repo_counts.items(), key=lambda item: (-item[1], item[0]))[:limit]),
+        "truncated": len(packages) > limit or len(importers) > limit or len(repo_counts) > limit,
+    }
+
+
+def _dependency_package_ids(kg: KgSnapshot, dependencies: list[JsonObject]) -> set[str]:
+    facts_by_id = {str(fact.get("fact_id")): fact for fact in kg.facts if fact.get("fact_id")}
+    package_ids: set[str] = set()
+    for row in dependencies:
+        fact_id = row.get("fact_id")
+        if not isinstance(fact_id, str):
+            continue
+        fact = facts_by_id.get(fact_id)
+        if not fact:
+            continue
+        predicate = fact.get("predicate")
+        if predicate == "IMPORTS":
+            package_ids.add(str(fact.get("object_id")))
+        elif predicate in {"RESOLVES_TO_REPO", "RESOLVES_TO_SERVICE"}:
+            package_ids.add(str(fact.get("subject_id")))
+    return package_ids
+
+
+def _planning_context_service_operational_surfaces(
+    kg: KgSnapshot,
+    services: list[JsonObject],
+    *,
+    limit: int,
+) -> JsonObject:
+    if len(services) != 1:
+        return {
+            "status": "not_computed",
+            "reason": "service operational surfaces require one resolved service",
+        }
+    service_id = services[0].get("service_id") or services[0].get("entity_id")
+    if not isinstance(service_id, str):
+        return {
+            "status": "not_computed",
+            "reason": "resolved service missing service_id",
+        }
+    service = kg.entities_by_id.get(service_id)
+    if not service:
+        return {
+            "status": "not_computed",
+            "reason": "resolved service not found in snapshot",
+        }
+    return {
+        "status": "found",
+        **_service_operational_surfaces(kg, service, limit=limit),
+    }
+
+
 def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, *, limit: int) -> dict[str, list[JsonObject]]:
     related = _facts_touching_entity(kg, str(service["entity_id"]))
     exposed_endpoint_rows = _exposed_endpoint_rows_for_service_id(kg, str(service["entity_id"]))
@@ -1689,6 +1998,7 @@ def _planning_context_output(
     next_actions: list[str],
     status: str,
 ) -> JsonObject:
+    dependency_importers = _dependency_importer_packet(kg, dependencies, limit=PLANNING_CONTEXT_SECTION_LIMIT)
     bounded_services = _planning_context_public_rows(services)
     bounded_symbols = _planning_context_public_rows(symbols)
     bounded_dependencies = _planning_context_public_rows(dependencies)
@@ -1705,6 +2015,12 @@ def _planning_context_output(
         "event_channels": bounded_event_channels,
         "domains": bounded_domains,
     }
+    inventory = _snapshot_inventory_packet(kg, anchors=anchors, limit=PLANNING_CONTEXT_SECTION_LIMIT)
+    service_operational_surfaces = _planning_context_service_operational_surfaces(
+        kg,
+        bounded_services,
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
     related_facts = _planning_context_related_facts(
         kg=kg,
         services=bounded_services,
@@ -1716,6 +2032,9 @@ def _planning_context_output(
         domains=bounded_domains,
         anchors=anchors,
         status=status,
+        dependency_importers=dependency_importers,
+        inventory=inventory,
+        service_operational_surfaces=service_operational_surfaces,
     )
     source_coordinates = _planning_context_source_coordinates(
         bounded_services,
@@ -1729,11 +2048,7 @@ def _planning_context_output(
     )
     snapshot_scope = _planning_context_snapshot_scope(kg, anchors)
     if status == "not_found" and _planning_context_has_indexed_scope(snapshot_scope):
-        next_actions = [
-            action
-            for action in next_actions
-            if "No deterministic planning anchor combination overlapped" not in action
-        ]
+        next_actions = [action for action in next_actions if action != PLANNING_CONTEXT_NO_OVERLAP_ACTION]
         next_actions.append(
             "The repo anchor has indexed snapshot scope but no matching first-class dependency, endpoint, event, domain, service, or symbol rows for the supplied filters."
         )
@@ -1747,6 +2062,8 @@ def _planning_context_output(
         "summary": _planning_context_summary(groups, source_coordinates=source_coordinates),
         "snapshot_summary": _planning_context_snapshot_summary(kg),
         "snapshot_scope": snapshot_scope,
+        "inventory": inventory,
+        "service_operational_surfaces": service_operational_surfaces,
         "anchors": {
             "repo": anchors.get("repo"),
             "path": anchors.get("path"),
@@ -1818,6 +2135,167 @@ def _planning_context_snapshot_summary(kg: KgSnapshot) -> JsonObject:
         "top_predicates": predicates,
         "coverage_states": dict(sorted(coverage_states.items())),
     }
+
+
+def _snapshot_inventory_packet(
+    kg: KgSnapshot,
+    *,
+    anchors: dict[str, str | None],
+    limit: int,
+) -> JsonObject:
+    repo = anchors.get("repo")
+    repo_key = _normalize_repo_text(repo)
+    scoped = bool(repo_key)
+    coverage_rows = [
+        row
+        for row in kg.coverage
+        if isinstance(row, dict) and (not scoped or _planning_context_coverage_row_matches_repo(row, repo_key))
+    ]
+    top_dependencies = _top_dependency_rows(kg, repo_key=repo_key if scoped else None, limit=limit)
+    coverage_state_counts = _coverage_counts(coverage_rows, "state", limit=10)
+    coverage_predicate_counts = _coverage_counts(coverage_rows, "predicate", limit=10)
+    coverage_reason_counts = _coverage_counts(coverage_rows, "reason", limit=10)
+    runtime_counts = _runtime_inventory_counts(kg, repo_key=repo_key if scoped else None)
+    gap_samples = _coverage_gap_samples(coverage_rows, limit=limit)
+    return {
+        "scope": {"kind": "repo", "repo": repo} if scoped else {"kind": "fleet"},
+        "summary": {
+            "entity_count": _inventory_entity_count(kg, repo_key=repo_key if scoped else None),
+            "fact_count": _inventory_fact_count(kg, repo_key=repo_key if scoped else None),
+            "coverage_count": len(coverage_rows),
+            "top_dependency_count": len(top_dependencies),
+            "coverage_gap_sample_count": len(gap_samples),
+            "section_limit": limit,
+        },
+        "top_dependencies": top_dependencies,
+        "coverage": {
+            "state_counts": coverage_state_counts,
+            "predicate_counts": coverage_predicate_counts,
+            "reason_counts": coverage_reason_counts,
+            "gap_samples": gap_samples,
+        },
+        "runtime_counts": runtime_counts,
+    }
+
+
+def _top_dependency_rows(kg: KgSnapshot, *, repo_key: str | None, limit: int) -> list[JsonObject]:
+    counts: dict[str, JsonObject] = {}
+    for fact in kg.facts:
+        if fact.get("predicate") != "IMPORTS":
+            continue
+        module = kg.entities_by_id.get(fact.get("subject_id"))
+        package = kg.entities_by_id.get(fact.get("object_id"))
+        if not module or not package or package.get("kind") != "ExternalPackage":
+            continue
+        if repo_key is not None and _planning_context_entity_repo(module) != repo_key:
+            continue
+        qualifier = fact.get("qualifier", {})
+        if not isinstance(qualifier, dict):
+            qualifier = {}
+        category = qualifier.get("category")
+        if category in {"stdlib", "node_builtin", "unknown"}:
+            continue
+        name = str(package.get("identity", {}).get("name") or display_entity(package))
+        row = counts.setdefault(
+            name,
+            {
+                "name": name,
+                "category": category,
+                "import_root": qualifier.get("import_root"),
+                "distribution_name": qualifier.get("distribution_name"),
+                "importer_count": 0,
+                "sample_evidence": [],
+            },
+        )
+        row["importer_count"] += 1
+        if len(row["sample_evidence"]) < 2:
+            row["sample_evidence"].extend(kg.evidence_by_target.get(fact["fact_id"], [])[:1])
+    return sorted(counts.values(), key=lambda row: (-int(row["importer_count"]), str(row["name"])))[:limit]
+
+
+def _coverage_counts(rows: list[JsonObject], field: str, *, limit: int) -> JsonObject:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(field)
+        if value is None:
+            continue
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit])
+
+
+def _coverage_gap_samples(rows: list[JsonObject], *, limit: int) -> list[JsonObject]:
+    samples = []
+    for row in rows:
+        state = str(row.get("state") or "")
+        if state not in {"partially_instrumented", "uninstrumented"}:
+            continue
+        samples.append(
+            {
+                "state": row.get("state"),
+                "predicate": row.get("predicate"),
+                "reason": row.get("reason"),
+                "scope_ref": row.get("scope_ref"),
+            }
+        )
+        if len(samples) >= limit:
+            break
+    return samples
+
+
+def _runtime_inventory_counts(kg: KgSnapshot, *, repo_key: str | None) -> JsonObject:
+    entity_kinds = {"Service", "Endpoint", "EventChannel", "Domain", "DeployTarget"}
+    predicate_kinds = {
+        "EXPOSES_ENDPOINT",
+        "CALLS_ENDPOINT",
+        "PRODUCES_EVENT",
+        "CONSUMES_EVENT",
+        "REFERENCES_DOMAIN",
+        "ROUTES_DOMAIN_TO_DEPLOY",
+    }
+    entities: dict[str, int] = {}
+    facts: dict[str, int] = {}
+    for entity in kg.entities:
+        kind = str(entity.get("kind"))
+        if kind not in entity_kinds:
+            continue
+        if repo_key is not None and _planning_context_entity_repo(entity) != repo_key:
+            continue
+        entities[kind] = entities.get(kind, 0) + 1
+    for fact in kg.facts:
+        predicate = str(fact.get("predicate"))
+        if predicate not in predicate_kinds:
+            continue
+        if repo_key is not None and not _fact_touches_repo(kg, fact, repo_key):
+            continue
+        facts[predicate] = facts.get(predicate, 0) + 1
+    return {
+        "entity_counts": dict(sorted(entities.items())),
+        "fact_counts": dict(sorted(facts.items())),
+    }
+
+
+def _inventory_entity_count(kg: KgSnapshot, *, repo_key: str | None) -> int:
+    if repo_key is None:
+        return len(kg.entities)
+    return sum(1 for entity in kg.entities if _planning_context_entity_repo(entity) == repo_key)
+
+
+def _inventory_fact_count(kg: KgSnapshot, *, repo_key: str | None) -> int:
+    if repo_key is None:
+        return len(kg.facts)
+    return sum(1 for fact in kg.facts if _fact_touches_repo(kg, fact, repo_key))
+
+
+def _fact_touches_repo(kg: KgSnapshot, fact: JsonObject, repo_key: str) -> bool:
+    subject = kg.entities_by_id.get(fact.get("subject_id"))
+    object_ = kg.entities_by_id.get(fact.get("object_id"))
+    if subject and _planning_context_entity_repo(subject) == repo_key:
+        return True
+    if object_ and _planning_context_entity_repo(object_) == repo_key:
+        return True
+    qualifier = fact.get("qualifier", {})
+    return isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key
 
 
 def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | None]) -> JsonObject:
@@ -1910,10 +2388,16 @@ def _planning_context_related_facts(
     domains: list[JsonObject],
     anchors: dict[str, str | None],
     status: str,
+    dependency_importers: JsonObject,
+    inventory: JsonObject,
+    service_operational_surfaces: JsonObject,
 ) -> JsonObject:
     return {
         "service_brief": _planning_context_service_brief(services, endpoints, endpoint_consumers, event_channels, domains),
         "symbol_impact": _planning_context_symbol_impact(kg, symbols, anchors=anchors, status=status),
+        "dependency_importers": dependency_importers,
+        "inventory": inventory,
+        "service_operational_surfaces": service_operational_surfaces,
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -2412,9 +2896,10 @@ _TOOLS: dict[str, McpTool] = {
     "get_service_brief": McpTool(
         name="get_service_brief",
         description=(
-            "Returns a compact service brief plus related endpoint, path-matched endpoint-consumer, event-channel, and deploy-mapping facts for one matched service. "
+            "Returns a compact service brief plus related endpoint, path-matched endpoint-consumer, event-channel, deploy-mapping, and operational domain/deploy-target candidate facts for one matched service. "
             "Use it after you know the target service and want a bounded operational summary of what the KG has linked to it. "
             "endpoint_consumers are static CALLS_ENDPOINT candidates matched by normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
+            "operational_surfaces only use exact repo-identity joins for service candidates; unlinked fleet route samples are config evidence and do not imply canonical deploy-blocker relationships. "
             "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime/deploy contracts; if deploy mappings are absent, inspect manifests before making environment claims."
         ),
         input_schema=_object_schema(
@@ -2499,8 +2984,9 @@ _TOOLS: dict[str, McpTool] = {
         name="planning_context",
         description=(
             "Returns bounded planning context for one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
-            "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
+            "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
+            "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Use it first for broad planning, architecture, dependency, or impact questions on deterministic anchors before selecting narrower MCP tools. "
             "For exact caller, callee, service-brief, or event producer/consumer questions, prefer the exact primitive tool. "

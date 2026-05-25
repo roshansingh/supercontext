@@ -227,6 +227,32 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["related_facts"]["service_brief"]["summary"]["endpoint_consumer_fact_count"], 1)
         self.assertEqual(result["related_facts"]["endpoint_consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
 
+    def test_planning_context_includes_inventory_and_dependency_importers(self) -> None:
+        with _fixture_snapshot(extra_package_importers=2) as kg:
+            result = call_tool(kg, "planning_context", {"package": "shared-lib", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["inventory"]["scope"], {"kind": "fleet"})
+        self.assertEqual(result["related_facts"]["dependency_importers"]["summary"]["importer_fact_count"], 3)
+        self.assertEqual(result["related_facts"]["dependency_importers"]["repo_counts"], {"payments": 3})
+        self.assertEqual(result["related_facts"]["dependency_importers"]["packages"][0]["name"], "shared-lib")
+
+    def test_planning_context_includes_service_operational_surfaces(self) -> None:
+        with _fixture_snapshot(operational_deploy_mapping=True, operational_deploy_same_repo=True) as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments", "limit": 10})
+
+        surfaces = result["service_operational_surfaces"]
+        self.assertEqual(surfaces["status"], "found")
+        self.assertEqual(surfaces["summary"]["deploy_target_candidate_count"], 1)
+        self.assertEqual(surfaces["summary"]["domain_route_candidate_count"], 1)
+        self.assertEqual(surfaces["evidence_buckets"], ["known_linked", "unlinked_evidence", "missing_contracts"])
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["status"], "found")
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["counts"]["domain_route_count"], 1)
+        self.assertEqual(
+            result["related_facts"]["service_operational_surfaces"]["domain_route_candidates"][0]["predicate"],
+            "ROUTES_DOMAIN_TO_DEPLOY",
+        )
+
     def test_planning_context_symbol_anchor_returns_impact_and_coordinates(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "planning_context", {"symbol": "handle_checkout"})
@@ -373,6 +399,48 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(packet["consumers"][0]["match_basis"], "normalized_endpoint_path_and_compatible_method")
         self.assertTrue(any("endpoint_consumers" in action for action in result["next_actions"]))
 
+    def test_get_service_brief_surfaces_operational_deploy_candidates(self) -> None:
+        with _fixture_snapshot(operational_deploy_mapping=True, operational_deploy_same_repo=True) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["summary"]["deploy_target_candidate_count"], 1)
+        self.assertEqual(result["summary"]["domain_route_candidate_count"], 1)
+        surfaces = result["operational_surfaces"]
+        self.assertEqual(
+            surfaces["deploy_target_candidates"][0]["match_basis"],
+            "deploy_target_repo_equals_service_repo",
+        )
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["status"], "found")
+        self.assertEqual(surfaces["evidence_partition"]["unlinked_evidence"]["status"], "empty")
+        self.assertTrue(
+            any(
+                item["contract"] == "canonical_service_deploy_blocker"
+                for item in surfaces["evidence_partition"]["missing_contracts"]["items"]
+            )
+        )
+        self.assertEqual(surfaces["domain_route_candidates"][0]["predicate"], "ROUTES_DOMAIN_TO_DEPLOY")
+        self.assertIn("exact repo-identity evidence", surfaces["coverage_note"])
+
+    def test_get_service_brief_does_not_infer_deploy_from_target_text(self) -> None:
+        with _fixture_snapshot(operational_deploy_mapping=True) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        surfaces = result["operational_surfaces"]
+        self.assertEqual(result["summary"]["deploy_target_candidate_count"], 0)
+        self.assertEqual(result["summary"]["domain_route_candidate_count"], 0)
+        self.assertEqual(surfaces["summary"]["unlinked_domain_route_count"], 1)
+        self.assertEqual(surfaces["unlinked_domain_route_samples"][0]["relationship_to_service"], "unlinked_fleet_route")
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["status"], "found")
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["counts"]["domain_route_count"], 0)
+        self.assertEqual(surfaces["evidence_partition"]["known_linked"]["counts"]["deploy_target_count"], 0)
+        self.assertEqual(surfaces["evidence_partition"]["unlinked_evidence"]["status"], "found")
+        self.assertTrue(
+            any(
+                item["contract"] == "unlinked_route_to_service"
+                for item in surfaces["evidence_partition"]["missing_contracts"]["items"]
+            )
+        )
+
     def test_get_service_brief_treats_provider_any_method_as_compatible(self) -> None:
         with _fixture_snapshot(
             endpoint_consumer=True,
@@ -383,6 +451,13 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 1)
         self.assertEqual(result["endpoint_consumers"]["consumers"][0]["matched_provider_endpoint"]["methods"], ["ANY"])
+
+    def test_get_service_brief_does_not_match_consumers_without_method(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True, endpoint_consumer_method=None) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 0)
+        self.assertEqual(result["endpoint_consumers"]["consumers"], [])
 
     def test_review_context_aggregates_symbols_and_call_edges(self) -> None:
         with _fixture_snapshot() as kg:
@@ -854,7 +929,9 @@ class _fixture_snapshot:
         extra_service_endpoint: bool = False,
         endpoint_consumer: bool = False,
         provider_endpoint_method: str = "POST",
-        endpoint_consumer_method: str = "POST",
+        endpoint_consumer_method: str | None = "POST",
+        operational_deploy_mapping: bool = False,
+        operational_deploy_same_repo: bool = False,
         symbol_entity_evidence_duplicate_coordinates: bool = False,
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -865,6 +942,8 @@ class _fixture_snapshot:
         self.endpoint_consumer = endpoint_consumer
         self.provider_endpoint_method = provider_endpoint_method
         self.endpoint_consumer_method = endpoint_consumer_method
+        self.operational_deploy_mapping = operational_deploy_mapping
+        self.operational_deploy_same_repo = operational_deploy_same_repo
         self.symbol_entity_evidence_duplicate_coordinates = symbol_entity_evidence_duplicate_coordinates
 
     def __enter__(self) -> KgSnapshot:
@@ -963,6 +1042,15 @@ class _fixture_snapshot:
             kind="Domain",
             identity={"tenant_id": "default", "repo": "payments", "name": "api.internal.example"},
         )
+        operational_deploy_repo = "payments" if self.operational_deploy_same_repo else "ops"
+        route_domain = Entity(
+            kind="Domain",
+            identity={"tenant_id": "default", "repo": operational_deploy_repo, "name": "payments.example.com"},
+        )
+        deploy_target = Entity(
+            kind="DeployTarget",
+            identity={"tenant_id": "default", "repo": operational_deploy_repo, "type": "wsgi", "target": "/srv/payments/app.wsgi"},
+        )
         env_var = Entity(
             kind="EnvVar",
             identity={"tenant_id": "default", "repo": "payments", "name": "PAYMENTS_API_BASE_URL"},
@@ -1029,6 +1117,7 @@ class _fixture_snapshot:
         consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
         domain_fact = Fact("REFERENCES_DOMAIN", env_var.entity_id, domain.entity_id)
+        route_fact = Fact("ROUTES_DOMAIN_TO_DEPLOY", route_domain.entity_id, deploy_target.entity_id, {"source_kind": "fixture_vhost"})
         extra_services = [
             Entity(
                 kind="Service",
@@ -1123,6 +1212,18 @@ class _fixture_snapshot:
                     confidence=0.8,
                 )
             )
+        if self.operational_deploy_mapping:
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=route_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "ops"},
+                    bytes_ref={"repo": "ops", "path": "ops/payments.conf", "line_start": 3, "line_end": 8},
+                    confidence=1.0,
+                )
+            )
         entities = [
             service,
             caller,
@@ -1134,6 +1235,7 @@ class _fixture_snapshot:
             *([consumer_service, consumer_endpoint] if self.endpoint_consumer else []),
             channel,
             domain,
+            *([route_domain, deploy_target] if self.operational_deploy_mapping else []),
             env_var,
             package,
             provider_repo,
@@ -1151,6 +1253,7 @@ class _fixture_snapshot:
             consume_fact,
             produce_fact,
             domain_fact,
+            *([route_fact] if self.operational_deploy_mapping else []),
             *([endpoint_fact] if self.duplicate_endpoint_fact else []),
             *extra_consume_facts,
             *extra_import_facts,
