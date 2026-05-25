@@ -61,6 +61,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("known_linked", descriptions["planning_context"])
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
+        self.assertIn("disambiguation.retry_arguments", descriptions["find_callers"])
+        self.assertIn("disambiguation.retry_arguments", descriptions["find_callees"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:
@@ -701,6 +703,37 @@ class McpToolsTest(unittest.TestCase):
         _assert_additive_fields(self, callees)
         _assert_additive_fields(self, radius)
 
+    def test_symbol_tools_ambiguous_results_include_retry_guidance(self) -> None:
+        with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "charge_card"})
+            callees = call_tool(kg, "find_callees", {"symbol": "charge_card"})
+            disambiguated = call_tool(
+                kg,
+                "find_callers",
+                {"symbol": "charge_card", "path": "payments/gateway.py", "line": 5},
+            )
+
+        self.assertEqual(callers["status"], "ambiguous")
+        self.assertFalse(callers["result_computed"])
+        self.assertEqual(callers["callers"], [])
+        self.assertEqual(callers["target"]["candidate_count"], 2)
+        self.assertEqual(callers["disambiguation"]["reason"], "ambiguous_symbol")
+        self.assertEqual(callers["disambiguation"]["candidate_count"], 2)
+        self.assertIn(
+            {
+                "symbol": "payments.gateway.charge_card",
+                "path": "payments/gateway.py",
+                "line": 5,
+            },
+            callers["disambiguation"]["retry_arguments"],
+        )
+        self.assertTrue(any("include_all=true" in action for action in callers["next_actions"]))
+        self.assertEqual(callees["status"], "ambiguous")
+        self.assertFalse(callees["result_computed"])
+        self.assertIn("no callees result was computed", callees["disambiguation"]["message"])
+        self.assertEqual(disambiguated["status"], "found")
+        self.assertEqual(disambiguated["caller_count"], 1)
+
     def test_discovery_keeps_fuzzy_but_graph_tools_require_exact_symbols(self) -> None:
         with _fixture_snapshot() as kg:
             lookup = kg.lookup_symbol("card")
@@ -844,6 +877,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("known_linked", instructions)
         self.assertIn("unlinked_evidence", instructions)
         self.assertIn("missing_contracts", instructions)
+        self.assertIn("disambiguation.retry_arguments", instructions)
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(initialized_with_client_version["result"]["instructions"], instructions)
         self.assertEqual(ping["result"], {})

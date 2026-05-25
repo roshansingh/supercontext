@@ -912,7 +912,9 @@ def _limit_schema() -> JsonObject:
 
 def _symbol_properties() -> JsonObject:
     return {
-        "symbol": _string_schema("Symbol name or qualified name."),
+        "symbol": _string_schema(
+            "Symbol name or exact qualified name. If a prior result was ambiguous, retry with a candidate `qualified_name`."
+        ),
         "path": _nullable_string_schema("Optional source-file path for disambiguation."),
         "line": _nullable_line_schema(),
         "include_all": {"type": "boolean", "default": False},
@@ -2958,6 +2960,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns static CALLS edges whose downstream target matches the requested symbol, with optional path and line disambiguation. "
             "Use it when you need reverse call impact for a known function, method, or symbol in the indexed codebase. "
+            "If status is ambiguous, do not treat the empty callers list as no callers; retry with disambiguation.retry_arguments or a candidate qualified_name. "
             "Does not include transitive closure, runtime dispatch, cross-repo execution paths, endpoint/service-level rollups, or unresolved external-package call sites. "
             "A not_found result is not proof of absence; inspect source before finalizing."
         ),
@@ -2969,6 +2972,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns static CALLS edges whose upstream subject matches the requested symbol, with optional path and line disambiguation. "
             "Use it when you want the immediate downstream call surface of a known symbol before expanding to blast radius. "
+            "If status is ambiguous, do not treat the empty callees list as no callees; retry with disambiguation.retry_arguments or a candidate qualified_name. "
             "Does not return reverse callers, transitive closure, runtime-only invocations, service and endpoint boundaries, or unresolved external-package calls. "
             "A not_found result is not proof of absence; inspect source before finalizing."
         ),
@@ -3006,6 +3010,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns downstream static CALLS closure from an anchor symbol up to `depth`. "
             "Use only when you know the exact edit-site symbol and want to enumerate intra-repo callees. "
+            "If status is ambiguous, do not treat the empty edge list as no impact; retry with disambiguation.retry_arguments or a candidate qualified_name. "
             "Does not include reverse callers, cross-repo edges, service or endpoint boundaries, runtime calls, or unresolved external-package calls. "
             "A not_found result is not proof of absence; inspect source before finalizing."
         ),

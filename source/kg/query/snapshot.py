@@ -48,7 +48,12 @@ class KgSnapshot:
         if resolution["status"] == "not_found":
             return {"status": "not_found", "target": resolution, "callers": []}
         if resolution["status"] == "ambiguous" and not include_all:
-            return {"status": "ambiguous", "target": resolution, "callers": []}
+            return {
+                "status": "ambiguous",
+                "target": resolution,
+                "callers": [],
+                **self._symbol_disambiguation_payload(resolution, result_kind="callers"),
+            }
 
         if include_all:
             target_ids = {candidate["symbol_id"] for candidate in resolution["candidates"]}
@@ -83,7 +88,12 @@ class KgSnapshot:
         if resolution["status"] == "not_found":
             return {"status": "not_found", "source": resolution, "callees": []}
         if resolution["status"] == "ambiguous" and not include_all:
-            return {"status": "ambiguous", "source": resolution, "callees": []}
+            return {
+                "status": "ambiguous",
+                "source": resolution,
+                "callees": [],
+                **self._symbol_disambiguation_payload(resolution, result_kind="callees"),
+            }
 
         if include_all:
             source_ids = {candidate["symbol_id"] for candidate in resolution["candidates"]}
@@ -119,7 +129,12 @@ class KgSnapshot:
         if resolution["status"] == "not_found":
             return {"status": "not_found", "source": resolution, "edges": []}
         if resolution["status"] == "ambiguous" and not include_all:
-            return {"status": "ambiguous", "source": resolution, "edges": []}
+            return {
+                "status": "ambiguous",
+                "source": resolution,
+                "edges": [],
+                **self._symbol_disambiguation_payload(resolution, result_kind="downstream impact"),
+            }
 
         if include_all:
             root_ids = {candidate["symbol_id"] for candidate in resolution["candidates"]}
@@ -920,6 +935,49 @@ class KgSnapshot:
             "candidates": candidates[:limit],
             "candidate_count": len(candidates),
         }
+
+    def _symbol_disambiguation_payload(self, resolution: JsonObject, *, result_kind: str) -> JsonObject:
+        candidates = list(resolution.get("candidates", []))
+        retry_arguments = [self._symbol_retry_arguments(candidate, resolution["query"]) for candidate in candidates]
+        return {
+            "result_computed": False,
+            "disambiguation": {
+                "status": "required",
+                "reason": "ambiguous_symbol",
+                "message": (
+                    f"Multiple symbols matched {resolution['query']!r}; no {result_kind} result was computed. "
+                    "Retry with one candidate's exact qualified name or with path and line."
+                ),
+                "candidate_count": resolution.get("candidate_count", len(candidates)),
+                "candidates": [self._symbol_disambiguation_candidate(candidate) for candidate in candidates],
+                "retry_arguments": retry_arguments,
+            },
+            "next_actions": [
+                "Pick one candidate from disambiguation.candidates before treating this as evidence.",
+                "Retry with `symbol` set to a candidate `qualified_name`, or keep the original symbol and add the candidate `path` and `line`.",
+                "Use `include_all=true` only for exploratory aggregation across all matching symbols, not for precise impact answers.",
+            ],
+        }
+
+    def _symbol_disambiguation_candidate(self, candidate: JsonObject) -> JsonObject:
+        return {
+            key: candidate.get(key)
+            for key in ("qualified_name", "repo", "module", "qualname", "symbol_kind", "path", "line")
+            if candidate.get(key) is not None
+        }
+
+    def _symbol_retry_arguments(self, candidate: JsonObject, original_query: str) -> JsonObject:
+        path = candidate.get("path")
+        line = candidate.get("line")
+        qualified_name = candidate.get("qualified_name")
+        retry: JsonObject = {
+            "symbol": qualified_name if isinstance(qualified_name, str) and qualified_name else original_query,
+        }
+        if isinstance(path, str) and path:
+            retry["path"] = path
+        if isinstance(line, int):
+            retry["line"] = line
+        return retry
 
     def _symbol_entities(self) -> list[JsonObject]:
         return [entity for entity in self.entities if entity["kind"] == "CodeSymbol"]
