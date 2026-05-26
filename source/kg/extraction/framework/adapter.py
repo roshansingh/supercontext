@@ -15,6 +15,7 @@ class AdapterCapability:
     file_kinds: tuple[str, ...] = ()
     framework_tags: tuple[str, ...] = ()
     produces_predicates: tuple[str, ...] = ()
+    produces_support_predicates: tuple[str, ...] = ()
     produces_entity_kinds: tuple[str, ...] = ()
     ontology_scope: Literal["canonical", "implementation_support", "mixed"] = "canonical"
     derivation_classes: tuple[EvidenceDerivationClass, ...] = ("deterministic_static",)
@@ -61,6 +62,7 @@ class ExtractionContext:
 class AdapterResult:
     entities: list[Entity] = field(default_factory=list)
     facts: list[Fact] = field(default_factory=list)
+    support_facts: list[Fact] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     coverage: list[Coverage] = field(default_factory=list)
 

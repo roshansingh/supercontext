@@ -16,13 +16,21 @@ class JsonlKgStore:
         *,
         entities: Iterable[Entity],
         facts: Iterable[Fact],
+        support_facts: Iterable[Fact] = (),
         evidence: Iterable[Evidence],
         coverage: Iterable[Coverage],
         manifest: JsonObject,
     ) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        support_fact_rows = list(support_facts)
         self._write_jsonl("entities.jsonl", (entity.to_record() for entity in entities), "entity_id")
         self._write_jsonl("facts.jsonl", (fact.to_record() for fact in facts), "fact_id")
+        if support_fact_rows:
+            self._write_jsonl("support_facts.jsonl", (fact.to_record() for fact in support_fact_rows), "fact_id")
+        else:
+            support_path = self.output_dir / "support_facts.jsonl"
+            if support_path.exists():
+                support_path.unlink()
         self._write_jsonl("evidence.jsonl", (row.to_record() for row in evidence), "evidence_id")
         self._write_jsonl("coverage.jsonl", (row.to_record() for row in coverage), "coverage_id")
         self._write_json("manifest.json", manifest)

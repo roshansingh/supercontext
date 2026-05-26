@@ -13,7 +13,11 @@ from source.kg.core.models import Coverage, Entity, Evidence, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.extraction.framework.registry import register_for_tests, validate_adapters
-from source.kg.extraction.framework.runner import run_adapters, select_applicable_adapters
+from source.kg.extraction.framework.runner import (
+    run_adapters,
+    run_selected_adapters_with_support,
+    select_applicable_adapters,
+)
 from source.kg.file_formats import REGISTERED_FILE_FORMATS, discover_file_formats, file_format_adapters
 from source.kg.file_formats._shared.extractor_adapter import STATIC_CONFIG_ADAPTER
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
@@ -57,6 +61,12 @@ class AdapterFrameworkTest(unittest.TestCase):
         adapter = _Adapter("bad-predicate-declaration", "test_v0", produces_predicates=("MADE_UP",))
 
         with self.assertRaisesRegex(ValueError, "declares unsupported predicates"):
+            validate_adapters((adapter,))
+
+    def test_registry_rejects_unsupported_declared_support_predicate(self) -> None:
+        adapter = _Adapter("bad-support-predicate-declaration", "test_v0", produces_support_predicates=("MADE_UP",))
+
+        with self.assertRaisesRegex(ValueError, "declares unsupported support predicates"):
             validate_adapters((adapter,))
 
     def test_registry_rejects_unsupported_declared_entity_kind(self) -> None:
@@ -172,6 +182,59 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertEqual(errors[0]["error"], "ValueError")
         self.assertIn("unsupported predicate", errors[0]["message"])
+        self.assertEqual(coverage[0].scope_ref["reason"], "adapter_error")
+
+    def test_runner_validates_support_facts_separately_from_canonical_facts(self) -> None:
+        repo = _repo()
+        service = _entity("Service", "svc")
+        repo_entity = _entity("Repo", "repo")
+        support_fact = Fact("DECLARES_FIELD", service.entity_id, repo_entity.entity_id)
+        adapter = _Adapter(
+            "support-predicate",
+            "support_v0",
+            produces_support_predicates=("DECLARES_FIELD",),
+            result=AdapterResult(entities=[service, repo_entity], support_facts=[support_fact]),
+        )
+
+        result = run_selected_adapters_with_support(repo, (adapter,))
+
+        self.assertEqual(result.entities, [service, repo_entity])
+        self.assertEqual(result.facts, [])
+        self.assertEqual(result.support_facts, [support_fact])
+        self.assertEqual(result.evidence, [])
+        self.assertEqual(result.coverage, [])
+        self.assertEqual(result.errors, [])
+
+    def test_legacy_runner_rejects_support_facts_instead_of_dropping_them(self) -> None:
+        repo = _repo()
+        service = _entity("Service", "svc")
+        repo_entity = _entity("Repo", "repo")
+        support_fact = Fact("DECLARES_FIELD", service.entity_id, repo_entity.entity_id)
+        adapter = _Adapter(
+            "support-predicate",
+            "support_v0",
+            produces_support_predicates=("DECLARES_FIELD",),
+            result=AdapterResult(entities=[service, repo_entity], support_facts=[support_fact]),
+        )
+
+        with self.assertRaisesRegex(ValueError, "legacy adapter runner cannot return support_facts"):
+            run_adapters(repo, (adapter,))
+
+    def test_runner_rejects_undeclared_support_fact_predicate(self) -> None:
+        repo = _repo()
+        service = _entity("Service", "svc")
+        repo_entity = _entity("Repo", "repo")
+        support_fact = Fact("DECLARES_FIELD", service.entity_id, repo_entity.entity_id)
+        adapter = _Adapter(
+            "support-predicate",
+            "support_v0",
+            result=AdapterResult(entities=[service, repo_entity], support_facts=[support_fact]),
+        )
+
+        _, _, _, coverage, errors = run_adapters(repo, (adapter,))
+
+        self.assertEqual(errors[0]["error"], "ValueError")
+        self.assertIn("undeclared support predicate", errors[0]["message"])
         self.assertEqual(coverage[0].scope_ref["reason"], "adapter_error")
 
     def test_runner_strict_validation_rejects_unknown_predicate(self) -> None:
@@ -788,6 +851,7 @@ class _Adapter:
     languages: tuple[str, ...] = ("config",)
     applies: bool = True
     produces_predicates: tuple[str, ...] = ("DEFINED_IN",)
+    produces_support_predicates: tuple[str, ...] = ()
     produces_entity_kinds: tuple[str, ...] = ("Service", "Repo")
     framework_tags: tuple[str, ...] = ()
     result: AdapterResult | None = None
@@ -804,6 +868,7 @@ class _Adapter:
             languages=self.languages,
             framework_tags=self.framework_tags,
             produces_predicates=self.produces_predicates,
+            produces_support_predicates=self.produces_support_predicates,
             produces_entity_kinds=self.produces_entity_kinds,
             source_system=self.source_system,
         )

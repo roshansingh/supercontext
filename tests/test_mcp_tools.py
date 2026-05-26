@@ -8,7 +8,9 @@ from pathlib import Path
 
 from source.kg.core.models import Entity, Evidence, Fact
 from source.kg.core.store import JsonlKgStore
+from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import TOOL_NAMES, _planning_context_symbol_impact, call_tool, tool_definitions
+from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
     _JsonPayloadError,
@@ -61,6 +63,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("known_linked", descriptions["planning_context"])
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
+        self.assertIn("runtime_architecture", descriptions["planning_context"])
+        self.assertIn("framework_impact", descriptions["review_context"])
+        self.assertIn("application_impact", descriptions["review_context"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callers"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callees"])
 
@@ -271,6 +276,51 @@ class McpToolsTest(unittest.TestCase):
             result["related_facts"]["service_operational_surfaces"]["domain_route_candidates"][0]["predicate"],
             "ROUTES_DOMAIN_TO_DEPLOY",
         )
+
+    def test_planning_context_includes_runtime_architecture_map(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            operational_deploy_mapping=True,
+            operational_deploy_link=True,
+            operational_deploy_same_repo=True,
+        ) as kg:
+            result = call_tool(kg, "planning_context", {"repo": "payments", "limit": 10})
+
+        architecture = result["runtime_architecture"]
+        self.assertEqual(architecture["scope"], {"kind": "repo", "repo": "payments"})
+        self.assertEqual(architecture["summary"]["domain_route_count"], 1)
+        self.assertEqual(architecture["summary"]["deploy_link_count"], 1)
+        self.assertEqual(architecture["summary"]["endpoint_surface_count"], 1)
+        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+        self.assertEqual(architecture["domain_routes"][0]["predicate"], "ROUTES_DOMAIN_TO_DEPLOY")
+        self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
+
+    def test_runtime_architecture_matches_endpoint_methods_case_insensitively(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True, provider_endpoint_method="post", endpoint_consumer_method="POST") as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+
+        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+
+    def test_runtime_architecture_does_not_match_partial_method_endpoints(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True, provider_endpoint_method=None, endpoint_consumer_method="POST") as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+
+        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 0)
+
+    def test_runtime_architecture_packet_supports_fleet_scope(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            operational_deploy_mapping=True,
+            operational_deploy_link=True,
+            operational_deploy_same_repo=True,
+        ) as kg:
+            architecture = runtime_architecture_packet(kg, repo=None, limit=10)
+
+        self.assertEqual(architecture["scope"], {"kind": "fleet"})
+        self.assertEqual(architecture["summary"]["domain_route_count"], 1)
+        self.assertEqual(architecture["summary"]["deploy_link_count"], 1)
+        self.assertEqual(architecture["summary"]["endpoint_surface_count"], 1)
+        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
 
     def test_planning_context_symbol_anchor_returns_impact_and_coordinates(self) -> None:
         with _fixture_snapshot() as kg:
@@ -521,9 +571,35 @@ class McpToolsTest(unittest.TestCase):
             {row["predicate"] for row in result["runtime_surfaces"]["event_channels"]},
             {"CONSUMES_EVENT", "PRODUCES_EVENT"},
         )
+        self.assertIn("application_impact", result)
+        self.assertEqual(result["application_impact"]["anchors"][0]["root"], "payments")
         self.assertTrue(result["source_coordinates"])
         self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
         _assert_additive_fields(self, result)
+
+    def test_review_context_groups_application_impact_surfaces(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        impact = result["application_impact"]
+        self.assertEqual(impact["status"], "found")
+        self.assertEqual(result["summary"]["app_surface_count"], impact["summary"]["same_repo_entity_count"])
+        self.assertTrue(any(row["module"] == "payments.api" for row in impact["same_repo_surfaces"]["api"]))
+        self.assertTrue(any(row["module"] == "payments.tasks" for row in impact["same_repo_surfaces"]["workers"]))
+        self.assertTrue(
+            any(row["module"] == "payments.management.commands.reconcile" for row in impact["same_repo_surfaces"]["scheduled_jobs"])
+        )
+        self.assertTrue(any(row["qualname"] == "Payment" for row in impact["same_repo_surfaces"]["models"]))
+        self.assertFalse(any(row["symbol_kind"] == "django_field" for row in impact["same_repo_surfaces"]["models"]))
+        self.assertTrue(any(row["predicate"] == "EXPOSES_ENDPOINT" for row in impact["runtime_facts"]))
+        lead = impact["cross_repo_name_leads"][0]
+        self.assertEqual(lead["repo"], "web")
+        self.assertEqual(lead["match_basis"], "name_derived_unlinked_lead")
+        self.assertIn("not as impact proof", lead["interpretation"])
 
     def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
@@ -703,6 +779,26 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["answerability"]["status"], "partial")
         self.assertEqual(result["answerability"]["missing_fact_families"], ["changed_symbols"])
         self.assertEqual(result["changed_surface"]["files"][0]["symbol_count"], 0)
+
+    def test_review_context_does_not_create_application_anchor_from_test_path(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "review_context", {"repo": "payments", "changed_files": ["tests/test_checkout.py"]})
+
+        self.assertEqual(result["application_impact"]["status"], "missing_anchor")
+        self.assertEqual(result["application_impact"]["anchors"], [])
+
+    def test_review_context_does_not_create_application_anchor_from_test_symbol_module(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            impact = application_impact_packet(
+                kg,
+                repo="payments",
+                changed_files=[],
+                changed_symbols=[{"module": "tests.test_checkout", "qualname": "test_checkout"}],
+                limit=10,
+            )
+
+        self.assertEqual(impact["status"], "missing_anchor")
+        self.assertEqual(impact["anchors"], [])
 
     def test_review_context_changed_ranges_fail_closed_for_non_overlapping_file(self) -> None:
         with _fixture_snapshot() as kg:
@@ -983,6 +1079,7 @@ class McpToolsTest(unittest.TestCase):
         instructions = initialized["result"]["instructions"]
         self.assertIn("planning_context first", instructions)
         self.assertIn("review_context first", instructions)
+        self.assertIn("review_context.application_impact", instructions)
         self.assertIn("inspect the relevant workspace source files", instructions)
         self.assertIn("service_operational_surfaces.evidence_partition", instructions)
         self.assertIn("deploy_link_facts", instructions)
@@ -1106,7 +1203,7 @@ class _fixture_snapshot:
         duplicate_endpoint_fact: bool = False,
         extra_service_endpoint: bool = False,
         endpoint_consumer: bool = False,
-        provider_endpoint_method: str = "POST",
+        provider_endpoint_method: str | None = "POST",
         endpoint_consumer_method: str | None = "POST",
         operational_deploy_mapping: bool = False,
         operational_deploy_same_repo: bool = False,
@@ -1117,6 +1214,7 @@ class _fixture_snapshot:
         upstream_checkout_grandcaller: bool = False,
         upstream_checkout_cycle: bool = False,
         containing_checkout_class: bool = False,
+        app_surface: bool = False,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -1136,6 +1234,7 @@ class _fixture_snapshot:
         self.upstream_checkout_grandcaller = upstream_checkout_grandcaller
         self.upstream_checkout_cycle = upstream_checkout_cycle
         self.containing_checkout_class = containing_checkout_class
+        self.app_surface = app_surface
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -1303,6 +1402,54 @@ class _fixture_snapshot:
                 "symbol_kind": "function",
             },
             properties={"path": "payments/alt_gateway.py", "line": 7, "end_line": 9},
+        )
+        app_api_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "payments", "module": "payments.api"},
+            properties={"path": "payments/api.py"},
+        )
+        app_task_symbol = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.tasks",
+                "qualname": "send_receipt",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/tasks.py", "line": 3, "end_line": 8},
+        )
+        app_command_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "payments", "module": "payments.management.commands.reconcile"},
+            properties={"path": "payments/management/commands/reconcile.py"},
+        )
+        app_model_symbol = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.models",
+                "qualname": "Payment",
+                "symbol_kind": "class",
+            },
+            properties={"path": "payments/models.py", "line": 4, "end_line": 20},
+        )
+        app_model_field = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.models",
+                "qualname": "Payment.status",
+                "symbol_kind": "django_field",
+            },
+            properties={"path": "payments/models.py", "line": 7, "end_line": 7},
+        )
+        cross_repo_payment_screen = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "web", "module": "src.views.PaymentsScreen"},
+            properties={"path": "src/views/PaymentsScreen.tsx"},
         )
         call_fact = Fact("CALLS", caller.entity_id, callee.entity_id)
         upstream_call_fact = Fact("CALLS", upstream_caller.entity_id, caller.entity_id)
@@ -1474,6 +1621,18 @@ class _fixture_snapshot:
                     confidence=1.0,
                 )
             )
+        if self.app_surface:
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=endpoint_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "payments"},
+                    bytes_ref={"repo": "payments", "path": "payments/api.py", "line_start": 10, "line_end": 12},
+                    confidence=1.0,
+                )
+            )
         entities = [
             service,
             *([containing_class] if self.containing_checkout_class else []),
@@ -1493,6 +1652,11 @@ class _fixture_snapshot:
             package,
             provider_repo,
             *([duplicate_callee] if self.extra_charge_card_symbol else []),
+            *(
+                [app_api_module, app_task_symbol, app_command_module, app_model_symbol, app_model_field, cross_repo_payment_screen]
+                if self.app_surface
+                else []
+            ),
             *extra_services,
             *extra_modules,
         ]

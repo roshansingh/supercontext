@@ -17,6 +17,8 @@ class KgSnapshot:
         root = Path(snapshot_dir).expanduser().resolve()
         self.entities = read_jsonl(root / "entities.jsonl")
         self.facts = read_jsonl(root / "facts.jsonl")
+        support_facts_path = root / "support_facts.jsonl"
+        self.support_facts = read_jsonl(support_facts_path) if support_facts_path.exists() else []
         self.evidence = read_jsonl(root / "evidence.jsonl")
         self.coverage = read_jsonl(root / "coverage.jsonl")
         self.entities_by_id = {entity["entity_id"]: entity for entity in self.entities}

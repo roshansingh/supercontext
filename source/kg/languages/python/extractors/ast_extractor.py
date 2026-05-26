@@ -16,6 +16,7 @@ from source.kg.languages.python.extractors.dataflow import (
     config_object_value_assignments,
     module_literal_assignments,
 )
+from source.kg.languages.python.extractors.django_framework import extract_django_framework_facts
 from source.kg.languages.python.extractors.transport_extractor import (
     extract_transport_events,
     module_transport_context,
@@ -42,6 +43,7 @@ from source.kg.core.repo_source import RepoSnapshot
 class KgBuild:
     entities: list[Entity] = field(default_factory=list)
     facts: list[Fact] = field(default_factory=list)
+    support_facts: list[Fact] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     coverage: list[Coverage] = field(default_factory=list)
 
@@ -119,6 +121,53 @@ class PythonAstExtractor:
                 ctx,
                 tenant_id,
                 emitted_runtime_symbol_ids,
+            )
+
+        parsed_trees = {
+            file_path: parsed.tree
+            for file_path, parsed in parsed_files.items()
+            if parsed.tree is not None
+        }
+        django_framework = extract_django_framework_facts(
+            repo,
+            parsed_trees,
+            tenant_id=tenant_id,
+            source_system=self.source_system,
+        )
+        build.entities.extend(django_framework.entities)
+        build.support_facts.extend(django_framework.facts)
+        build.evidence.extend(django_framework.evidence)
+        # Coverage predicates describe extractor scope; support fact predicates remain separately allowlisted.
+        if django_framework.facts:
+            build.coverage.append(
+                Coverage(
+                    tenant_id=tenant_id,
+                    predicate="FRAMEWORK_IMPACT",
+                    scope_ref={
+                        "repo": repo.name,
+                        "language": "python",
+                        "framework_family": "python_framework_stack",
+                        "framework_import_roots": list(django_framework.recognized_import_roots),
+                    },
+                    state="instrumented",
+                    source_system=self.source_system,
+                )
+            )
+        elif django_framework.recognized_framework:
+            build.coverage.append(
+                Coverage(
+                    tenant_id=tenant_id,
+                    predicate="FRAMEWORK_IMPACT",
+                    scope_ref={
+                        "repo": repo.name,
+                        "language": "python",
+                        "framework_family": "python_framework_stack",
+                        "framework_import_roots": list(django_framework.recognized_import_roots),
+                        "reason": "recognized_framework_without_static_framework_impact_facts",
+                    },
+                    state="partially_instrumented",
+                    source_system=self.source_system,
+                )
             )
 
         build.coverage.append(

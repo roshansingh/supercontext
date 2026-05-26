@@ -39,6 +39,8 @@ Read answerability, coverage_warnings, unsupported_scopes, and next_actions befo
 For symbol callers, callees, and blast-radius tools, an ambiguous result means no result was computed. Do not interpret an empty callers/callees/edges list as absence; use disambiguation.retry_arguments, a candidate qualified_name, or candidate path+line to retry the exact symbol.
 
 For service operational evidence, read operational_surfaces.evidence_partition or service_operational_surfaces.evidence_partition. Keep known_linked, unlinked_evidence, and missing_contracts separate: known_linked is exact KG/repo-linked evidence, unlinked_evidence is source leads only, and missing_contracts are claims the KG cannot prove. Treat deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof.
+
+For PR review impact, read review_context.application_impact alongside framework_impact and runtime_surfaces. application_impact groups same-repo app/package namespace surfaces such as API, models, serializers, workers, and scheduled jobs, and separates app-scoped runtime facts from unlinked cross-repo name leads. Use cross_repo_name_leads only as source-inspection leads, not as proven impact.
 """
 
 

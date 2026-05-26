@@ -20,6 +20,7 @@ class ExtractorAdapter:
         return AdapterResult(
             entities=list(build.entities),
             facts=list(build.facts),
+            support_facts=list(build.support_facts),
             evidence=list(build.evidence),
             coverage=list(build.coverage),
         )
@@ -37,6 +38,13 @@ PYTHON_AST_ADAPTER = ExtractorAdapter(
             "IMPORTS",
             "CALLS",
             "EXPOSES_ENDPOINT",
+        ),
+        produces_support_predicates=(
+            "DECLARES_FIELD",
+            "RELATES_TO_MODEL",
+            "SERIALIZES_MODEL",
+            "HANDLES_MODEL",
+            "TASK_USES_MODEL",
         ),
         produces_entity_kinds=(
             "Repo",

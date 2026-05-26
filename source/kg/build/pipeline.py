@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 
-from source.kg.core.models import Coverage, JsonObject, utc_now_iso
+from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
@@ -43,6 +43,7 @@ def build_kg(
             },
             "entities": len({entity.entity_id for entity in build.entities}),
             "facts": len({fact.fact_id for fact in build.facts}),
+            "support_facts": len({fact.fact_id for fact in build.support_facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
             "coverage": len({row.coverage_id for row in build.coverage}),
         },
@@ -50,6 +51,7 @@ def build_kg(
     JsonlKgStore(output_dir).write(
         entities=build.entities,
         facts=build.facts,
+        support_facts=build.support_facts,
         evidence=build.evidence,
         coverage=build.coverage,
         manifest=manifest,
@@ -59,12 +61,13 @@ def build_kg(
 
 @dataclass
 class RepoKgBuild:
-    entities: list
-    facts: list
-    evidence: list
+    entities: list[Entity]
+    facts: list[Fact]
+    evidence: list[Evidence]
     coverage: list[Coverage]
     extractor_names: list[str]
     extractor_errors: list[JsonObject]
+    support_facts: list[Fact] = field(default_factory=list)
 
 
 def extract_repo(
@@ -72,7 +75,7 @@ def extract_repo(
     strict_extractors: bool = False,
     tenant_id: str | None = None,
 ) -> RepoKgBuild:
-    from source.kg.extraction.framework import run_selected_adapters, select_applicable_adapter_specs
+    from source.kg.extraction.framework import run_selected_adapters_with_support, select_applicable_adapter_specs
     from source.kg.file_formats import STATIC_CONFIG_ADAPTER, file_format_adapters
     from source.kg.languages import language_adapters
 
@@ -80,7 +83,7 @@ def extract_repo(
     adapters = _combined_adapters((STATIC_CONFIG_ADAPTER,), language_adapters(), file_format_adapters())
     selected = select_applicable_adapter_specs(repo, adapters, ctx=ctx)
     selected_adapters = [selection.adapter for selection in selected]
-    entities, facts, evidence, coverage, extractor_errors = run_selected_adapters(
+    adapter_run = run_selected_adapters_with_support(
         repo,
         selected_adapters,
         strict_extractors=strict_extractors,
@@ -88,12 +91,13 @@ def extract_repo(
     )
     extractor_names = list(dict.fromkeys(selection.capability.source_system for selection in selected))
     return RepoKgBuild(
-        entities=entities,
-        facts=facts,
-        evidence=evidence,
-        coverage=coverage,
+        entities=adapter_run.entities,
+        facts=adapter_run.facts,
+        support_facts=adapter_run.support_facts,
+        evidence=adapter_run.evidence,
+        coverage=adapter_run.coverage,
         extractor_names=extractor_names,
-        extractor_errors=extractor_errors,
+        extractor_errors=adapter_run.errors,
     )
 
 
