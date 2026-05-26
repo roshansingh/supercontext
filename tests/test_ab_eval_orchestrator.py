@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +14,7 @@ from source.kg.eval.corpus import CorpusRow, EvalTask
 from source.kg.eval.runner import (
     RunRecord,
     RunnerConfig,
+    async_run_single_task,
     _allowed_tools,
     _claude_extra_args,
     _mcp_tool_observations,
@@ -212,6 +216,66 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(commands, [])
+
+    def test_run_record_stores_expanded_task_prompt(self) -> None:
+        captured_prompts: list[str] = []
+
+        class ClaudeAgentOptions:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class ResultMessage:
+            def __init__(self, result: str) -> None:
+                self.result = result
+
+        class ClaudeSDKClient:
+            def __init__(self, options: ClaudeAgentOptions) -> None:
+                self.options = options
+
+            async def __aenter__(self) -> "ClaudeSDKClient":
+                return self
+
+            async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+                return None
+
+            async def query(self, prompt: str) -> None:
+                captured_prompts.append(prompt)
+
+            async def receive_response(self):
+                yield ResultMessage("final answer")
+
+        fake_sdk = types.SimpleNamespace(
+            ClaudeAgentOptions=ClaudeAgentOptions,
+            ClaudeSDKClient=ClaudeSDKClient,
+            ResultMessage=ResultMessage,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"claude_agent_sdk": fake_sdk}):
+            root = Path(tmp)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            output = root / "out"
+            task = _task()
+
+            record = asyncio.run(
+                async_run_single_task(
+                    task,
+                    arm="mcp_on",
+                    snapshot=snapshot,
+                    output_dir=output,
+                    run_group_id="group-1",
+                    config=RunnerConfig(model="test-model", claude_cli_path="/bin/echo"),
+                )
+            )
+
+            stored = json.loads((output / "group-1" / "mcp_on" / "record.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(captured_prompts, [record.task_prompt])
+        self.assertEqual(stored["task_prompt"], record.task_prompt)
+        self.assertIn("Run this SuperContext A/B evaluation task.", record.task_prompt)
+        self.assertIn("Snapshot path:", record.task_prompt)
+        self.assertIn("User question:\nWho calls load_model?", record.task_prompt)
+        self.assertNotEqual(record.task_prompt, task.prompt)
 
     def test_reuse_mcp_off_from_cache_materializes_record_and_skips_host_run(self) -> None:
         task = _task()

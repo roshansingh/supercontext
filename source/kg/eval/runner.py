@@ -190,7 +190,7 @@ async def async_run_single_task(
         repo_fixture=task.fixture,
         difficulty=task.difficulty,
         harness_version=DEFAULT_HARNESS_VERSION,
-        task_prompt=task.prompt,
+        task_prompt=prompt,
         snapshot_path=str(snapshot_path),
         mcp_tools_called=mcp_tools,
         non_mcp_tools_called=non_mcp_tools,
