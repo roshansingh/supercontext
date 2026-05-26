@@ -528,6 +528,13 @@ def _endpoint_consumer_rows_for_exposed_endpoints(
         for row in exposed_endpoint_rows
         if isinstance(row.get("_subject"), dict) and row.get("_subject", {}).get("entity_id")
     }
+    provider_service_repos = {
+        repo
+        for row in exposed_endpoint_rows
+        if isinstance(row.get("_subject"), dict)
+        for repo in [_planning_context_entity_repo(row["_subject"])]
+        if isinstance(repo, str) and repo.strip()
+    }
     rows: list[JsonObject] = []
     for fact in kg.facts:
         if fact.get("predicate") != "CALLS_ENDPOINT":
@@ -537,6 +544,8 @@ def _endpoint_consumer_rows_for_exposed_endpoints(
         if not subject or not endpoint or endpoint.get("kind") != "Endpoint":
             continue
         if str(subject.get("entity_id")) in provider_service_ids:
+            continue
+        if _same_repo_internal_endpoint_consumer(subject, provider_repos=provider_service_repos):
             continue
         endpoint_path = _endpoint_path(endpoint)
         if endpoint_path is None or endpoint_path not in provider_index:
@@ -557,6 +566,13 @@ def _endpoint_consumer_rows_for_exposed_endpoints(
             }
         )
     return _planning_context_dedupe_rows(rows)
+
+
+def _same_repo_internal_endpoint_consumer(subject: JsonObject, *, provider_repos: set[str]) -> bool:
+    if subject.get("kind") not in {"CodeModule", "CodeSymbol"}:
+        return False
+    repo = _planning_context_entity_repo(subject)
+    return repo is not None and repo in provider_repos
 
 
 def _exposed_endpoint_rows_for_service_id(kg: KgSnapshot, service_id: str) -> list[JsonObject]:
@@ -775,7 +791,6 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
                 deploy_link_rows,
                 deploy_runtime_units,
                 endpoint_consumer_rows,
-                deploy_order_guidance["practical_deploy_order"],
                 unlinked_domain_route_rows,
             )
         ),
@@ -3006,10 +3021,10 @@ def _planning_context_anchors(arguments: JsonObject) -> JsonObject:
 def _planning_context_single_service_repo(anchors: dict[str, str | None], services: list[JsonObject]) -> str | None:
     if not anchors.get("service"):
         return None
-    if len(services) != 1:
+    repos = {repo for service in services for repo in [service.get("repo")] if isinstance(repo, str) and repo.strip()}
+    if len(repos) != 1:
         return None
-    repo = services[0].get("repo")
-    return repo if isinstance(repo, str) and repo.strip() else None
+    return next(iter(repos))
 
 
 def _is_planning_context_fleet_request(*, query: str | None, line: int | None, anchors: JsonObject) -> bool:
@@ -3938,6 +3953,7 @@ _TOOLS: dict[str, McpTool] = {
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
             "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
+            "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "

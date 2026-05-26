@@ -335,10 +335,18 @@ def _minimal_runtime_row(row: JsonObject) -> JsonObject:
         "services",
         "source",
         "service",
+        "subject",
+        "object",
+        "predicate",
+        "qualifier",
+        "match_basis",
         "provider",
         "provider_endpoint",
+        "matched_provider_endpoint",
         "endpoint",
         "consumer",
+        "consumers",
+        "consumer_count",
         "deploy_target",
         "deploy_kind",
         "deploy_details",
@@ -353,7 +361,12 @@ def _minimal_runtime_row(row: JsonObject) -> JsonObject:
         "evidence_coordinates",
         "interpretation",
     )
-    return {key: row[key] for key in keys if key in row}
+    minimal = {key: row[key] for key in keys if key in row}
+    for nested_key in ("consumers", "ingress_or_domain_routes"):
+        nested = minimal.get(nested_key)
+        if isinstance(nested, list):
+            minimal[nested_key] = [_minimal_runtime_row(item) for item in nested if isinstance(item, dict)]
+    return minimal
 
 
 def _compact_service_operational_surfaces(value: object) -> JsonObject:
@@ -389,6 +402,11 @@ def _compact_service_operational_surfaces(value: object) -> JsonObject:
         "deploy_order_guidance": {
             "status": deploy_order.get("status"),
             "inference_contract": deploy_order.get("inference_contract"),
+            "proven_endpoint_consumers": [
+                _minimal_runtime_row(row)
+                for row in _list_value(deploy_order.get("proven_endpoint_consumers"))
+                if isinstance(row, dict)
+            ],
             "practical_deploy_order": [
                 _minimal_runtime_row(row)
                 for row in _list_value(deploy_order.get("practical_deploy_order"))
@@ -396,8 +414,18 @@ def _compact_service_operational_surfaces(value: object) -> JsonObject:
             ],
             "truncated": deploy_order.get("truncated"),
         },
+        "direct_domain_references": _minimal_runtime_rows(value.get("direct_domain_references")),
+        "domain_route_candidates": _minimal_runtime_rows(value.get("domain_route_candidates")),
+        "deploy_target_candidates": _minimal_runtime_rows(value.get("deploy_target_candidates")),
+        "deploy_link_facts": _minimal_runtime_rows(value.get("deploy_link_facts")),
+        "endpoint_consumers": _minimal_runtime_rows(value.get("endpoint_consumers")),
+        "unlinked_domain_route_samples": _minimal_runtime_rows(value.get("unlinked_domain_route_samples")),
         "coverage_note": value.get("coverage_note"),
     }
+
+
+def _minimal_runtime_rows(value: object, *, limit: int = 2) -> list[JsonObject]:
+    return [_minimal_runtime_row(row) for row in _list_value(value)[:limit] if isinstance(row, dict)]
 
 
 def _compact_partition_counts(value: object) -> JsonObject:
@@ -405,6 +433,7 @@ def _compact_partition_counts(value: object) -> JsonObject:
         return {}
     return {
         "status": value.get("status"),
+        "interpretation": value.get("interpretation"),
         "counts": value.get("counts", {}),
     }
 

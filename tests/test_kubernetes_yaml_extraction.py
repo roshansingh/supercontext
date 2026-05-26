@@ -78,6 +78,68 @@ class KubernetesYamlExtractionTest(unittest.TestCase):
         self.assertEqual(route.qualifier["backend_service_ports"], [{"port": 80, "targetPort": 8000}])
         self.assertEqual(route.qualifier["match_basis"], "ingress_backend_service_selector_to_workload")
 
+    def test_service_port_and_node_port_require_integers_but_target_port_may_be_named(self) -> None:
+        build = _extract(
+            "deployment/kubernetes/staging/api/orders.yaml",
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: orders-api\n"
+            "spec:\n"
+            "  selector:\n"
+            "    matchLabels:\n"
+            "      app: orders-api\n"
+            "  template:\n"
+            "    metadata:\n"
+            "      labels:\n"
+            "        app: orders-api\n"
+            "    spec:\n"
+            "      containers:\n"
+            "      - name: orders-api\n"
+            "        image: registry.example.com/acme/orders_api:sha\n"
+            "---\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: orders-api-service\n"
+            "spec:\n"
+            "  selector:\n"
+            "    app: orders-api\n"
+            "  ports:\n"
+            "  - port: http\n"
+            "    targetPort: http\n"
+            "    nodePort: external\n"
+            "  - targetPort: metrics\n"
+            "---\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: orders-ingress\n"
+            "spec:\n"
+            "  rules:\n"
+            "  - host: orders.example.com\n"
+            "    http:\n"
+            "      paths:\n"
+            "      - backend:\n"
+            "          service:\n"
+            "            name: orders-api-service\n",
+            repo_name="orders_api",
+            service_slug="orders-api",
+        )
+
+        route = next(fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY")
+        self.assertEqual(route.qualifier["backend_service_ports"], [{"targetPort": "http"}, {"targetPort": "metrics"}])
+        self.assertEqual(
+            {row.scope_ref["reason"] for row in build.coverage},
+            {
+                "kubernetes_service_node_port_malformed",
+                "kubernetes_service_port_malformed",
+                "kubernetes_service_port_missing",
+            },
+        )
+        self.assertEqual({row.predicate for row in build.coverage}, {"ROUTES_DOMAIN_TO_DEPLOY"})
+        self.assertEqual({row.scope_ref["service_name"] for row in build.coverage}, {"orders-api-service"})
+
     def test_unowned_workload_does_not_emit_service_deploy_fact(self) -> None:
         build = _extract(
             "manifests/payments.yaml",

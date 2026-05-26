@@ -32,6 +32,7 @@ def runtime_architecture_packet(
     domain_references: list[JsonObject] = []
 
     scoped_endpoint_keys = _scoped_endpoint_keys(kg, repo_key)
+    scoped_endpoint_paths = {path for _, path in scoped_endpoint_keys if path is not None}
 
     for fact in kg.facts:
         predicate = str(fact.get("predicate") or "")
@@ -42,7 +43,7 @@ def runtime_architecture_packet(
         if not subject or not object_:
             continue
         if repo_key is not None and not _fact_touches_repo(subject, object_, fact, repo_key):
-            if predicate != "CALLS_ENDPOINT" or _endpoint_key(object_) not in scoped_endpoint_keys:
+            if predicate != "CALLS_ENDPOINT" or _endpoint_key(object_)[1] not in scoped_endpoint_paths:
                 continue
         row = _fact_row(kg, fact, subject, object_)
         if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
@@ -88,7 +89,11 @@ def runtime_architecture_packet(
         limit=route_limit,
     )
     deploy_runtime_map = _deploy_runtime_map(deploy_links=deploy_links, domain_routes=domain_routes, limit=route_limit)
-    endpoint_consumer_map = _endpoint_consumer_map(endpoint_rows=endpoint_rows, client_rows=client_rows, limit=route_limit)
+    endpoint_consumer_map, endpoint_consumer_missing_method_drop_count = _endpoint_consumer_map(
+        endpoint_rows=endpoint_rows,
+        client_rows=client_rows,
+        limit=route_limit,
+    )
     deploy_order_guidance = _runtime_deploy_order_guidance(endpoint_consumer_map, limit=route_limit)
     deploy_kind_counts = _deploy_kind_counts(runtime_building_blocks, domain_routing_map)
     missing_fact_families = _runtime_missing_fact_families(
@@ -109,6 +114,7 @@ def runtime_architecture_packet(
             "domain_routing_map_count": len(domain_routing_map),
             "deploy_runtime_unit_count": len(deploy_runtime_map),
             "endpoint_consumer_map_count": len(endpoint_consumer_map),
+            "endpoint_consumer_missing_method_drop_count": endpoint_consumer_missing_method_drop_count,
             "deploy_order_guidance_count": len(deploy_order_guidance),
             "section_limit": limit,
             "component_limit": component_limit,
@@ -383,21 +389,43 @@ def _endpoint_consumer_map(
     endpoint_rows: list[JsonObject],
     client_rows: list[JsonObject],
     limit: int,
-) -> list[JsonObject]:
+) -> tuple[list[JsonObject], int]:
     rows = []
+    missing_method_drop_keys: set[tuple[object, object, object]] = set()
+    clients_by_path: dict[str, list[tuple[tuple[str | None, str | None], JsonObject]]] = {}
+    for client_row in client_rows:
+        client_key = _endpoint_key_from_row(client_row)
+        if client_key is None or client_key[1] is None:
+            continue
+        clients_by_path.setdefault(client_key[1], []).append((client_key, client_row))
     for provider_row in endpoint_rows:
         provider_endpoint = provider_row.get("object") if isinstance(provider_row.get("object"), dict) else {}
         endpoint_key = _endpoint_key_from_row(provider_row)
-        if endpoint_key is None:
+        if endpoint_key is None or endpoint_key[1] is None:
             continue
+        provider_method, provider_path = endpoint_key
         consumers = []
         provider = provider_row.get("subject") if isinstance(provider_row.get("subject"), dict) else {}
         provider_id = provider.get("entity_id")
-        for client_row in client_rows:
+        provider_repo = _entity_repo(provider)
+        for client_key, client_row in clients_by_path.get(provider_path, []):
             consumer = client_row.get("subject") if isinstance(client_row.get("subject"), dict) else {}
             if provider_id is not None and consumer.get("entity_id") == provider_id:
                 continue
-            if not _endpoint_keys_are_compatible(_endpoint_key_from_row(client_row), endpoint_key):
+            if _same_repo_internal_endpoint_call(provider_repo=provider_repo, consumer=consumer):
+                continue
+            consumer_method, _ = client_key
+            if provider_method is None or consumer_method is None:
+                client_endpoint = client_row.get("object") if isinstance(client_row.get("object"), dict) else {}
+                missing_method_drop_keys.add(
+                    (
+                        client_row.get("fact_id"),
+                        consumer.get("entity_id"),
+                        client_endpoint.get("entity_id") or provider_path,
+                    )
+                )
+                continue
+            if not _endpoint_keys_are_compatible(client_key, endpoint_key):
                 continue
             consumers.append(
                 {
@@ -420,7 +448,13 @@ def _endpoint_consumer_map(
                 "evidence_coordinates": _evidence_coordinates(provider_row),
             }
         )
-    return sorted(_dedupe_endpoint_consumer_map(rows), key=_endpoint_consumer_sort_key)[:limit]
+    return sorted(_dedupe_endpoint_consumer_map(rows), key=_endpoint_consumer_sort_key)[:limit], len(missing_method_drop_keys)
+
+
+def _same_repo_internal_endpoint_call(*, provider_repo: str | None, consumer: JsonObject) -> bool:
+    if provider_repo is None or consumer.get("kind") not in {"CodeModule", "CodeSymbol"}:
+        return False
+    return _entity_repo(consumer) == provider_repo
 
 
 def _runtime_deploy_order_guidance(endpoint_consumer_map: list[JsonObject], *, limit: int) -> list[JsonObject]:
@@ -463,9 +497,9 @@ def _runtime_missing_fact_families(
 ) -> list[str]:
     missing: list[str] = []
     if deploy_order_guidance:
-        missing.extend(["canonical_service_deploy_blocker", "endpoint_contract_change_classification"])
+        missing.append("canonical_service_deploy_blocker")
     if endpoint_consumer_map:
-        missing.append("runtime_host_resolution")
+        missing.extend(["endpoint_contract_change_classification", "runtime_host_resolution"])
     return sorted(set(missing))
 
 

@@ -393,7 +393,16 @@ class McpToolsTest(unittest.TestCase):
         with _fixture_snapshot(endpoint_consumer=True, provider_endpoint_method=None, endpoint_consumer_method="POST") as kg:
             architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
 
-        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 0)
+        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+        self.assertEqual(architecture["summary"]["endpoint_consumer_missing_method_drop_count"], 1)
+        self.assertEqual(architecture["answer_packet"]["endpoint_consumer_map"], [])
+
+    def test_runtime_architecture_reports_path_matches_dropped_for_missing_method(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True, endpoint_consumer_method=None) as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+
+        self.assertEqual(architecture["answer_packet"]["endpoint_consumer_map"], [])
+        self.assertEqual(architecture["summary"]["endpoint_consumer_missing_method_drop_count"], 1)
 
     def test_runtime_architecture_packet_supports_fleet_scope(self) -> None:
         with _fixture_snapshot(
@@ -409,6 +418,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(architecture["summary"]["deploy_link_count"], 1)
         self.assertEqual(architecture["summary"]["endpoint_surface_count"], 1)
         self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+
+    def test_runtime_architecture_endpoint_consumer_map_excludes_same_repo_symbol_callers(self) -> None:
+        with _fixture_snapshot(endpoint_consumer=True, same_repo_endpoint_consumer=True) as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+            context = call_tool(kg, "planning_context", {"service": "payments", "limit": 10})
+
+        self.assertEqual(architecture["answer_packet"]["endpoint_consumer_map"], [])
+        self.assertEqual(architecture["answer_packet"]["deploy_order_guidance"], [])
+        self.assertEqual(context["summary"]["endpoint_consumer_fact_count"], 0)
+        self.assertEqual(context["service_operational_surfaces"]["summary"]["endpoint_consumer_fact_count"], 0)
 
     def test_planning_context_output_budget_truncates_runtime_architecture_shape(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
@@ -441,6 +460,27 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("output_budget", result)
         self.assertEqual(result["runtime_architecture"]["scope"], {"kind": "repo", "repo": "runtime-repo-0"})
         self.assertIn("service_operational_surfaces", result)
+
+    def test_planning_context_service_anchor_budget_truncates_large_single_repo_runtime_packet(self) -> None:
+        with _fixture_snapshot(
+            runtime_pressure_routes=80,
+            runtime_pressure_payload_size=2_500,
+            runtime_pressure_same_repo=True,
+        ) as kg:
+            result = call_tool(kg, "planning_context", {"service": "runtime-service-0"})
+
+        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
+        self.assertEqual(result["tool"], "planning_context")
+        budget = result["output_budget"]
+        self.assertTrue(budget["truncated"])
+        self.assertEqual(budget["max_chars"], PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
+        self.assertTrue(
+            any(
+                section.startswith("runtime_architecture.answer_packet.deploy_runtime_map")
+                for section in budget["truncated_sections"]
+            )
+        )
+        self.assertIn("runtime_architecture.answer_packet.domain_routing_map", budget["truncated_sections"])
 
     def test_planning_context_output_budget_preserves_valid_json_transport_shape(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
@@ -554,6 +594,48 @@ class McpToolsTest(unittest.TestCase):
         routes = budgeted["runtime_architecture"]["answer_packet"]["domain_routing_map"]
         self.assertEqual({row["status"] for row in routes}, {"known_route", "unlinked_domain_reference"})
         self.assertTrue(all("payload" not in row for row in routes))
+
+    def test_output_budget_minimizes_endpoint_consumer_map_without_dropping_consumers(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "runtime_architecture": {
+                "scope": {"kind": "repo", "repo": "payments"},
+                "summary": {"endpoint_consumer_map_count": 1},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [],
+                    "deploy_runtime_map": [],
+                    "endpoint_consumer_map": [
+                        {
+                            "provider": {"name": "payments"},
+                            "provider_endpoint": {"path": "/checkout"},
+                            "consumers": [
+                                {
+                                    "consumer": {"name": "web"},
+                                    "evidence_coordinates": [{"repo": "web", "path": "src/api.ts", "line_start": 1}],
+                                    "payload": "x" * 20_000,
+                                }
+                            ],
+                            "consumer_count": 1,
+                            "payload": "x" * 20_000,
+                        }
+                    ],
+                    "deploy_order_guidance": [],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "typed facts only",
+                },
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_planning_context_budget(result, max_chars=2_500)
+
+        row = budgeted["runtime_architecture"]["answer_packet"]["endpoint_consumer_map"][0]
+        self.assertEqual(row["consumer_count"], 1)
+        self.assertEqual(row["consumers"][0]["consumer"]["name"], "web")
 
     def test_output_budget_marks_final_packet_when_minimum_still_exceeds_budget(self) -> None:
         result = {
@@ -1507,6 +1589,7 @@ class _fixture_snapshot:
         duplicate_endpoint_fact: bool = False,
         extra_service_endpoint: bool = False,
         endpoint_consumer: bool = False,
+        same_repo_endpoint_consumer: bool = False,
         provider_endpoint_method: str | None = "POST",
         endpoint_consumer_method: str | None = "POST",
         operational_deploy_mapping: bool = False,
@@ -1523,6 +1606,7 @@ class _fixture_snapshot:
         kubernetes_operational_deploy: bool = False,
         runtime_pressure_routes: int = 0,
         runtime_pressure_payload_size: int = 0,
+        runtime_pressure_same_repo: bool = False,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -1531,6 +1615,7 @@ class _fixture_snapshot:
         self.duplicate_endpoint_fact = duplicate_endpoint_fact
         self.extra_service_endpoint = extra_service_endpoint
         self.endpoint_consumer = endpoint_consumer
+        self.same_repo_endpoint_consumer = same_repo_endpoint_consumer
         self.provider_endpoint_method = provider_endpoint_method
         self.endpoint_consumer_method = endpoint_consumer_method
         self.operational_deploy_mapping = operational_deploy_mapping
@@ -1547,6 +1632,7 @@ class _fixture_snapshot:
         self.kubernetes_operational_deploy = kubernetes_operational_deploy
         self.runtime_pressure_routes = runtime_pressure_routes
         self.runtime_pressure_payload_size = runtime_pressure_payload_size
+        self.runtime_pressure_same_repo = runtime_pressure_same_repo
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -1810,9 +1896,10 @@ class _fixture_snapshot:
             extra_endpoint.entity_id,
             {"method": "GET", "path": "/refund"},
         )
+        endpoint_consumer_subject = caller if self.same_repo_endpoint_consumer else consumer_service
         endpoint_consumer_fact = Fact(
             "CALLS_ENDPOINT",
-            consumer_service.entity_id,
+            endpoint_consumer_subject.entity_id,
             consumer_endpoint.entity_id,
             {
                 "confidence": "host_unresolved_path_resolved",
@@ -1870,6 +1957,7 @@ class _fixture_snapshot:
             {"literal": "app.example.com", "path": "prod/cloudfront.tf", "source_kind": "terraform_literal"},
         )
         runtime_payload = "x" * self.runtime_pressure_payload_size
+        runtime_repo = "runtime-shared" if self.runtime_pressure_same_repo else None
         runtime_services = [
             Entity(
                 kind="Service",
@@ -1877,7 +1965,7 @@ class _fixture_snapshot:
                     "tenant_id": "default",
                     "namespace": "default",
                     "slug": f"runtime-service-{index}",
-                    "repo": f"runtime-repo-{index}",
+                    "repo": runtime_repo or f"runtime-repo-{index}",
                 },
             )
             for index in range(self.runtime_pressure_routes)
@@ -1885,7 +1973,11 @@ class _fixture_snapshot:
         runtime_domains = [
             Entity(
                 kind="Domain",
-                identity={"tenant_id": "default", "repo": f"runtime-infra-{index}", "name": f"runtime-{index}.example.test"},
+                identity={
+                    "tenant_id": "default",
+                    "repo": runtime_repo or f"runtime-infra-{index}",
+                    "name": f"runtime-{index}.example.test",
+                },
             )
             for index in range(self.runtime_pressure_routes)
         ]
@@ -1894,7 +1986,7 @@ class _fixture_snapshot:
                 kind="DeployTarget",
                 identity={
                     "tenant_id": "default",
-                    "repo": f"runtime-infra-{index}",
+                    "repo": runtime_repo or f"runtime-infra-{index}",
                     "type": "cloudfront_distribution",
                     "target": f"aws_cloudfront_distribution.runtime_{index}",
                 },
@@ -2002,14 +2094,20 @@ class _fixture_snapshot:
                 )
             )
         if self.endpoint_consumer:
+            endpoint_consumer_repo = "payments" if self.same_repo_endpoint_consumer else "web"
             evidence.append(
                 Evidence(
                     target_type="fact",
                     target_id=endpoint_consumer_fact.fact_id,
                     derivation_class="deterministic_static",
                     source_system="test",
-                    source_ref={"repo": "web"},
-                    bytes_ref={"repo": "web", "path": "web/src/api.ts", "line_start": 42, "line_end": 42},
+                    source_ref={"repo": endpoint_consumer_repo},
+                    bytes_ref={
+                        "repo": endpoint_consumer_repo,
+                        "path": "payments/internal_api.py" if self.same_repo_endpoint_consumer else "web/src/api.ts",
+                        "line_start": 42,
+                        "line_end": 42,
+                    },
                     confidence=0.8,
                 )
             )
@@ -2106,7 +2204,8 @@ class _fixture_snapshot:
             *([extra_endpoint] if self.extra_service_endpoint else []),
             *([upstream_caller] if self.upstream_checkout_caller else []),
             *([upstream_grandcaller] if self.upstream_checkout_grandcaller else []),
-            *([consumer_service, consumer_endpoint] if self.endpoint_consumer else []),
+            *([consumer_service] if self.endpoint_consumer and not self.same_repo_endpoint_consumer else []),
+            *([consumer_endpoint] if self.endpoint_consumer else []),
             channel,
             domain,
             *([route_domain, deploy_target] if self.operational_deploy_mapping else []),

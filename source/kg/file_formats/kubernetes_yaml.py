@@ -81,6 +81,7 @@ class KubernetesManifestExtraction:
     services: list[KubernetesService]
     ingress_routes: list[KubernetesIngressRoute]
     coverage_reason: str | None = None
+    coverage_reasons: tuple[JsonObject, ...] = ()
 
 
 def extract_kubernetes_manifests(
@@ -105,6 +106,17 @@ def extract_kubernetes_manifests(
             )
         )
         return
+    for item in result.coverage_reasons:
+        scope_ref = {"repo": repo.name, "file_path": scanned.relative_path, **item}
+        build.coverage.append(
+            Coverage(
+                tenant_id=resolved_tenant_id,
+                predicate="ROUTES_DOMAIN_TO_DEPLOY",
+                scope_ref=scope_ref,
+                state="partially_instrumented",
+                source_system=CONFIG_SOURCE_SYSTEM,
+            )
+        )
 
     for workload in result.workloads:
         add_entity_evidence(build, repo, workload.target, scanned.path, workload.line)
@@ -201,6 +213,7 @@ def kubernetes_manifests(
     workloads: list[KubernetesWorkload] = []
     services: list[KubernetesService] = []
     ingress_routes: list[KubernetesIngressRoute] = []
+    coverage_reasons: set[tuple[str, str, str]] = set()
     for doc in docs:
         if not _is_kubernetes_doc(doc):
             continue
@@ -242,18 +255,28 @@ def kubernetes_manifests(
                 )
             )
         elif kind == "Service":
+            ports, port_coverage_reasons = _service_ports(doc)
+            coverage_reasons.update((reason, namespace, name) for reason in port_coverage_reasons)
             services.append(
                 KubernetesService(
                     name=name,
                     namespace=namespace,
                     selector=_string_mapping(_mapping(doc.get("spec")).get("selector")),
-                    ports=_service_ports(doc),
+                    ports=ports,
                     line=line,
                 )
             )
         elif kind == "Ingress":
             ingress_routes.extend(_ingress_routes(doc, namespace, scanned))
-    return KubernetesManifestExtraction(workloads, services, ingress_routes)
+    return KubernetesManifestExtraction(
+        workloads,
+        services,
+        ingress_routes,
+        coverage_reasons=tuple(
+            {"reason": reason, "namespace": namespace, "service_name": service_name}
+            for reason, namespace, service_name in sorted(coverage_reasons)
+        ),
+    )
 
 
 def _workloads_by_service(
@@ -351,31 +374,50 @@ def _containers_for_workload(doc: dict[object, object]) -> tuple[tuple[str, ...]
     return tuple(names), tuple(images)
 
 
-def _service_ports(doc: dict[object, object]) -> tuple[JsonObject, ...]:
+def _service_ports(doc: dict[object, object]) -> tuple[tuple[JsonObject, ...], tuple[str, ...]]:
     ports = _mapping(doc.get("spec")).get("ports")
     if not isinstance(ports, list):
-        return ()
+        return (), ()
     rows: list[JsonObject] = []
+    coverage_reasons: set[str] = set()
     for port in ports:
         if not isinstance(port, dict):
             continue
+        if "port" not in port or port.get("port") is None:
+            coverage_reasons.add("kubernetes_service_port_missing")
+        if _invalid_numeric_port(port.get("port")):
+            coverage_reasons.add("kubernetes_service_port_malformed")
+        if _invalid_numeric_port(port.get("nodePort")):
+            coverage_reasons.add("kubernetes_service_node_port_malformed")
         row = {
             key: value
             for key, value in {
                 "name": _string(port.get("name")),
                 "protocol": _string(port.get("protocol")),
-                "port": _port_value(port.get("port")),
-                "targetPort": _port_value(port.get("targetPort")),
-                "nodePort": _port_value(port.get("nodePort")),
+                "port": _numeric_port_value(port.get("port")),
+                "targetPort": _target_port_value(port.get("targetPort")),
+                "nodePort": _numeric_port_value(port.get("nodePort")),
             }.items()
             if value is not None
         }
         if row:
             rows.append(row)
-    return tuple(rows)
+    return tuple(rows), tuple(sorted(coverage_reasons))
 
 
-def _port_value(value: object) -> int | str | None:
+def _invalid_numeric_port(value: object) -> bool:
+    return value is not None and (isinstance(value, bool) or not isinstance(value, int))
+
+
+def _numeric_port_value(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _target_port_value(value: object) -> int | str | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
