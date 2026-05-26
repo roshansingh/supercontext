@@ -87,7 +87,14 @@ def runtime_architecture_packet(
         domain_references=domain_references,
         limit=route_limit,
     )
+    deploy_runtime_map = _deploy_runtime_map(deploy_links=deploy_links, domain_routes=domain_routes, limit=route_limit)
+    endpoint_consumer_map = _endpoint_consumer_map(endpoint_rows=endpoint_rows, client_rows=client_rows, limit=route_limit)
+    deploy_order_guidance = _runtime_deploy_order_guidance(endpoint_consumer_map, limit=route_limit)
     deploy_kind_counts = _deploy_kind_counts(runtime_building_blocks, domain_routing_map)
+    missing_fact_families = _runtime_missing_fact_families(
+        deploy_order_guidance=deploy_order_guidance,
+        endpoint_consumer_map=endpoint_consumer_map,
+    )
 
     packet = {
         "scope": {"kind": "repo", "repo": repo} if repo_key else {"kind": "fleet"},
@@ -100,6 +107,9 @@ def runtime_architecture_packet(
             "domain_reference_count": len(domain_references),
             "runtime_building_block_count": len(runtime_building_blocks),
             "domain_routing_map_count": len(domain_routing_map),
+            "deploy_runtime_unit_count": len(deploy_runtime_map),
+            "endpoint_consumer_map_count": len(endpoint_consumer_map),
+            "deploy_order_guidance_count": len(deploy_order_guidance),
             "section_limit": limit,
             "component_limit": component_limit,
             "component_detail_limit": component_detail_limit,
@@ -108,10 +118,16 @@ def runtime_architecture_packet(
         "answer_packet": {
             "runtime_building_blocks": runtime_building_blocks,
             "domain_routing_map": domain_routing_map,
+            "deploy_runtime_map": deploy_runtime_map,
+            "endpoint_consumer_map": endpoint_consumer_map,
+            "deploy_order_guidance": deploy_order_guidance,
             "deploy_kind_counts": deploy_kind_counts,
+            "missing_fact_families": missing_fact_families,
             "evidence_contract": (
                 "known_route rows come from ROUTES_DOMAIN_TO_DEPLOY and can be treated as domain-to-deploy evidence. "
                 "deploy_link rows come from DEPLOYS_VIA_CONFIG and link services to deploy targets. "
+                "endpoint_consumer_map rows are proven static CALLS_ENDPOINT consumers matched to provider endpoints. "
+                "deploy_order_guidance rows are practical compatibility inferences from those consumers, not canonical deploy-blocker facts. "
                 "unlinked_domain_reference rows are source leads only and must not be promoted to proven routes."
             ),
         },
@@ -124,6 +140,9 @@ def runtime_architecture_packet(
             {
                 "runtime_building_blocks": runtime_building_blocks,
                 "domain_routing_map": domain_routing_map,
+                "deploy_runtime_map": deploy_runtime_map,
+                "endpoint_consumer_map": endpoint_consumer_map,
+                "deploy_order_guidance": deploy_order_guidance,
                 "deploy_kind_counts": deploy_kind_counts,
                 "domain_routes": domain_routes[:limit],
                 "deploy_links": deploy_links[:limit],
@@ -318,6 +337,169 @@ def _domain_routing_map(
             }
         )
     return sorted(_dedupe_route_rows(routes), key=_route_sort_key)[:limit]
+
+
+def _deploy_runtime_map(
+    *,
+    deploy_links: list[JsonObject],
+    domain_routes: list[JsonObject],
+    limit: int,
+) -> list[JsonObject]:
+    routes_by_target: dict[str, list[JsonObject]] = {}
+    for route in domain_routes:
+        target = route.get("object") if isinstance(route.get("object"), dict) else {}
+        target_id = target.get("entity_id")
+        if isinstance(target_id, str):
+            routes_by_target.setdefault(target_id, []).append(route)
+
+    units = []
+    for row in deploy_links:
+        service = row.get("subject") if isinstance(row.get("subject"), dict) else {}
+        target = row.get("object") if isinstance(row.get("object"), dict) else {}
+        target_id = target.get("entity_id")
+        if not isinstance(target_id, str):
+            continue
+        qualifier = _compact_qualifier(row.get("qualifier"))
+        routes = routes_by_target.get(target_id, [])
+        units.append(
+            {
+                "status": "known_linked_deploy_unit",
+                "service": _compact_entity(service),
+                "deploy_target": _compact_entity(target),
+                "deploy_kind": _deploy_kind_for_route_or_target(row),
+                "deploy_details": _deploy_details(qualifier),
+                "ingress_or_domain_routes": [
+                    _deploy_runtime_route(route)
+                    for route in sorted(routes, key=_route_sort_key)
+                ][:limit],
+                "evidence_coordinates": _evidence_coordinates(row),
+            }
+        )
+    return sorted(_dedupe_deploy_runtime_units(units), key=_deploy_runtime_sort_key)[:limit]
+
+
+def _endpoint_consumer_map(
+    *,
+    endpoint_rows: list[JsonObject],
+    client_rows: list[JsonObject],
+    limit: int,
+) -> list[JsonObject]:
+    rows = []
+    for provider_row in endpoint_rows:
+        provider_endpoint = provider_row.get("object") if isinstance(provider_row.get("object"), dict) else {}
+        endpoint_key = _endpoint_key_from_row(provider_row)
+        if endpoint_key is None:
+            continue
+        consumers = []
+        provider = provider_row.get("subject") if isinstance(provider_row.get("subject"), dict) else {}
+        provider_id = provider.get("entity_id")
+        for client_row in client_rows:
+            consumer = client_row.get("subject") if isinstance(client_row.get("subject"), dict) else {}
+            if provider_id is not None and consumer.get("entity_id") == provider_id:
+                continue
+            if not _endpoint_keys_are_compatible(_endpoint_key_from_row(client_row), endpoint_key):
+                continue
+            consumers.append(
+                {
+                    "consumer": _compact_entity(consumer),
+                    "called_endpoint": _compact_entity(client_row.get("object")),
+                    "qualifier": _compact_qualifier(client_row.get("qualifier")),
+                    "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
+                    "evidence_coordinates": _evidence_coordinates(client_row),
+                }
+            )
+        if not consumers:
+            continue
+        rows.append(
+            {
+                "provider": _compact_entity(provider),
+                "provider_endpoint": _compact_entity(provider_endpoint),
+                "consumers": sorted(consumers, key=_consumer_sort_key)[:limit],
+                "consumer_count": len(consumers),
+                "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
+                "evidence_coordinates": _evidence_coordinates(provider_row),
+            }
+        )
+    return sorted(_dedupe_endpoint_consumer_map(rows), key=_endpoint_consumer_sort_key)[:limit]
+
+
+def _runtime_deploy_order_guidance(endpoint_consumer_map: list[JsonObject], *, limit: int) -> list[JsonObject]:
+    guidance = []
+    for row in endpoint_consumer_map:
+        provider = row.get("provider") if isinstance(row.get("provider"), dict) else {}
+        endpoint = row.get("provider_endpoint") if isinstance(row.get("provider_endpoint"), dict) else {}
+        consumers = row.get("consumers")
+        if not isinstance(consumers, list):
+            continue
+        for consumer_row in consumers:
+            if not isinstance(consumer_row, dict):
+                continue
+            consumer = consumer_row.get("consumer") if isinstance(consumer_row.get("consumer"), dict) else {}
+            guidance.append(
+                {
+                    "status": "practical_inference",
+                    "provider": provider,
+                    "endpoint": endpoint,
+                    "consumer": consumer,
+                    "recommendation": (
+                        "If this provider endpoint changes incompatibly, make the consumer compatible before or alongside the provider deploy."
+                    ),
+                    "basis": "static CALLS_ENDPOINT consumer matched to provider endpoint; not a canonical deploy-blocker fact",
+                    "missing_fact_families": [
+                        "canonical_service_deploy_blocker",
+                        "runtime_host_resolution",
+                        "endpoint_contract_change_classification",
+                    ],
+                    "evidence_coordinates": consumer_row.get("evidence_coordinates", []),
+                }
+            )
+    return sorted(_dedupe_guidance_rows(guidance), key=_guidance_sort_key)[:limit]
+
+
+def _runtime_missing_fact_families(
+    *,
+    deploy_order_guidance: list[JsonObject],
+    endpoint_consumer_map: list[JsonObject],
+) -> list[str]:
+    missing: list[str] = []
+    if deploy_order_guidance:
+        missing.extend(["canonical_service_deploy_blocker", "endpoint_contract_change_classification"])
+    if endpoint_consumer_map:
+        missing.append("runtime_host_resolution")
+    return sorted(set(missing))
+
+
+def _deploy_runtime_route(row: JsonObject) -> JsonObject:
+    qualifier = _compact_qualifier(row.get("qualifier"))
+    return {
+        "domain": _compact_entity(row.get("subject")),
+        "deploy_target": _compact_entity(row.get("object")),
+        "deploy_kind": _deploy_kind_for_route_or_target(row),
+        "route_source_kind": qualifier.get("source_kind"),
+        "backend_service": qualifier.get("backend_service"),
+        "backend_service_ports": qualifier.get("backend_service_ports", []),
+        "ingress_path": qualifier.get("ingress_path"),
+        "namespace": qualifier.get("namespace"),
+        "workload": qualifier.get("workload"),
+        "match_basis": qualifier.get("match_basis"),
+        "qualifier": qualifier,
+        "evidence_coordinates": _evidence_coordinates(row),
+    }
+
+
+def _deploy_details(qualifier: JsonObject) -> JsonObject:
+    keys = (
+        "source_kind",
+        "target_type",
+        "kubernetes_kind",
+        "namespace",
+        "workload",
+        "containers",
+        "images",
+        "ownership_basis",
+        "path",
+    )
+    return {key: qualifier[key] for key in keys if key in qualifier}
 
 
 def _fact_row(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_: JsonObject) -> JsonObject:
@@ -683,6 +865,72 @@ def _compact_row_entity_key(value: object) -> tuple[object, object, object]:
     return (value.get("entity_id"), value.get("kind"), value.get("name"))
 
 
+def _dedupe_deploy_runtime_units(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        service = row.get("service") if isinstance(row.get("service"), dict) else {}
+        target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+        key = (service.get("entity_id"), target.get("entity_id"), row.get("deploy_kind"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _dedupe_endpoint_consumer_map(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        provider = row.get("provider") if isinstance(row.get("provider"), dict) else {}
+        endpoint = row.get("provider_endpoint") if isinstance(row.get("provider_endpoint"), dict) else {}
+        key = (provider.get("entity_id"), endpoint.get("entity_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _dedupe_guidance_rows(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        provider = row.get("provider") if isinstance(row.get("provider"), dict) else {}
+        endpoint = row.get("endpoint") if isinstance(row.get("endpoint"), dict) else {}
+        consumer = row.get("consumer") if isinstance(row.get("consumer"), dict) else {}
+        key = (provider.get("entity_id"), endpoint.get("entity_id"), consumer.get("entity_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _deploy_runtime_sort_key(row: JsonObject) -> tuple[str, str, str]:
+    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+    target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+    return (str(service.get("repo") or ""), str(service.get("name") or ""), str(target.get("name") or ""))
+
+
+def _endpoint_consumer_sort_key(row: JsonObject) -> tuple[str, str]:
+    provider = row.get("provider") if isinstance(row.get("provider"), dict) else {}
+    endpoint = row.get("provider_endpoint") if isinstance(row.get("provider_endpoint"), dict) else {}
+    return (str(provider.get("name") or ""), str(endpoint.get("path") or endpoint.get("name") or ""))
+
+
+def _consumer_sort_key(row: JsonObject) -> tuple[str, str]:
+    consumer = row.get("consumer") if isinstance(row.get("consumer"), dict) else {}
+    return (str(consumer.get("repo") or ""), str(consumer.get("name") or ""))
+
+
+def _guidance_sort_key(row: JsonObject) -> tuple[str, str]:
+    consumer = row.get("consumer") if isinstance(row.get("consumer"), dict) else {}
+    provider = row.get("provider") if isinstance(row.get("provider"), dict) else {}
+    return (str(provider.get("name") or ""), str(consumer.get("name") or ""))
+
+
 def _route_sort_key(row: JsonObject) -> tuple[int, str, str]:
     status_rank = 0 if row.get("status") == "known_route" else 1
     domain = row.get("domain") if isinstance(row.get("domain"), dict) else {}
@@ -781,6 +1029,34 @@ def _endpoint_key(entity: JsonObject) -> tuple[str | None, str | None]:
     # Method-aware endpoint joins intentionally fail closed when one side lacks
     # a method; otherwise any path-only endpoint could absorb method-specific calls.
     return (str(method).upper() if method is not None else None, str(path) if path is not None else None)
+
+
+def _endpoint_key_from_row(row: JsonObject) -> tuple[str | None, str | None] | None:
+    endpoint = row.get("object")
+    if not isinstance(endpoint, dict):
+        return None
+    key = _endpoint_key(endpoint)
+    if key[1] is None:
+        return None
+    qualifier = row.get("qualifier")
+    if key[0] is None and isinstance(qualifier, dict):
+        method = qualifier.get("method")
+        if isinstance(method, str) and method.strip():
+            key = (method.strip().upper(), key[1])
+    return key
+
+
+def _endpoint_keys_are_compatible(
+    consumer_key: tuple[str | None, str | None] | None,
+    provider_key: tuple[str | None, str | None] | None,
+) -> bool:
+    if consumer_key is None or provider_key is None:
+        return False
+    consumer_method, consumer_path = consumer_key
+    provider_method, provider_path = provider_key
+    if consumer_path != provider_path or consumer_method is None or provider_method is None:
+        return False
+    return provider_method == "ANY" or consumer_method == provider_method
 
 
 def _entity_repo(entity: JsonObject) -> str | None:

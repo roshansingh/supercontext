@@ -650,6 +650,8 @@ def _count_row_qualifier_values(rows: list[JsonObject], key: str) -> JsonObject:
 def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
     repo = _planning_context_entity_repo(service)
     service_id = service.get("entity_id")
+    exposed_endpoint_rows = _exposed_endpoint_rows_for_service_id(kg, str(service_id)) if isinstance(service_id, str) else []
+    endpoint_consumer_rows = _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoint_rows)
     direct_domain_rows: list[JsonObject] = []
     deploy_target_rows: list[JsonObject] = []
     deploy_link_rows: list[JsonObject] = []
@@ -719,7 +721,17 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
     deploy_target_rows = _planning_context_dedupe_rows(deploy_target_rows)
     deploy_link_rows = _planning_context_dedupe_rows(deploy_link_rows)
     unlinked_domain_route_rows = _planning_context_dedupe_rows(unlinked_domain_route_rows)
+    endpoint_consumer_rows = _planning_context_dedupe_rows(endpoint_consumer_rows)
+    deploy_runtime_units = _service_deploy_runtime_units(kg, service, limit=limit)
+    deploy_order_guidance = _service_deploy_order_guidance(endpoint_consumer_rows, limit=limit)
     deploy_evidence_count = len(deploy_target_rows) + len(deploy_link_rows)
+    missing_contract_items = _operational_missing_contracts(
+        domain_route_rows=domain_route_rows,
+        deploy_target_rows=deploy_target_rows,
+        deploy_link_rows=deploy_link_rows,
+        unlinked_domain_route_rows=unlinked_domain_route_rows,
+        endpoint_consumer_rows=endpoint_consumer_rows,
+    )
     return {
         "summary": {
             "direct_domain_reference_count": len(direct_domain_rows),
@@ -727,10 +739,14 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
             "deploy_target_candidate_count": deploy_evidence_count,
             "deploy_target_entity_count": len(deploy_target_rows),
             "deploy_link_fact_count": len(deploy_link_rows),
+            "deploy_runtime_unit_count": len(deploy_runtime_units),
             "unlinked_domain_route_count": len(unlinked_domain_route_rows),
+            "endpoint_consumer_fact_count": len(endpoint_consumer_rows),
+            "practical_deploy_order_guidance_count": len(deploy_order_guidance["practical_deploy_order"]),
             "match_basis": "structured_repo_identity_only",
             "section_limit": limit,
         },
+        "missing_fact_families": [str(item["contract"]) for item in missing_contract_items],
         "evidence_buckets": list(OPERATIONAL_EVIDENCE_BUCKETS),
         "bucket_descriptions": OPERATIONAL_BUCKET_DESCRIPTIONS,
         "evidence_partition": _operational_evidence_partition(
@@ -739,12 +755,16 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
             deploy_target_rows=deploy_target_rows,
             deploy_link_rows=deploy_link_rows,
             unlinked_domain_route_rows=unlinked_domain_route_rows,
+            missing_contract_items=missing_contract_items,
             limit=limit,
         ),
+        "deploy_runtime_units": deploy_runtime_units[:limit],
+        "deploy_order_guidance": deploy_order_guidance,
         "direct_domain_references": direct_domain_rows[:limit],
         "domain_route_candidates": domain_route_rows[:limit],
         "deploy_target_candidates": deploy_target_rows[:limit],
         "deploy_link_facts": deploy_link_rows[:limit],
+        "endpoint_consumers": _compact_endpoint_consumer_rows(endpoint_consumer_rows, limit=limit),
         "unlinked_domain_route_samples": unlinked_domain_route_rows[:limit],
         "truncated": any(
             len(rows) > limit
@@ -753,11 +773,14 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
                 domain_route_rows,
                 deploy_target_rows,
                 deploy_link_rows,
+                deploy_runtime_units,
+                endpoint_consumer_rows,
+                deploy_order_guidance["practical_deploy_order"],
                 unlinked_domain_route_rows,
             )
         ),
         "coverage_note": (
-            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; deploy_link_facts require service-to-target evidence; unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
+            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; deploy_link_facts require service-to-target evidence; deploy_runtime_units join DEPLOYS_VIA_CONFIG to domain/ingress routes by deploy target. endpoint_consumers are static caller facts; deploy_order_guidance is a practical compatibility inference, not a canonical deploy-blocker fact. unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
         ),
     }
 
@@ -769,6 +792,7 @@ def _operational_evidence_partition(
     deploy_target_rows: list[JsonObject],
     deploy_link_rows: list[JsonObject],
     unlinked_domain_route_rows: list[JsonObject],
+    missing_contract_items: list[JsonObject],
     limit: int,
 ) -> JsonObject:
     known_count = len(direct_domain_rows) + len(domain_route_rows) + len(deploy_target_rows) + len(deploy_link_rows)
@@ -799,12 +823,7 @@ def _operational_evidence_partition(
         OPERATIONAL_MISSING_CONTRACTS: {
             "status": "present",
             "interpretation": OPERATIONAL_BUCKET_DESCRIPTIONS[OPERATIONAL_MISSING_CONTRACTS],
-            "items": _operational_missing_contracts(
-                domain_route_rows=domain_route_rows,
-                deploy_target_rows=deploy_target_rows,
-                deploy_link_rows=deploy_link_rows,
-                unlinked_domain_route_rows=unlinked_domain_route_rows,
-            ),
+            "items": missing_contract_items,
         },
     }
 
@@ -815,6 +834,7 @@ def _operational_missing_contracts(
     deploy_target_rows: list[JsonObject],
     deploy_link_rows: list[JsonObject],
     unlinked_domain_route_rows: list[JsonObject],
+    endpoint_consumer_rows: list[JsonObject] | None = None,
 ) -> list[JsonObject]:
     missing = [
         {
@@ -852,7 +872,213 @@ def _operational_missing_contracts(
                 ),
             }
         )
+    if endpoint_consumer_rows:
+        missing.append(
+            {
+                "contract": "endpoint_contract_change_classification",
+                "status": "not_proven",
+                "meaning": (
+                    "Static endpoint consumers prove compatibility risk candidates, but the KG does not know whether the provider change is backward-compatible."
+                ),
+            }
+        )
     return missing
+
+
+def _service_deploy_runtime_units(kg: KgSnapshot, service: JsonObject, *, limit: int) -> list[JsonObject]:
+    service_id = service.get("entity_id")
+    if not isinstance(service_id, str):
+        return []
+    route_facts_by_target: dict[str, list[JsonObject]] = {}
+    for fact in kg.facts:
+        if fact.get("predicate") != "ROUTES_DOMAIN_TO_DEPLOY":
+            continue
+        target_id = fact.get("object_id")
+        if isinstance(target_id, str):
+            route_facts_by_target.setdefault(target_id, []).append(fact)
+
+    units = []
+    for fact in kg.facts:
+        if fact.get("predicate") != "DEPLOYS_VIA_CONFIG" or fact.get("subject_id") != service_id:
+            continue
+        target = kg.entities_by_id.get(fact.get("object_id"))
+        if not target:
+            continue
+        qualifier = fact.get("qualifier") if isinstance(fact.get("qualifier"), dict) else {}
+        target_id = str(fact.get("object_id"))
+        ingress_or_domain_routes = []
+        for route_fact in route_facts_by_target.get(target_id, []):
+            route_row = _service_deploy_route_row(kg, route_fact)
+            if route_row:
+                ingress_or_domain_routes.append(route_row)
+            if len(ingress_or_domain_routes) >= limit:
+                break
+        units.append(
+            {
+                "status": "known_linked_deploy_unit",
+                "service": _operational_compact_entity(service),
+                "deploy_target": _operational_compact_entity(target),
+                "deploy_kind": _operational_deploy_kind(target, qualifier),
+                "deploy_details": _operational_deploy_details(qualifier),
+                "ingress_or_domain_routes": ingress_or_domain_routes,
+                "evidence_coordinates": _operational_evidence_coordinates(kg.evidence_by_target.get(fact.get("fact_id"), [])),
+            }
+        )
+    return sorted(_dedupe_operational_units(units), key=_operational_unit_sort_key)[:limit]
+
+
+def _service_deploy_route_row(kg: KgSnapshot, fact: JsonObject) -> JsonObject:
+    domain = kg.entities_by_id.get(fact.get("subject_id"))
+    target = kg.entities_by_id.get(fact.get("object_id"))
+    if not domain or not target:
+        return {}
+    qualifier = fact.get("qualifier") if isinstance(fact.get("qualifier"), dict) else {}
+    return {
+        "domain": _operational_compact_entity(domain),
+        "deploy_target": _operational_compact_entity(target),
+        "deploy_kind": _operational_deploy_kind(target, qualifier),
+        "route_source_kind": qualifier.get("source_kind"),
+        "backend_service": qualifier.get("backend_service"),
+        "backend_service_ports": qualifier.get("backend_service_ports", []),
+        "ingress_path": qualifier.get("ingress_path"),
+        "namespace": qualifier.get("namespace"),
+        "workload": qualifier.get("workload"),
+        "match_basis": qualifier.get("match_basis"),
+        "evidence_coordinates": _operational_evidence_coordinates(kg.evidence_by_target.get(fact.get("fact_id"), [])),
+    }
+
+
+def _service_deploy_order_guidance(endpoint_consumer_rows: list[JsonObject], *, limit: int) -> JsonObject:
+    public_consumers = _compact_endpoint_consumer_rows(endpoint_consumer_rows, limit=max(limit, len(endpoint_consumer_rows)))
+    returned_consumers = public_consumers[:limit]
+    practical_order = []
+    for row in returned_consumers:
+        consumer = row.get("consumer") if isinstance(row.get("consumer"), dict) else {}
+        practical_order.append(
+            {
+                "status": "practical_inference",
+                "consumer": consumer,
+                "matched_provider_endpoint": row.get("matched_provider_endpoint", {}),
+                "recommendation": (
+                    "If the provider endpoint changes incompatibly, make this consumer compatible before or alongside the provider deploy."
+                ),
+                "basis": "static CALLS_ENDPOINT consumer matched to a provider endpoint; not a canonical deploy-blocker fact",
+                "missing_fact_families": [
+                    "canonical_service_deploy_blocker",
+                    "runtime_host_resolution",
+                    "endpoint_contract_change_classification",
+                ],
+                "evidence_coordinates": row.get("evidence_coordinates", []),
+            }
+        )
+    return {
+        "status": "inference_available" if practical_order else "no_static_endpoint_consumers",
+        "inference_contract": (
+            "deploy_order_guidance is a compatibility-risk recommendation derived from static endpoint consumers. It must not be presented as a canonical deploy-blocker relation."
+        ),
+        "proven_endpoint_consumers": returned_consumers,
+        "practical_deploy_order": practical_order,
+        "truncated": len(public_consumers) > limit,
+    }
+
+
+def _compact_endpoint_consumer_rows(rows: list[JsonObject], *, limit: int) -> list[JsonObject]:
+    compact_rows = []
+    for row in _planning_context_public_rows(rows)[:limit]:
+        compact_rows.append(
+            {
+                "consumer": row.get("consumer", {}),
+                "matched_provider_endpoint": row.get("matched_provider_endpoint", {}),
+                "match_basis": row.get("match_basis"),
+                "qualifier": row.get("qualifier", {}),
+                "evidence_coordinates": _operational_evidence_coordinates(row.get("evidence", [])),
+            }
+        )
+    return compact_rows
+
+
+def _operational_compact_entity(entity: JsonObject) -> JsonObject:
+    identity = entity.get("identity")
+    properties = entity.get("properties")
+    if not isinstance(identity, dict):
+        identity = {}
+    if not isinstance(properties, dict):
+        properties = {}
+    return {
+        "entity_id": entity.get("entity_id"),
+        "kind": entity.get("kind"),
+        "name": display_entity(entity),
+        "repo": identity.get("repo") or properties.get("repo"),
+        "slug": identity.get("slug"),
+        "type": identity.get("type"),
+        "target": identity.get("target"),
+        "path": identity.get("path") or properties.get("path"),
+    }
+
+
+def _operational_deploy_kind(target: JsonObject, qualifier: JsonObject) -> str | None:
+    identity = target.get("identity") if isinstance(target.get("identity"), dict) else {}
+    target_type = qualifier.get("target_type")
+    deploy_type = identity.get("type") or target_type
+    return str(deploy_type) if deploy_type else None
+
+
+def _operational_deploy_details(qualifier: JsonObject) -> JsonObject:
+    keys = (
+        "source_kind",
+        "target_type",
+        "kubernetes_kind",
+        "namespace",
+        "workload",
+        "containers",
+        "images",
+        "ownership_basis",
+        "path",
+    )
+    return {key: qualifier[key] for key in keys if key in qualifier}
+
+
+def _operational_evidence_coordinates(evidence_rows: object, *, limit: int = 2) -> list[JsonObject]:
+    if not isinstance(evidence_rows, list):
+        return []
+    coordinates = []
+    for evidence in evidence_rows:
+        if not isinstance(evidence, dict):
+            continue
+        bytes_ref = evidence.get("bytes_ref")
+        if not isinstance(bytes_ref, dict):
+            continue
+        coordinate = {
+            "repo": bytes_ref.get("repo_name") or bytes_ref.get("repo"),
+            "path": bytes_ref.get("path"),
+            "line_start": bytes_ref.get("line_start"),
+            "line_end": bytes_ref.get("line_end"),
+            "confidence": evidence.get("confidence"),
+            "source_system": evidence.get("source_system"),
+        }
+        coordinates.append({key: value for key, value in coordinate.items() if value is not None})
+        if len(coordinates) >= limit:
+            break
+    return coordinates
+
+
+def _dedupe_operational_units(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        service = row.get("service") if isinstance(row.get("service"), dict) else {}
+        target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+        key = (service.get("entity_id"), target.get("entity_id"), row.get("deploy_kind"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _operational_unit_sort_key(row: JsonObject) -> tuple[str, str]:
+    target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+    return (str(row.get("deploy_kind") or ""), str(target.get("name") or ""))
 
 
 def _operational_entity_row(kg: KgSnapshot, entity: JsonObject, *, match_basis: str) -> JsonObject:
@@ -2693,9 +2919,10 @@ def _planning_context_output(
         bounded_services,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
+    runtime_repo = anchors.get("repo") or _planning_context_single_service_repo(anchors, bounded_services)
     runtime_architecture = runtime_architecture_packet(
         kg,
-        repo=anchors.get("repo"),
+        repo=runtime_repo,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
         include_legacy_sections=False,
     )
@@ -2774,6 +3001,15 @@ def _planning_context_output(
 
 def _planning_context_anchors(arguments: JsonObject) -> JsonObject:
     return {field: _optional_string(arguments, field) for field in _PLANNING_CONTEXT_ANCHOR_FIELDS}
+
+
+def _planning_context_single_service_repo(anchors: dict[str, str | None], services: list[JsonObject]) -> str | None:
+    if not anchors.get("service"):
+        return None
+    if len(services) != 1:
+        return None
+    repo = services[0].get("repo")
+    return repo if isinstance(repo, str) and repo.strip() else None
 
 
 def _is_planning_context_fleet_request(*, query: str | None, line: int | None, anchors: JsonObject) -> bool:
@@ -3110,8 +3346,12 @@ def _planning_context_runtime_architecture_reference(runtime_architecture: JsonO
         "summary": runtime_architecture.get("summary", {}),
         "scope": runtime_architecture.get("scope", {}),
         "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
+        "missing_fact_families": answer_packet.get("missing_fact_families", []),
         "evidence_contract": answer_packet.get("evidence_contract"),
         "read_top_level_field": "runtime_architecture.answer_packet",
+        "read_for_deploy_runtime": "runtime_architecture.answer_packet.deploy_runtime_map",
+        "read_for_endpoint_consumers": "runtime_architecture.answer_packet.endpoint_consumer_map",
+        "read_for_deploy_order": "runtime_architecture.answer_packet.deploy_order_guidance",
     }
 
 
@@ -3697,10 +3937,10 @@ _TOOLS: dict[str, McpTool] = {
             "Use it first for broad cross-repo service discovery, runtime architecture, domain-routing, dependency, planning, or impact-map questions before selecting narrower MCP tools or looping over search_services/get_service_brief. "
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
-            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
+            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
-            "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
+            "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "
             "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Calling it with no anchor returns a fleet packet with compact service identities plus runtime_architecture.answer_packet. "

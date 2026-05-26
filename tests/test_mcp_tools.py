@@ -12,7 +12,7 @@ from source.kg.core.models import Entity, Evidence, Fact, canonical_json
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import TOOL_NAMES, _planning_context_symbol_impact, call_tool, tool_definitions
-from source.kg.product.output_budget import enforce_planning_context_budget
+from source.kg.product.output_budget import PLANNING_CONTEXT_ANCHORED_MAX_CHARS, enforce_planning_context_budget
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
@@ -313,6 +313,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("domain_routed", answer_packet["runtime_building_blocks"][0]["runtime_categories"])
         self.assertEqual(answer_packet["domain_routing_map"][0]["status"], "known_route")
         self.assertEqual(answer_packet["domain_routing_map"][0]["deploy_kind"], "apache_wsgi")
+        self.assertEqual(answer_packet["deploy_runtime_map"][0]["status"], "known_linked_deploy_unit")
+        self.assertEqual(answer_packet["endpoint_consumer_map"][0]["consumer_count"], 1)
+        self.assertEqual(answer_packet["deploy_order_guidance"][0]["status"], "practical_inference")
+        self.assertIn("canonical_service_deploy_blocker", answer_packet["missing_fact_families"])
         self.assertEqual(
             result["related_facts"]["runtime_architecture"]["deploy_kind_counts"]["component_deploy_kind_counts"],
             {"apache_wsgi": 1},
@@ -322,6 +326,35 @@ class McpToolsTest(unittest.TestCase):
             {},
         )
         self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
+
+    def test_service_operational_surfaces_include_kubernetes_runtime_unit_and_deploy_order_guidance(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            operational_deploy_mapping=True,
+            operational_deploy_link=True,
+            operational_deploy_same_repo=True,
+            kubernetes_operational_deploy=True,
+        ) as kg:
+            result = call_tool(kg, "planning_context", {"service": "payments", "limit": 10})
+
+        surfaces = result["service_operational_surfaces"]
+        self.assertEqual(result["runtime_architecture"]["scope"], {"kind": "repo", "repo": "payments"})
+        self.assertEqual(surfaces["summary"]["deploy_runtime_unit_count"], 1)
+        unit = surfaces["deploy_runtime_units"][0]
+        self.assertEqual(unit["deploy_kind"], "kubernetes_deployment")
+        self.assertEqual(unit["deploy_details"]["workload"], "payments")
+        self.assertEqual(unit["deploy_details"]["containers"], ["payments"])
+        self.assertEqual(unit["deploy_details"]["images"], ["registry.example.com/payments:latest"])
+        route = unit["ingress_or_domain_routes"][0]
+        self.assertEqual(route["domain"]["name"], "payments.example.com")
+        self.assertEqual(route["backend_service"], "payments-service")
+        self.assertEqual(route["backend_service_ports"], [{"port": 80, "targetPort": 8000}])
+        self.assertEqual(route["ingress_path"], "/")
+        guidance = surfaces["deploy_order_guidance"]
+        self.assertEqual(guidance["status"], "inference_available")
+        self.assertEqual(guidance["practical_deploy_order"][0]["consumer"]["slug"], "web")
+        self.assertIn("canonical_service_deploy_blocker", guidance["practical_deploy_order"][0]["missing_fact_families"])
+        self.assertIn("endpoint_contract_change_classification", surfaces["missing_fact_families"])
 
     def test_runtime_architecture_surfaces_unlinked_terraform_domain_leads(self) -> None:
         with _fixture_snapshot(static_hosting_domain_reference=True) as kg:
@@ -399,15 +432,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(answer_packet["domain_routing_map"][0]["evidence_coordinates"])
         self.assertIn("Use narrower or additional planning_context anchors", budget["advice"])
 
-    def test_planning_context_output_budget_applies_to_oversized_anchor_packets(self) -> None:
+    def test_planning_context_service_anchor_scopes_runtime_before_budgeting(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
             result = call_tool(kg, "planning_context", {"service": "runtime-service-0"})
 
-        self.assertLessEqual(len(canonical_json(result)), 150_000)
+        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
         self.assertEqual(result["tool"], "planning_context")
-        self.assertTrue(result["output_budget"]["truncated"])
-        self.assertLessEqual(len(canonical_json(result)), result["output_budget"]["max_chars"])
-        self.assertEqual(result["output_budget"]["max_chars"], 150_000)
+        self.assertNotIn("output_budget", result)
+        self.assertEqual(result["runtime_architecture"]["scope"], {"kind": "repo", "repo": "runtime-repo-0"})
         self.assertIn("service_operational_surfaces", result)
 
     def test_planning_context_output_budget_preserves_valid_json_transport_shape(self) -> None:
@@ -1488,6 +1520,7 @@ class _fixture_snapshot:
         containing_checkout_class: bool = False,
         app_surface: bool = False,
         static_hosting_domain_reference: bool = False,
+        kubernetes_operational_deploy: bool = False,
         runtime_pressure_routes: int = 0,
         runtime_pressure_payload_size: int = 0,
         symbol_repo: str = "payments",
@@ -1511,6 +1544,7 @@ class _fixture_snapshot:
         self.containing_checkout_class = containing_checkout_class
         self.app_surface = app_surface
         self.static_hosting_domain_reference = static_hosting_domain_reference
+        self.kubernetes_operational_deploy = kubernetes_operational_deploy
         self.runtime_pressure_routes = runtime_pressure_routes
         self.runtime_pressure_payload_size = runtime_pressure_payload_size
         self.symbol_repo = symbol_repo
@@ -1653,9 +1687,20 @@ class _fixture_snapshot:
             kind="Domain",
             identity={"tenant_id": "default", "repo": operational_deploy_repo, "name": "payments.example.com"},
         )
+        deploy_target_type = "kubernetes_deployment" if self.kubernetes_operational_deploy else "wsgi"
+        deploy_target_name = (
+            "k8s/payments.yaml#default/deployment/payments"
+            if self.kubernetes_operational_deploy
+            else "/srv/payments/app.wsgi"
+        )
         deploy_target = Entity(
             kind="DeployTarget",
-            identity={"tenant_id": "default", "repo": operational_deploy_repo, "type": "wsgi", "target": "/srv/payments/app.wsgi"},
+            identity={
+                "tenant_id": "default",
+                "repo": operational_deploy_repo,
+                "type": deploy_target_type,
+                "target": deploy_target_name,
+            },
         )
         env_var = Entity(
             kind="EnvVar",
@@ -1782,12 +1827,41 @@ class _fixture_snapshot:
         consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
         domain_fact = Fact("REFERENCES_DOMAIN", env_var.entity_id, domain.entity_id)
-        route_fact = Fact("ROUTES_DOMAIN_TO_DEPLOY", route_domain.entity_id, deploy_target.entity_id, {"source_kind": "fixture_vhost"})
+        route_qualifier = (
+            {
+                "source_kind": "kubernetes_ingress",
+                "target_type": "kubernetes_deployment",
+                "kubernetes_kind": "Deployment",
+                "namespace": "default",
+                "workload": "payments",
+                "backend_service": "payments-service",
+                "backend_service_ports": [{"port": 80, "targetPort": 8000}],
+                "ingress_path": "/",
+                "match_basis": "ingress_backend_service_selector_to_workload",
+            }
+            if self.kubernetes_operational_deploy
+            else {"source_kind": "fixture_vhost"}
+        )
+        route_fact = Fact("ROUTES_DOMAIN_TO_DEPLOY", route_domain.entity_id, deploy_target.entity_id, route_qualifier)
+        deploy_link_qualifier = (
+            {
+                "source_kind": "kubernetes_manifest",
+                "target_type": "kubernetes_deployment",
+                "kubernetes_kind": "Deployment",
+                "namespace": "default",
+                "workload": "payments",
+                "containers": ["payments"],
+                "images": ["registry.example.com/payments:latest"],
+                "ownership_basis": "image_repo_name_matches_service_identity:payments",
+            }
+            if self.kubernetes_operational_deploy
+            else {"source_kind": "runtime_linker", "resolved_by": "fixture"}
+        )
         deploy_link_fact = Fact(
             "DEPLOYS_VIA_CONFIG",
             service.entity_id,
             deploy_target.entity_id,
-            {"source_kind": "runtime_linker", "resolved_by": "fixture"},
+            deploy_link_qualifier,
         )
         static_hosting_fact = Fact(
             "REFERENCES_DOMAIN",

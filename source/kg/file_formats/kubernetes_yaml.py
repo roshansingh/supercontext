@@ -62,6 +62,7 @@ class KubernetesService:
     name: str
     namespace: str
     selector: dict[str, str]
+    ports: tuple[JsonObject, ...]
     line: int
 
 
@@ -122,10 +123,13 @@ def extract_kubernetes_manifests(
         )
 
     workloads_by_service = _workloads_by_service(result.workloads, result.services)
+    services_by_key = {(service.namespace, service.name): service for service in result.services}
     for route in result.ingress_routes:
         domain = domain_from_value(route.host)
         if domain is None:
             continue
+        backend_service = services_by_key.get((route.namespace, route.service_name))
+        backend_service_ports = list(backend_service.ports) if backend_service is not None else []
         domain_ref = domain_entity(repo, domain, resolved_tenant_id)
         add_entity_evidence(build, repo, domain_ref, scanned.path, route.line)
         add_fact(
@@ -141,6 +145,7 @@ def extract_kubernetes_manifests(
                 "kubernetes_kind": "Ingress",
                 "namespace": route.namespace,
                 "backend_service": route.service_name,
+                **({"backend_service_ports": backend_service_ports} if backend_service_ports else {}),
                 "path": scanned.relative_path,
                 "ingress_path": route.path or "",
             },
@@ -162,6 +167,7 @@ def extract_kubernetes_manifests(
                     "namespace": workload.namespace,
                     "workload": workload.name,
                     "backend_service": route.service_name,
+                    **({"backend_service_ports": backend_service_ports} if backend_service_ports else {}),
                     "ingress_path": route.path or "",
                     "path": scanned.relative_path,
                     "match_basis": "ingress_backend_service_selector_to_workload",
@@ -241,6 +247,7 @@ def kubernetes_manifests(
                     name=name,
                     namespace=namespace,
                     selector=_string_mapping(_mapping(doc.get("spec")).get("selector")),
+                    ports=_service_ports(doc),
                     line=line,
                 )
             )
@@ -342,6 +349,38 @@ def _containers_for_workload(doc: dict[object, object]) -> tuple[tuple[str, ...]
         if image:
             images.append(image)
     return tuple(names), tuple(images)
+
+
+def _service_ports(doc: dict[object, object]) -> tuple[JsonObject, ...]:
+    ports = _mapping(doc.get("spec")).get("ports")
+    if not isinstance(ports, list):
+        return ()
+    rows: list[JsonObject] = []
+    for port in ports:
+        if not isinstance(port, dict):
+            continue
+        row = {
+            key: value
+            for key, value in {
+                "name": _string(port.get("name")),
+                "protocol": _string(port.get("protocol")),
+                "port": _port_value(port.get("port")),
+                "targetPort": _port_value(port.get("targetPort")),
+                "nodePort": _port_value(port.get("nodePort")),
+            }.items()
+            if value is not None
+        }
+        if row:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _port_value(value: object) -> int | str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return _string(value)
 
 
 def _pod_spec_for_workload(doc: dict[object, object]) -> dict[object, object]:

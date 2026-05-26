@@ -14,6 +14,9 @@ COMPACT_RUNTIME_ROUTE_LIMIT = 15
 
 _RUNTIME_COMPONENTS_PATH = "runtime_architecture.answer_packet.runtime_building_blocks"
 _RUNTIME_ROUTES_PATH = "runtime_architecture.answer_packet.domain_routing_map"
+_RUNTIME_DEPLOY_UNITS_PATH = "runtime_architecture.answer_packet.deploy_runtime_map"
+_RUNTIME_CONSUMERS_PATH = "runtime_architecture.answer_packet.endpoint_consumer_map"
+_RUNTIME_DEPLOY_GUIDANCE_PATH = "runtime_architecture.answer_packet.deploy_order_guidance"
 _PLANNING_BUDGET_ADVICE = (
     "Use narrower or additional planning_context anchors such as repo+service, domain+repo, endpoint, path, or line "
     "to retrieve omitted runtime detail."
@@ -121,6 +124,18 @@ def _runtime_answer_counts(result: JsonObject) -> dict[str, int]:
             summary.get("domain_routing_map_count"),
             fallback=len(routes) if isinstance(routes, list) else 0,
         ),
+        "deploy_runtime_map": _int_count(
+            summary.get("deploy_runtime_unit_count"),
+            fallback=_answer_list_len(answer_packet, "deploy_runtime_map"),
+        ),
+        "endpoint_consumer_map": _int_count(
+            summary.get("endpoint_consumer_map_count"),
+            fallback=_answer_list_len(answer_packet, "endpoint_consumer_map"),
+        ),
+        "deploy_order_guidance": _int_count(
+            summary.get("deploy_order_guidance_count"),
+            fallback=_answer_list_len(answer_packet, "deploy_order_guidance"),
+        ),
     }
 
 
@@ -145,6 +160,10 @@ def _truncate_runtime_answer(result: JsonObject, *, component_limit: int, route_
     routes = answer_packet.get("domain_routing_map")
     if isinstance(routes, list):
         answer_packet["domain_routing_map"] = routes[:route_limit]
+    for key in ("deploy_runtime_map", "endpoint_consumer_map", "deploy_order_guidance"):
+        rows = answer_packet.get(key)
+        if isinstance(rows, list):
+            answer_packet[key] = rows[:route_limit]
 
 
 def _attach_budget_metadata(
@@ -159,13 +178,25 @@ def _attach_budget_metadata(
     shown_counts = _runtime_answer_shown_counts(result)
     omitted_counts = {
         key: max(0, original_counts.get(key, 0) - shown_counts.get(key, 0))
-        for key in ("runtime_building_blocks", "domain_routing_map")
+        for key in (
+            "runtime_building_blocks",
+            "domain_routing_map",
+            "deploy_runtime_map",
+            "endpoint_consumer_map",
+            "deploy_order_guidance",
+        )
     }
     truncated_sections = []
     if omitted_counts["runtime_building_blocks"] > 0:
         truncated_sections.append(_RUNTIME_COMPONENTS_PATH)
     if omitted_counts["domain_routing_map"] > 0:
         truncated_sections.append(_RUNTIME_ROUTES_PATH)
+    if omitted_counts["deploy_runtime_map"] > 0:
+        truncated_sections.append(_RUNTIME_DEPLOY_UNITS_PATH)
+    if omitted_counts["endpoint_consumer_map"] > 0:
+        truncated_sections.append(_RUNTIME_CONSUMERS_PATH)
+    if omitted_counts["deploy_order_guidance"] > 0:
+        truncated_sections.append(_RUNTIME_DEPLOY_GUIDANCE_PATH)
     advice = _PLANNING_BUDGET_ADVICE
     if fallback:
         advice += " The response also dropped non-essential planning sections to preserve a valid JSON packet."
@@ -199,6 +230,9 @@ def _runtime_answer_shown_counts(result: JsonObject) -> dict[str, int]:
     return {
         "runtime_building_blocks": len(components) if isinstance(components, list) else 0,
         "domain_routing_map": len(routes) if isinstance(routes, list) else 0,
+        "deploy_runtime_map": _answer_list_len(answer_packet, "deploy_runtime_map"),
+        "endpoint_consumer_map": _answer_list_len(answer_packet, "endpoint_consumer_map"),
+        "deploy_order_guidance": _answer_list_len(answer_packet, "deploy_order_guidance"),
     }
 
 
@@ -212,7 +246,11 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
             compact_answer = {
                 "runtime_building_blocks": _list_value(answer_packet.get("runtime_building_blocks")),
                 "domain_routing_map": _list_value(answer_packet.get("domain_routing_map")),
+                "deploy_runtime_map": _list_value(answer_packet.get("deploy_runtime_map")),
+                "endpoint_consumer_map": _list_value(answer_packet.get("endpoint_consumer_map")),
+                "deploy_order_guidance": _list_value(answer_packet.get("deploy_order_guidance")),
                 "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
+                "missing_fact_families": answer_packet.get("missing_fact_families", []),
                 "evidence_contract": answer_packet.get("evidence_contract"),
             }
         compact_runtime = {
@@ -239,7 +277,9 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         fallback.update(
             {
                 "inventory": result.get("inventory", {}),
-                "service_operational_surfaces": result.get("service_operational_surfaces", {}),
+                "service_operational_surfaces": _compact_service_operational_surfaces(
+                    result.get("service_operational_surfaces", {})
+                ),
                 "services": result.get("services", []),
                 "symbols": result.get("symbols", []),
                 "dependencies": result.get("dependencies", []),
@@ -259,7 +299,13 @@ def _minimize_runtime_answer_rows(result: JsonObject) -> None:
     answer_packet = _runtime_answer_packet(result)
     if answer_packet is None:
         return
-    for key in ("runtime_building_blocks", "domain_routing_map"):
+    for key in (
+        "runtime_building_blocks",
+        "domain_routing_map",
+        "deploy_runtime_map",
+        "endpoint_consumer_map",
+        "deploy_order_guidance",
+    ):
         rows = answer_packet.get(key)
         if not isinstance(rows, list):
             continue
@@ -288,12 +334,79 @@ def _minimal_runtime_row(row: JsonObject) -> JsonObject:
         "target",
         "services",
         "source",
+        "service",
+        "provider",
+        "provider_endpoint",
+        "endpoint",
+        "consumer",
+        "deploy_target",
         "deploy_kind",
+        "deploy_details",
+        "ingress_or_domain_routes",
         "route_source_kind",
+        "backend_service",
+        "backend_service_ports",
+        "ingress_path",
+        "recommendation",
+        "basis",
+        "missing_fact_families",
         "evidence_coordinates",
         "interpretation",
     )
     return {key: row[key] for key in keys if key in row}
+
+
+def _compact_service_operational_surfaces(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    deploy_order = value.get("deploy_order_guidance")
+    if not isinstance(deploy_order, dict):
+        deploy_order = {}
+    partition = value.get("evidence_partition")
+    if not isinstance(partition, dict):
+        partition = {}
+    missing_contracts = partition.get("missing_contracts")
+    if not isinstance(missing_contracts, dict):
+        missing_contracts = {}
+    return {
+        "status": value.get("status"),
+        "summary": value.get("summary", {}),
+        "missing_fact_families": value.get("missing_fact_families", []),
+        "evidence_buckets": value.get("evidence_buckets", []),
+        "evidence_partition": {
+            "known_linked": _compact_partition_counts(partition.get("known_linked")),
+            "unlinked_evidence": _compact_partition_counts(partition.get("unlinked_evidence")),
+            "missing_contracts": {
+                "status": missing_contracts.get("status"),
+                "items": missing_contracts.get("items", []),
+            },
+        },
+        "deploy_runtime_units": [
+            _minimal_runtime_row(row)
+            for row in _list_value(value.get("deploy_runtime_units"))
+            if isinstance(row, dict)
+        ],
+        "deploy_order_guidance": {
+            "status": deploy_order.get("status"),
+            "inference_contract": deploy_order.get("inference_contract"),
+            "practical_deploy_order": [
+                _minimal_runtime_row(row)
+                for row in _list_value(deploy_order.get("practical_deploy_order"))
+                if isinstance(row, dict)
+            ],
+            "truncated": deploy_order.get("truncated"),
+        },
+        "coverage_note": value.get("coverage_note"),
+    }
+
+
+def _compact_partition_counts(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "status": value.get("status"),
+        "counts": value.get("counts", {}),
+    }
 
 
 def _minimal_valid_packet(result: JsonObject) -> JsonObject:
@@ -305,6 +418,7 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         if isinstance(answer_packet, dict):
             compact_answer = {
                 "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
+                "missing_fact_families": answer_packet.get("missing_fact_families", []),
                 "evidence_contract": answer_packet.get("evidence_contract"),
             }
         compact_runtime = {
@@ -321,6 +435,9 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         "snapshot_summary": result.get("snapshot_summary", {}),
         "snapshot_scope": result.get("snapshot_scope", {}),
         "runtime_architecture": compact_runtime,
+        "service_operational_surfaces": _compact_service_operational_surfaces(
+            result.get("service_operational_surfaces", {})
+        ),
         "anchors": result.get("anchors", {}),
         "answerability": result.get("answerability", {}),
         "coverage_warnings": [],
@@ -333,3 +450,8 @@ def _list_value(value: object) -> list[object]:
     if not isinstance(value, list):
         return []
     return value
+
+
+def _answer_list_len(answer_packet: JsonObject, key: str) -> int:
+    value = answer_packet.get(key)
+    return len(value) if isinstance(value, list) else 0

@@ -75,6 +75,7 @@ class KubernetesYamlExtractionTest(unittest.TestCase):
         self.assertEqual(deploy.qualifier["namespace"], "production")
         self.assertEqual(deploy.qualifier["workload"], "orders-api")
         self.assertEqual(route.qualifier["backend_service"], "orders-api-service")
+        self.assertEqual(route.qualifier["backend_service_ports"], [{"port": 80, "targetPort": 8000}])
         self.assertEqual(route.qualifier["match_basis"], "ingress_backend_service_selector_to_workload")
 
     def test_unowned_workload_does_not_emit_service_deploy_fact(self) -> None:
