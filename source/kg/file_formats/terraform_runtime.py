@@ -10,7 +10,7 @@ closed.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import re
 
 from source.kg.core.models import Coverage, Entity
@@ -25,6 +25,13 @@ from source.kg.file_formats._shared.common import (
     domain_entity,
 )
 from source.kg.file_formats._shared.domain_literals import domain_from_value, safe_config_literal
+from source.kg.file_formats._shared.hcl import (
+    brace_delta,
+    has_brace_outside_quote,
+    heredoc_start_marker,
+    quoted_value_at,
+    strip_comments,
+)
 
 
 TERRAFORM_CLOUDFRONT_TARGET_TYPE = "cloudfront_distribution"
@@ -37,11 +44,12 @@ class TerraformAssignment:
     line: int
 
 
-@dataclass(frozen=True)
+@dataclass
 class TerraformNestedBlock:
     kind: str
     line: int
-    assignments: dict[str, TerraformAssignment] = field(default_factory=dict)
+    assignments: dict[str, TerraformAssignment]
+    malformed_assignments: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,7 @@ class TerraformBlock:
     relative_path: str
     assignments: dict[str, TerraformAssignment]
     nested_blocks: tuple[TerraformNestedBlock, ...]
+    malformed_assignments: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -98,7 +107,7 @@ def extract_terraform_runtime_routes(
             continue
         _add_cloudfront_alias_references(repo, build, tenant_id, service_entity, block, aliases)
         if not origins:
-            _add_cloudfront_coverage(repo, build, tenant_id, block, reason="cloudfront_no_s3_origin")
+            _add_cloudfront_coverage(repo, build, tenant_id, block, reason=_cloudfront_origin_skip_reason(block))
             continue
 
         target = deploy_target_entity(
@@ -138,7 +147,6 @@ def extract_terraform_runtime_routes(
                 target,
                 repo,
                 repo.root / block.relative_path,
-                block.line,
                 alias.line,
                 qualifier={
                     "source_kind": "terraform_cloudfront_alias",
@@ -208,9 +216,21 @@ def _add_cloudfront_coverage(
 
 
 def _cloudfront_alias_skip_reason(block: TerraformBlock) -> str:
-    if "aliases" not in block.assignments:
+    assignment = block.assignments.get("aliases")
+    if assignment is None:
+        if "aliases" in block.malformed_assignments:
+            return "cloudfront_alias_malformed"
         return "cloudfront_alias_missing"
+    if not _list_items(assignment.raw_value):
+        return "cloudfront_alias_empty"
     return "cloudfront_alias_unresolved"
+
+
+def _cloudfront_origin_skip_reason(block: TerraformBlock) -> str:
+    for nested in block.nested_blocks:
+        if nested.kind == "origin" and "domain_name" in nested.malformed_assignments:
+            return "cloudfront_origin_domain_malformed"
+    return "cloudfront_no_s3_origin"
 
 
 @dataclass(frozen=True)
@@ -323,7 +343,7 @@ def _top_level_blocks(scanned: ScannedFile) -> list[TerraformBlock]:
             if current is not None:
                 current[3].append((line_number, ""))
             continue
-        uncommented_line, in_block_comment = _strip_comments(raw_line, in_block_comment=in_block_comment)
+        uncommented_line, in_block_comment = strip_comments(raw_line, in_block_comment=in_block_comment)
         line = uncommented_line.strip()
         if current is None:
             match = _BLOCK_HEADER_RE.match(line)
@@ -331,20 +351,20 @@ def _top_level_blocks(scanned: ScannedFile) -> list[TerraformBlock]:
                 continue
             labels = tuple(re.findall(r'"([^"]+)"', match.group("labels")))
             current = (match.group("kind"), labels, line_number, [])
-            depth = _brace_delta(line)
+            depth = brace_delta(line)
             if depth <= 0:
                 kind, labels, start_line, body = current
                 blocks.append(_parse_block_body(scanned, kind, labels, start_line, body))
                 current = None
             continue
 
-        marker = _heredoc_start_marker(line)
+        marker = heredoc_start_marker(line)
         if marker is not None:
             heredoc_marker = marker
             current[3].append((line_number, ""))
         else:
             current[3].append((line_number, line))
-        depth += _brace_delta(line)
+        depth += brace_delta(line)
         if depth <= 0:
             kind, labels, start_line, body = current
             blocks.append(_parse_block_body(scanned, kind, labels, start_line, body))
@@ -362,11 +382,13 @@ def _parse_block_body(
     body: list[tuple[int, str]],
 ) -> TerraformBlock:
     assignments: dict[str, TerraformAssignment] = {}
+    malformed_assignments: set[str] = set()
     nested_blocks: list[TerraformNestedBlock] = []
     nested_kind: str | None = None
     nested_line = 0
     nested_depth = 0
     nested_assignments: dict[str, TerraformAssignment] = {}
+    nested_malformed_assignments: set[str] = set()
 
     index = 0
     while index < len(body):
@@ -382,26 +404,58 @@ def _parse_block_body(
             if nested_match is not None:
                 nested_kind = nested_match.group("kind")
                 nested_line = line_number
-                nested_depth = _brace_delta(line)
+                nested_depth = brace_delta(line)
                 nested_assignments = {}
+                nested_malformed_assignments = set()
                 if nested_depth <= 0:
-                    nested_blocks.append(TerraformNestedBlock(nested_kind, nested_line, nested_assignments))
+                    nested_blocks.append(
+                        TerraformNestedBlock(
+                            nested_kind,
+                            nested_line,
+                            nested_assignments,
+                            frozenset(nested_malformed_assignments),
+                        )
+                    )
                     nested_kind = None
                 index += 1
                 continue
-            assignment, index, _ = _assignment_at(body, index)
+            # At top-level-in-resource scope, unexpected structural braces are
+            # already represented in the outer block body. We only keep parsed
+            # assignments and malformed assignment keys for coverage reasons.
+            assignment, index, _, malformed_key = _assignment_at(body, index)
             if assignment is not None:
                 assignments[assignment.key] = assignment
+            elif malformed_key is not None:
+                malformed_assignments.add(malformed_key)
             continue
 
-        assignment, next_index, brace_delta = _assignment_at(body, index)
+        assignment, next_index, line_brace_delta, malformed_key = _assignment_at(body, index)
         if assignment is not None and nested_depth == 1:
             nested_assignments[assignment.key] = assignment
-        nested_depth += brace_delta
+        elif malformed_key is not None and nested_depth == 1:
+            nested_malformed_assignments.add(malformed_key)
+        nested_depth += line_brace_delta
         if nested_depth <= 0:
-            nested_blocks.append(TerraformNestedBlock(nested_kind, nested_line, nested_assignments))
+            nested_blocks.append(
+                TerraformNestedBlock(
+                    nested_kind,
+                    nested_line,
+                    nested_assignments,
+                    frozenset(nested_malformed_assignments),
+                )
+            )
             nested_kind = None
         index = next_index
+
+    if nested_kind is not None:
+        nested_blocks.append(
+            TerraformNestedBlock(
+                nested_kind,
+                nested_line,
+                nested_assignments,
+                frozenset(nested_malformed_assignments),
+            )
+        )
 
     return TerraformBlock(
         kind=kind,
@@ -410,30 +464,31 @@ def _parse_block_body(
         relative_path=scanned.relative_path,
         assignments=assignments,
         nested_blocks=tuple(nested_blocks),
+        malformed_assignments=frozenset(malformed_assignments),
     )
 
 
-def _assignment_at(lines: list[tuple[int, str]], index: int) -> tuple[TerraformAssignment | None, int, int]:
+def _assignment_at(lines: list[tuple[int, str]], index: int) -> tuple[TerraformAssignment | None, int, int, str | None]:
     line_number, line = lines[index]
     parsed = _assignment_parts(line, line_number)
     if parsed is None:
-        return None, index + 1, _brace_delta(line)
+        return None, index + 1, brace_delta(line), None
     key, value, start_line = parsed
 
     bracket_delta = _bracket_delta(value)
     if bracket_delta < 0:
-        return None, index + 1, 0
+        return None, index + 1, brace_delta(line), key
     if bracket_delta == 0:
-        return TerraformAssignment(key=key, raw_value=value, line=start_line), index + 1, 0
+        return TerraformAssignment(key=key, raw_value=value, line=start_line), index + 1, 0, None
     if not value.startswith("["):
-        return None, index + 1, 0
+        return None, index + 1, brace_delta(line), key
 
     raw_values = [value]
     next_index = index + 1
     failed = False
     while next_index < len(lines) and bracket_delta > 0:
         _, next_line = lines[next_index]
-        if _has_brace_outside_quote(next_line):
+        if has_brace_outside_quote(next_line):
             failed = True
         raw_values.append(next_line.strip())
         bracket_delta += _bracket_delta(next_line)
@@ -441,9 +496,11 @@ def _assignment_at(lines: list[tuple[int, str]], index: int) -> tuple[TerraformA
     if failed or bracket_delta != 0:
         # The malformed value is consumed as an assignment expression, not as
         # HCL block structure, so callers should not apply its internal braces
-        # to nested block depth.
-        return None, next_index, 0
-    return TerraformAssignment(key=key, raw_value=" ".join(raw_values), line=start_line), next_index, 0
+        # to nested block depth. If this consumes the rest of the current block,
+        # the resource fails closed with coverage rather than resuming from a
+        # guessed structural point.
+        return None, next_index, 0, key
+    return TerraformAssignment(key=key, raw_value=" ".join(raw_values), line=start_line), next_index, 0, None
 
 
 def _assignment_parts(line: str, line_number: int) -> tuple[str, str, int] | None:
@@ -454,7 +511,7 @@ def _assignment_parts(line: str, line_number: int) -> tuple[str, str, int] | Non
     if not key or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
         return None
     value = raw_value.strip()
-    if not value or _has_brace_outside_quote(value):
+    if not value or has_brace_outside_quote(value):
         return None
     return key, value, line_number
 
@@ -497,7 +554,7 @@ def _quoted_scalar(value: str) -> str | None:
     value = value.strip()
     if not value.startswith('"'):
         return None
-    literal, next_index = _quoted_value_at(value, 0)
+    literal, next_index = quoted_value_at(value, 0)
     if literal is None or value[next_index:].strip():
         return None
     return literal
@@ -520,80 +577,6 @@ def _resource_ref(value: str) -> TerraformResourceRef | None:
     return TerraformResourceRef(resource_type=match.group("type"), resource_name=match.group("name"))
 
 
-def _heredoc_start_marker(line: str) -> str | None:
-    _, separator, raw_value = line.partition("=")
-    if not separator:
-        return None
-    value = raw_value.strip()
-    if value.startswith("<<-"):
-        marker = value[3:].strip()
-    elif value.startswith("<<"):
-        marker = value[2:].strip()
-    else:
-        return None
-    return marker or None
-
-
-def _strip_comments(line: str, *, in_block_comment: bool) -> tuple[str, bool]:
-    chars: list[str] = []
-    quote: str | None = None
-    escaped = False
-    index = 0
-    while index < len(line):
-        char = line[index]
-        next_char = line[index + 1] if index + 1 < len(line) else ""
-        if in_block_comment:
-            if char == "*" and next_char == "/":
-                in_block_comment = False
-                index += 2
-                continue
-        elif escaped:
-            chars.append(char)
-            escaped = False
-        elif quote is not None and char == "\\":
-            chars.append(char)
-            escaped = True
-        elif char in {"'", '"'}:
-            if quote == char:
-                quote = None
-            elif quote is None:
-                quote = char
-            chars.append(char)
-        elif quote is None and char == "#":
-            return "".join(chars), in_block_comment
-        elif quote is None and char == "/" and next_char == "/":
-            return "".join(chars), in_block_comment
-        elif quote is None and char == "/" and next_char == "*":
-            in_block_comment = True
-            index += 2
-            continue
-        else:
-            chars.append(char)
-        index += 1
-    return "".join(chars), in_block_comment
-
-
-def _brace_delta(line: str) -> int:
-    quote: str | None = None
-    escaped = False
-    delta = 0
-    for char in line:
-        if escaped:
-            escaped = False
-        elif quote is not None and char == "\\":
-            escaped = True
-        elif char in {"'", '"'}:
-            if quote == char:
-                quote = None
-            elif quote is None:
-                quote = char
-        elif quote is None and char == "{":
-            delta += 1
-        elif quote is None and char == "}":
-            delta -= 1
-    return delta
-
-
 def _bracket_delta(line: str) -> int:
     quote: str | None = None
     escaped = False
@@ -613,39 +596,3 @@ def _bracket_delta(line: str) -> int:
         elif quote is None and char == "]":
             delta -= 1
     return delta
-
-
-def _has_brace_outside_quote(line: str) -> bool:
-    quote: str | None = None
-    escaped = False
-    for char in line:
-        if escaped:
-            escaped = False
-        elif quote is not None and char == "\\":
-            escaped = True
-        elif char in {"'", '"'}:
-            if quote == char:
-                quote = None
-            elif quote is None:
-                quote = char
-        elif quote is None and char in {"{", "}"}:
-            return True
-    return False
-
-
-def _quoted_value_at(value: str, start_index: int) -> tuple[str | None, int]:
-    quote = value[start_index]
-    chars: list[str] = []
-    escaped = False
-    for index, char in enumerate(value[start_index + 1 :], start=start_index + 1):
-        if escaped:
-            chars.append(char)
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
-        if char == quote:
-            return "".join(chars).strip(), index + 1
-        chars.append(char)
-    return None, len(value)

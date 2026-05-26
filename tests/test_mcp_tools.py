@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import contextlib
+from copy import deepcopy
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from source.kg.core.models import Entity, Evidence, Fact
+from source.kg.core.models import Entity, Evidence, Fact, canonical_json
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import TOOL_NAMES, _planning_context_symbol_impact, call_tool, tool_definitions
+from source.kg.product.output_budget import enforce_planning_context_budget
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
@@ -373,6 +376,175 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(architecture["summary"]["deploy_link_count"], 1)
         self.assertEqual(architecture["summary"]["endpoint_surface_count"], 1)
         self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+
+    def test_planning_context_output_budget_truncates_runtime_architecture_shape(self) -> None:
+        with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
+            result = call_tool(kg, "planning_context", {})
+
+        self.assertLessEqual(len(canonical_json(result)), 20_000)
+        self.assertEqual(result["tool"], "planning_context")
+        budget = result["output_budget"]
+        self.assertTrue(budget["truncated"])
+        self.assertLessEqual(len(canonical_json(result)), budget["max_chars"])
+        self.assertGreater(budget["omitted_counts"]["runtime_building_blocks"], 0)
+        self.assertGreater(budget["omitted_counts"]["domain_routing_map"], 0)
+        self.assertIn("runtime_architecture.answer_packet.runtime_building_blocks", budget["truncated_sections"])
+        self.assertIn("runtime_architecture.answer_packet.domain_routing_map", budget["truncated_sections"])
+        architecture = result["runtime_architecture"]
+        answer_packet = architecture["answer_packet"]
+        self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
+        self.assertLessEqual(len(answer_packet["runtime_building_blocks"]), 4)
+        self.assertLessEqual(len(answer_packet["domain_routing_map"]), 15)
+        self.assertTrue(answer_packet["domain_routing_map"])
+        self.assertTrue(answer_packet["domain_routing_map"][0]["evidence_coordinates"])
+        self.assertIn("Use narrower or additional planning_context anchors", budget["advice"])
+
+    def test_planning_context_output_budget_applies_to_oversized_anchor_packets(self) -> None:
+        with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
+            result = call_tool(kg, "planning_context", {"service": "runtime-service-0"})
+
+        self.assertLessEqual(len(canonical_json(result)), 150_000)
+        self.assertEqual(result["tool"], "planning_context")
+        self.assertTrue(result["output_budget"]["truncated"])
+        self.assertLessEqual(len(canonical_json(result)), result["output_budget"]["max_chars"])
+        self.assertEqual(result["output_budget"]["max_chars"], 150_000)
+        self.assertIn("service_operational_surfaces", result)
+
+    def test_planning_context_output_budget_preserves_valid_json_transport_shape(self) -> None:
+        with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
+            rpc = _handle_json_rpc(
+                kg,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "planning_context", "arguments": {}},
+                },
+            )
+
+        structured = rpc["result"]["structuredContent"]
+        parsed_text = json.loads(rpc["result"]["content"][0]["text"])
+        self.assertEqual(parsed_text, structured)
+        self.assertTrue(structured["output_budget"]["truncated"])
+
+    def test_planning_context_output_budget_leaves_under_budget_and_exact_tools_precise(self) -> None:
+        with _fixture_snapshot() as kg:
+            planning = call_tool(kg, "planning_context", {})
+            service_brief = call_tool(kg, "get_service_brief", {"service": "payments"})
+            callers = call_tool(kg, "find_callers", {"symbol": "charge_card"})
+            callees = call_tool(kg, "find_callees", {"symbol": "handle_checkout"})
+
+        self.assertNotIn("output_budget", planning)
+        self.assertNotIn("output_budget", service_brief)
+        self.assertNotIn("output_budget", callers)
+        self.assertNotIn("output_budget", callees)
+
+    def test_output_budget_preserves_known_and_unlinked_route_statuses(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "runtime_architecture": {
+                "scope": {"kind": "fleet"},
+                "summary": {"runtime_building_block_count": 8, "domain_routing_map_count": 8},
+                "answer_packet": {
+                    "runtime_building_blocks": [{"component_id": f"component-{index}"} for index in range(8)],
+                    "domain_routing_map": [
+                        {
+                            "status": "known_route" if index == 0 else "unlinked_domain_reference",
+                            "domain": {"name": f"domain-{index}.example.test"},
+                            "evidence_coordinates": [{"repo": "repo", "path": "infra.tf", "line_start": index + 1}],
+                            "payload": "x" * 700,
+                        }
+                        for index in range(8)
+                    ],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "unlinked rows are source leads only",
+                },
+                "assembly_contract": "typed facts only",
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+        original = deepcopy(result)
+
+        budgeted = enforce_planning_context_budget(result, max_chars=7_500)
+
+        self.assertEqual(result, original)
+        routes = budgeted["runtime_architecture"]["answer_packet"]["domain_routing_map"]
+        statuses = {row["status"] for row in routes}
+        self.assertIn("known_route", statuses)
+        self.assertIn("unlinked_domain_reference", statuses)
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertGreater(budgeted["output_budget"]["omitted_counts"]["domain_routing_map"], 0)
+
+    def test_output_budget_minimizes_oversized_runtime_rows_before_dropping_routes(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "runtime_architecture": {
+                "scope": {"kind": "fleet"},
+                "summary": {"runtime_building_block_count": 0, "domain_routing_map_count": 2},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [
+                        {
+                            "status": "known_route",
+                            "domain": {"name": "known.example.test"},
+                            "deploy_kind": "cloudfront_distribution",
+                            "evidence_coordinates": [{"repo": "repo", "path": "infra.tf", "line_start": 1}],
+                            "payload": "x" * 20_000,
+                        },
+                        {
+                            "status": "unlinked_domain_reference",
+                            "domain": {"name": "lead.example.test"},
+                            "deploy_kind": "terraform_domain_reference",
+                            "evidence_coordinates": [{"repo": "repo", "path": "infra.tf", "line_start": 2}],
+                            "payload": "x" * 20_000,
+                        },
+                    ],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "unlinked rows are source leads only",
+                },
+                "assembly_contract": "typed facts only",
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_planning_context_budget(result, max_chars=2_000)
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 2_000)
+        self.assertEqual(budgeted["tool"], "planning_context")
+        self.assertTrue(budgeted["output_budget"]["minimized"])
+        self.assertLessEqual(len(canonical_json(budgeted)), budgeted["output_budget"]["max_chars"])
+        routes = budgeted["runtime_architecture"]["answer_packet"]["domain_routing_map"]
+        self.assertEqual({row["status"] for row in routes}, {"known_route", "unlinked_domain_reference"})
+        self.assertTrue(all("payload" not in row for row in routes))
+
+    def test_output_budget_marks_final_packet_when_minimum_still_exceeds_budget(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "summary": {"note": "x" * 500},
+            "runtime_architecture": {
+                "scope": {},
+                "summary": {},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "typed facts only",
+                },
+            },
+        }
+
+        budgeted = enforce_planning_context_budget(result, max_chars=1)
+
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertTrue(budgeted["output_budget"]["minimized"])
+        self.assertTrue(budgeted["output_budget"]["exceeded_after_minimization"])
 
     def test_planning_context_symbol_anchor_returns_impact_and_coordinates(self) -> None:
         with _fixture_snapshot() as kg:
@@ -1316,6 +1488,8 @@ class _fixture_snapshot:
         containing_checkout_class: bool = False,
         app_surface: bool = False,
         static_hosting_domain_reference: bool = False,
+        runtime_pressure_routes: int = 0,
+        runtime_pressure_payload_size: int = 0,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -1337,6 +1511,8 @@ class _fixture_snapshot:
         self.containing_checkout_class = containing_checkout_class
         self.app_surface = app_surface
         self.static_hosting_domain_reference = static_hosting_domain_reference
+        self.runtime_pressure_routes = runtime_pressure_routes
+        self.runtime_pressure_payload_size = runtime_pressure_payload_size
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -1619,6 +1795,56 @@ class _fixture_snapshot:
             hosted_domain.entity_id,
             {"literal": "app.example.com", "path": "prod/cloudfront.tf", "source_kind": "terraform_literal"},
         )
+        runtime_payload = "x" * self.runtime_pressure_payload_size
+        runtime_services = [
+            Entity(
+                kind="Service",
+                identity={
+                    "tenant_id": "default",
+                    "namespace": "default",
+                    "slug": f"runtime-service-{index}",
+                    "repo": f"runtime-repo-{index}",
+                },
+            )
+            for index in range(self.runtime_pressure_routes)
+        ]
+        runtime_domains = [
+            Entity(
+                kind="Domain",
+                identity={"tenant_id": "default", "repo": f"runtime-infra-{index}", "name": f"runtime-{index}.example.test"},
+            )
+            for index in range(self.runtime_pressure_routes)
+        ]
+        runtime_targets = [
+            Entity(
+                kind="DeployTarget",
+                identity={
+                    "tenant_id": "default",
+                    "repo": f"runtime-infra-{index}",
+                    "type": "cloudfront_distribution",
+                    "target": f"aws_cloudfront_distribution.runtime_{index}",
+                },
+            )
+            for index in range(self.runtime_pressure_routes)
+        ]
+        runtime_route_facts = [
+            Fact(
+                "ROUTES_DOMAIN_TO_DEPLOY",
+                runtime_domains[index].entity_id,
+                runtime_targets[index].entity_id,
+                {"source_kind": "terraform_cloudfront_alias", "description": runtime_payload},
+            )
+            for index in range(self.runtime_pressure_routes)
+        ]
+        runtime_deploy_facts = [
+            Fact(
+                "DEPLOYS_VIA_CONFIG",
+                runtime_services[index].entity_id,
+                runtime_targets[index].entity_id,
+                {"source_kind": "terraform_cloudfront_origin", "description": runtime_payload},
+            )
+            for index in range(self.runtime_pressure_routes)
+        ]
         extra_services = [
             Entity(
                 kind="Service",
@@ -1761,6 +1987,40 @@ class _fixture_snapshot:
                     confidence=0.9,
                 )
             )
+        for index, fact in enumerate(runtime_route_facts):
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": f"runtime-infra-{index}"},
+                    bytes_ref={
+                        "repo": f"runtime-infra-{index}",
+                        "path": "prod/runtime.tf",
+                        "line_start": index + 1,
+                        "line_end": index + 1,
+                    },
+                    confidence=1.0,
+                )
+            )
+        for index, fact in enumerate(runtime_deploy_facts):
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": f"runtime-repo-{index}"},
+                    bytes_ref={
+                        "repo": f"runtime-repo-{index}",
+                        "path": "prod/runtime.tf",
+                        "line_start": index + 1,
+                        "line_end": index + 1,
+                    },
+                    confidence=1.0,
+                )
+            )
         entities = [
             service,
             *([containing_class] if self.containing_checkout_class else []),
@@ -1786,6 +2046,9 @@ class _fixture_snapshot:
                 else []
             ),
             *([infra_service, hosted_domain] if self.static_hosting_domain_reference else []),
+            *runtime_services,
+            *runtime_domains,
+            *runtime_targets,
             *extra_services,
             *extra_modules,
         ]
@@ -1805,6 +2068,8 @@ class _fixture_snapshot:
             *([route_fact] if self.operational_deploy_mapping else []),
             *([deploy_link_fact] if self.operational_deploy_link else []),
             *([static_hosting_fact] if self.static_hosting_domain_reference else []),
+            *runtime_route_facts,
+            *runtime_deploy_facts,
             *([endpoint_fact] if self.duplicate_endpoint_fact else []),
             *extra_consume_facts,
             *extra_import_facts,

@@ -9,7 +9,7 @@ from source.kg.core.models import Entity
 from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.file_formats._shared.common import ConfigKgBuild, MAX_SCAN_BYTES, ScannedFile
-from source.kg.file_formats.terraform import extract_terraform
+from source.kg.file_formats.terraform import extract_terraform_files
 from source.kg.metrics.opportunity import Opportunity
 
 
@@ -25,8 +25,7 @@ class TerraformDomainOpportunityDetector:
         terraform_files = _scan_terraform_files(repo)
         if not terraform_files:
             return ()
-        for scanned in terraform_files:
-            extract_terraform(repo, scanned, service, build, tenant_id)
+        extract_terraform_files(repo, terraform_files, service, build, tenant_id)
 
         source_kind_by_fact_id = {
             fact.fact_id: fact.qualifier.get("source_kind")

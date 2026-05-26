@@ -222,6 +222,9 @@ class TerraformExtractionTest(unittest.TestCase):
         route = next(fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY")
         self.assertEqual(route.qualifier["source_kind"], "terraform_cloudfront_alias")
         self.assertEqual(route.qualifier["origin_resources"], ["aws_s3_bucket.site"])
+        route_evidence = next(row for row in build.evidence if row.target_type == "fact" and row.target_id == route.fact_id)
+        self.assertEqual(route_evidence.bytes_ref["line_start"], 6)
+        self.assertEqual(route_evidence.bytes_ref["line_end"], 6)
         reference = next(
             fact
             for fact in build.facts
@@ -409,6 +412,28 @@ class TerraformExtractionTest(unittest.TestCase):
 
         self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
 
+    def test_cloudfront_unclosed_alias_list_fails_closed_without_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [\n"
+                    '    "static.example.com"\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_alias_malformed"])
+
     def test_cloudfront_unresolved_alias_emits_no_runtime_route(self) -> None:
         build = _extract_files(
             {
@@ -430,6 +455,27 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
         self.assertEqual(_coverage_reasons(build), ["cloudfront_alias_unresolved"])
 
+    def test_cloudfront_empty_alias_list_emits_specific_coverage_reason(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = []\n"
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_alias_empty"])
+
     def test_cloudfront_without_s3_origin_emits_no_runtime_route(self) -> None:
         build = _extract_files(
             {
@@ -448,6 +494,25 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
         self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
         self.assertEqual(_coverage_reasons(build), ["cloudfront_no_s3_origin"])
+
+    def test_cloudfront_malformed_origin_domain_emits_specific_coverage_reason(self) -> None:
+        build = _extract_files(
+            {
+                "cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = ]\n"
+                    "  }\n"
+                    '  aliases = ["app.example.com"]\n'
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_origin_domain_malformed"])
 
     def test_cloudfront_variable_resolution_is_directory_scoped(self) -> None:
         build = _extract_files(
@@ -584,7 +649,7 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
         self.assertEqual(_coverage_reasons(build), ["cloudfront_no_s3_origin"])
 
-    def test_legacy_single_file_api_does_not_emit_runtime_routes_or_coverage(self) -> None:
+    def test_legacy_single_file_api_emits_coverage_when_runtime_routes_are_skipped(self) -> None:
         build = _extract(
             'resource "aws_s3_bucket" "site" {\n'
             '  bucket = "example-site"\n'
@@ -599,7 +664,7 @@ class TerraformExtractionTest(unittest.TestCase):
 
         self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
         self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
-        self.assertEqual(_coverage_reasons(build), [])
+        self.assertEqual(_coverage_reasons(build), ["terraform_runtime_requires_file_set_api"])
         self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
 
     def test_nested_block_assignment_is_skipped(self) -> None:
