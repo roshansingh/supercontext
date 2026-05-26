@@ -31,6 +31,7 @@ SuperContext provides deterministic, source-cited context from the indexed repos
 - Service endpoint/event/deploy fact sheet -> get_service_brief.
 - Exact event channel producers or consumers -> get_event_producers or get_event_consumers.
 - KG inventory or repo coverage summary -> planning_context and read snapshot_summary/snapshot_scope.
+- Runtime architecture or domain-routing map -> planning_context first and read runtime_architecture.answer_packet, runtime_building_blocks, domain_routing_map, and deploy_kind_counts before source inspection; keep component deploy counts separate from unlinked route leads.
 
 ## Answerability
 

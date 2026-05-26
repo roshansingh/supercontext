@@ -1073,9 +1073,22 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     }
     line = _optional_int(arguments, "line")
     if query is None and line is None and not any(anchors.values()):
-        raise ValueError(
-            "planning_context requires at least one of: query, repo, path, line, symbol, service, "
-            "package, endpoint, event_channel, domain"
+        services = _planning_context_fleet_services(kg, limit=min(limit, PLANNING_CONTEXT_SECTION_LIMIT))
+        return _planning_context_output(
+            kg=kg,
+            query=query,
+            anchors=anchors,
+            services=services,
+            symbols=[],
+            dependencies=[],
+            endpoints=[],
+            endpoint_consumers=[],
+            event_channels=[],
+            domains=[],
+            next_actions=[
+                "Read runtime_architecture.answer_packet for a fleet runtime map, then use narrower anchors only for follow-up details."
+            ],
+            status="found" if services else "not_found",
         )
 
     if query is not None and not any(anchors.values()) and line is None:
@@ -2605,6 +2618,29 @@ def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, 
     }
 
 
+def _planning_context_fleet_services(kg: KgSnapshot, *, limit: int) -> list[JsonObject]:
+    services = [entity for entity in kg.entities if entity.get("kind") == "Service"]
+    rows = []
+    for service in sorted(services, key=display_entity)[:limit]:
+        identity = service.get("identity")
+        properties = service.get("properties")
+        if not isinstance(identity, dict):
+            identity = {}
+        if not isinstance(properties, dict):
+            properties = {}
+        rows.append(
+            {
+                "service_id": service.get("entity_id"),
+                "urn": service.get("urn"),
+                "name": display_entity(service),
+                "repo": identity.get("repo") or properties.get("repo"),
+                "namespace": identity.get("namespace"),
+                "slug": identity.get("slug"),
+            }
+        )
+    return rows
+
+
 def _planning_context_output(
     *,
     kg: KgSnapshot,
@@ -2647,6 +2683,7 @@ def _planning_context_output(
         kg,
         repo=anchors.get("repo"),
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
+        include_legacy_sections=False,
     )
     related_facts = _planning_context_related_facts(
         kg=kg,
@@ -3039,7 +3076,7 @@ def _planning_context_related_facts(
         "dependency_importers": dependency_importers,
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
-        "runtime_architecture": runtime_architecture,
+        "runtime_architecture": _planning_context_runtime_architecture_reference(runtime_architecture),
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -3048,6 +3085,19 @@ def _planning_context_related_facts(
             row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}
         ][:PLANNING_CONTEXT_SECTION_LIMIT],
         "domains": domains[:PLANNING_CONTEXT_SECTION_LIMIT],
+    }
+
+
+def _planning_context_runtime_architecture_reference(runtime_architecture: JsonObject) -> JsonObject:
+    answer_packet = runtime_architecture.get("answer_packet")
+    if not isinstance(answer_packet, dict):
+        answer_packet = {}
+    return {
+        "summary": runtime_architecture.get("summary", {}),
+        "scope": runtime_architecture.get("scope", {}),
+        "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
+        "evidence_contract": answer_packet.get("evidence_contract"),
+        "read_top_level_field": "runtime_architecture.answer_packet",
     }
 
 
@@ -3629,16 +3679,17 @@ _TOOLS: dict[str, McpTool] = {
     "planning_context": McpTool(
         name="planning_context",
         description=(
-            "Returns bounded planning context for one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
+            "Returns bounded planning context for a fleet or one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
+            "Use it first for broad cross-repo service discovery, runtime architecture, domain-routing, dependency, planning, or impact-map questions before selecting narrower MCP tools or looping over search_services/get_service_brief. "
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
-            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into a bounded runtime map without promoting unlinked evidence. "
+            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
             "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
-            "Use it first for broad planning, architecture, dependency, or impact questions on deterministic anchors before selecting narrower MCP tools. "
+            "Calling it with no anchor returns a fleet packet with compact service identities plus runtime_architecture.answer_packet. "
             "For exact caller, callee, service-brief, or event producer/consumer questions, prefer the exact primitive tool. "
             "Does not expand free-form natural language, call an LLM, or fan one query across multiple ambiguous resolver paths."
         ),

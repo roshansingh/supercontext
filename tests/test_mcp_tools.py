@@ -83,14 +83,23 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(query["anchors"]["package"], "shared-lib")
         self.assertEqual(query["dependencies"][0]["predicate"], "IMPORTS")
 
-    def test_planning_context_ambiguous_and_empty_inputs_fail_closed(self) -> None:
+    def test_planning_context_ambiguous_inputs_fail_closed_and_empty_input_returns_fleet_packet(self) -> None:
         with _fixture_snapshot() as kg:
             ambiguous = call_tool(kg, "planning_context", {"query": "payments"})
-            self.assertEqual(ambiguous["status"], "ambiguous")
-            self.assertTrue(ambiguous["next_actions"])
-            self.assertTrue(any(row["predicate"] == "RESOLVES_TO_REPO" for row in ambiguous["dependencies"]))
-            with self.assertRaisesRegex(ValueError, "planning_context requires at least one of"):
-                call_tool(kg, "planning_context", {})
+            fleet = call_tool(kg, "planning_context", {})
+
+        self.assertEqual(ambiguous["status"], "ambiguous")
+        self.assertTrue(ambiguous["next_actions"])
+        self.assertTrue(any(row["predicate"] == "RESOLVES_TO_REPO" for row in ambiguous["dependencies"]))
+        self.assertEqual(fleet["status"], "found")
+        self.assertEqual(fleet["snapshot_summary"]["scope"], {"kind": "fleet"})
+        self.assertEqual(fleet["runtime_architecture"]["scope"], {"kind": "fleet"})
+        self.assertEqual(
+            fleet["related_facts"]["runtime_architecture"]["deploy_kind_counts"],
+            {"component_deploy_kind_counts": {}, "unlinked_route_deploy_kind_counts": {}},
+        )
+        self.assertEqual(fleet["services"][0]["name"], "payments")
+        self.assertTrue(any("runtime_architecture.answer_packet" in action for action in fleet["next_actions"]))
 
     def test_planning_context_package_query_does_not_treat_limited_rows_as_unique(self) -> None:
         with _fixture_snapshot(extra_package_importers=1) as kg:
@@ -295,8 +304,48 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(architecture["summary"]["deploy_link_count"], 1)
         self.assertEqual(architecture["summary"]["endpoint_surface_count"], 1)
         self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
-        self.assertEqual(architecture["domain_routes"][0]["predicate"], "ROUTES_DOMAIN_TO_DEPLOY")
+        self.assertIn("answer_packet", architecture)
+        answer_packet = architecture["answer_packet"]
+        self.assertEqual(answer_packet["runtime_building_blocks"][0]["deploy_kinds"], ["apache_wsgi"])
+        self.assertIn("domain_routed", answer_packet["runtime_building_blocks"][0]["runtime_categories"])
+        self.assertEqual(answer_packet["domain_routing_map"][0]["status"], "known_route")
+        self.assertEqual(answer_packet["domain_routing_map"][0]["deploy_kind"], "apache_wsgi")
+        self.assertEqual(
+            result["related_facts"]["runtime_architecture"]["deploy_kind_counts"]["component_deploy_kind_counts"],
+            {"apache_wsgi": 1},
+        )
+        self.assertEqual(
+            result["related_facts"]["runtime_architecture"]["deploy_kind_counts"]["unlinked_route_deploy_kind_counts"],
+            {},
+        )
         self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
+
+    def test_runtime_architecture_surfaces_unlinked_terraform_domain_leads(self) -> None:
+        with _fixture_snapshot(static_hosting_domain_reference=True) as kg:
+            architecture = runtime_architecture_packet(kg, repo=None, limit=10)
+
+        route = next(row for row in architecture["domain_routing_map"] if row["status"] == "unlinked_domain_reference")
+        self.assertEqual(route["domain"]["name"], "app.example.com")
+        self.assertEqual(route["deploy_kind"], "terraform_domain_reference")
+        self.assertEqual(route["qualifier"]["literal"], "app.example.com")
+        self.assertIn("no typed route", route["interpretation"])
+        component = next(row for row in architecture["runtime_building_blocks"] if row["repo"] == "infra")
+        self.assertIn("domain_reference", component["runtime_categories"])
+        self.assertEqual(component["domain_reference_leads"][0]["qualifier"]["literal"], "app.example.com")
+        self.assertEqual(component["domain_reference_leads"][0]["evidence_coordinates"][0]["path"], "prod/cloudfront.tf")
+
+    def test_runtime_architecture_repo_scope_excludes_other_repo_domain_reference_leads(self) -> None:
+        with _fixture_snapshot(
+            operational_deploy_mapping=True,
+            operational_deploy_link=True,
+            operational_deploy_same_repo=True,
+            static_hosting_domain_reference=True,
+        ) as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+
+        repos = {component["repo"] for component in architecture["runtime_building_blocks"]}
+        self.assertEqual(repos, {"payments"})
+        self.assertNotIn("infra", repos)
 
     def test_runtime_architecture_matches_endpoint_methods_case_insensitively(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True, provider_endpoint_method="post", endpoint_consumer_method="POST") as kg:
@@ -1266,6 +1315,7 @@ class _fixture_snapshot:
         upstream_checkout_cycle: bool = False,
         containing_checkout_class: bool = False,
         app_surface: bool = False,
+        static_hosting_domain_reference: bool = False,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -1286,6 +1336,7 @@ class _fixture_snapshot:
         self.upstream_checkout_cycle = upstream_checkout_cycle
         self.containing_checkout_class = containing_checkout_class
         self.app_surface = app_surface
+        self.static_hosting_domain_reference = static_hosting_domain_reference
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -1502,6 +1553,14 @@ class _fixture_snapshot:
             identity={"tenant_id": "default", "repo": "web", "module": "src.views.PaymentsScreen"},
             properties={"path": "src/views/PaymentsScreen.tsx"},
         )
+        infra_service = Entity(
+            kind="Service",
+            identity={"tenant_id": "default", "namespace": "default", "slug": "frontend-infra", "repo": "infra"},
+        )
+        hosted_domain = Entity(
+            kind="Domain",
+            identity={"tenant_id": "default", "repo": "infra", "name": "app.example.com"},
+        )
         call_fact = Fact("CALLS", caller.entity_id, callee.entity_id)
         upstream_call_fact = Fact("CALLS", upstream_caller.entity_id, caller.entity_id)
         upstream_grandcall_fact = Fact("CALLS", upstream_grandcaller.entity_id, upstream_caller.entity_id)
@@ -1553,6 +1612,12 @@ class _fixture_snapshot:
             service.entity_id,
             deploy_target.entity_id,
             {"source_kind": "runtime_linker", "resolved_by": "fixture"},
+        )
+        static_hosting_fact = Fact(
+            "REFERENCES_DOMAIN",
+            infra_service.entity_id,
+            hosted_domain.entity_id,
+            {"literal": "app.example.com", "path": "prod/cloudfront.tf", "source_kind": "terraform_literal"},
         )
         extra_services = [
             Entity(
@@ -1684,6 +1749,18 @@ class _fixture_snapshot:
                     confidence=1.0,
                 )
             )
+        if self.static_hosting_domain_reference:
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=static_hosting_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "infra"},
+                    bytes_ref={"repo": "infra", "path": "prod/cloudfront.tf", "line_start": 12, "line_end": 18},
+                    confidence=0.9,
+                )
+            )
         entities = [
             service,
             *([containing_class] if self.containing_checkout_class else []),
@@ -1708,6 +1785,7 @@ class _fixture_snapshot:
                 if self.app_surface
                 else []
             ),
+            *([infra_service, hosted_domain] if self.static_hosting_domain_reference else []),
             *extra_services,
             *extra_modules,
         ]
@@ -1726,6 +1804,7 @@ class _fixture_snapshot:
             domain_fact,
             *([route_fact] if self.operational_deploy_mapping else []),
             *([deploy_link_fact] if self.operational_deploy_link else []),
+            *([static_hosting_fact] if self.static_hosting_domain_reference else []),
             *([endpoint_fact] if self.duplicate_endpoint_fact else []),
             *extra_consume_facts,
             *extra_import_facts,
