@@ -24,6 +24,48 @@ TOOL_NAMES = (
 )
 
 PLANNING_CONTEXT_SECTION_LIMIT = 5
+REVIEW_CONTEXT_DETAIL_LIMIT = 25
+REVIEW_CONTEXT_SURFACES = (
+    "ui_screens",
+    "scheduled_jobs",
+    "sqs_consumers",
+    "delivery_workers",
+    "tracking_paths",
+    "api_surfaces",
+    "models",
+    "serializers",
+)
+REVIEW_CONTEXT_SURFACE_ALIASES = {
+    "ui": "ui_screens",
+    "screen": "ui_screens",
+    "screens": "ui_screens",
+    "ui_screen": "ui_screens",
+    "ui_screens": "ui_screens",
+    "scheduled_job": "scheduled_jobs",
+    "scheduled_jobs": "scheduled_jobs",
+    "job": "scheduled_jobs",
+    "jobs": "scheduled_jobs",
+    "sqs": "sqs_consumers",
+    "queue": "sqs_consumers",
+    "queue_consumers": "sqs_consumers",
+    "sqs_consumer": "sqs_consumers",
+    "sqs_consumers": "sqs_consumers",
+    "worker": "delivery_workers",
+    "workers": "delivery_workers",
+    "delivery_worker": "delivery_workers",
+    "delivery_workers": "delivery_workers",
+    "tracking": "tracking_paths",
+    "tracking_path": "tracking_paths",
+    "tracking_paths": "tracking_paths",
+    "api": "api_surfaces",
+    "apis": "api_surfaces",
+    "api_surface": "api_surfaces",
+    "api_surfaces": "api_surfaces",
+    "model": "models",
+    "models": "models",
+    "serializer": "serializers",
+    "serializers": "serializers",
+}
 PLANNING_CONTEXT_NO_OVERLAP_ACTION = (
     "No deterministic planning anchor combination overlapped after applying the supplied filters. "
     "Try a broader primary anchor or remove one narrowing field."
@@ -851,6 +893,36 @@ def _required_string_list(arguments: JsonObject, field: str) -> list[str]:
     return normalized
 
 
+def _optional_string_list(arguments: JsonObject, field: str) -> list[str]:
+    if field not in arguments:
+        return []
+    value = arguments[field]
+    if not isinstance(value, list):
+        raise ValueError(f"MCP tool argument {field!r} must be a list of strings")
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"MCP tool argument {field!r} must be a list of non-empty strings")
+        normalized.append(item.strip())
+    return normalized
+
+
+def _optional_review_surfaces(arguments: JsonObject, field: str) -> list[str]:
+    surfaces: list[str] = []
+    unsupported: list[str] = []
+    for value in _optional_string_list(arguments, field):
+        canonical = REVIEW_CONTEXT_SURFACE_ALIASES.get(value.strip().lower().replace("-", "_").replace(" ", "_"))
+        if canonical is None:
+            unsupported.append(value)
+            continue
+        if canonical not in surfaces:
+            surfaces.append(canonical)
+    if unsupported:
+        allowed = ", ".join(REVIEW_CONTEXT_SURFACES)
+        raise ValueError(f"MCP tool argument {field!r} has unsupported surface(s): {', '.join(unsupported)}; allowed: {allowed}")
+    return surfaces
+
+
 def _optional_changed_ranges(arguments: JsonObject, field: str) -> list[JsonObject]:
     if field not in arguments:
         return []
@@ -974,6 +1046,14 @@ def _review_context_properties() -> JsonObject:
             "description": "Optional changed line ranges for narrowing file symbols.",
         },
         "limit": _limit_schema(),
+        "requested_surfaces": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Optional impact surfaces named by the review prompt. Supported canonical values include "
+                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, and tracking are accepted."
+            ),
+        },
         "include_deploy_blockers": {"type": "boolean", "default": False},
     }
 
@@ -1142,6 +1222,8 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     changed_files = _required_string_list(arguments, "changed_files")
     changed_ranges = _optional_changed_ranges(arguments, "changed_ranges")
     limit = _limit(arguments)
+    detail_limit = min(limit, REVIEW_CONTEXT_DETAIL_LIMIT)
+    requested_surfaces = _optional_review_surfaces(arguments, "requested_surfaces")
     include_deploy_blockers = _optional_bool(arguments, "include_deploy_blockers", default=False)
 
     changed_symbols: list[JsonObject] = []
@@ -1163,10 +1245,10 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             changed_symbols.append(row)
         changed_symbols_by_path[normalized_changed_file] = symbol_rows
 
-    changed_symbols = _review_context_dedupe_rows(changed_symbols)[:limit]
+    changed_symbols = _review_context_dedupe_rows(changed_symbols)[:detail_limit]
     changed_file_symbols = _review_context_dedupe_rows(
         [row for rows in file_symbols_by_path.values() for row in rows]
-    )[:limit]
+    )[:detail_limit]
     direct_callers: list[JsonObject] = []
     direct_callees: list[JsonObject] = []
     for row in changed_symbols:
@@ -1175,39 +1257,43 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             continue
         callers = kg.find_callers(
             symbol_name,
-            limit=limit,
+            limit=detail_limit,
             path=_optional_symbol_path(row),
             line=_optional_symbol_line(row),
             include_all=False,
         )
         callees = kg.find_callees(
             symbol_name,
-            limit=limit,
+            limit=detail_limit,
             path=_optional_symbol_path(row),
             line=_optional_symbol_line(row),
             include_all=False,
         )
         direct_callers.extend(callers.get("callers", []))
         direct_callees.extend(callees.get("callees", []))
-    repo_dependency_result = kg.repo_dependencies(repo, limit=limit)
+    repo_dependency_result = kg.repo_dependencies(repo, limit=detail_limit)
     repo_dependencies = list(repo_dependency_result.get("dependencies", []))
-    direct_callers = _review_context_dedupe_rows(direct_callers)[:limit]
-    direct_callees = _review_context_dedupe_rows(direct_callees)[:limit]
-    transitive_callers = _review_context_transitive_callers(kg, changed_symbols=changed_symbols, depth=3, limit=limit)
-    repo_dependencies = _review_context_dedupe_rows(repo_dependencies)[:limit]
-    runtime_surfaces = _review_context_runtime_surfaces(kg, repo=repo, changed_symbols=changed_symbols, limit=limit)
+    direct_callers = _review_context_dedupe_rows(direct_callers)[:detail_limit]
+    direct_callees = _review_context_dedupe_rows(direct_callees)[:detail_limit]
+    transitive_callers = _review_context_transitive_callers(
+        kg, changed_symbols=changed_symbols, depth=3, limit=detail_limit
+    )
+    repo_dependencies = _review_context_dedupe_rows(repo_dependencies)[:detail_limit]
+    runtime_surfaces = _review_context_runtime_surfaces(
+        kg, repo=repo, changed_symbols=changed_symbols, limit=detail_limit
+    )
     framework_impact = framework_impact_packet(
         kg,
         repo=repo,
         changed_symbols=changed_symbols,
-        limit=limit,
+        limit=detail_limit,
     )
     application_impact = application_impact_packet(
         kg,
         repo=repo,
         changed_files=changed_files,
         changed_symbols=changed_symbols,
-        limit=limit,
+        limit=detail_limit,
     )
     endpoint_rows = runtime_surfaces["endpoints"]
     endpoint_consumer_rows = runtime_surfaces["endpoint_consumers"]
@@ -1242,10 +1328,17 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         deploy_mapping_rows,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
+    surface_status = _review_context_surface_status(
+        application_impact=application_impact,
+        runtime_surfaces=runtime_surfaces,
+        requested_surfaces=requested_surfaces,
+    )
     answerability = _review_context_answerability(
         status=status,
         changed_symbols=changed_symbols,
         include_deploy_blockers=include_deploy_blockers,
+        surface_status=surface_status,
+        requested_surfaces=requested_surfaces,
     )
     next_actions = _review_context_next_actions(answerability, unsupported_scopes=unsupported_scopes)
     public_changed_symbols = _review_context_public_symbol_rows(changed_symbols)
@@ -1258,25 +1351,53 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     public_endpoint_consumers = _planning_context_public_rows(endpoint_consumer_rows)
     public_event_channels = _planning_context_public_rows(event_channel_rows)
     public_deploy_mappings = _planning_context_public_rows(deploy_mapping_rows)
+    summary = _review_context_summary(
+        changed_files=changed_files,
+        changed_symbols=public_changed_symbols,
+        direct_callers=public_direct_callers,
+        direct_callees=public_direct_callees,
+        repo_dependencies=public_repo_dependencies,
+        endpoints=public_endpoints,
+        endpoint_consumers=public_endpoint_consumers,
+        event_channels=public_event_channels,
+        deploy_mappings=public_deploy_mappings,
+        source_coordinates=source_coordinates,
+        changed_file_symbols=public_changed_file_symbols,
+        transitive_callers=public_transitive_callers,
+        framework_impact=framework_impact,
+        application_impact=application_impact,
+    )
+    summary["requested_limit"] = limit
+    summary["detail_limit"] = detail_limit
+    scope_contract = _review_context_scope_contract(
+        changed_ranges=changed_ranges,
+        changed_symbols=public_changed_symbols,
+        changed_file_symbols=public_changed_file_symbols,
+    )
+    review_answer_packet = _review_context_answer_packet(
+        status=status,
+        summary=summary,
+        scope_contract=scope_contract,
+        changed_symbols=public_changed_symbols,
+        direct_callers=public_direct_callers,
+        direct_callees=public_direct_callees,
+        transitive_callers=public_transitive_callers,
+        framework_impact=framework_impact,
+        application_impact=application_impact,
+        runtime_surfaces={
+            "endpoints": public_endpoints,
+            "endpoint_consumers": public_endpoint_consumers,
+            "event_channels": public_event_channels,
+            "deploy_mappings": public_deploy_mappings,
+        },
+        surface_status=surface_status,
+        answerability=answerability,
+    )
     return {
         "status": status,
         "repo": repo,
-        "summary": _review_context_summary(
-            changed_files=changed_files,
-            changed_symbols=public_changed_symbols,
-            direct_callers=public_direct_callers,
-            direct_callees=public_direct_callees,
-            repo_dependencies=public_repo_dependencies,
-            endpoints=public_endpoints,
-            endpoint_consumers=public_endpoint_consumers,
-            event_channels=public_event_channels,
-            deploy_mappings=public_deploy_mappings,
-            source_coordinates=source_coordinates,
-            changed_file_symbols=public_changed_file_symbols,
-            transitive_callers=public_transitive_callers,
-            framework_impact=framework_impact,
-            application_impact=application_impact,
-        ),
+        "summary": summary,
+        "review_answer_packet": review_answer_packet,
         "changed_symbols": public_changed_symbols,
         "changed_file_symbols": public_changed_file_symbols,
         "direct_callers": public_direct_callers,
@@ -1286,11 +1407,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "transitive_callers": public_transitive_callers,
         "repo_dependencies": public_repo_dependencies,
         "changed_surface": changed_surface,
-        "scope_contract": _review_context_scope_contract(
-            changed_ranges=changed_ranges,
-            changed_symbols=public_changed_symbols,
-            changed_file_symbols=public_changed_file_symbols,
-        ),
+        "scope_contract": scope_contract,
         "impact": {
             "direct_callers": public_direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
             "direct_callees": public_direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -1305,6 +1422,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         },
         "framework_impact": framework_impact,
         "application_impact": application_impact,
+        "surface_status": surface_status,
         "source_coordinates": source_coordinates,
         "answerability": answerability,
         "coverage_warnings": [],
@@ -2087,36 +2205,262 @@ def _summary_count(packet: JsonObject, field_name: str) -> int:
     return value
 
 
+def _review_context_answer_packet(
+    *,
+    status: str,
+    summary: JsonObject,
+    scope_contract: JsonObject,
+    changed_symbols: list[JsonObject],
+    direct_callers: list[JsonObject],
+    direct_callees: list[JsonObject],
+    transitive_callers: list[JsonObject],
+    framework_impact: JsonObject,
+    application_impact: JsonObject,
+    runtime_surfaces: dict[str, list[JsonObject]],
+    surface_status: list[JsonObject],
+    answerability: JsonObject,
+) -> JsonObject:
+    same_repo_surfaces = application_impact.get("same_repo_surfaces", {})
+    if not isinstance(same_repo_surfaces, dict):
+        same_repo_surfaces = {}
+    return {
+        "status": status,
+        "answerability": answerability,
+        "summary": {
+            "changed_symbol_count": summary["changed_symbol_count"],
+            "direct_caller_count": summary["direct_caller_count"],
+            "direct_callee_count": summary["direct_callee_count"],
+            "transitive_caller_count": summary["transitive_caller_count"],
+            "framework_model_count": summary["framework_model_count"],
+            "framework_relation_count": summary["framework_relation_count"],
+            "app_surface_count": summary["app_surface_count"],
+            "app_runtime_fact_count": summary["app_runtime_fact_count"],
+            "app_cross_repo_lead_count": summary["app_cross_repo_lead_count"],
+            "detail_limit": summary["detail_limit"],
+        },
+        "scope_contract": scope_contract,
+        "top_changed_symbols": changed_symbols[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "top_direct_callers": direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "top_direct_callees": direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "top_transitive_callers": transitive_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "framework": {
+            "changed_models": framework_impact.get("changed_models", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "model_fields": framework_impact.get("model_fields", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "model_relations": framework_impact.get("model_relations", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "relationship_paths": framework_impact.get("relationship_paths", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "serializers": framework_impact.get("serializers", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "views": framework_impact.get("views", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "tasks": framework_impact.get("tasks", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+        },
+        "application": {
+            "api": same_repo_surfaces.get("api", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "models": same_repo_surfaces.get("models", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "serializers": same_repo_surfaces.get("serializers", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "workers": same_repo_surfaces.get("workers", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "scheduled_jobs": same_repo_surfaces.get("scheduled_jobs", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "runtime_facts": application_impact.get("runtime_facts", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "cross_repo_name_leads": application_impact.get("cross_repo_name_leads", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+        },
+        "runtime": {
+            "endpoints": runtime_surfaces.get("endpoints", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "endpoint_consumers": runtime_surfaces.get("endpoint_consumers", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "event_channels": runtime_surfaces.get("event_channels", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "deploy_mappings": runtime_surfaces.get("deploy_mappings", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+        },
+        "surface_status": surface_status,
+    }
+
+
+def _review_context_surface_status(
+    *,
+    application_impact: JsonObject,
+    runtime_surfaces: dict[str, list[JsonObject]],
+    requested_surfaces: list[str],
+) -> list[JsonObject]:
+    surfaces = requested_surfaces or list(REVIEW_CONTEXT_SURFACES)
+    return [
+        _review_context_surface_status_row(
+            surface,
+            application_impact=application_impact,
+            runtime_surfaces=runtime_surfaces,
+        )
+        for surface in surfaces
+    ]
+
+
+def _review_context_surface_status_row(
+    surface: str,
+    *,
+    application_impact: JsonObject,
+    runtime_surfaces: dict[str, list[JsonObject]],
+) -> JsonObject:
+    known_rows, unlinked_rows, evidence_path = _review_context_surface_rows(
+        surface,
+        application_impact=application_impact,
+        runtime_surfaces=runtime_surfaces,
+    )
+    if known_rows:
+        status = "known"
+        interpretation = "Known from structured review packet rows."
+    elif unlinked_rows:
+        status = "unlinked"
+        interpretation = "Only unlinked source leads are available; verify source before claiming impact."
+    else:
+        status = "missing"
+        interpretation = "No current KG evidence for this requested surface."
+    return {
+        "surface": surface,
+        "status": status,
+        "known_count": len(known_rows),
+        "unlinked_count": len(unlinked_rows),
+        "evidence_path": evidence_path,
+        "sample_rows": [_review_context_surface_sample(row) for row in (known_rows or unlinked_rows)[:2]],
+        "interpretation": interpretation,
+    }
+
+
+def _review_context_surface_rows(
+    surface: str,
+    *,
+    application_impact: JsonObject,
+    runtime_surfaces: dict[str, list[JsonObject]],
+) -> tuple[list[JsonObject], list[JsonObject], str]:
+    same_repo_surfaces = application_impact.get("same_repo_surfaces", {})
+    if not isinstance(same_repo_surfaces, dict):
+        same_repo_surfaces = {}
+    cross_repo_leads = [
+        row for row in application_impact.get("cross_repo_name_leads", []) if isinstance(row, dict)
+    ]
+    runtime_facts = [row for row in application_impact.get("runtime_facts", []) if isinstance(row, dict)]
+    event_rows = [row for row in runtime_surfaces.get("event_channels", []) if isinstance(row, dict)]
+    if surface == "scheduled_jobs":
+        return _surface_list(same_repo_surfaces, "scheduled_jobs"), [], "application_impact.same_repo_surfaces.scheduled_jobs"
+    if surface == "delivery_workers":
+        return _surface_list(same_repo_surfaces, "workers"), [], "application_impact.same_repo_surfaces.workers"
+    if surface == "api_surfaces":
+        return _surface_list(same_repo_surfaces, "api"), [], "application_impact.same_repo_surfaces.api"
+    if surface == "models":
+        return _surface_list(same_repo_surfaces, "models"), [], "application_impact.same_repo_surfaces.models"
+    if surface == "serializers":
+        return _surface_list(same_repo_surfaces, "serializers"), [], "application_impact.same_repo_surfaces.serializers"
+    if surface == "ui_screens":
+        ui_leads = [
+            row
+            for row in cross_repo_leads
+            if row.get("surface_role") == "api" or _review_context_row_mentions_any(row, {"screen", "screens", "view", "views", "ui"})
+        ]
+        return [], ui_leads, "application_impact.cross_repo_name_leads"
+    if surface == "sqs_consumers":
+        sqs_rows = [
+            row
+            for row in event_rows
+            if row.get("predicate") == "CONSUMES_EVENT" and _review_context_row_mentions_any(row, {"sqs", "queue"})
+        ]
+        return sqs_rows, [], "runtime_surfaces.event_channels"
+    if surface == "tracking_paths":
+        known_rows = [
+            row
+            for row in [*runtime_facts, *event_rows]
+            if _review_context_row_mentions_any(row, {"tracking", "track"})
+        ]
+        unlinked_rows = [
+            row
+            for row in cross_repo_leads
+            if _review_context_row_mentions_any(row, {"tracking", "track"})
+        ]
+        return known_rows, unlinked_rows, "application_impact.runtime_facts|cross_repo_name_leads"
+    raise ValueError(f"Unsupported review surface: {surface}")
+
+
+def _surface_list(rows_by_role: JsonObject, role: str) -> list[JsonObject]:
+    rows = rows_by_role.get(role, [])
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _review_context_surface_sample(row: JsonObject) -> JsonObject:
+    return {
+        key: row[key]
+        for key in (
+            "repo",
+            "module",
+            "qualname",
+            "path",
+            "predicate",
+            "subject",
+            "object",
+            "surface_role",
+            "match_basis",
+        )
+        if key in row
+    }
+
+
+def _review_context_row_mentions_any(row: JsonObject, terms: set[str]) -> bool:
+    text = _review_context_row_text(row).lower()
+    return any(term in text for term in terms)
+
+
+def _review_context_row_text(value: object) -> str:
+    if isinstance(value, dict):
+        return " ".join(_review_context_row_text(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_review_context_row_text(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _review_context_answerability(
     *,
     status: str,
     changed_symbols: list[JsonObject],
     include_deploy_blockers: bool,
+    surface_status: list[JsonObject],
+    requested_surfaces: list[str],
 ) -> JsonObject:
     if status == "not_found":
         return {
             "status": "not_answerable",
             "missing_fact_families": ["review_anchor"],
+            "unlinked_fact_families": [],
             "recommended_followups": ["Read the changed files directly or pass narrower changed_ranges."],
         }
     missing = []
+    unlinked = []
     if not changed_symbols:
         missing.append("changed_symbols")
     if include_deploy_blockers:
         missing.append("deploy_blockers")
+    if requested_surfaces:
+        for row in surface_status:
+            surface = row.get("surface")
+            if not isinstance(surface, str) or surface not in requested_surfaces:
+                continue
+            if row.get("status") == "missing":
+                missing.append(surface)
+            elif row.get("status") == "unlinked":
+                unlinked.append(surface)
     return {
-        "status": "partial" if missing else "answerable",
+        "status": "partial" if missing or unlinked else "answerable",
         "missing_fact_families": missing,
-        "recommended_followups": _review_context_answerability_followups(missing),
+        "unlinked_fact_families": unlinked,
+        "recommended_followups": _review_context_answerability_followups(missing, unlinked),
     }
 
 
-def _review_context_answerability_followups(missing: list[str]) -> list[str]:
+def _review_context_answerability_followups(missing: list[str], unlinked: list[str]) -> list[str]:
     actions = []
     if "changed_symbols" in missing:
         actions.append("Read the changed files directly; no indexed symbols overlapped the review scope.")
     if "deploy_blockers" in missing:
         actions.append("Use deployment manifests or source inspection; deploy-blocker facts are unsupported by the current KG.")
+    for surface in missing:
+        if surface in REVIEW_CONTEXT_SURFACES:
+            actions.append(f"Inspect source or runtime/config evidence for requested surface {surface}; the current KG has no proof.")
+    for surface in unlinked:
+        actions.append(f"Verify unlinked source leads for requested surface {surface} before claiming impact.")
     return actions
 
 
@@ -3304,8 +3648,10 @@ _TOOLS: dict[str, McpTool] = {
     "review_context": McpTool(
         name="review_context",
         description=(
-            "Returns bounded review context for one repo plus a changed-file set by composing changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
+            "Returns bounded review context for one repo plus a changed-file set by composing review_answer_packet, changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
+            "Read review_answer_packet first; detailed review rows are capped by summary.detail_limit even when a larger limit is requested. "
             "Use scope_contract to keep changed_symbols distinct from changed_file_symbols: file inventory is context, not proof every symbol changed. "
+            "When the prompt names impact categories, pass requested_surfaces such as ui_screens, scheduled_jobs, sqs_consumers, delivery_workers, or tracking_paths so surface_status can separate known, unlinked, and missing evidence. "
             "Existing top-level changed_symbols, direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
             "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "framework_impact includes parser-backed support facts for Django/Celery model fields, model relations, serializers, view/model bindings, tasks, and bounded model relationship paths when present. "

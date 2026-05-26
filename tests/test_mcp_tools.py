@@ -53,6 +53,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(schemas["find_callers"]["properties"]["line"]["type"], ["integer", "null"])
         self.assertEqual(schemas["planning_context"]["properties"]["symbol"]["type"], ["string", "null"])
         self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
+        self.assertEqual(schemas["review_context"]["properties"]["requested_surfaces"]["type"], "array")
         self.assertNotIn("depth", schemas["review_context"]["properties"])
         self.assertIn("operational_surfaces.evidence_partition", descriptions["get_service_brief"])
         self.assertIn("operational_surfaces.deploy_link_facts", descriptions["get_service_brief"])
@@ -64,6 +65,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
         self.assertIn("runtime_architecture", descriptions["planning_context"])
+        self.assertIn("review_answer_packet", descriptions["review_context"])
+        self.assertIn("requested_surfaces", descriptions["review_context"])
         self.assertIn("framework_impact", descriptions["review_context"])
         self.assertIn("application_impact", descriptions["review_context"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callers"])
@@ -563,6 +566,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["answerability"]["status"], "answerable")
         self.assertEqual(result["summary"]["changed_file_count"], 1)
         self.assertEqual(result["summary"]["changed_symbol_count"], 2)
+        self.assertEqual(result["summary"]["detail_limit"], 10)
+        self.assertEqual(result["review_answer_packet"]["summary"]["changed_symbol_count"], 2)
+        self.assertIn("changed-file symbol set", result["review_answer_packet"]["scope_contract"]["changed_symbols"])
         self.assertEqual(result["changed_surface"]["files"][0]["symbol_count"], 2)
         self.assertEqual(result["changed_surface"]["symbols"][0]["qualname"], "bootstrap_checkout")
         self.assertEqual({row["predicate"] for row in result["impact"]["direct_callees"]}, {"CALLS"})
@@ -600,6 +606,31 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(lead["repo"], "web")
         self.assertEqual(lead["match_basis"], "name_derived_unlinked_lead")
         self.assertIn("not as impact proof", lead["interpretation"])
+
+    def test_review_context_marks_requested_surfaces_known_unlinked_or_missing(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "requested_surfaces": ["UI", "scheduled_jobs", "SQS", "workers", "tracking"],
+                    "limit": 10,
+                },
+            )
+
+        statuses = {row["surface"]: row for row in result["surface_status"]}
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertEqual(statuses["scheduled_jobs"]["status"], "known")
+        self.assertEqual(statuses["delivery_workers"]["status"], "known")
+        self.assertEqual(statuses["ui_screens"]["status"], "unlinked")
+        self.assertEqual(statuses["sqs_consumers"]["status"], "known")
+        self.assertEqual(statuses["tracking_paths"]["status"], "missing")
+        self.assertIn("ui_screens", result["answerability"]["unlinked_fact_families"])
+        self.assertNotIn("sqs_consumers", result["answerability"]["missing_fact_families"])
+        self.assertIn("tracking_paths", result["answerability"]["missing_fact_families"])
+        self.assertEqual(result["review_answer_packet"]["surface_status"], result["surface_status"])
 
     def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
@@ -839,6 +870,26 @@ class McpToolsTest(unittest.TestCase):
                     kg,
                     "review_context",
                     {"repo": "payments", "changed_files": ["payments/checkout.py"], "changed_ranges": None},
+                )
+            with self.assertRaisesRegex(ValueError, "requested_surfaces.*unsupported"):
+                call_tool(
+                    kg,
+                    "review_context",
+                    {
+                        "repo": "payments",
+                        "changed_files": ["payments/checkout.py"],
+                        "requested_surfaces": ["campaign_specific_guess"],
+                    },
+                )
+            with self.assertRaisesRegex(ValueError, "requested_surfaces.*list"):
+                call_tool(
+                    kg,
+                    "review_context",
+                    {
+                        "repo": "payments",
+                        "changed_files": ["payments/checkout.py"],
+                        "requested_surfaces": "ui_screens",
+                    },
                 )
 
     def test_review_context_deploy_blocker_row_is_opt_in(self) -> None:
