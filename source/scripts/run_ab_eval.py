@@ -19,7 +19,14 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from source.kg.eval.corpus import DEFAULT_QUERY_SET, EvalTask, default_v1_tasks, parse_query_set
-from source.kg.eval.runner import Arm, RunRecord, RunnerConfig, run_single_task
+from source.kg.eval.runner import (
+    DEFAULT_HARNESS_VERSION,
+    Arm,
+    RunRecord,
+    RunnerConfig,
+    render_task_prompt,
+    run_single_task,
+)
 
 
 def main() -> None:
@@ -529,7 +536,8 @@ def _validate_cached_mcp_off_record(
         "phase": task.phase,
         "difficulty": task.difficulty,
         "repo_fixture": task.fixture,
-        "task_prompt": task.prompt,
+        "harness_version": DEFAULT_HARNESS_VERSION,
+        "task_prompt": render_task_prompt(task, snapshot_path=Path(snapshot).expanduser(), arm="mcp_off"),
         "host": host,
         "model": config.model,
     }
@@ -537,6 +545,7 @@ def _validate_cached_mcp_off_record(
         "phase": record.phase,
         "difficulty": record.difficulty,
         "repo_fixture": record.repo_fixture,
+        "harness_version": record.harness_version,
         "task_prompt": record.task_prompt,
         "host": record.host,
         "model": record.model,

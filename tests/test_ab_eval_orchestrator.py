@@ -10,8 +10,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from source.kg.eval import runner as eval_runner
 from source.kg.eval.corpus import CorpusRow, EvalTask
 from source.kg.eval.runner import (
+    DEFAULT_HARNESS_VERSION,
+    Arm,
     RunRecord,
     RunnerConfig,
     async_run_single_task,
@@ -20,7 +23,7 @@ from source.kg.eval.runner import (
     _mcp_tool_observations,
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
-    _task_prompt,
+    render_task_prompt,
     _tool_calls,
 )
 from source.scripts.run_ab_eval import (
@@ -274,6 +277,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertEqual(stored["task_prompt"], record.task_prompt)
         self.assertIn("Run this SuperContext A/B evaluation task.", record.task_prompt)
         self.assertIn("Snapshot path:", record.task_prompt)
+        self.assertIn("SuperContext MCP skill routing guidance", record.task_prompt)
         self.assertIn("User question:\nWho calls load_model?", record.task_prompt)
         self.assertNotEqual(record.task_prompt, task.prompt)
 
@@ -356,6 +360,64 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "host session log does not exist"):
+                _run_paired_tasks(
+                    [task],
+                    arms=["mcp_off"],
+                    snapshot="snapshot-dir",
+                    output_dir=root / "out",
+                    host="claude_code",
+                    seed=1,
+                    config=RunnerConfig(model="test-model"),
+                    run_task=lambda *args, **kwargs: self.fail("cache hit should skip host run"),
+                    run_host_command=lambda command: self.fail(f"unexpected host command: {command}"),
+                    group_id_factory=lambda: "new-group",
+                    reuse_mcp_off_from=root / "cache",
+                )
+
+    def test_reuse_mcp_off_from_cache_rejects_raw_task_prompt_record(self) -> None:
+        task = _task()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_arm_dir = root / "cache" / "old-group" / "mcp_off"
+            cache_arm_dir.mkdir(parents=True)
+            cached_messages = cache_arm_dir / "messages.jsonl"
+            cached_messages.write_text('{"cached": true}\n', encoding="utf-8")
+            cached_payload = _record(task=task, arm="mcp_off", run_group_id="old-group", pre=(), post=()).to_json()
+            cached_payload["task_prompt"] = task.prompt
+            cached_payload["host_session_log_path"] = str(cached_messages)
+            (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "incompatible task_prompt"):
+                _run_paired_tasks(
+                    [task],
+                    arms=["mcp_off"],
+                    snapshot="snapshot-dir",
+                    output_dir=root / "out",
+                    host="claude_code",
+                    seed=1,
+                    config=RunnerConfig(model="test-model"),
+                    run_task=lambda *args, **kwargs: self.fail("cache hit should skip host run"),
+                    run_host_command=lambda command: self.fail(f"unexpected host command: {command}"),
+                    group_id_factory=lambda: "new-group",
+                    reuse_mcp_off_from=root / "cache",
+                )
+
+    def test_reuse_mcp_off_from_cache_rejects_stale_harness_version(self) -> None:
+        task = _task()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_arm_dir = root / "cache" / "old-group" / "mcp_off"
+            cache_arm_dir.mkdir(parents=True)
+            cached_messages = cache_arm_dir / "messages.jsonl"
+            cached_messages.write_text('{"cached": true}\n', encoding="utf-8")
+            cached_payload = _record(task=task, arm="mcp_off", run_group_id="old-group", pre=(), post=()).to_json()
+            cached_payload["harness_version"] = "ab-eval-v1"
+            cached_payload["host_session_log_path"] = str(cached_messages)
+            (cache_arm_dir / "record.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "incompatible harness_version"):
                 _run_paired_tasks(
                     [task],
                     arms=["mcp_off"],
@@ -908,13 +970,39 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             fixture_input='PR input:\n{"repo": "backend_api", "changed_files": ["api/auth/routes.py", "api/accounts/views.py"]}',
         )
 
-        prompt = _task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+        prompt = render_task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
 
         self.assertIn("Fixture input:", prompt)
         self.assertIn('"repo": "backend_api"', prompt)
         self.assertIn('"changed_files": ["api/auth/routes.py", "api/accounts/views.py"]', prompt)
         self.assertLess(prompt.index("Fixture input:"), prompt.index("User question:"))
         self.assertNotIn("Arm: mcp_on\n\n\n", prompt)
+
+    def test_mcp_on_task_prompt_loads_supercontext_skill_routing_guidance(self) -> None:
+        prompt = render_task_prompt(_task(), snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+
+        self.assertIn("SuperContext MCP skill routing guidance for this mcp_on arm:", prompt)
+        self.assertIn("Call `planning_context` before broad search", prompt)
+        self.assertIn("Before reviewing a diff, call `review_context`", prompt)
+        self.assertIn("If the result is `ambiguous`, use `next_actions`", prompt)
+        self.assertLess(prompt.index("SuperContext MCP skill routing guidance"), prompt.index("User question:"))
+        self.assertNotIn("---\nname: supercontext-mcp", prompt)
+
+    def test_mcp_off_task_prompt_does_not_include_supercontext_skill_routing_guidance(self) -> None:
+        prompt = render_task_prompt(_task(), snapshot_path=Path("snapshot-dir"), arm="mcp_off")
+
+        self.assertNotIn("SuperContext MCP skill routing guidance", prompt)
+        self.assertNotIn("Call `planning_context` before broad search", prompt)
+
+    def test_mcp_on_task_prompt_fails_loudly_when_skill_template_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            eval_runner._claude_supercontext_skill_text.cache_clear()
+            try:
+                with patch.object(eval_runner, "_CLAUDE_SUPERCONTEXT_SKILL_PATH", Path(tmp) / "missing.md"):
+                    with self.assertRaisesRegex(RuntimeError, "SuperContext SKILL.md missing"):
+                        render_task_prompt(_task(), snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+            finally:
+                eval_runner._claude_supercontext_skill_text.cache_clear()
 
     def test_task_prompt_includes_resolved_fixture_bindings(self) -> None:
         task = EvalTask(
@@ -932,7 +1020,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             fixture_bindings=(("$PY_REPO", "mercury_ml"), ("$CALLER_SYMBOL", "load_model")),
         )
 
-        prompt = _task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+        prompt = render_task_prompt(task, snapshot_path=Path("snapshot-dir"), arm="mcp_on")
 
         self.assertIn("Fixture: mercury_ml, load_model", prompt)
         self.assertIn("Resolved fixture bindings", prompt)
@@ -962,7 +1050,7 @@ def _task(task_id: str = "Q003") -> EvalTask:
 def _record(
     *,
     task: EvalTask,
-    arm: str,
+    arm: Arm,
     run_group_id: str,
     pre: tuple[str, ...],
     post: tuple[str, ...],
@@ -976,8 +1064,8 @@ def _record(
         host="claude_code",
         repo_fixture=task.fixture,
         difficulty=task.difficulty,
-        harness_version="ab-eval-v1",
-        task_prompt=task.prompt,
+        harness_version=DEFAULT_HARNESS_VERSION,
+        task_prompt=render_task_prompt(task, snapshot_path=Path("snapshot-dir"), arm=arm),
         snapshot_path="snapshot-dir",
         mcp_tools_called=mcp_tools or [],
         non_mcp_tools_called=["Read"],

@@ -5,10 +5,12 @@ import dataclasses
 import json
 import time
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+import source.kg.product as kg_product
 from source.kg.eval.corpus import EvalTask
 from source.kg.product.claude_tool_policy import (
     DEFAULT_CLAUDE_PERMISSION_MODE,
@@ -19,7 +21,7 @@ from source.kg.product.mcp_tools import tool_definitions
 
 Arm = Literal["mcp_on", "mcp_off"]
 DEFAULT_EVAL_MODEL = "claude-sonnet-4-5-20250929"
-DEFAULT_HARNESS_VERSION = "ab-eval-v1"
+DEFAULT_HARNESS_VERSION = "ab-eval-v2-skill-routing"
 DEFAULT_MCP_URL = "http://127.0.0.1:3845/mcp"
 SUPERCONTEXT_MCP_TOOL_PREFIX = "mcp__supercontext__"
 LEGACY_BETTERCONTEXT_MCP_TOOL_PREFIX = "mcp__bettercontext__"
@@ -32,6 +34,13 @@ SUPERCONTEXT_MCP_TOOL_PREFIXES = (
 # available because prior baseline runs relied on jq/grep-style snapshot inspection.
 EVAL_ALLOWED_ORDINARY_TOOLS = ("Read", "Grep", "Glob", "LS", "Bash", "ToolSearch")
 EVAL_DISALLOWED_EDIT_TOOLS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
+_CLAUDE_SUPERCONTEXT_SKILL_PATH = (
+    Path(kg_product.__file__).resolve().parent
+    / "mcp_skill_templates"
+    / "claude"
+    / "supercontext-mcp"
+    / "SKILL.md"
+)
 
 
 @dataclass(frozen=True)
@@ -132,6 +141,7 @@ async def async_run_single_task(
     snapshot_path = Path(snapshot).expanduser()
     if not snapshot_path.exists():
         raise ValueError(f"Snapshot path does not exist: {snapshot_path}")
+    _validate_prompt_assets_available(arm)
 
     try:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
@@ -145,7 +155,7 @@ async def async_run_single_task(
     arm_dir = _prepare_arm_output_dir(Path(output_dir), group_id=group_id, arm=arm)
     messages_path = arm_dir / "messages.jsonl"
 
-    prompt = _task_prompt(task, snapshot_path=snapshot_path, arm=arm)
+    prompt = render_task_prompt(task, snapshot_path=snapshot_path, arm=arm)
     start = time.monotonic()
     final_answer = ""
     serialized_messages: list[dict[str, Any]] = []
@@ -251,7 +261,7 @@ def _prepare_arm_output_dir(output_dir: Path, *, group_id: str, arm: Arm) -> Pat
     return arm_dir
 
 
-def _task_prompt(task: EvalTask, *, snapshot_path: Path, arm: Arm) -> str:
+def render_task_prompt(task: EvalTask, *, snapshot_path: Path, arm: Arm) -> str:
     fixture_bindings = _fixture_binding_block(task)
     sections = [
         f"""Run this SuperContext A/B evaluation task.
@@ -267,6 +277,8 @@ Arm: {arm}""",
         sections.append(fixture_bindings)
     if task.fixture_input:
         sections.append(f"Fixture input:\n{task.fixture_input}")
+    if arm == "mcp_on":
+        sections.append(_mcp_on_supercontext_skill_guidance())
     sections.extend(
         [
             f"User question:\n{task.prompt}",
@@ -279,6 +291,34 @@ Arm: {arm}""",
         ]
     )
     return "\n\n".join(sections) + "\n"
+
+
+def _mcp_on_supercontext_skill_guidance() -> str:
+    return "SuperContext MCP skill routing guidance for this mcp_on arm:\n\n" + _claude_supercontext_skill_text()
+
+
+def _validate_prompt_assets_available(arm: Arm) -> None:
+    if arm == "mcp_on":
+        _claude_supercontext_skill_text()
+
+
+@cache
+def _claude_supercontext_skill_text() -> str:
+    # Eval runs are CLI one-shots; cache the template so a corpus run uses one
+    # stable routing contract even if the source file changes mid-process.
+    if not _CLAUDE_SUPERCONTEXT_SKILL_PATH.is_file():
+        raise RuntimeError(f"SuperContext SKILL.md missing at {_CLAUDE_SUPERCONTEXT_SKILL_PATH}")
+    return _strip_skill_frontmatter(_CLAUDE_SUPERCONTEXT_SKILL_PATH.read_text(encoding="utf-8")).strip()
+
+
+def _strip_skill_frontmatter(text: str) -> str:
+    if not text.startswith("---\n"):
+        return text
+    marker = "\n---\n"
+    end = text.find(marker, len("---\n"))
+    if end == -1:
+        return text
+    return text[end + len(marker) :]
 
 
 def _fixture_binding_block(task: EvalTask) -> str:
