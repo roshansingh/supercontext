@@ -540,7 +540,10 @@ class AdapterFrameworkTest(unittest.TestCase):
 
         self.assertIn("terraform", capability.framework_tags)
         self.assertIn("REFERENCES_DOMAIN", capability.produces_predicates)
+        self.assertIn("ROUTES_DOMAIN_TO_DEPLOY", capability.produces_predicates)
+        self.assertIn("DEPLOYS_VIA_CONFIG", capability.produces_predicates)
         self.assertIn("Domain", capability.produces_entity_kinds)
+        self.assertIn("DeployTarget", capability.produces_entity_kinds)
 
     def test_apache_vhost_adapter_claims_parser_backed_public_scope(self) -> None:
         capability = {adapter.capability.name: adapter.capability for adapter in file_format_adapters()}[

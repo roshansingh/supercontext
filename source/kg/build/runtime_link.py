@@ -22,6 +22,7 @@ DIRECT_DEPLOY_TARGET_TYPES = frozenset(
         "kubernetes_job",
         "kubernetes_replica_set",
         "kubernetes_stateful_set",
+        "cloudfront_distribution",
     )
 )
 SUPPORTED_DEPLOY_TARGET_TYPES = CROSS_REPO_LINKABLE_DEPLOY_TARGET_TYPES | DIRECT_DEPLOY_TARGET_TYPES

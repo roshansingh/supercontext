@@ -21,7 +21,7 @@ from source.kg.file_formats.dotenv import extract_dotenv
 from source.kg.file_formats.kubernetes_yaml import extract_kubernetes_manifests, is_likely_kubernetes_manifest
 from source.kg.file_formats._shared.endpoints import extract_endpoints
 from source.kg.file_formats.serverless_yaml import extract_serverless_yaml_routes, is_serverless_yaml_filename
-from source.kg.file_formats.terraform import extract_terraform
+from source.kg.file_formats.terraform import extract_terraform_files
 from source.kg.file_formats.zappa import extract_zappa_event_sources
 from source.kg.core.models import Coverage, Entity, Evidence
 from source.kg.core.repo_source import RepoSnapshot
@@ -64,8 +64,7 @@ class StaticConfigExtractor:
         if self.include_domain_env:
             extract_dotenv(repo, files, service_entity, build, resolved_tenant_id)
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
-            for scanned in files:
-                extract_terraform(repo, scanned, service_entity, build, resolved_tenant_id)
+            extract_terraform_files(repo, files, service_entity, build, resolved_tenant_id)
         extract_endpoints(repo, files, service_entity, build, tenant_id=resolved_tenant_id, include_openapi=self.include_openapi)
         if self.include_deploy_events:
             for scanned in files:

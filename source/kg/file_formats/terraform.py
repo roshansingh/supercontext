@@ -1,14 +1,16 @@
 """Fail-closed Terraform literal domain extraction.
 
-V1 scope is top-level `variable` and `resource` blocks with double-quoted
-scalar assignments or single-line lists of quoted literals, plus `module.source`
-git host literals. It intentionally skips provider, data, locals, output,
-terraform, provisioner, nested blocks, interpolation, objects, multi-line lists,
-and heredoc values.
+V1 domain-literal scope is top-level `variable` and `resource` blocks with
+double-quoted scalar assignments or single-line lists of quoted literals, plus
+`module.source` git host literals. Runtime extraction has a separate typed
+CloudFront/S3 pass. Other provider, data, locals, output, terraform,
+provisioner, interpolation, objects, multi-line lists, and heredoc values remain
+fail-closed.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -22,12 +24,14 @@ from source.kg.file_formats._shared.common import (
     domain_entity,
 )
 from source.kg.file_formats._shared.domain_literals import domain_from_value, safe_config_literal
+from source.kg.file_formats.terraform_runtime import extract_terraform_runtime_routes
 
 
 @dataclass
 class _BlockState:
     kind: str
     depth: int
+    labels: tuple[str, ...] = ()
 
 
 SUPPORTED_BLOCK_KINDS = {"module", "variable", "resource"}
@@ -39,6 +43,46 @@ def extract_terraform(
     service_entity: Entity,
     build: ConfigKgBuild,
     tenant_id: str,
+) -> None:
+    """Extract legacy single-file Terraform domain literals.
+
+    Runtime topology extraction requires the full Terraform file set so variable
+    defaults and resources can be resolved within a Terraform root. Use
+    `extract_terraform_files` for CloudFront/S3 runtime routes. This entry point
+    remains for per-file domain-literal opportunity detection.
+    """
+
+    _extract_terraform_domain_literals(repo, scanned, service_entity, build, tenant_id)
+
+
+def extract_terraform_files(
+    repo: RepoSnapshot,
+    files: Iterable[ScannedFile],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
+    files = tuple(files)
+    for scanned in files:
+        _extract_terraform_domain_literals(
+            repo,
+            scanned,
+            service_entity,
+            build,
+            tenant_id,
+            skip_cloudfront_aliases=True,
+        )
+    extract_terraform_runtime_routes(repo, files, service_entity, build, tenant_id)
+
+
+def _extract_terraform_domain_literals(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+    *,
+    skip_cloudfront_aliases: bool = False,
 ) -> None:
     if scanned.path.suffix != ".tf":
         return
@@ -80,7 +124,7 @@ def extract_terraform(
                         domain_ref=domain_ref,
                         source_kind="terraform_module_source",
                     )
-            else:
+            elif not skip_cloudfront_aliases or not _is_cloudfront_alias_assignment(block, line):
                 for literal in _assignment_literals(line) or ():
                     _add_terraform_domain(repo, scanned, service_entity, build, line_number, literal, tenant_id)
         block.depth += _brace_delta(line)
@@ -97,7 +141,44 @@ def _start_block(line: str) -> _BlockState | None:
     depth = _brace_delta(line)
     if depth <= 0:
         return None
-    return _BlockState(kind=token, depth=depth)
+    return _BlockState(kind=token, depth=depth, labels=_quoted_labels_before_open_brace(line))
+
+
+def _is_cloudfront_alias_assignment(block: _BlockState, line: str) -> bool:
+    return block.kind == "resource" and block.labels[:1] == ("aws_cloudfront_distribution",) and _assignment_key(line) == "aliases"
+
+
+def _assignment_key(line: str) -> str | None:
+    key, separator, _ = line.partition("=")
+    if not separator:
+        return None
+    key = key.strip()
+    return key or None
+
+
+def _quoted_labels_before_open_brace(line: str) -> tuple[str, ...]:
+    before_brace, _, _ = line.partition("{")
+    labels: list[str] = []
+    quote: str | None = None
+    escaped = False
+    chars: list[str] = []
+    for char in before_brace:
+        if escaped:
+            if quote is not None:
+                chars.append(char)
+            escaped = False
+        elif quote is not None and char == "\\":
+            escaped = True
+        elif char == '"':
+            if quote == '"':
+                labels.append("".join(chars))
+                chars = []
+                quote = None
+            elif quote is None:
+                quote = '"'
+        elif quote is not None:
+            chars.append(char)
+    return tuple(labels)
 
 
 def _quoted_assignment_value(line: str) -> str | None:

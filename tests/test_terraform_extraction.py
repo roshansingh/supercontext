@@ -7,7 +7,7 @@ from pathlib import Path
 from source.kg.core.models import Entity
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.file_formats._shared.common import ConfigKgBuild, ScannedFile
-from source.kg.file_formats.terraform import extract_terraform
+from source.kg.file_formats.terraform import extract_terraform, extract_terraform_files
 
 
 class TerraformExtractionTest(unittest.TestCase):
@@ -186,6 +186,422 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(build.entities, [])
         self.assertEqual(build.facts, [])
 
+    def test_cloudfront_alias_to_s3_origin_emits_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "variables.tf": (
+                    'variable "site_domain" {\n'
+                    '  default = "app.example.com"\n'
+                    "}\n"
+                ),
+                "s3.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "  website {\n"
+                    '    index_document = "index.html"\n'
+                    "  }\n"
+                    "}\n"
+                ),
+                "cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_regional_domain_name\n"
+                    '    origin_id = "site-origin"\n'
+                    "  }\n"
+                    "  aliases = [var.site_domain]\n"
+                    '  default_root_object = "index.html"\n'
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertIn("app.example.com", _domains(build))
+        self.assertEqual(_deploy_targets(build), [("cloudfront_distribution", "cloudfront.tf#aws_cloudfront_distribution.site")])
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+        route = next(fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY")
+        self.assertEqual(route.qualifier["source_kind"], "terraform_cloudfront_alias")
+        self.assertEqual(route.qualifier["origin_resources"], ["aws_s3_bucket.site"])
+        reference = next(
+            fact
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_DOMAIN" and fact.qualifier["source_kind"] == "terraform_cloudfront_alias"
+        )
+        self.assertEqual(reference.qualifier["expression"], "var.site_domain")
+
+    def test_cloudfront_literal_alias_emits_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    '  aliases = ["static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertIn("static.example.com", _domains(build))
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_multiline_alias_list_emits_runtime_routes(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [\n"
+                    '    "static.example.com",\n'
+                    '    "www.example.com",\n'
+                    "  ]\n"
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 2)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 2)
+        self.assertEqual(sorted(_domains(build)), ["static.example.com", "www.example.com"])
+
+    def test_cloudfront_single_line_trailing_comma_alias_emits_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    '  aliases = ["static.example.com",]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_duplicate_alias_emits_one_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    '  aliases = ["static.example.com", "static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_runtime_routes_accept_file_iterators(self) -> None:
+        build = _extract_files(
+            {
+                "variables.tf": (
+                    'variable "site_domain" {\n'
+                    '  default = "app.example.com"\n'
+                    "}\n"
+                ),
+                "s3.tf": 'resource "aws_s3_bucket" "site" {}\n',
+                "cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [var.site_domain]\n"
+                    "}\n"
+                ),
+            },
+            as_iterator=True,
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_invalid_multiline_list_does_not_hide_following_aliases(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  custom_header = [\n"
+                    "    {\n"
+                    '      name = "x"\n'
+                    "    },\n"
+                    "  ]\n"
+                    '  aliases = ["static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_invalid_multiline_list_inside_origin_does_not_hide_domain_name(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    custom_header = [\n"
+                    "      {\n"
+                    '        name = "x"\n'
+                    "      },\n"
+                    "    ]\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    '  aliases = ["static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_invalid_multiline_list_does_not_hide_later_origin_block(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  custom_header = [\n"
+                    "    {\n"
+                    '      name = "x"\n'
+                    "    },\n"
+                    "  ]\n"
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    '  aliases = ["static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
+
+    def test_cloudfront_unresolved_alias_emits_no_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [var.missing_domain]\n"
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_alias_unresolved"])
+
+    def test_cloudfront_without_s3_origin_emits_no_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    '    domain_name = "api.example.com"\n'
+                    "  }\n"
+                    '  aliases = ["app.example.com"]\n'
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_no_s3_origin"])
+
+    def test_cloudfront_variable_resolution_is_directory_scoped(self) -> None:
+        build = _extract_files(
+            {
+                "prod/variables.tf": (
+                    'variable "site_domain" {\n'
+                    '  default = "prod.example.com"\n'
+                    "}\n"
+                ),
+                "staging/variables.tf": (
+                    'variable "site_domain" {\n'
+                    '  default = "staging.example.com"\n'
+                    "}\n"
+                ),
+                "prod/s3.tf": 'resource "aws_s3_bucket" "site" {}\n',
+                "staging/s3.tf": 'resource "aws_s3_bucket" "site" {}\n',
+                "prod/cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [var.site_domain]\n"
+                    "}\n"
+                ),
+                "staging/cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [var.site_domain]\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        routes = [
+            (
+                _entity_name(build, fact.subject_id),
+                _entity_target(build, fact.object_id),
+            )
+            for fact in build.facts
+            if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY"
+        ]
+        self.assertEqual(
+            sorted(routes),
+            [
+                ("prod.example.com", "prod/cloudfront.tf#aws_cloudfront_distribution.site"),
+                ("staging.example.com", "staging/cloudfront.tf#aws_cloudfront_distribution.site"),
+            ],
+        )
+
+    def test_cloudfront_s3_origin_resolution_is_directory_scoped(self) -> None:
+        build = _extract_files(
+            {
+                "prod/variables.tf": (
+                    'variable "site_domain" {\n'
+                    '  default = "prod.example.com"\n'
+                    "}\n"
+                ),
+                "staging/s3.tf": 'resource "aws_s3_bucket" "site" {}\n',
+                "prod/cloudfront.tf": (
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "  aliases = [var.site_domain]\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_no_s3_origin"])
+
+    def test_cloudfront_missing_alias_emits_coverage(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+                    "  }\n"
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_alias_missing"])
+
+    def test_cloudfront_invalid_resource_reference_emits_no_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    "    domain_name = aws_s3_bucket.123-site.bucket_domain_name\n"
+                    "  }\n"
+                    '  aliases = ["static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_no_s3_origin"])
+
+    def test_cloudfront_function_wrapped_resource_reference_emits_no_runtime_route(self) -> None:
+        build = _extract_files(
+            {
+                "main.tf": (
+                    'resource "aws_s3_bucket" "site" {\n'
+                    '  bucket = "example-site"\n'
+                    "}\n"
+                    'resource "aws_cloudfront_distribution" "site" {\n'
+                    "  origin {\n"
+                    '    domain_name = lookup(local.origins, "site", aws_s3_bucket.site.bucket_domain_name)\n'
+                    "  }\n"
+                    '  aliases = ["static.example.com"]\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+        self.assertEqual(_coverage_reasons(build), ["cloudfront_no_s3_origin"])
+
+    def test_legacy_single_file_api_does_not_emit_runtime_routes_or_coverage(self) -> None:
+        build = _extract(
+            'resource "aws_s3_bucket" "site" {\n'
+            '  bucket = "example-site"\n'
+            "}\n"
+            'resource "aws_cloudfront_distribution" "site" {\n'
+            "  origin {\n"
+            "    domain_name = aws_s3_bucket.site.bucket_domain_name\n"
+            "  }\n"
+            '  aliases = ["static.example.com"]\n'
+            "}\n"
+        )
+
+        self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 0)
+        self.assertEqual(_fact_count(build, "DEPLOYS_VIA_CONFIG"), 0)
+        self.assertEqual(_coverage_reasons(build), [])
+        self.assertEqual(_fact_count(build, "REFERENCES_DOMAIN"), 1)
+
     def test_nested_block_assignment_is_skipped(self) -> None:
         build = _extract(
             'resource "aws_cloudfront_distribution" "api" {\n'
@@ -278,10 +694,30 @@ class TerraformExtractionTest(unittest.TestCase):
 
 
 def _extract(text: str, *, relative_path: str = "main.tf") -> ConfigKgBuild:
+    return _extract_files({relative_path: text}, single_file_api=True)
+
+
+def _extract_files(
+    files: dict[str, str],
+    *,
+    single_file_api: bool = False,
+    as_iterator: bool = False,
+) -> ConfigKgBuild:
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        terraform_path = root / relative_path
-        terraform_path.write_text(text, encoding="utf-8")
+        scanned_files = []
+        for relative_path, text in files.items():
+            terraform_path = root / relative_path
+            terraform_path.parent.mkdir(parents=True, exist_ok=True)
+            terraform_path.write_text(text, encoding="utf-8")
+            scanned_files.append(
+                ScannedFile(
+                    path=terraform_path,
+                    relative_path=relative_path,
+                    text=text,
+                    lines=tuple(text.splitlines()),
+                )
+            )
         repo = RepoSnapshot(
             root=root,
             name="terraform-service",
@@ -289,15 +725,14 @@ def _extract(text: str, *, relative_path: str = "main.tf") -> ConfigKgBuild:
             commit_sha="sha",
             files_by_language={"python": (), "typescript": ()},
         )
-        scanned = ScannedFile(
-            path=terraform_path,
-            relative_path=relative_path,
-            text=text,
-            lines=tuple(text.splitlines()),
-        )
         service = Entity(kind="Service", identity={"tenant_id": "default", "namespace": "default", "slug": "svc"})
         build = ConfigKgBuild()
-        extract_terraform(repo, scanned, service, build, "default")
+        if single_file_api:
+            self_scanned = scanned_files[0]
+            extract_terraform(repo, self_scanned, service, build, "default")
+        else:
+            file_input = iter(scanned_files) if as_iterator else scanned_files
+            extract_terraform_files(repo, file_input, service, build, "default")
         return build
 
 
@@ -307,6 +742,32 @@ def _domains(build: ConfigKgBuild) -> list[str]:
 
 def _fact_count(build: ConfigKgBuild, predicate: str) -> int:
     return len([fact for fact in build.facts if fact.predicate == predicate])
+
+
+def _deploy_targets(build: ConfigKgBuild) -> list[tuple[str, str]]:
+    return [
+        (entity.identity["type"], entity.identity["target"])
+        for entity in build.entities
+        if entity.kind == "DeployTarget"
+    ]
+
+
+def _coverage_reasons(build: ConfigKgBuild) -> list[str]:
+    return sorted(
+        str(row.scope_ref["reason"])
+        for row in build.coverage
+        if row.predicate == "ROUTES_DOMAIN_TO_DEPLOY"
+    )
+
+
+def _entity_name(build: ConfigKgBuild, entity_id: str) -> str:
+    entity = next(entity for entity in build.entities if entity.entity_id == entity_id)
+    return str(entity.identity["name"])
+
+
+def _entity_target(build: ConfigKgBuild, entity_id: str) -> str:
+    entity = next(entity for entity in build.entities if entity.entity_id == entity_id)
+    return str(entity.identity["target"])
 
 
 if __name__ == "__main__":

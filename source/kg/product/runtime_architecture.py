@@ -695,12 +695,13 @@ def _route_kind_rank(value: object) -> int:
     priority = {
         "apache_wsgi": 0,
         "zappa_lambda": 1,
-        "kubernetes_deployment": 2,
-        "apache_server_name_reference": 3,
-        "zappa_domain_reference": 4,
-        "kubernetes_ingress_domain_reference": 5,
-        "terraform_domain_reference": 6,
-        "env_domain_reference": 7,
+        "cloudfront_distribution": 2,
+        "kubernetes_deployment": 3,
+        "apache_server_name_reference": 4,
+        "zappa_domain_reference": 5,
+        "kubernetes_ingress_domain_reference": 6,
+        "terraform_domain_reference": 7,
+        "env_domain_reference": 8,
     }
     return priority.get(value, 50)
 
