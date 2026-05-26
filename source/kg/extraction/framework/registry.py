@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from source.kg.extraction.framework.adapter import Adapter
-from source.kg.extraction.framework.allowlists import SUPPORTED_ENTITY_KINDS, SUPPORTED_FACT_PREDICATES
+from source.kg.extraction.framework.allowlists import (
+    SUPPORTED_ENTITY_KINDS,
+    SUPPORTED_FACT_PREDICATES,
+    SUPPORTED_SUPPORT_FACT_PREDICATES,
+)
 
 
 REGISTERED_ADAPTERS: tuple[Adapter, ...] = ()
@@ -29,6 +33,14 @@ def validate_adapters(adapters: Iterable[Adapter]) -> tuple[Adapter, ...]:
         if unsupported_predicates:
             raise ValueError(
                 f"Adapter {capability.name} declares unsupported predicates: {sorted(unsupported_predicates)}"
+            )
+        unsupported_support_predicates = (
+            set(capability.produces_support_predicates) - SUPPORTED_SUPPORT_FACT_PREDICATES
+        )
+        if unsupported_support_predicates:
+            raise ValueError(
+                f"Adapter {capability.name} declares unsupported support predicates: "
+                f"{sorted(unsupported_support_predicates)}"
             )
         unsupported_kinds = set(capability.produces_entity_kinds) - SUPPORTED_ENTITY_KINDS
         if unsupported_kinds:

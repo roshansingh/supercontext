@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from source.kg.build import relink
@@ -31,6 +31,7 @@ class MultiRepoBuild:
     package_classifications: tuple[JsonObject, ...]
     runtime_link_count: int
     runtime_ambiguous_link_count: int
+    support_facts: list[Fact] = field(default_factory=list)
 
 
 def build_multi_kg(
@@ -77,6 +78,7 @@ def build_multi_kg(
             "unsupported_files_by_language": _unsupported_files_by_language_counts(repos),
             "entities": len({entity.entity_id for entity in build.entities}),
             "facts": len({fact.fact_id for fact in build.facts}),
+            "support_facts": len({fact.fact_id for fact in build.support_facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
             "coverage": len({row.coverage_id for row in build.coverage}),
         },
@@ -84,6 +86,7 @@ def build_multi_kg(
     JsonlKgStore(output_dir).write(
         entities=build.entities,
         facts=build.facts,
+        support_facts=build.support_facts,
         evidence=build.evidence,
         coverage=build.coverage,
         manifest=manifest,
@@ -99,6 +102,7 @@ def build_multi(
 ) -> MultiRepoBuild:
     entities: list[Entity] = []
     facts: list[Fact] = []
+    support_facts: list[Fact] = []
     evidence: list[Evidence] = []
     coverage = []
     extractor_errors: list[JsonObject] = []
@@ -116,6 +120,7 @@ def build_multi(
         runtime_inputs.append(runtime_link.RuntimeLinkerInput(repo, tuple(repo_entities), tuple(repo_facts), tuple(repo_evidence)))
         entities.extend(repo_build.entities)
         facts.extend(repo_build.facts)
+        support_facts.extend(repo_build.support_facts)
         evidence.extend(repo_evidence)
         coverage.extend(repo_build.coverage)
         extractor_errors.extend(
@@ -142,6 +147,7 @@ def build_multi(
     return MultiRepoBuild(
         entities=entities,
         facts=facts,
+        support_facts=support_facts,
         evidence=evidence,
         coverage=coverage,
         extractor_errors=extractor_errors,

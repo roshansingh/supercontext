@@ -1,0 +1,524 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from source.kg.build.pipeline import build_kg
+from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.store import JsonlKgStore
+from source.kg.languages.python.extractors.ast_extractor import KgBuild, PythonAstExtractor
+from source.kg.product.framework_impact import framework_impact_packet
+from source.kg.product.mcp_tools import call_tool
+from source.kg.query.snapshot import KgSnapshot
+
+
+class PythonDjangoFrameworkExtractionTest(unittest.TestCase):
+    def test_django_model_serializer_viewset_and_task_emit_framework_impact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            serializers = app / "serializers.py"
+            views = app / "views.py"
+            tasks = app / "tasks.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Customer(models.Model):\n"
+                "    email = models.EmailField()\n\n"
+                "class Order(models.Model):\n"
+                "    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)\n"
+                "    total = models.DecimalField(max_digits=8, decimal_places=2)\n",
+                encoding="utf-8",
+            )
+            serializers.write_text(
+                "from rest_framework import serializers\n"
+                "from .models import Order\n\n"
+                "class OrderSerializer(serializers.ModelSerializer):\n"
+                "    class Meta:\n"
+                "        model = Order\n"
+                "        fields = ['id', 'customer', 'total']\n",
+                encoding="utf-8",
+            )
+            views.write_text(
+                "from rest_framework.viewsets import ModelViewSet\n"
+                "from .models import Order\n"
+                "from .serializers import OrderSerializer\n\n"
+                "class OrderViewSet(ModelViewSet):\n"
+                "    queryset = Order.objects.all()\n"
+                "    serializer_class = OrderSerializer\n",
+                encoding="utf-8",
+            )
+            tasks.write_text(
+                "from celery import shared_task\n"
+                "from .models import Order\n\n"
+                "@shared_task\n"
+                "def send_order_receipt(order_id):\n"
+                "    order = Order.objects.get(id=order_id)\n"
+                "    return order.total\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models, serializers, views, tasks))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        predicates = {fact.predicate for fact in build.support_facts}
+        self.assertIn("DECLARES_FIELD", predicates)
+        self.assertIn("RELATES_TO_MODEL", predicates)
+        self.assertIn("SERIALIZES_MODEL", predicates)
+        self.assertIn("HANDLES_MODEL", predicates)
+        self.assertIn("TASK_USES_MODEL", predicates)
+
+        result = call_tool(
+            kg,
+            "review_context",
+            {
+                "repo": "orders",
+                "changed_files": ["orders/models.py"],
+                "changed_ranges": [{"path": "orders/models.py", "start_line": 6, "end_line": 8}],
+            },
+        )
+
+        self.assertEqual(result["status"], "found")
+        impact = result["framework_impact"]
+        self.assertEqual(impact["status"], "found")
+        self.assertEqual(impact["summary"]["changed_framework_model_count"], 1)
+        self.assertGreaterEqual(impact["summary"]["model_field_count"], 2)
+        self.assertEqual(impact["serializers"][0]["subject"]["qualname"], "OrderSerializer")
+        self.assertEqual(impact["views"][0]["subject"]["qualname"], "OrderViewSet")
+        self.assertEqual(impact["tasks"][0]["subject"]["qualname"], "send_order_receipt")
+
+        limited = call_tool(
+            kg,
+            "review_context",
+            {
+                "repo": "orders",
+                "changed_files": ["orders/models.py"],
+                "changed_ranges": [{"path": "orders/models.py", "start_line": 6, "end_line": 8}],
+                "limit": 1,
+            },
+        )
+        self.assertEqual(limited["summary"]["framework_model_count"], 1)
+        self.assertEqual(len(limited["framework_impact"]["model_fields"]), 1)
+        self.assertGreater(limited["framework_impact"]["summary"]["model_field_count"], 1)
+
+        serializer_change = call_tool(
+            kg,
+            "review_context",
+            {
+                "repo": "orders",
+                "changed_files": ["orders/serializers.py"],
+                "changed_ranges": [{"path": "orders/serializers.py", "start_line": 4, "end_line": 7}],
+            },
+        )
+        self.assertEqual(serializer_change["framework_impact"]["status"], "found")
+        self.assertEqual(serializer_change["framework_impact"]["summary"]["changed_framework_model_count"], 1)
+        self.assertEqual(serializer_change["framework_impact"]["changed_models"][0]["qualname"], "Order")
+
+    def test_dynamic_serializer_model_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            serializers = app / "serializers.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            serializers.write_text(
+                "from rest_framework import serializers\n"
+                "from .models import Order\n\n"
+                "MODEL = Order\n\n"
+                "class OrderSerializer(serializers.ModelSerializer):\n"
+                "    class Meta:\n"
+                "        model = MODEL\n"
+                "        fields = '__all__'\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models, serializers))
+
+        serializer_facts = [fact for fact in build.support_facts if fact.predicate == "SERIALIZES_MODEL"]
+        self.assertEqual(serializer_facts, [])
+
+    def test_unrelated_app_task_decorator_does_not_emit_task_fact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            tasks = app / "tasks.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            tasks.write_text(
+                "from django.conf import settings\n"
+                "from .models import Order\n\n"
+                "@app.task\n"
+                "def purge_order(order_id):\n"
+                "    return Order.objects.get(id=order_id).total\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models, tasks))
+            _assert_support_facts_reference_entities(build)
+
+        task_facts = [fact for fact in build.support_facts if fact.predicate == "TASK_USES_MODEL"]
+        self.assertEqual(task_facts, [])
+
+    def test_async_celery_task_uses_main_extractor_symbol_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            tasks = app / "tasks.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            tasks.write_text(
+                "from celery import shared_task\n"
+                "from .models import Order\n\n"
+                "@shared_task\n"
+                "async def refresh_order(order_id):\n"
+                "    order = Order.objects.get(id=order_id)\n"
+                "    return order.total\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models, tasks))
+
+        task_facts = [fact for fact in build.support_facts if fact.predicate == "TASK_USES_MODEL"]
+        self.assertEqual(len(task_facts), 1)
+        entities_by_id = {entity.entity_id: entity for entity in build.entities}
+        task_entity = entities_by_id[task_facts[0].subject_id]
+        self.assertEqual(task_entity.identity["qualname"], "refresh_order")
+        self.assertEqual(task_entity.identity["symbol_kind"], "async_function")
+
+    def test_nested_celery_task_is_not_linked_to_top_level_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            tasks = app / "tasks.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            tasks.write_text(
+                "from celery import shared_task\n"
+                "from .models import Order\n\n"
+                "def refresh_order():\n"
+                "    return None\n\n"
+                "def register_tasks():\n"
+                "    @shared_task\n"
+                "    def refresh_order(order_id):\n"
+                "        return Order.objects.get(id=order_id).total\n"
+                "    return refresh_order\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models, tasks))
+
+        task_facts = [fact for fact in build.support_facts if fact.predicate == "TASK_USES_MODEL"]
+        self.assertEqual(task_facts, [])
+
+    def test_viewset_serializer_import_resolves_when_short_name_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            orders = root / "orders"
+            archive = root / "archive"
+            orders.mkdir()
+            archive.mkdir()
+            order_models = orders / "models.py"
+            order_serializers = orders / "serializers.py"
+            order_views = orders / "views.py"
+            archive_models = archive / "models.py"
+            archive_serializers = archive / "serializers.py"
+            order_models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            order_serializers.write_text(
+                "from rest_framework import serializers\n"
+                "from .models import Order\n\n"
+                "class OrderSerializer(serializers.ModelSerializer):\n"
+                "    class Meta:\n"
+                "        model = Order\n"
+                "        fields = '__all__'\n",
+                encoding="utf-8",
+            )
+            order_views.write_text(
+                "from rest_framework.viewsets import ModelViewSet\n"
+                "from .serializers import OrderSerializer\n\n"
+                "class OrderViewSet(ModelViewSet):\n"
+                "    serializer_class = OrderSerializer\n",
+                encoding="utf-8",
+            )
+            archive_models.write_text(
+                "from django.db import models\n\n"
+                "class ArchivedOrder(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            archive_serializers.write_text(
+                "from rest_framework import serializers\n"
+                "from .models import ArchivedOrder\n\n"
+                "class OrderSerializer(serializers.ModelSerializer):\n"
+                "    class Meta:\n"
+                "        model = ArchivedOrder\n"
+                "        fields = '__all__'\n",
+                encoding="utf-8",
+            )
+
+            build = _build(
+                root,
+                (
+                    order_models,
+                    order_serializers,
+                    order_views,
+                    archive_models,
+                    archive_serializers,
+                ),
+            )
+
+        view_facts = [fact for fact in build.support_facts if fact.predicate == "HANDLES_MODEL"]
+        self.assertEqual(len(view_facts), 1)
+        model_by_id = {entity.entity_id: entity for entity in build.entities}
+        self.assertEqual(model_by_id[view_facts[0].object_id].identity["qualname"], "Order")
+
+    def test_build_kg_writes_framework_support_facts_outside_canonical_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir()
+            (root / "models.py").write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+            out = Path(tmpdir) / "snapshot"
+
+            manifest = build_kg(root, out)
+            facts_text = (out / "facts.jsonl").read_text(encoding="utf-8")
+            support_text = (out / "support_facts.jsonl").read_text(encoding="utf-8")
+
+            self.assertEqual(manifest["extractor_errors"], [])
+            self.assertGreaterEqual(manifest["counts"]["support_facts"], 1)
+            self.assertNotIn("DECLARES_FIELD", facts_text)
+            self.assertIn("DECLARES_FIELD", support_text)
+
+    def test_non_framework_repo_does_not_emit_django_specific_framework_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "plain.py"
+            module.write_text("def add(left, right):\n    return left + right\n", encoding="utf-8")
+
+            build = _build(root, (module,))
+
+        rows = [coverage for coverage in build.coverage if coverage.predicate == "FRAMEWORK_IMPACT"]
+        self.assertEqual(rows, [])
+
+    def test_framework_import_without_static_facts_emits_partial_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "settings_reader.py"
+            module.write_text(
+                "from django.conf import settings\n\n"
+                "def debug_enabled():\n"
+                "    return settings.DEBUG\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (module,))
+            kg = _snapshot(root, build)
+
+        rows = [coverage for coverage in build.coverage if coverage.predicate == "FRAMEWORK_IMPACT"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].state, "partially_instrumented")
+        self.assertEqual(rows[0].scope_ref["framework_family"], "python_framework_stack")
+        self.assertEqual(rows[0].scope_ref["framework_import_roots"], ["django"])
+        self.assertEqual(rows[0].scope_ref["reason"], "recognized_framework_without_static_framework_impact_facts")
+        review = call_tool(
+            kg,
+            "review_context",
+            {
+                "repo": "orders",
+                "changed_files": ["settings_reader.py"],
+                "changed_ranges": [{"path": "settings_reader.py", "start_line": 3, "end_line": 4}],
+            },
+        )
+        self.assertEqual(review["framework_impact"]["status"], "empty")
+
+    def test_celery_only_import_uses_neutral_framework_family_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            module = root / "tasks.py"
+            module.write_text(
+                "from celery import shared_task\n\n"
+                "@shared_task\n"
+                "def ping():\n"
+                "    return 'pong'\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (module,))
+
+        rows = [coverage for coverage in build.coverage if coverage.predicate == "FRAMEWORK_IMPACT"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].scope_ref["framework_family"], "python_framework_stack")
+        self.assertEqual(rows[0].scope_ref["framework_import_roots"], ["celery"])
+        self.assertNotIn("framework", rows[0].scope_ref)
+
+    def test_framework_impact_missing_repo_preserves_summary_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    total = models.IntegerField()\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models,))
+            kg = _snapshot(root, build)
+
+        packet = framework_impact_packet(kg, repo="", changed_symbols=[], limit=5)
+
+        self.assertEqual(packet["status"], "missing_repo")
+        self.assertEqual(packet["summary"]["changed_framework_model_count"], 0)
+        self.assertEqual(packet["summary"]["section_limit"], 5)
+
+    def test_fieldless_model_change_impacts_serializer_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            serializers = app / "serializers.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Order(models.Model):\n"
+                "    class Meta:\n"
+                "        app_label = 'orders'\n",
+                encoding="utf-8",
+            )
+            serializers.write_text(
+                "from rest_framework import serializers\n"
+                "from .models import Order\n\n"
+                "class OrderSerializer(serializers.ModelSerializer):\n"
+                "    class Meta:\n"
+                "        model = Order\n"
+                "        fields = '__all__'\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models, serializers))
+            kg = _snapshot(root, build)
+
+        result = call_tool(
+            kg,
+            "review_context",
+            {
+                "repo": "orders",
+                "changed_files": ["orders/models.py"],
+                "changed_ranges": [{"path": "orders/models.py", "start_line": 3, "end_line": 5}],
+            },
+        )
+
+        self.assertEqual(result["framework_impact"]["status"], "found")
+        self.assertEqual(result["framework_impact"]["summary"]["changed_framework_model_count"], 1)
+        self.assertEqual(result["framework_impact"]["changed_models"][0]["qualname"], "Order")
+
+    def test_relationship_paths_stop_after_two_model_hops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            models = app / "models.py"
+            models.write_text(
+                "from django.db import models\n\n"
+                "class Country(models.Model):\n"
+                "    name = models.CharField(max_length=50)\n\n"
+                "class Customer(models.Model):\n"
+                "    country = models.ForeignKey(Country, on_delete=models.CASCADE)\n\n"
+                "class Order(models.Model):\n"
+                "    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)\n\n"
+                "class LineItem(models.Model):\n"
+                "    order = models.ForeignKey(Order, on_delete=models.CASCADE)\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (models,))
+            kg = _snapshot(root, build)
+
+        result = call_tool(
+            kg,
+            "review_context",
+            {
+                "repo": "orders",
+                "changed_files": ["orders/models.py"],
+                "changed_ranges": [{"path": "orders/models.py", "start_line": 11, "end_line": 12}],
+                "limit": 10,
+            },
+        )
+
+        paths = result["framework_impact"]["relationship_paths"]
+        self.assertTrue(paths)
+        self.assertLessEqual(max(len(path["model_path"]) for path in paths), 3)
+        self.assertTrue(all(path["relation"]["relation_type"] == "ForeignKey" for path in paths))
+        self.assertEqual(result["framework_impact"]["summary"]["relationship_path_count"], 2)
+
+
+def _build(root: Path, files: tuple[Path, ...]) -> KgBuild:
+    return PythonAstExtractor(include_transport=False).extract(
+        RepoSnapshot(
+            root=root,
+            name="orders",
+            owner="test",
+            commit_sha="sha",
+            files_by_language={"python": files, "typescript": ()},
+        )
+    )
+
+
+def _assert_support_facts_reference_entities(build: KgBuild) -> None:
+    entity_ids = {entity.entity_id for entity in build.entities}
+    for fact in build.support_facts:
+        if fact.object_id:
+            if fact.object_id not in entity_ids:
+                raise AssertionError(f"missing support fact object entity: {fact}")
+        if fact.subject_id not in entity_ids:
+            raise AssertionError(f"missing support fact subject entity: {fact}")
+
+
+def _snapshot(root: Path, build: KgBuild) -> KgSnapshot:
+    snapshot_dir = root / "snapshot"
+    JsonlKgStore(snapshot_dir).write(
+        entities=build.entities,
+        facts=build.facts,
+        support_facts=build.support_facts,
+        evidence=build.evidence,
+        coverage=build.coverage,
+        manifest={"counts": {"entities": len(build.entities), "facts": len(build.facts)}},
+    )
+    return KgSnapshot(snapshot_dir)

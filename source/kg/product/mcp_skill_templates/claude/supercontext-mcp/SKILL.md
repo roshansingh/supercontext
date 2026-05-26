@@ -56,7 +56,7 @@ Before reviewing a diff, call `review_context` with:
 - `changed_files`
 - `changed_ranges` when line ranges are known
 
-Read `changed_surface`, `impact`, `runtime_surfaces`, `source_coordinates`, `answerability`, and `unsupported_review_scopes` before deciding what to inspect next. Use `source_coordinates` for targeted diff/source reads. Drill into primitive tools only for concrete follow-up findings or missing details.
+Read `changed_surface`, `impact`, `runtime_surfaces`, `framework_impact`, `application_impact`, `source_coordinates`, `answerability`, and `unsupported_review_scopes` before deciding what to inspect next. Use `application_impact.same_repo_surfaces` for app-level API/model/serializer/worker/scheduled-job context, `application_impact.runtime_facts` for app-scoped typed runtime facts, and `application_impact.cross_repo_name_leads` only as unlinked source-inspection leads, not as proven impact. Use `source_coordinates` for targeted diff/source reads. Drill into primitive tools only for concrete follow-up findings or missing details.
 
 ## Trace Evaluation
 

@@ -5,6 +5,9 @@ from typing import Callable
 
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject, canonical_json
+from source.kg.product.application_impact import application_impact_packet
+from source.kg.product.framework_impact import framework_impact_packet
+from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.call_site import call_site_from_qualifier
 from source.kg.query.snapshot import KgSnapshot
 
@@ -1193,6 +1196,19 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     transitive_callers = _review_context_transitive_callers(kg, changed_symbols=changed_symbols, depth=3, limit=limit)
     repo_dependencies = _review_context_dedupe_rows(repo_dependencies)[:limit]
     runtime_surfaces = _review_context_runtime_surfaces(kg, repo=repo, changed_symbols=changed_symbols, limit=limit)
+    framework_impact = framework_impact_packet(
+        kg,
+        repo=repo,
+        changed_symbols=changed_symbols,
+        limit=limit,
+    )
+    application_impact = application_impact_packet(
+        kg,
+        repo=repo,
+        changed_files=changed_files,
+        changed_symbols=changed_symbols,
+        limit=limit,
+    )
     endpoint_rows = runtime_surfaces["endpoints"]
     endpoint_consumer_rows = runtime_surfaces["endpoint_consumers"]
     event_channel_rows = runtime_surfaces["event_channels"]
@@ -1258,6 +1274,8 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             source_coordinates=source_coordinates,
             changed_file_symbols=public_changed_file_symbols,
             transitive_callers=public_transitive_callers,
+            framework_impact=framework_impact,
+            application_impact=application_impact,
         ),
         "changed_symbols": public_changed_symbols,
         "changed_file_symbols": public_changed_file_symbols,
@@ -1285,6 +1303,8 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "event_channels": public_event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
             "deploy_mappings": public_deploy_mappings[:PLANNING_CONTEXT_SECTION_LIMIT],
         },
+        "framework_impact": framework_impact,
+        "application_impact": application_impact,
         "source_coordinates": source_coordinates,
         "answerability": answerability,
         "coverage_warnings": [],
@@ -1299,6 +1319,12 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             endpoint_consumer_rows,
             event_channel_rows,
             deploy_mapping_rows,
+            framework_impact.get("model_fields", []),
+            framework_impact.get("model_relations", []),
+            framework_impact.get("serializers", []),
+            framework_impact.get("views", []),
+            framework_impact.get("tasks", []),
+            application_impact.get("runtime_facts", []),
         ),
         "next_actions": next_actions,
     }
@@ -2025,6 +2051,8 @@ def _review_context_summary(
     event_channels: list[JsonObject],
     deploy_mappings: list[JsonObject],
     source_coordinates: list[JsonObject],
+    framework_impact: JsonObject,
+    application_impact: JsonObject,
 ) -> JsonObject:
     return {
         "changed_file_count": len(changed_files),
@@ -2038,9 +2066,25 @@ def _review_context_summary(
         "endpoint_consumer_fact_count": len(endpoint_consumers),
         "event_fact_count": len(event_channels),
         "deploy_mapping_count": len(deploy_mappings),
+        "framework_model_count": _summary_count(framework_impact, "changed_framework_model_count"),
+        "framework_task_count": _summary_count(framework_impact, "task_count"),
+        "framework_relation_count": _summary_count(framework_impact, "model_relation_count"),
+        "app_surface_count": _summary_count(application_impact, "same_repo_entity_count"),
+        "app_runtime_fact_count": _summary_count(application_impact, "runtime_fact_count"),
+        "app_cross_repo_lead_count": _summary_count(application_impact, "cross_repo_name_lead_count"),
         "source_coordinate_count": len(source_coordinates),
         "section_limit": PLANNING_CONTEXT_SECTION_LIMIT,
     }
+
+
+def _summary_count(packet: JsonObject, field_name: str) -> int:
+    summary = packet.get("summary")
+    if not isinstance(summary, dict):
+        raise ValueError("context packet is missing required summary object")
+    value = summary.get(field_name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"context packet summary field {field_name} must be an integer")
+    return value
 
 
 def _review_context_answerability(
@@ -2255,6 +2299,11 @@ def _planning_context_output(
         bounded_services,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
+    runtime_architecture = runtime_architecture_packet(
+        kg,
+        repo=anchors.get("repo"),
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
     related_facts = _planning_context_related_facts(
         kg=kg,
         services=bounded_services,
@@ -2269,6 +2318,7 @@ def _planning_context_output(
         dependency_importers=dependency_importers,
         inventory=inventory,
         service_operational_surfaces=service_operational_surfaces,
+        runtime_architecture=runtime_architecture,
     )
     source_coordinates = _planning_context_source_coordinates(
         bounded_services,
@@ -2298,6 +2348,7 @@ def _planning_context_output(
         "snapshot_scope": snapshot_scope,
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
+        "runtime_architecture": runtime_architecture,
         "anchors": {
             "repo": anchors.get("repo"),
             "path": anchors.get("path"),
@@ -2636,6 +2687,7 @@ def _planning_context_related_facts(
     dependency_importers: JsonObject,
     inventory: JsonObject,
     service_operational_surfaces: JsonObject,
+    runtime_architecture: JsonObject,
 ) -> JsonObject:
     return {
         "service_brief": _planning_context_service_brief(services, endpoints, endpoint_consumers, event_channels, domains),
@@ -2643,6 +2695,7 @@ def _planning_context_related_facts(
         "dependency_importers": dependency_importers,
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
+        "runtime_architecture": runtime_architecture,
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -3235,6 +3288,7 @@ _TOOLS: dict[str, McpTool] = {
             "Returns bounded planning context for one structured anchor such as a symbol, service, repo, package, endpoint, event channel, or domain. "
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
+            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into a bounded runtime map without promoting unlinked evidence. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
@@ -3250,10 +3304,12 @@ _TOOLS: dict[str, McpTool] = {
     "review_context": McpTool(
         name="review_context",
         description=(
-            "Returns bounded review context for one repo plus a changed-file set by composing changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, source_coordinates, and answerability metadata. "
+            "Returns bounded review context for one repo plus a changed-file set by composing changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
             "Use scope_contract to keep changed_symbols distinct from changed_file_symbols: file inventory is context, not proof every symbol changed. "
             "Existing top-level changed_symbols, direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
             "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
+            "framework_impact includes parser-backed support facts for Django/Celery model fields, model relations, serializers, view/model bindings, tasks, and bounded model relationship paths when present. "
+            "application_impact groups changed app/package namespace surfaces into API/model/serializer/worker/scheduled-job sections, app-scoped runtime facts, and unlinked cross-repo name leads that require separate verification. "
             "Use it when you know the changed files and need deterministic static review context before drilling into narrower MCP tools. "
             "Does not infer deploy blockers unless explicitly requested, summarize diffs with an LLM, or invent cross-repo and runtime-only impact."
         ),

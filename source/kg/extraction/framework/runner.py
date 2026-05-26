@@ -11,6 +11,7 @@ from source.kg.extraction.framework.allowlists import (
     BYTES_REF_OPTIONAL_SOURCE_SYSTEMS,
     SUPPORTED_ENTITY_KINDS,
     SUPPORTED_FACT_PREDICATES,
+    SUPPORTED_SUPPORT_FACT_PREDICATES,
 )
 from source.kg.extraction.framework.known_stacks import KNOWN_STACK_CATEGORY_PREDICATE
 from source.kg.metrics.dimension import normalize_package_name
@@ -22,6 +23,16 @@ class SelectedAdapter:
     capability: AdapterCapability
 
 
+@dataclass
+class AdapterRun:
+    entities: list[Entity]
+    facts: list[Fact]
+    support_facts: list[Fact]
+    evidence: list[Evidence]
+    coverage: list[Coverage]
+    errors: list[JsonObject]
+
+
 def run_adapters(
     repo: RepoSnapshot,
     adapters: Iterable[Adapter],
@@ -29,9 +40,11 @@ def run_adapters(
     strict_extractors: bool = False,
     ctx: ExtractionContext | None = None,
 ) -> tuple[list[Entity], list[Fact], list[Evidence], list[Coverage], list[JsonObject]]:
+    """Legacy tuple API; support facts are available via run_selected_adapters_with_support."""
     ctx = ctx or ExtractionContext()
     selected_adapters = select_applicable_adapters(repo, adapters, ctx=ctx)
-    return run_selected_adapters(repo, selected_adapters, strict_extractors=strict_extractors, ctx=ctx)
+    result = run_selected_adapters_with_support(repo, selected_adapters, strict_extractors=strict_extractors, ctx=ctx)
+    return _legacy_tuple_without_support(result)
 
 
 def run_selected_adapters(
@@ -41,9 +54,30 @@ def run_selected_adapters(
     strict_extractors: bool = False,
     ctx: ExtractionContext | None = None,
 ) -> tuple[list[Entity], list[Fact], list[Evidence], list[Coverage], list[JsonObject]]:
+    """Legacy tuple API; support facts are available via run_selected_adapters_with_support."""
+    result = run_selected_adapters_with_support(repo, adapters, strict_extractors=strict_extractors, ctx=ctx)
+    return _legacy_tuple_without_support(result)
+
+
+def _legacy_tuple_without_support(
+    result: AdapterRun,
+) -> tuple[list[Entity], list[Fact], list[Evidence], list[Coverage], list[JsonObject]]:
+    if result.support_facts:
+        raise ValueError("legacy adapter runner cannot return support_facts; use run_selected_adapters_with_support")
+    return result.entities, result.facts, result.evidence, result.coverage, result.errors
+
+
+def run_selected_adapters_with_support(
+    repo: RepoSnapshot,
+    adapters: Iterable[Adapter],
+    *,
+    strict_extractors: bool = False,
+    ctx: ExtractionContext | None = None,
+) -> AdapterRun:
     ctx = ctx or ExtractionContext()
     entities: list[Entity] = []
     facts_by_id: dict[str, Fact] = {}
+    support_facts_by_id: dict[str, Fact] = {}
     evidence_by_id: dict[str, Evidence] = {}
     coverage: list[Coverage] = []
     result_coverage_ids: set[str] = set()
@@ -73,6 +107,8 @@ def run_selected_adapters(
         entities.extend(result.entities)
         for fact in result.facts:
             facts_by_id.setdefault(fact.fact_id, fact)
+        for fact in result.support_facts:
+            support_facts_by_id.setdefault(fact.fact_id, fact)
         for row in result.evidence:
             evidence_by_id.setdefault(row.evidence_id, row)
         for row in result.coverage:
@@ -87,7 +123,14 @@ def run_selected_adapters(
     if strict_extractors and errors:
         raise RuntimeError(_adapter_error_message(repo.name, errors))
 
-    return entities, list(facts_by_id.values()), list(evidence_by_id.values()), coverage, errors
+    return AdapterRun(
+        entities=entities,
+        facts=list(facts_by_id.values()),
+        support_facts=list(support_facts_by_id.values()),
+        evidence=list(evidence_by_id.values()),
+        coverage=coverage,
+        errors=errors,
+    )
 
 
 def select_applicable_adapters(
@@ -138,6 +181,14 @@ def _validate(capability: AdapterCapability, result: AdapterResult) -> None:
             raise ValueError(f"{capability.name} emitted unsupported predicate: {fact.predicate}")
         if capability.produces_predicates and fact.predicate not in capability.produces_predicates:
             raise ValueError(f"{capability.name} emitted undeclared predicate: {fact.predicate}")
+    for fact in result.support_facts:
+        if fact.predicate not in SUPPORTED_SUPPORT_FACT_PREDICATES:
+            raise ValueError(f"{capability.name} emitted unsupported support predicate: {fact.predicate}")
+        if (
+            not capability.produces_support_predicates
+            or fact.predicate not in capability.produces_support_predicates
+        ):
+            raise ValueError(f"{capability.name} emitted undeclared support predicate: {fact.predicate}")
     for row in result.evidence:
         if row.bytes_ref is None and row.source_system not in BYTES_REF_OPTIONAL_SOURCE_SYSTEMS:
             raise ValueError(

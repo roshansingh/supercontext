@@ -3,6 +3,7 @@ from source.kg.extraction.framework.runner import (
     SelectedAdapter,
     run_adapters,
     run_selected_adapters,
+    run_selected_adapters_with_support,
     select_applicable_adapter_specs,
     select_applicable_adapters,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "SelectedAdapter",
     "run_adapters",
     "run_selected_adapters",
+    "run_selected_adapters_with_support",
     "select_applicable_adapter_specs",
     "select_applicable_adapters",
 ]

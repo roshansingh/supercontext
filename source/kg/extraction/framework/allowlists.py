@@ -21,6 +21,17 @@ SUPPORTED_FACT_PREDICATES: frozenset[str] = frozenset(
 )
 
 
+SUPPORTED_SUPPORT_FACT_PREDICATES: frozenset[str] = frozenset(
+    {
+        "DECLARES_FIELD",
+        "RELATES_TO_MODEL",
+        "SERIALIZES_MODEL",
+        "HANDLES_MODEL",
+        "TASK_USES_MODEL",
+    }
+)
+
+
 SUPPORTED_ENTITY_KINDS: frozenset[str] = frozenset(
     {
         "Service",
