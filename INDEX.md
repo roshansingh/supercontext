@@ -41,16 +41,6 @@ Annotated index for agents and contributors. Read this before opening many docs 
 | [docs/evaluation/COVERAGE-METRICS-IMPLEMENTATION-PLAN.md](docs/evaluation/COVERAGE-METRICS-IMPLEMENTATION-PLAN.md) | Coverage | Implementation plan for coverage metrics. Read before changing metric computation, dimensions, or generated report contracts. |
 | [docs/evaluation/COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md](docs/evaluation/COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md) | Coverage | Notes on incremental coverage and linking gaps. Read when diagnosing why coverage rows/gaps changed. |
 
-## Current Debate Seeds
-
-| URL | Owner | Annotation |
-|---|---|---|
-| [docs/MCP-WORKFLOW-INTEGRATION-DEBATE-SEED.md](docs/MCP-WORKFLOW-INTEGRATION-DEBATE-SEED.md) | MCP/product | Seed for debating MCP workflow integration for planning, coding, and review. Read before changing MCP tool scope or adding host-agent skill hooks. |
-| [docs/CROSS-REPO-PACKAGE-LINKAGE-DEBATE-SEED.md](docs/CROSS-REPO-PACKAGE-LINKAGE-DEBATE-SEED.md) | Cross-repo linkage | Seed for cross-repo package linkage work. Read before changing package resolver, multi-repo relinking, or package coverage behavior. |
-| [docs/JS-TS-ENDPOINT-COVERAGE-JUMP-DEBATE-SEED.md](docs/JS-TS-ENDPOINT-COVERAGE-JUMP-DEBATE-SEED.md) | JS/TS extraction | Seed for client-context-aware JS/TS endpoint extraction. Read before changing frontend endpoint resolution or URL helper handling. |
-| [docs/JS-TS-ENDPOINT-REMAINING-GAPS-DEBATE-SEED.md](docs/JS-TS-ENDPOINT-REMAINING-GAPS-DEBATE-SEED.md) | JS/TS extraction | Seed for remaining JS/TS endpoint gaps. Read when deciding whether more endpoint extraction work is still worth doing. |
-| [docs/K8S-ENV-HOST-LINKAGE-DEBATE-SEED.md](docs/K8S-ENV-HOST-LINKAGE-DEBATE-SEED.md) | Deploy/config linkage | Seed for linking env-backed endpoint hosts to Kubernetes, Helm, Kustomize, ConfigMap, and Secret evidence. Read before changing deploy/config extraction for endpoint host provenance. |
-
 ## Design Recommendations
 
 | URL | Owner | Annotation |

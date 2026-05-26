@@ -293,7 +293,7 @@ These were the load-bearing R1/R2 corrections during Debate-19 convergence:
 
 ## 9. Open questions (post-implementation)
 
-Surfaced during PR-4 review (`docs/reviews/PRE-PR-REVIEW-debate19-pr4-per-kind-urn-MANUAL.md`):
+Surfaced during PR-4 review:
 
 - **CodeSymbol URN drops `symbol_kind` from identity.** `entity_id` keys on it; `urn` does not. Two symbols with same `(tenant_id, repo, module, qualname)` but different `symbol_kind` get distinct entity IDs but identical URNs. Decision call for ontology owners; recommendation is to include `symbol_kind` as an extra URN segment.
 - **Empty-string vs `None` host on Endpoint URN.** `None` → `_` placeholder; `""` → hash fallback. Inconsistency; extractor normalization protects production but a future direct constructor could hit the empty-string path.
@@ -312,4 +312,4 @@ Surfaced earlier but still relevant for the incremental story:
 - ADR-0006 per-kind URN format (PR-4): `adr/0006-canonical-ontology-and-fact-metadata-envelope.md`
 - ADR-0005 evidence grounding contract: drives `M_evidence_grounding` knockout flag
 - ADR-0011 Python distribution aliases: input to PR-9 PyPI resolver
-- PR-4 review with surfaced URN issues: `docs/reviews/PRE-PR-REVIEW-debate19-pr4-per-kind-urn-MANUAL.md`
+- PR-4 review with surfaced URN issues: summarized in §9 above

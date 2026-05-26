@@ -13,7 +13,7 @@ Use the clean default-v1 A/B run below as the comparison baseline for context-to
 - Run shape: 18 paired tasks / 36 host runs, seed `119`, `--fixture-overrides docs/evaluation/default-v1-fixture-overrides.yaml`
 - Result: `mcp_on=4`, `mcp_off=6`, `tie=8`, with zero MCP denials, zero MCP errors, and zero judge errors
 
-Keep checked-in historical A/B reports, including `docs/evaluation/ab-runs/pr119-full-2026-05-23/`, for provenance. Do not use them as the active baseline for new context-tool PRs unless explicitly doing historical comparison.
+Historical one-off A/B run artifacts have been removed from the repo. Keep only the current baseline above unless a future run is explicitly promoted to canonical.
 
 Regenerate the canonical report with:
 
