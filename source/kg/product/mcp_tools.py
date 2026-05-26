@@ -7,6 +7,7 @@ from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject, canonical_json
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.framework_impact import framework_impact_packet
+from source.kg.product.output_budget import PLANNING_CONTEXT_ANCHORED_MAX_CHARS, enforce_planning_context_budget
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.call_site import call_site_from_qualifier
 from source.kg.query.snapshot import KgSnapshot
@@ -24,6 +25,16 @@ TOOL_NAMES = (
 )
 
 PLANNING_CONTEXT_SECTION_LIMIT = 5
+_PLANNING_CONTEXT_ANCHOR_FIELDS = (
+    "repo",
+    "path",
+    "symbol",
+    "service",
+    "package",
+    "endpoint",
+    "event_channel",
+    "domain",
+)
 REVIEW_CONTEXT_DETAIL_LIMIT = 25
 REVIEW_CONTEXT_SURFACES = (
     "ui_screens",
@@ -131,10 +142,22 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
     tool = _TOOLS[name]
     _validate_declared_arguments(tool, arguments)
     result = _with_default_tool_metadata(tool.handler(kg, arguments))
-    return {
+    payload = {
         **result,
         "tool": name,
     }
+    if name == "planning_context":
+        query = _optional_string(arguments, "query")
+        line = _optional_int(arguments, "line")
+        anchors = _planning_context_anchors(arguments)
+        if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
+            return enforce_planning_context_budget(payload)
+        return enforce_planning_context_budget(
+            payload,
+            max_chars=PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
+            preserve_planning_sections=True,
+        )
+    return payload
 
 
 def _search_services(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
@@ -1061,18 +1084,9 @@ def _review_context_properties() -> JsonObject:
 def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     limit = _limit(arguments)
     query = _optional_string(arguments, "query")
-    anchors = {
-        "repo": _optional_string(arguments, "repo"),
-        "path": _optional_string(arguments, "path"),
-        "symbol": _optional_string(arguments, "symbol"),
-        "service": _optional_string(arguments, "service"),
-        "package": _optional_string(arguments, "package"),
-        "endpoint": _optional_string(arguments, "endpoint"),
-        "event_channel": _optional_string(arguments, "event_channel"),
-        "domain": _optional_string(arguments, "domain"),
-    }
+    anchors = _planning_context_anchors(arguments)
     line = _optional_int(arguments, "line")
-    if query is None and line is None and not any(anchors.values()):
+    if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
         services = _planning_context_fleet_services(kg, limit=min(limit, PLANNING_CONTEXT_SECTION_LIMIT))
         return _planning_context_output(
             kg=kg,
@@ -1086,7 +1100,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             event_channels=[],
             domains=[],
             next_actions=[
-                "Read runtime_architecture.answer_packet for a fleet runtime map, then use narrower anchors only for follow-up details."
+                "Read runtime_architecture.answer_packet for a fleet runtime map; if output_budget is present and truncated is true, use narrower repo/service/domain/endpoint anchors for omitted detail."
             ],
             status="found" if services else "not_found",
         )
@@ -2721,7 +2735,7 @@ def _planning_context_output(
             "Use `snapshot_summary` and `snapshot_scope` for KG inventory counts, then inspect source or narrower anchors for behavioral claims."
         )
     answerability = _planning_context_answerability(status=status, anchors=anchors, groups=groups)
-    return {
+    result = {
         "status": status,
         "query": query,
         "summary": _planning_context_summary(groups, source_coordinates=source_coordinates),
@@ -2730,16 +2744,7 @@ def _planning_context_output(
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
         "runtime_architecture": runtime_architecture,
-        "anchors": {
-            "repo": anchors.get("repo"),
-            "path": anchors.get("path"),
-            "symbol": anchors.get("symbol"),
-            "service": anchors.get("service"),
-            "package": anchors.get("package"),
-            "endpoint": anchors.get("endpoint"),
-            "event_channel": anchors.get("event_channel"),
-            "domain": anchors.get("domain"),
-        },
+        "anchors": {field: anchors.get(field) for field in _PLANNING_CONTEXT_ANCHOR_FIELDS},
         "services": bounded_services,
         "symbols": bounded_symbols,
         "dependencies": bounded_dependencies,
@@ -2764,6 +2769,15 @@ def _planning_context_output(
         "unsupported_scopes": [],
         "next_actions": next_actions,
     }
+    return result
+
+
+def _planning_context_anchors(arguments: JsonObject) -> JsonObject:
+    return {field: _optional_string(arguments, field) for field in _PLANNING_CONTEXT_ANCHOR_FIELDS}
+
+
+def _is_planning_context_fleet_request(*, query: str | None, line: int | None, anchors: JsonObject) -> bool:
+    return query is None and line is None and not any(anchors.values())
 
 
 def _planning_context_summary(groups: dict[str, list[JsonObject]], *, source_coordinates: list[JsonObject]) -> JsonObject:
@@ -3690,6 +3704,7 @@ _TOOLS: dict[str, McpTool] = {
             "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Calling it with no anchor returns a fleet packet with compact service identities plus runtime_architecture.answer_packet. "
+            "Output is bounded with a compact fleet cap and a larger anchored-detail cap; when truncated, output_budget.omitted_counts and output_budget.advice describe what was omitted and how to retrieve detail via narrower anchors. "
             "For exact caller, callee, service-brief, or event producer/consumer questions, prefer the exact primitive tool. "
             "Does not expand free-form natural language, call an LLM, or fan one query across multiple ambiguous resolver paths."
         ),

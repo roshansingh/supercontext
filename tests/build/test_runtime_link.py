@@ -123,6 +123,24 @@ class RuntimeLinkTest(unittest.TestCase):
         self.assertEqual(result.ambiguous_link_count, 0)
         self.assertNotIn("unsupported_deploy_target_type", {row.scope_ref["reason"] for row in result.coverage})
 
+    def test_cloudfront_target_is_handled_by_direct_extractor_not_cross_repo_linker(self) -> None:
+        service = _service("infra")
+        target = _deploy_target(
+            "infra",
+            "cloudfront.tf#aws_cloudfront_distribution.site",
+            target_type="cloudfront_distribution",
+        )
+        deploy_fact = Fact("DEPLOYS_VIA_CONFIG", service.entity_id, target.entity_id)
+        result = link_runtime_targets(
+            (
+                _input("infra", (service, target), (deploy_fact,), (_evidence_for(target),)),
+            )
+        )
+
+        self.assertEqual(result.facts, ())
+        self.assertEqual(result.ambiguous_link_count, 0)
+        self.assertNotIn("unsupported_deploy_target_type", {row.scope_ref["reason"] for row in result.coverage})
+
 
 def _input(
     repo_name: str,
