@@ -20,6 +20,7 @@ from source.kg.eval.runner import (
     async_run_single_task,
     _allowed_tools,
     _claude_extra_args,
+    _incomplete_background_task_ids,
     _mcp_tool_observations,
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
@@ -705,6 +706,109 @@ class AbEvalOrchestratorTest(unittest.TestCase):
     def test_missing_result_message_fails_closed(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "missing ResultMessage"):
             _raise_for_host_error_messages([{"type": "SystemMessage", "data": {"subtype": "init"}}])
+
+    def test_incomplete_background_task_fails_closed(self) -> None:
+        messages = [
+            {
+                "type": "SystemMessage",
+                "data": {
+                    "data": {
+                        "subtype": "task_updated",
+                        "task_id": "bbgn0p55y",
+                        "patch": {"is_backgrounded": True},
+                    }
+                },
+            },
+            {
+                "type": "UserMessage",
+                "data": {
+                    "content": [
+                        {
+                            "tool_use_id": "toolu_1",
+                            "is_error": False,
+                            "content": (
+                                "Command running in background with ID: bbgn0p55y. "
+                                "Output is being written to a task file."
+                            ),
+                        }
+                    ],
+                    "tool_use_result": {
+                        "backgroundTaskId": "bbgn0p55y",
+                        "assistantAutoBackgrounded": False,
+                        "stdout": "",
+                        "stderr": "",
+                    },
+                },
+            },
+            {
+                "type": "ResultMessage",
+                "data": {
+                    "is_error": False,
+                    "result": "The dependency path is mercury_ml_api -> mercury_ml.",
+                },
+            },
+        ]
+
+        self.assertEqual(_incomplete_background_task_ids(messages), {"bbgn0p55y"})
+        with self.assertRaisesRegex(RuntimeError, "incomplete background task.*bbgn0p55y"):
+            _raise_for_host_error_messages(messages)
+
+    def test_system_background_patch_alone_fails_closed(self) -> None:
+        messages = [
+            {
+                "type": "SystemMessage",
+                "data": {
+                    "data": {
+                        "subtype": "task_updated",
+                        "task_id": "bg-from-system",
+                        "patch": {"is_backgrounded": True},
+                    }
+                },
+            },
+            {
+                "type": "ResultMessage",
+                "data": {
+                    "is_error": False,
+                    "result": "The dependency path is mercury_ml_api -> mercury_ml.",
+                },
+            },
+        ]
+
+        self.assertEqual(_incomplete_background_task_ids(messages), {"bg-from-system"})
+        with self.assertRaisesRegex(RuntimeError, "incomplete background task.*bg-from-system"):
+            _raise_for_host_error_messages(messages)
+
+    def test_completed_background_task_does_not_fail(self) -> None:
+        _raise_for_host_error_messages(
+            [
+                {
+                    "type": "UserMessage",
+                    "data": {
+                        "tool_use_result": {
+                            "backgroundTaskId": "bg-1",
+                            "stdout": "",
+                            "stderr": "",
+                        }
+                    },
+                },
+                {
+                    "type": "SystemMessage",
+                    "data": {
+                        "data": {
+                            "subtype": "task_completed",
+                            "task_id": "bg-1",
+                        }
+                    },
+                },
+                {
+                    "type": "ResultMessage",
+                    "data": {
+                        "is_error": False,
+                        "result": "The dependency path is mercury_ml_api -> mercury_ml.",
+                    },
+                },
+            ]
+        )
 
     def test_eval_runner_allows_safe_read_tools_and_mcp_only_for_on_arm(self) -> None:
         on_tools = _allowed_tools("mcp_on")

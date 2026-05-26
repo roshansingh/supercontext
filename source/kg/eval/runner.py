@@ -358,6 +358,55 @@ def _raise_for_host_error_messages(messages: list[dict[str, Any]]) -> None:
             raise RuntimeError(f"Claude host message failed: {data.get('error')}")
     if not saw_result_message:
         raise RuntimeError("Claude host run failed: missing ResultMessage")
+    _raise_for_incomplete_background_tasks(messages)
+
+
+def _raise_for_incomplete_background_tasks(messages: list[dict[str, Any]]) -> None:
+    incomplete_task_ids = sorted(_incomplete_background_task_ids(messages))
+    if not incomplete_task_ids:
+        return
+    raise RuntimeError(
+        "Claude host run ended with incomplete background task result(s): "
+        + ", ".join(incomplete_task_ids)
+    )
+
+
+def _incomplete_background_task_ids(messages: list[dict[str, Any]]) -> set[str]:
+    task_ids: set[str] = set()
+    for message in messages:
+        data = message.get("data")
+        if not isinstance(data, dict):
+            continue
+
+        tool_use_result = data.get("tool_use_result")
+        if isinstance(tool_use_result, dict):
+            task_id = tool_use_result.get("backgroundTaskId")
+            if isinstance(task_id, str) and task_id:
+                task_ids.add(task_id)
+
+        system_data = data.get("data")
+        if not isinstance(system_data, dict):
+            continue
+        subtype = system_data.get("subtype")
+        task_id = system_data.get("task_id")
+        if isinstance(task_id, str) and task_id and subtype in {
+            "task_completed",
+            "task_failed",
+            "task_cancelled",
+        }:
+            task_ids.discard(task_id)
+            continue
+        patch = system_data.get("patch")
+        if (
+            isinstance(patch, dict)
+            and isinstance(task_id, str)
+            and task_id
+        ):
+            if patch.get("is_backgrounded") is True:
+                task_ids.add(task_id)
+            elif patch.get("is_backgrounded") is False:
+                task_ids.discard(task_id)
+    return task_ids
 
 
 def _raise_for_mcp_tool_failures(observations: dict[str, list[str]]) -> None:
