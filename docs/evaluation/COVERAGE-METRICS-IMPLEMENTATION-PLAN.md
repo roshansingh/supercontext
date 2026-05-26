@@ -3,7 +3,7 @@
 **Status:** complete — 11 PRs merged to `main` as of 2026-05-18
 **Source:** Debate 19 (`debates/` was local-gitignored and is no longer present; this doc captures the converged contract)
 **Related docs:**
-- `docs/evaluation/claude-kg-coverage-metrices.md` + `docs/evaluation/codex-kg-coverage-metrices.md` — parallel research inputs (Debate-14 inputs)
+- Parallel Debate-14 metric research inputs were consolidated into this plan and removed during docs cleanup.
 - `docs/evaluation/COVERAGE-METRICS-INCREMENTAL-AND-LINKING-GAPS.md` — incremental ingestion + linker-staleness follow-up (binding sub-spec)
 - ADR-0006 — canonical ontology; URN per-kind spec at §3
 - ADR-0011 — Python import distribution aliases (used by PyPI resolver PR-9)
