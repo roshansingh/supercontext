@@ -89,17 +89,18 @@ The SuperContext MCP server is a simple JSON-RPC HTTP endpoint that runs on your
 
 ### Starting the Server
 
-Start the server with a single command:
+First, build a KG snapshot, then start the server:
 
 ```bash
-supercontext-init --serve
+supercontext-build-kg --repo /path/to/repo --out ./data/kg_runs/my-repo
+supercontext-mcp-server --snapshot ./data/kg_runs/my-repo
 ```
 
-This command:
+This will:
 
-1. **Builds the snapshot** — Runs the knowledge graph extractor on your repo if `.supercontext/kg` doesn't exist
-2. **Starts the server** — Launches the MCP server on `localhost:3845` in the foreground
-3. **Prints the endpoint** — Shows you the URL to register with your IDE
+1. **Build the snapshot** — Extracts entities, facts, and evidence from your repo
+2. **Start the server** — Launches the MCP server on `localhost:3845` in the foreground
+3. **Print the endpoint** — Shows you the URL to register with your IDE
 
 Output:
 ```
@@ -111,17 +112,17 @@ Ready for tool calls. Press Ctrl+C to stop.
 
 ### Server Configuration
 
-The server respects these environment variables:
+The server respects these command-line and environment options:
 
 ```bash
 # Change the port (default: 3845)
-SUPERCONTEXT_MCP_PORT=8000 supercontext-init --serve
+supercontext-mcp-server --port 8000
 
-# Use a specific snapshot instead of building
-SUPERCONTEXT_SNAPSHOT=/path/to/snapshot supercontext-init --serve
+# Use a specific snapshot
+supercontext-mcp-server --snapshot /path/to/snapshot
 
 # Write logs to a file for debugging
-SUPERCONTEXT_LOG_FILE=~/.supercontext/mcp.log supercontext-init --serve
+supercontext-mcp-server --log-file ~/.supercontext/mcp.log
 ```
 
 ### How Tool Registration Works
@@ -230,7 +231,7 @@ Add the MCP server to your Claude Code settings:
   "mcpServers": {
     "supercontext": {
       "command": "bash",
-      "args": ["-c", "cd /path/to/my-repo && supercontext-init --serve"]
+      "args": ["-c", "cd /path/to/my-repo && supercontext-mcp-server"]
     }
   }
 }
@@ -248,7 +249,7 @@ In `.cursor/settings` or VS Code settings:
   "mcp": {
     "supercontext": {
       "command": "bash",
-      "args": ["-c", "cd /path/to/my-repo && supercontext-init --serve"]
+      "args": ["-c", "cd /path/to/my-repo && supercontext-mcp-server"]
     }
   }
 }
@@ -263,7 +264,7 @@ Cody reads MCP configuration from `~/.cody/mcp-config.json`:
   "mcpServers": {
     "supercontext": {
       "command": "bash",
-      "args": ["-c", "cd /path/to/my-repo && supercontext-init --serve"]
+      "args": ["-c", "cd /path/to/my-repo && supercontext-mcp-server"]
     }
   }
 }
@@ -485,7 +486,7 @@ You have two options:
 
 ```bash
 # Original SuperContext server
-SUPERCONTEXT_MCP_PORT=3845 supercontext-init --serve
+SUPERCONTEXT_MCP_PORT=3845 supercontext-mcp-server
 
 # Your custom server (different port)
 python -m my_org.custom_mcp_server --port 3846 --upstream-supercontext http://localhost:3845
@@ -498,7 +499,7 @@ Then register both servers in your IDE:
   "mcpServers": {
     "supercontext": {
       "command": "bash",
-      "args": ["-c", "supercontext-init --serve"]
+      "args": ["-c", "supercontext-mcp-server"]
     },
     "my-custom-tools": {
       "command": "bash",
@@ -515,7 +516,7 @@ Then register both servers in your IDE:
 **Self-hosted** — For production self-hosted deployments, the server supports bearer token authentication:
 
 ```bash
-SUPERCONTEXT_AUTH_TOKEN="secret-token" supercontext-init --serve
+SUPERCONTEXT_AUTH_TOKEN="secret-token" supercontext-mcp-server
 ```
 
 Agents must include the token in requests:

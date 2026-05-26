@@ -11,13 +11,13 @@
 #   bash start-mcp-server.sh data/kg_runs/myrepo # Start with specific snapshot
 #   bash start-mcp-server.sh --build ./flask    # Build Flask snapshot then start
 #
-# The server listens on localhost:8000 by default.
+# The server listens on localhost:3845 by default.
 #
 # To connect from Claude Code:
 #   1. Run this script
-#   2. Note the server URL and token
+#   2. Note the server URL
 #   3. Add to Claude Code MCP settings:
-#      "supercontext": { "url": "http://localhost:8000", "token": "..." }
+#      "supercontext": { "url": "http://localhost:3845" }
 #   4. Use SuperContext tools in Claude: find-callers, get_service_brief, etc.
 ###############################################################################
 
@@ -132,35 +132,20 @@ verify_snapshot() {
 
 start_server() {
     local snapshot_path="$1"
-    local port="${2:-8000}"
+    local port="${2:-3845}"
 
     log_step "Starting MCP Server"
     log_info "Snapshot: $snapshot_path"
     log_info "Port: $port"
 
     # Start the MCP server process
-    # NOTE: This would call the actual server command when implemented
-    # For now, show what would be called:
-
-    if command -v supercontext-init &> /dev/null; then
-        log_info "Using supercontext-init to start server..."
-        supercontext-init --serve --snapshot "$snapshot_path" --port "$port"
+    if command -v supercontext-mcp-server &> /dev/null; then
+        log_info "Starting MCP server..."
+        supercontext-mcp-server --snapshot "$snapshot_path" --port "$port"
     else
-        log_info "supercontext-init not yet available"
-        log_info "Server start would use: supercontext-init --serve --snapshot $snapshot_path --port $port"
-
-        # Placeholder: show how to start the server manually
-        log_step "Manual Start Instructions"
-        echo "To start the MCP server manually, run:"
-        echo ""
-        echo "  python3 -m source.mcp.server \\"
-        echo "    --snapshot ${snapshot_path} \\"
-        echo "    --port ${port}"
-        echo ""
-        echo "Then connect from Claude Code with:"
-        echo ""
-        echo "  Settings → MCP Servers → Add:"
-        echo "  {\"supercontext\": \"http://localhost:${port}\"}"
+        log_error "supercontext-mcp-server not found. Please install SuperContext first:"
+        log_error "  pip install -e ."
+        return 1
     fi
 }
 
@@ -171,7 +156,7 @@ Usage: $0 [OPTIONS]
 Options:
     --build REPO    Build snapshot from REPO before starting
     --snapshot DIR  Use snapshot at DIR (default: ${DEFAULT_SNAPSHOT})
-    --port N        Listen on port N (default: 8000)
+    --port N        Listen on port N (default: 3845)
     --help          Show this help message
 
 Examples:
@@ -199,7 +184,7 @@ EOF
 
 main() {
     local snapshot_path="$DEFAULT_SNAPSHOT"
-    local port="8000"
+    local port="3845"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
