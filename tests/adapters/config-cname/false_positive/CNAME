@@ -1,0 +1,3 @@
+# URLs and paths are not valid static-site CNAME targets.
+https://developer.example.com/
+developer.example.com/path

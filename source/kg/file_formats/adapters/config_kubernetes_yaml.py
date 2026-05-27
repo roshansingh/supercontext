@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import AdapterCapability, AdapterResult, ExtractionContext
 from source.kg.file_formats._shared.common import ConfigKgBuild
-from source.kg.file_formats._shared.static_config import StaticConfigExtractor
+from source.kg.file_formats._shared.static_config import StaticConfigExtractor, service_entity_for_repo
 from source.kg.file_formats.adapters.config_shared import scan_coverage_rows, scannable_config_files
 from source.kg.file_formats.kubernetes_yaml import extract_kubernetes_manifests
 
@@ -28,7 +28,7 @@ class ConfigKubernetesYamlAdapter:
 
     def extract(self, repo: RepoSnapshot, ctx: ExtractionContext) -> AdapterResult:
         build = ConfigKgBuild()
-        service_entity = StaticConfigExtractor()._service_entity(repo, ctx.tenant_id)
+        service_entity = service_entity_for_repo(repo, ctx.tenant_id)
         for scanned in scannable_config_files(repo, ctx):
             extract_kubernetes_manifests(repo, scanned, service_entity, build, ctx.tenant_id)
         return AdapterResult(

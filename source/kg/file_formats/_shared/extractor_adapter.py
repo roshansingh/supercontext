@@ -42,5 +42,10 @@ STATIC_CONFIG_ADAPTER = ExtractorAdapter(
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     ),
-    extractor=StaticConfigExtractor(include_domain_env=False, include_openapi=False, include_deploy_events=False),
+    extractor=StaticConfigExtractor(
+        include_static_site_cname=False,
+        include_domain_env=False,
+        include_openapi=False,
+        include_deploy_events=False,
+    ),
 )

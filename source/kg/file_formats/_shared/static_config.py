@@ -16,6 +16,7 @@ from source.kg.file_formats._shared.common import (
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.file_formats.apache_vhost import extract_apache_vhost_routes
 from source.kg.file_formats._shared.deploy_events import extract_deploy_events
+from source.kg.file_formats.cname import extract_cname_domains
 from source.kg.file_formats.domain_env import extract_domain_env
 from source.kg.file_formats.dotenv import extract_dotenv
 from source.kg.file_formats.kubernetes_yaml import extract_kubernetes_manifests, is_likely_kubernetes_manifest
@@ -33,10 +34,12 @@ class StaticConfigExtractor:
     def __init__(
         self,
         *,
+        include_static_site_cname: bool = True,
         include_domain_env: bool = True,
         include_openapi: bool = True,
         include_deploy_events: bool = True,
     ) -> None:
+        self.include_static_site_cname = include_static_site_cname
         self.include_domain_env = include_domain_env
         self.include_openapi = include_openapi
         self.include_deploy_events = include_deploy_events
@@ -50,7 +53,7 @@ class StaticConfigExtractor:
         resolved_tenant_id = resolve_tenant_id(tenant_id)
         build = ConfigKgBuild()
         repo_entity = self._repo_entity(repo, resolved_tenant_id)
-        service_entity = self._service_entity(repo, resolved_tenant_id)
+        service_entity = service_entity_for_repo(repo, resolved_tenant_id)
         build.entities.extend([repo_entity, service_entity])
         build.evidence.extend([self._repo_evidence(repo, repo_entity), self._service_evidence(repo, service_entity)])
         manifest_path = self._manifest_path(repo)
@@ -61,6 +64,8 @@ class StaticConfigExtractor:
             scan_result = scan_config_files(repo, resolved_tenant_id)
             files = list(scan_result.files)
             build.coverage.extend(scan_result.coverage)
+        if self.include_static_site_cname:
+            extract_cname_domains(repo, files, service_entity, build, resolved_tenant_id)
         if self.include_domain_env:
             extract_dotenv(repo, files, service_entity, build, resolved_tenant_id)
             extract_domain_env(repo, files, service_entity, build, resolved_tenant_id)
@@ -103,16 +108,7 @@ class StaticConfigExtractor:
         )
 
     def _service_entity(self, repo: RepoSnapshot, tenant_id: str) -> Entity:
-        return Entity(
-            kind="Service",
-            identity={
-                "tenant_id": tenant_id,
-                "namespace": "default",
-                "repo": repo.name,
-                "slug": self._service_slug(repo),
-            },
-            properties={"repo": repo.name},
-        )
+        return service_entity_for_repo(repo, tenant_id)
 
     def _repo_evidence(self, repo: RepoSnapshot, entity: Entity) -> Evidence:
         return Evidence(
@@ -149,22 +145,43 @@ class StaticConfigExtractor:
         return self.source_system
 
     def _service_slug(self, repo: RepoSnapshot) -> str:
-        return re.sub(r"[^a-z0-9]+", "-", self._package_name(repo).lower()).strip("-") or repo.name
+        return service_slug_for_repo(repo)
 
     def _package_name(self, repo: RepoSnapshot) -> str:
-        pyproject = repo.root / "pyproject.toml"
-        if pyproject.exists():
-            try:
-                data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-            except tomllib.TOMLDecodeError:
-                data = {}
-            return str(data.get("tool", {}).get("poetry", {}).get("name") or data.get("project", {}).get("name") or repo.name)
+        return package_name_for_repo(repo)
 
-        package_json = repo.root / "package.json"
-        if package_json.exists():
-            try:
-                data = json.loads(package_json.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                data = {}
-            return str(data.get("name") or repo.name)
-        return repo.name
+
+def service_entity_for_repo(repo: RepoSnapshot, tenant_id: str) -> Entity:
+    return Entity(
+        kind="Service",
+        identity={
+            "tenant_id": tenant_id,
+            "namespace": "default",
+            "repo": repo.name,
+            "slug": service_slug_for_repo(repo),
+        },
+        properties={"repo": repo.name},
+    )
+
+
+def service_slug_for_repo(repo: RepoSnapshot) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", package_name_for_repo(repo).lower()).strip("-") or repo.name
+
+
+def package_name_for_repo(repo: RepoSnapshot) -> str:
+    pyproject = repo.root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError:
+            data = {}
+        return str(data.get("tool", {}).get("poetry", {}).get("name") or data.get("project", {}).get("name") or repo.name)
+
+    package_json = repo.root / "package.json"
+    if package_json.exists():
+        try:
+            data = json.loads(package_json.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = {}
+        return str(data.get("name") or repo.name)
+    return repo.name

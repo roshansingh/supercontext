@@ -52,6 +52,9 @@ def _extract_domains(
     build: ConfigKgBuild,
     tenant_id: str,
 ) -> None:
+    # Domain-env extraction is line scoped: a config-like key on the line makes
+    # all URL/domain literals on that line runtime configuration leads.
+    source_kind = "domain_env" if _line_has_domain_hint(line) else "source_domain_literal"
     for url in URL_RE.findall(line):
         clean_url = _clean_url_literal(url)
         parsed = _safe_parse_url(clean_url)
@@ -59,12 +62,32 @@ def _extract_domains(
             continue
         hostname = _safe_hostname(parsed)
         if hostname:
-            _add_domain_reference(repo, scanned, line_number, service_entity, build, hostname, clean_url, tenant_id)
+            _add_domain_reference(
+                repo,
+                scanned,
+                line_number,
+                service_entity,
+                build,
+                hostname,
+                clean_url,
+                tenant_id,
+                source_kind=source_kind,
+            )
     for domain in DOMAIN_RE.findall(line):
         if _looks_like_code_file(domain):
             continue
         if "://" in line or _line_has_domain_hint(line):
-            _add_domain_reference(repo, scanned, line_number, service_entity, build, domain, domain, tenant_id)
+            _add_domain_reference(
+                repo,
+                scanned,
+                line_number,
+                service_entity,
+                build,
+                domain,
+                domain,
+                tenant_id,
+                source_kind=source_kind,
+            )
 
 
 def _extract_env_references(
@@ -122,10 +145,30 @@ def _extract_env_assignments(
             continue
         hostname = _safe_hostname(parsed)
         if hostname:
-            _add_domain_reference(repo, scanned, line_number, env_entity, build, hostname, clean_url, tenant_id)
+            _add_domain_reference(
+                repo,
+                scanned,
+                line_number,
+                env_entity,
+                build,
+                hostname,
+                clean_url,
+                tenant_id,
+                source_kind="domain_env",
+            )
     for domain in DOMAIN_RE.findall(value):
         if not _looks_like_code_file(domain):
-            _add_domain_reference(repo, scanned, line_number, env_entity, build, domain, domain, tenant_id)
+            _add_domain_reference(
+                repo,
+                scanned,
+                line_number,
+                env_entity,
+                build,
+                domain,
+                domain,
+                tenant_id,
+                source_kind="domain_env",
+            )
 
 
 def _add_domain_reference(
@@ -137,6 +180,7 @@ def _add_domain_reference(
     domain: str,
     literal: str,
     tenant_id: str,
+    source_kind: str,
 ) -> None:
     domain_ref = _normalize_domain_ref(domain)
     if not domain_ref:
@@ -151,7 +195,7 @@ def _add_domain_reference(
         repo,
         scanned.path,
         line_number,
-        qualifier={"literal": _safe_config_literal(literal), "path": scanned.relative_path},
+        qualifier={"literal": _safe_config_literal(literal), "path": scanned.relative_path, "source_kind": source_kind},
     )
 
 

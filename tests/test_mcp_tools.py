@@ -11,8 +11,18 @@ from pathlib import Path
 from source.kg.core.models import Entity, Evidence, Fact, canonical_json
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.application_impact import application_impact_packet
-from source.kg.product.mcp_tools import TOOL_NAMES, _planning_context_symbol_impact, call_tool, tool_definitions
-from source.kg.product.output_budget import PLANNING_CONTEXT_ANCHORED_MAX_CHARS, enforce_planning_context_budget
+from source.kg.product.mcp_tools import (
+    TOOL_NAMES,
+    _planning_context_has_resolved_anchor,
+    _planning_context_symbol_impact,
+    call_tool,
+    tool_definitions,
+)
+from source.kg.product.output_budget import (
+    PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
+    PLANNING_CONTEXT_MAX_CHARS,
+    enforce_planning_context_budget,
+)
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_server import (
@@ -309,6 +319,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
         self.assertIn("answer_packet", architecture)
         answer_packet = architecture["answer_packet"]
+        brief = answer_packet["investigation_brief"]
+        self.assertEqual(brief["purpose"], "head_start_for_agent_source_investigation")
+        self.assertEqual(brief["runtime_anchors"][0]["name"], "payments")
+        self.assertEqual(brief["known_routes"][0]["domain"]["name"], "payments.example.com")
+        self.assertTrue(brief["recommended_source_checks"])
         self.assertEqual(answer_packet["runtime_building_blocks"][0]["deploy_kinds"], ["apache_wsgi"])
         self.assertIn("domain_routed", answer_packet["runtime_building_blocks"][0]["runtime_categories"])
         self.assertEqual(answer_packet["domain_routing_map"][0]["status"], "known_route")
@@ -383,6 +398,71 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(repos, {"payments"})
         self.assertNotIn("infra", repos)
 
+    def test_runtime_architecture_surfaces_env_domain_reference_leads(self) -> None:
+        with _fixture_snapshot(env_domain_reference_lead=True) as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+
+        route = next(row for row in architecture["domain_routing_map"] if row["status"] == "unlinked_domain_reference")
+        self.assertEqual(route["domain"]["name"], "api.internal.example")
+        self.assertEqual(route["deploy_kind"], "env_domain_reference")
+        self.assertEqual(route["qualifier"]["literal"], "https://api.internal.example")
+        brief = architecture["answer_packet"]["investigation_brief"]
+        self.assertEqual(brief["unlinked_runtime_leads"][0]["deploy_kind"], "env_domain_reference")
+
+    def test_runtime_architecture_ignores_unhinted_source_url_literals_as_runtime_leads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "docs", "repo": "docs"},
+            )
+            domain = Entity(kind="Domain", identity={"tenant_id": "default", "repo": "docs", "name": "example.com"})
+            unclassified_domain = Entity(
+                kind="Domain",
+                identity={"tenant_id": "default", "repo": "docs", "name": "unclassified.example.com"},
+            )
+            source_literal_fact = Fact(
+                "REFERENCES_DOMAIN",
+                service.entity_id,
+                domain.entity_id,
+                {"literal": "https://example.com", "path": "docs/settings.py", "source_kind": "source_domain_literal"},
+            )
+            unclassified_fact = Fact(
+                "REFERENCES_DOMAIN",
+                service.entity_id,
+                unclassified_domain.entity_id,
+                {"literal": "https://unclassified.example.com", "path": "docs/settings.py"},
+            )
+            source_literal_evidence = Evidence(
+                target_type="fact",
+                target_id=source_literal_fact.fact_id,
+                derivation_class="deterministic_static",
+                source_system="test",
+                source_ref={"repo": "docs"},
+                bytes_ref={"repo": "docs", "path": "docs/settings.py", "line_start": 1, "line_end": 1},
+                confidence=1.0,
+            )
+            unclassified_evidence = Evidence(
+                target_type="fact",
+                target_id=unclassified_fact.fact_id,
+                derivation_class="deterministic_static",
+                source_system="test",
+                source_ref={"repo": "docs"},
+                bytes_ref={"repo": "docs", "path": "docs/settings.py", "line_start": 2, "line_end": 2},
+                confidence=1.0,
+            )
+            JsonlKgStore(root).write(
+                entities=[service, domain, unclassified_domain],
+                facts=[source_literal_fact, unclassified_fact],
+                evidence=[source_literal_evidence, unclassified_evidence],
+                coverage=[],
+                manifest={"counts": {"entities": 3, "facts": 2}},
+            )
+            architecture = runtime_architecture_packet(KgSnapshot(root), repo=None, limit=10)
+
+        self.assertEqual(architecture["answer_packet"]["domain_routing_map"], [])
+        self.assertEqual(architecture["answer_packet"]["investigation_brief"]["unlinked_runtime_leads"], [])
+
     def test_runtime_architecture_matches_endpoint_methods_case_insensitively(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True, provider_endpoint_method="post", endpoint_consumer_method="POST") as kg:
             architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
@@ -433,7 +513,7 @@ class McpToolsTest(unittest.TestCase):
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
             result = call_tool(kg, "planning_context", {})
 
-        self.assertLessEqual(len(canonical_json(result)), 20_000)
+        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
         self.assertEqual(result["tool"], "planning_context")
         budget = result["output_budget"]
         self.assertTrue(budget["truncated"])
@@ -445,11 +525,44 @@ class McpToolsTest(unittest.TestCase):
         architecture = result["runtime_architecture"]
         answer_packet = architecture["answer_packet"]
         self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
-        self.assertLessEqual(len(answer_packet["runtime_building_blocks"]), 4)
-        self.assertLessEqual(len(answer_packet["domain_routing_map"]), 15)
-        self.assertTrue(answer_packet["domain_routing_map"])
-        self.assertTrue(answer_packet["domain_routing_map"][0]["evidence_coordinates"])
-        self.assertIn("Use narrower or additional planning_context anchors", budget["advice"])
+        self.assertIn("investigation_brief", answer_packet)
+        self.assertGreater(len(answer_packet["investigation_brief"]["runtime_anchors"]), 1)
+        self.assertTrue(answer_packet["investigation_brief"]["recommended_source_checks"])
+        self.assertLessEqual(len(answer_packet.get("runtime_building_blocks", [])), 4)
+        self.assertLessEqual(len(answer_packet.get("domain_routing_map", [])), 15)
+        self.assertTrue(answer_packet["investigation_brief"]["known_routes"])
+        self.assertTrue(answer_packet["investigation_brief"]["known_routes"][0]["evidence_coordinates"])
+        self.assertIn("use narrower planning_context anchors", budget["advice"])
+
+    def test_planning_context_budget_keeps_runtime_headstart_when_bulk_sections_are_dropped(self) -> None:
+        with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=2_500) as kg:
+            result = call_tool(kg, "planning_context", {})
+
+        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
+        answer_packet = result["runtime_architecture"]["answer_packet"]
+        brief = answer_packet["investigation_brief"]
+        self.assertEqual(brief["purpose"], "head_start_for_agent_source_investigation")
+        self.assertGreaterEqual(len(brief["runtime_anchors"]), 4)
+        self.assertTrue(brief["known_routes"])
+        self.assertTrue(brief["recommended_source_checks"])
+        self.assertTrue(all("path" in row for row in brief["recommended_source_checks"]))
+        self.assertTrue(result["output_budget"]["truncated"])
+        self.assertTrue(result["output_budget"]["truncated_sections"])
+        self.assertIn("investigation_brief", result["output_budget"]["advice"])
+
+    def test_planning_context_unresolved_anchor_uses_compact_fleet_budget(self) -> None:
+        with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=2_500) as kg:
+            result = call_tool(kg, "planning_context", {"service": "missing-product-name"})
+
+        self.assertEqual(result["answerability"]["status"], "not_answerable")
+        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
+        self.assertEqual(result["output_budget"]["max_chars"], PLANNING_CONTEXT_MAX_CHARS)
+
+    def test_planning_context_anchor_resolution_gate_compacts_only_explicit_failures(self) -> None:
+        self.assertFalse(_planning_context_has_resolved_anchor({"answerability": {"status": "not_answerable"}}))
+        self.assertFalse(_planning_context_has_resolved_anchor({"status": "ambiguous"}))
+        self.assertTrue(_planning_context_has_resolved_anchor({"answerability": {"status": "answerable"}}))
+        self.assertTrue(_planning_context_has_resolved_anchor({}))
 
     def test_planning_context_service_anchor_scopes_runtime_before_budgeting(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
@@ -1607,6 +1720,7 @@ class _fixture_snapshot:
         runtime_pressure_routes: int = 0,
         runtime_pressure_payload_size: int = 0,
         runtime_pressure_same_repo: bool = False,
+        env_domain_reference_lead: bool = False,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -1633,6 +1747,7 @@ class _fixture_snapshot:
         self.runtime_pressure_routes = runtime_pressure_routes
         self.runtime_pressure_payload_size = runtime_pressure_payload_size
         self.runtime_pressure_same_repo = runtime_pressure_same_repo
+        self.env_domain_reference_lead = env_domain_reference_lead
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -1913,7 +2028,16 @@ class _fixture_snapshot:
         )
         consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
-        domain_fact = Fact("REFERENCES_DOMAIN", env_var.entity_id, domain.entity_id)
+        domain_fact = Fact(
+            "REFERENCES_DOMAIN",
+            env_var.entity_id,
+            domain.entity_id,
+            (
+                {"literal": "https://api.internal.example", "path": "payments/settings.py", "source_kind": "domain_env"}
+                if self.env_domain_reference_lead
+                else {}
+            ),
+        )
         route_qualifier = (
             {
                 "source_kind": "kubernetes_ingress",
@@ -2144,6 +2268,18 @@ class _fixture_snapshot:
                     source_system="test",
                     source_ref={"repo": "payments"},
                     bytes_ref={"repo": "payments", "path": "payments/api.py", "line_start": 10, "line_end": 12},
+                    confidence=1.0,
+                )
+            )
+        if self.env_domain_reference_lead:
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=domain_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "payments"},
+                    bytes_ref={"repo": "payments", "path": "payments/settings.py", "line_start": 3, "line_end": 3},
                     confidence=1.0,
                 )
             )

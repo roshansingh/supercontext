@@ -79,7 +79,14 @@ class ZappaExtractionTest(unittest.TestCase):
         self.assertEqual(build.evidence, [])
 
     def test_stage_domain_and_app_function_emit_deploy_and_route(self) -> None:
-        build = _extract('{"prod": {"app_function": "app.app", "domain": "api.example.com"}}')
+        build = _extract(
+            '{\n'
+            '  "prod": {\n'
+            '    "app_function": "app.app",\n'
+            '    "domain": "api.example.com"\n'
+            '  }\n'
+            '}'
+        )
 
         self.assertEqual(_entity_count(build, "DeployTarget"), 1)
         self.assertEqual(_entity_count(build, "Domain"), 1)
@@ -88,9 +95,16 @@ class ZappaExtractionTest(unittest.TestCase):
         self.assertEqual(_fact_count(build, "ROUTES_DOMAIN_TO_DEPLOY"), 1)
         deploy = next(fact for fact in build.facts if fact.predicate == "DEPLOYS_VIA_CONFIG")
         route = next(fact for fact in build.facts if fact.predicate == "ROUTES_DOMAIN_TO_DEPLOY")
+        deploy_evidence = next(row for row in build.evidence if row.target_type == "fact" and row.target_id == deploy.fact_id)
+        route_evidence = next(row for row in build.evidence if row.target_type == "fact" and row.target_id == route.fact_id)
         self.assertEqual(deploy.object_id, route.object_id)
         self.assertEqual(deploy.qualifier["target_type"], "zappa_lambda")
         self.assertEqual(route.qualifier["stage"], "prod")
+        self.assertEqual(route.qualifier["app_function"], "app.app")
+        self.assertEqual(deploy_evidence.bytes_ref["line_start"], 3)
+        self.assertEqual(deploy_evidence.bytes_ref["line_end"], 3)
+        self.assertEqual(route_evidence.bytes_ref["line_start"], 4)
+        self.assertEqual(route_evidence.bytes_ref["line_end"], 4)
 
     def test_disabled_apigateway_emits_deploy_only(self) -> None:
         build = _extract(

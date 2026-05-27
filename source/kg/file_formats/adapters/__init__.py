@@ -1,4 +1,5 @@
 from source.kg.file_formats.adapters.config_apache_vhost import CONFIG_APACHE_VHOST_ADAPTER
+from source.kg.file_formats.adapters.config_cname import CONFIG_CNAME_ADAPTER
 from source.kg.file_formats.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
 from source.kg.file_formats.adapters.config_dotenv import CONFIG_DOTENV_ADAPTER
 from source.kg.file_formats.adapters.config_kubernetes_yaml import CONFIG_KUBERNETES_YAML_ADAPTER
@@ -10,6 +11,7 @@ from source.kg.file_formats.adapters.event_channel_normalizer import EVENT_CHANN
 
 __all__ = [
     "CONFIG_APACHE_VHOST_ADAPTER",
+    "CONFIG_CNAME_ADAPTER",
     "CONFIG_DOMAIN_ENV_ADAPTER",
     "CONFIG_DOTENV_ADAPTER",
     "CONFIG_KUBERNETES_YAML_ADAPTER",

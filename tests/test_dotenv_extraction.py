@@ -54,6 +54,62 @@ class DotenvExtractionTest(unittest.TestCase):
 
         self.assertEqual([scanned.relative_path for scanned in result.files], [".env"])
 
+    def test_config_scan_includes_canonical_cname_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="docs-site",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            result = scan_config_files(repo)
+
+        self.assertEqual([scanned.relative_path for scanned in result.files], ["CNAME"])
+
+    def test_static_config_extracts_static_site_cname_domain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="docs-site",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            build = StaticConfigExtractor().extract(repo)
+
+        domain_facts = [fact for fact in build.facts if fact.predicate == "REFERENCES_DOMAIN"]
+        self.assertEqual(len(domain_facts), 1)
+        self.assertEqual(domain_facts[0].qualifier["literal"], "developer.example.com")
+        self.assertEqual(domain_facts[0].qualifier["source_kind"], "static_site_cname")
+        self.assertEqual(domain_facts[0].qualifier["path"], "CNAME")
+
+    def test_static_config_extracts_cname_when_domain_env_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            (root / ".env").write_text("API_URL=https://api.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="docs-site",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            build = StaticConfigExtractor(include_domain_env=False).extract(repo)
+
+        domain_facts = [fact for fact in build.facts if fact.predicate == "REFERENCES_DOMAIN"]
+        self.assertEqual(len(domain_facts), 1)
+        self.assertEqual(domain_facts[0].qualifier["literal"], "developer.example.com")
+        self.assertEqual(domain_facts[0].qualifier["source_kind"], "static_site_cname")
+
     def test_static_config_extracts_dotenv_without_domain_env_double_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -124,6 +180,43 @@ class DotenvExtractionTest(unittest.TestCase):
         self.assertEqual(env_fact.qualifier["safe_literal"], "api.example.com:443")
         self.assertEqual(len(domain_facts), 1)
         self.assertEqual(domain_facts[0].qualifier["literal"], "api.example.com:443")
+
+    def test_source_url_literals_are_distinguished_from_config_runtime_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "settings.py").write_text(
+                'EXAMPLE = "https://example.com"\nAPI_URL = "https://api.example.com/v1"\n',
+                encoding="utf-8",
+            )
+            repo = RepoSnapshot(
+                root=root,
+                name="source-url-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            build = StaticConfigExtractor().extract(repo)
+
+        domain_facts = [
+            fact
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_DOMAIN" and fact.qualifier.get("path") == "settings.py"
+        ]
+        self.assertTrue(
+            any(
+                fact.qualifier["literal"] == "https://example.com"
+                and fact.qualifier["source_kind"] == "source_domain_literal"
+                for fact in domain_facts
+            )
+        )
+        self.assertTrue(
+            any(
+                fact.qualifier["literal"] == "https://api.example.com/v1"
+                and fact.qualifier["source_kind"] == "domain_env"
+                for fact in domain_facts
+            )
+        )
 
 
 def _scanned(filename: str) -> ScannedFile:
