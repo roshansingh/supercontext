@@ -119,6 +119,46 @@ Keep changes surgical. Do not rewrite ADRs, research docs, or generated data unl
 
 Always use the project-local `.codex/skills/product-evaluation` skill before interpreting product-validation results, proposing the next validation-driven feature, or deciding the next highest-value KG/product gap.
 
+## MCP Head-Start Product Positioning
+
+SuperContext MCP tools should give the agent the best possible head start. When the relevant packet fits comfortably inside the output budget, return the complete relevant evidence. When the full packet would exceed size or section limits, bound it without erasing the agent's inspection path.
+
+- Prefer complete relevant sections for small packets and compact, prioritized lead sections for large packets. A good bounded packet surfaces the highest-value review/planning leads first, with evidence coordinates and why each lead matters.
+- Count-only omissions are not a head start. If limits prune rows, do not merely say "N rows omitted." Provide a compact inspection index for omitted rows whenever possible. If no rows were pruned, do not invent omitted sections.
+- Use a two-tier bounded packet shape only when full detail does not fit: detailed leads for the most important rows, plus compact inspection references for the rest. Detailed leads should include the relevant fact/evidence summary; compact references should still include enough coordinates for the agent to inspect without rediscovering the row from scratch.
+- After compaction, spend remaining output budget deliberately. If the full packet is over budget and the compact packet lands under budget, backfill the highest-value omitted rows or details until the packet is near the budget ceiling without crossing it. Do not stop at an unnecessarily tiny compact packet when safe headroom remains.
+- Every omitted inspection reference should preserve the strongest available coordinates: `repo`, `path`, `line`, `symbol`/`qualname`, `endpoint`/`domain`/`event_channel` when applicable, category/status, and a short reason it matters. Evidence blobs may be capped; coordinates and inspection targets should survive.
+- If even the compact omitted index must be truncated, expose an explicit continuation/narrowing contract such as omitted count by category plus the exact narrower anchor to call next. Never let truncation silently erase a category.
+- Separate `known_linked`, `candidate_or_unlinked`, and `missing_or_unknown` evidence. Do not let compact packets imply absence just because a row was omitted by a limit.
+- For review/security/runtime questions, include investigation leads and inspection areas together: proven KG facts, high-signal source leads, and the specific dynamic/framework/config areas the KG cannot prove.
+- When one row has multiple important classifications, preserve the classifications instead of allowing one lead type to suppress another. For example, an explicitly public endpoint with an in-method signature/API-key guard should remain visible as both public surface and guarded surface.
+- Raise limits only when the packet genuinely needs more rows. The default fix for oversized packets should be better prioritization and clearer follow-up guidance; the default for small packets is to return the relevant evidence directly.
+- Evaluate MCP improvements by whether they improve final answer quality and reduce unnecessary agent investigation. If MCP gives a partial head start, the expected behavior is targeted source inspection, not stopping at the packet.
+
+## Anti-Overfitting Discipline
+
+When fixing an evaluated question or a previous MCP-off win, treat that question as evidence of a product gap, not as the objective itself. The objective is to make SuperContext stronger as a generic OSS tool.
+
+- Before coding, re-read the current `AGENTS.md` on the active branch and verify these MCP head-start and A/B regression instructions are present. If they are stale, update them before implementing feature work.
+- Prefer generic parser/AST/compiler/config/source-of-truth semantics over fixture-specific matching. Do not add repo names, service names, endpoint names, function names, product-domain terms, or fixture-specific ranking just to move one question.
+- For packet design, return all relevant rows when they fit. When size or section limits require pruning, capture the most important generic facts as prioritized leads, backfill omitted detail with any remaining budget, and put the rest into explicit inspection areas with coordinates. A count without omitted-row coordinates is not an acceptable inspection area for pruned rows. Do not churn limits, row ordering, or packet fields only to make one answer look better.
+- When fixing a loss caused by budget/packet truncation, first ask whether the omitted evidence had a compact inspection index. If not, fix the packet contract before increasing budgets or adding more prose.
+- If a proposed change only helps the target question and does not plausibly help similar repositories or workflows, stop and either narrow it to private fixture configuration or reject it.
+- Before running validation for an eval-driven fix, ask Claude Code specifically: "Are these changes overfitting to the target question, or do they make the overall OSS product stronger?" Include the target question, changed files, and the generic rule being added.
+- Treat Claude Code's answer as a hypothesis to verify against code. For each concern, decide `accept`, `deny`, or `act` with evidence before running focused or previous-loss-set evals.
+- Do not proceed to merge or claim an improvement while unresolved overfitting concerns remain.
+
+## A/B Evaluation Regression Discipline
+
+For iterative MCP quality work, use tiered validation. Do not treat a single-question MCP-on win as sufficient evidence, but also do not rerun the full 18-question suite after every edit.
+
+- During development, run the target question only, usually MCP-on only or MCP-on against a reused compatible MCP-off record, to check whether the local change works.
+- After the target question wins, rerun MCP-on for the full current MCP-off loss set from the latest relevant full report, reusing compatible MCP-off records with `run_ab_eval --reuse-mcp-off-from <run-dir>`, then regenerate deltas/judgement/report.
+- Before merge or before claiming a direction-level improvement, run the full 18-question A/B, or full 18 with reused MCP-off records if the harness, prompts, fixtures, and task text are unchanged and only MCP/KG behavior changed.
+- Recompute MCP-off only for fresh merge-gating runs, new baselines, harness changes that invalidate cached records, or when the task prompt/fixture changed.
+- Report the previous-loss-set outcome after focused wins, not only the target question. If a target win creates or preserves other MCP-off wins, classify those regressions before further coding.
+- Use a proper judge pass for comparisons; raw answer inspection is acceptable for diagnosis but not for claiming an eval win.
+
 ## Pre-PR Validation Discipline
 
 Copilot has repeatedly caught boundary-condition mistakes in review. Before opening or updating a PR, explicitly check these patterns:

@@ -646,6 +646,524 @@ class PythonDjangoFrameworkExtractionTest(unittest.TestCase):
         self.assertEqual(endpoint["authz_status"], "missing_declared_policy")
         self.assertEqual(endpoint["checks"], [])
 
+    def test_authz_surface_extracts_custom_guard_call_with_auth_failure_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            api_key_validator = app / "api_key_validator.py"
+            api_key_validator.write_text(
+                "def get_company_by_api_key(request):\n"
+                "    api_key = request.headers.get('api-key')\n"
+                "    if api_key:\n"
+                "        return object()\n",
+                encoding="utf-8",
+            )
+            views.write_text(
+                "from rest_framework import status\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n"
+                "from orders.api_key_validator import get_company_by_api_key\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = get_company_by_api_key(request)\n"
+                "        if not company:\n"
+                "            return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)\n"
+                "        if not request.data.get('email'):\n"
+                "            return Response({'error': 'Bad request'}, status=status.HTTP_400_BAD_REQUEST)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (api_key_validator, views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["endpoint"]["path"], "/public/orders/")
+        self.assertEqual(endpoint["authz_status"], "authz_evidence_found")
+        self.assertEqual(len(endpoint["checks"]), 1)
+        check = endpoint["checks"][0]
+        self.assertEqual(check["qualifier"]["source_kind"], "custom_guard_call")
+        self.assertEqual(check["qualifier"]["access_level"], "custom_security_guard")
+        self.assertEqual(check["qualifier"]["guard_intent"], "unknown")
+        self.assertEqual(check["qualifier"]["check"], "get_company_by_api_key")
+        self.assertEqual(check["object"]["kind"], "CodeSymbol")
+        self.assertEqual(check["object"]["module"], "orders.api_key_validator")
+        self.assertEqual(check["object"]["properties"]["path"], "orders/api_key_validator.py")
+        self.assertEqual(result["authz_surface"]["review_leads"][0]["lead_type"], "custom_guard")
+        self.assertEqual(result["authz_surface"]["inspection_areas"][0]["area"], "custom_guard_implementations")
+
+    def test_authz_surface_does_not_misattribute_unresolved_bare_guard_call_to_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework import status\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        guard = request.guard\n"
+                "        if not guard(request):\n"
+                "            return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["checks"], [])
+
+    def test_authz_surface_does_not_treat_arbitrary_forbidden_enum_as_status_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n\n"
+                "class BillingTier:\n"
+                "    FORBIDDEN = 403\n\n"
+                "def resolve_company(request):\n"
+                "    return object()\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = resolve_company(request)\n"
+                "        if not company:\n"
+                "            return Response({'error': 'tier'}, status=BillingTier.FORBIDDEN)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["checks"], [])
+
+    def test_authz_surface_extracts_custom_guard_with_positional_response_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n\n"
+                "def resolve_company(request):\n"
+                "    return object()\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = resolve_company(request)\n"
+                "        if not company:\n"
+                "            return Response({'error': 'Unauthorized'}, 401)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["checks"][0]["qualifier"]["source_kind"], "custom_guard_call")
+
+    def test_authz_surface_extracts_custom_guard_with_implicit_forbidden_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from django.http import HttpResponseForbidden\n"
+                "from rest_framework.views import APIView\n\n"
+                "def resolve_company(request):\n"
+                "    return object()\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = resolve_company(request)\n"
+                "        if not company:\n"
+                "            return HttpResponseForbidden()\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["checks"][0]["qualifier"]["source_kind"], "custom_guard_call")
+
+    def test_authz_surface_does_not_promote_custom_guard_without_auth_failure_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework import status\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n\n"
+                "def resolve_company(request):\n"
+                "    return object()\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = resolve_company(request)\n"
+                "        if not company:\n"
+                "            return Response({'error': 'Bad request'}, status=status.HTTP_400_BAD_REQUEST)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["authz_status"], "missing_declared_policy")
+        self.assertEqual(endpoint["checks"], [])
+
+    def test_authz_surface_does_not_promote_guard_from_unrelated_nested_failure_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework import status\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n\n"
+                "def resolve_company(request):\n"
+                "    return object()\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = resolve_company(request)\n"
+                "        if not company:\n"
+                "            if request.data.get('force'):\n"
+                "                return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)\n"
+                "            return None\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["authz_status"], "missing_declared_policy")
+        self.assertEqual(endpoint["checks"], [])
+
+    def test_authz_surface_extracts_custom_guard_inside_match_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from http import HTTPStatus\n"
+                "from rest_framework import status\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n\n"
+                "def resolve_company(request):\n"
+                "    return object()\n\n"
+                "class PublicOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        match request.method:\n"
+                "            case 'POST':\n"
+                "                company = resolve_company(request)\n"
+                "                if company is None:\n"
+                "                    return Response({'error': 'Unauthorized'}, status=HTTPStatus.FORBIDDEN)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicOrderView\n\n"
+                "urlpatterns = [path('public/orders/', PublicOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["authz_status"], "authz_evidence_found")
+        self.assertEqual(endpoint["checks"][0]["qualifier"]["source_kind"], "custom_guard_call")
+
+    def test_authz_surface_prioritizes_review_leads_before_section_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework import status\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n"
+                "from orders.api_key_validator import get_company_by_api_key\n\n"
+                "class MissingPolicyView(APIView):\n"
+                "    def get(self, request):\n"
+                "        return None\n\n"
+                "class GuardedOrderView(APIView):\n"
+                "    permission_classes = []\n"
+                "    def post(self, request):\n"
+                "        company = get_company_by_api_key(request)\n"
+                "        if not company:\n"
+                "            return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import GuardedOrderView, MissingPolicyView\n\n"
+                "urlpatterns = [\n"
+                "    path('aaa/missing/', MissingPolicyView.as_view()),\n"
+                "    path('zzz/guarded/', GuardedOrderView.as_view()),\n"
+                "]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 1})
+        authz = result["authz_surface"]
+        self.assertEqual(authz["summary"]["section_limit"], 1)
+        self.assertEqual(
+            authz["summary"]["inspection_ref_count"],
+            sum(len(area.get("inspection_refs", [])) for area in authz["inspection_areas"]),
+        )
+        self.assertEqual(
+            authz["summary"]["inspection_row_count"],
+            sum(area.get("inspection_row_count", 0) for area in authz["inspection_areas"]),
+        )
+        self.assertEqual(authz["endpoint_authorization"][0]["endpoint"]["path"], "/aaa/missing/")
+        self.assertEqual(authz["review_leads"][0]["lead_type"], "custom_guard")
+        self.assertEqual(authz["review_leads"][0]["endpoint"]["path"], "/zzz/guarded/")
+        omitted_area = next(area for area in authz["inspection_areas"] if area["area"] == "omitted_endpoint_rows")
+        self.assertEqual(omitted_area["inspection_refs"][0]["endpoint"]["path"], "/zzz/guarded/")
+        self.assertEqual(omitted_area["inspection_refs"][0]["handler"]["path"], "orders/views.py")
+        self.assertEqual(omitted_area["inspection_refs"][0]["handler"]["qualname"], "GuardedOrderView")
+        self.assertIn(
+            "/zzz/guarded/",
+            {ref["endpoint"]["path"] for ref in authz["inspection_index"] if "endpoint" in ref},
+        )
+        self.assertIn(
+            "omitted_endpoint_rows",
+            {area["area"] for area in authz["inspection_areas"]},
+        )
+
+    def test_authz_surface_keeps_public_and_guard_leads_for_same_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework import status\n"
+                "from rest_framework.permissions import AllowAny\n"
+                "from rest_framework.response import Response\n"
+                "from rest_framework.views import APIView\n"
+                "from orders.api_key_validator import get_company_by_api_key\n\n"
+                "class PublicWebhookView(APIView):\n"
+                "    permission_classes = [AllowAny]\n"
+                "    def post(self, request):\n"
+                "        company = get_company_by_api_key(request)\n"
+                "        if not company:\n"
+                "            return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import PublicWebhookView\n\n"
+                "urlpatterns = [path('webhook/', PublicWebhookView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        authz = result["authz_surface"]
+        lead_types = {lead["lead_type"] for lead in authz["review_leads"]}
+        self.assertIn("public_policy_present", lead_types)
+        self.assertIn("custom_guard", lead_types)
+        endpoint = authz["endpoint_authorization"][0]
+        self.assertTrue(endpoint["public_policy_present"])
+        self.assertEqual(endpoint["authz_status"], "authz_evidence_found")
+
+    def test_authz_surface_reports_languages_without_authz_extractors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.views import APIView\n\n"
+                "class OrdersView(APIView):\n"
+                "    def get(self, request):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import OrdersView\n\n"
+                "urlpatterns = [path('orders/', OrdersView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(
+                root,
+                build,
+                manifest_counts={
+                    "files_by_language": {"elixir": 1, "markdown": 4, "python": 2, "typescript": 3},
+                    "unsupported_files_by_language": {"markdown": 2, "ruby": 1},
+                },
+            )
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        unsupported_by_language = {
+            row["language"]: row["reason"] for row in result["authz_surface"]["unsupported_scopes"]
+        }
+        self.assertEqual(unsupported_by_language["elixir"], "language_has_no_authz_extractor")
+        self.assertEqual(unsupported_by_language["typescript"], "language_has_no_authz_extractor")
+        self.assertEqual(unsupported_by_language["ruby"], "unsupported_language")
+        self.assertNotIn("markdown", unsupported_by_language)
+        unsupported_area = next(
+            area for area in result["authz_surface"]["inspection_areas"] if area["area"] == "unsupported_authz_scopes"
+        )
+        self.assertEqual(
+            {ref["language"] for ref in unsupported_area["inspection_refs"]},
+            {"elixir", "typescript", "ruby"},
+        )
+
+    def test_authz_surface_detects_permission_classes_through_local_base_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.permissions import BasePermission\n"
+                "from rest_framework.views import APIView\n\n"
+                "class AppBasePermission(BasePermission):\n"
+                "    pass\n\n"
+                "class StaffOnly(AppBasePermission):\n"
+                "    def has_permission(self, request, view):\n"
+                "        return request.user.is_staff\n\n"
+                "class OrderAdminView(APIView):\n"
+                "    permission_classes = [StaffOnly]\n"
+                "    def post(self, request):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import OrderAdminView\n\n"
+                "urlpatterns = [path('orders/admin/', OrderAdminView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        policy_names = {row["qualifier"]["policy"] for row in endpoint["policies"]}
+        self.assertIn("StaffOnly", policy_names)
+        declared_policy_names = {
+            row["qualifier"]["policy"] for row in result["authz_surface"]["declared_policies"]
+        }
+        self.assertIn("StaffOnly", declared_policy_names)
+
     def test_authz_surface_joins_method_decorator_policy_to_class_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -680,6 +1198,38 @@ class PythonDjangoFrameworkExtractionTest(unittest.TestCase):
         self.assertEqual(endpoint["policies"][0]["subject"]["qualname"], "SecureView.get")
         self.assertEqual(endpoint["policies"][0]["qualifier"]["policy"], "login_required")
 
+    def test_authz_surface_detects_drf_self_check_on_local_base_view_subclass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.views import APIView\n\n"
+                "class BaseOrderView(APIView):\n"
+                "    pass\n\n"
+                "class SecureOrderView(BaseOrderView):\n"
+                "    def post(self, request):\n"
+                "        self.check_permissions(request)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import SecureOrderView\n\n"
+                "urlpatterns = [path('secure/orders/', SecureOrderView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["checks"][0]["qualifier"]["check"], "check_permissions")
+
     def test_flask_authz_surface_uses_route_decorator_and_auth_decorator(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -713,6 +1263,33 @@ class PythonDjangoFrameworkExtractionTest(unittest.TestCase):
         self.assertEqual(endpoint["policies"][0]["qualifier"]["policy"], "jwt_required")
         self.assertEqual(endpoint["checks"][0]["qualifier"]["check"], "is_authenticated")
 
+    def test_flask_authz_surface_extracts_custom_guard_with_abort_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            flask_app = app / "app.py"
+            flask_app.write_text(
+                "from flask import Flask, abort\n\n"
+                "app = Flask(__name__)\n\n"
+                "def verify_api_key(request):\n"
+                "    return None\n\n"
+                "@app.route('/admin', methods=['POST'])\n"
+                "def admin_action():\n"
+                "    if not verify_api_key(None):\n"
+                "        return abort(401)\n"
+                "    return None\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (flask_app,))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["checks"][0]["qualifier"]["source_kind"], "custom_guard_call")
+
 
 def _build(root: Path, files: tuple[Path, ...]) -> KgBuild:
     return PythonAstExtractor(include_transport=False).extract(
@@ -736,14 +1313,17 @@ def _assert_support_facts_reference_entities(build: KgBuild) -> None:
             raise AssertionError(f"missing support fact subject entity: {fact}")
 
 
-def _snapshot(root: Path, build: KgBuild) -> KgSnapshot:
+def _snapshot(root: Path, build: KgBuild, *, manifest_counts: dict[str, object] | None = None) -> KgSnapshot:
     snapshot_dir = root / "snapshot"
+    counts: dict[str, object] = {"entities": len(build.entities), "facts": len(build.facts)}
+    if manifest_counts:
+        counts.update(manifest_counts)
     JsonlKgStore(snapshot_dir).write(
         entities=build.entities,
         facts=build.facts,
         support_facts=build.support_facts,
         evidence=build.evidence,
         coverage=build.coverage,
-        manifest={"counts": {"entities": len(build.entities), "facts": len(build.facts)}},
+        manifest={"counts": counts},
     )
     return KgSnapshot(snapshot_dir)

@@ -14,13 +14,19 @@ from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import (
     TOOL_NAMES,
     _planning_context_has_resolved_anchor,
+    _planning_context_authz_surface_reference,
     _planning_context_symbol_impact,
     call_tool,
     tool_definitions,
 )
 from source.kg.product.output_budget import (
+    AUTHZ_COMPACT_LIST_KEYS,
+    COMPACT_AUTHZ_INSPECTION_REF_LIMIT,
+    COMPACT_RUNTIME_HEADSTART_LIMIT,
     PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
     PLANNING_CONTEXT_MAX_CHARS,
+    _BUDGET_BACKFILL_LIST_PATHS,
+    _compact_authz_surface,
     enforce_planning_context_budget,
 )
 from source.kg.product.runtime_architecture import runtime_architecture_packet
@@ -666,6 +672,115 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_domain_reference", statuses)
         self.assertTrue(budgeted["output_budget"]["truncated"])
         self.assertGreater(budgeted["output_budget"]["omitted_counts"]["domain_routing_map"], 0)
+
+    def test_output_budget_backfills_omitted_rows_when_compact_packet_has_headroom(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "runtime_architecture": {
+                "scope": {"kind": "fleet"},
+                "summary": {"runtime_building_block_count": 0, "domain_routing_map_count": 24},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [
+                        {
+                            "status": "known_route" if index == 0 else "unlinked_domain_reference",
+                            "domain": {"name": f"domain-{index}.example.test"},
+                            "evidence_coordinates": [{"repo": "repo", "path": "infra.tf", "line_start": index + 1}],
+                            "payload": "x" * 200,
+                        }
+                        for index in range(24)
+                    ],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "unlinked rows are source leads only",
+                },
+                "assembly_contract": "typed facts only",
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_planning_context_budget(result, max_chars=5_000)
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 5_000)
+        routes = budgeted["runtime_architecture"]["answer_packet"]["domain_routing_map"]
+        self.assertGreater(len(routes), 7)
+        self.assertGreater(
+            budgeted["output_budget"]["backfilled_counts"]["runtime_architecture.answer_packet.domain_routing_map"],
+            0,
+        )
+        self.assertGreaterEqual(budgeted["output_budget"]["remaining_chars"], 0)
+
+    def test_output_budget_authz_compact_lists_are_backfillable(self) -> None:
+        authz_backfill_keys = {
+            path[1]
+            for path in _BUDGET_BACKFILL_LIST_PATHS
+            if len(path) == 2 and path[0] == "authz_surface"
+        }
+
+        self.assertTrue(set(AUTHZ_COMPACT_LIST_KEYS).issubset(authz_backfill_keys))
+
+    def test_planning_context_authz_reference_includes_all_compact_list_keys(self) -> None:
+        authz_surface = {
+            "status": "found",
+            "scope": {},
+            "summary": {},
+            **{key: [{"category": key}] for key in AUTHZ_COMPACT_LIST_KEYS},
+        }
+
+        reference = _planning_context_authz_surface_reference(authz_surface)
+
+        self.assertTrue(set(AUTHZ_COMPACT_LIST_KEYS).issubset(reference))
+
+    def test_planning_context_authz_reference_caps_nested_inspection_refs(self) -> None:
+        authz_surface = {
+            "inspection_areas": [
+                {
+                    "area": "omitted_endpoint_rows",
+                    "inspection_refs": [{"endpoint": {"path": f"/orders/{index}/"}} for index in range(12)],
+                }
+            ]
+        }
+
+        reference = _planning_context_authz_surface_reference(authz_surface)
+
+        area = reference["inspection_areas"][0]
+        self.assertEqual(len(area["inspection_refs"]), COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
+        self.assertTrue(area["inspection_refs_truncated"])
+        self.assertEqual(area["omitted_inspection_ref_count"], 12 - COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
+
+    def test_compact_authz_surface_caps_inspection_areas_for_backfill(self) -> None:
+        compact = _compact_authz_surface(
+            {
+                "status": "found",
+                "scope": {},
+                "summary": {},
+                "inspection_areas": [{"area": f"area-{index}"} for index in range(20)],
+            }
+        )
+
+        self.assertEqual(len(compact["inspection_areas"]), COMPACT_RUNTIME_HEADSTART_LIMIT)
+
+    def test_compact_authz_surface_caps_nested_inspection_refs(self) -> None:
+        compact = _compact_authz_surface(
+            {
+                "status": "found",
+                "scope": {},
+                "summary": {},
+                "inspection_areas": [
+                    {
+                        "area": "omitted_endpoint_rows",
+                        "inspection_refs": [{"endpoint": {"path": f"/orders/{index}/"}} for index in range(12)],
+                    }
+                ],
+            }
+        )
+
+        area = compact["inspection_areas"][0]
+        self.assertEqual(len(area["inspection_refs"]), COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
+        self.assertTrue(area["inspection_refs_truncated"])
+        self.assertEqual(area["omitted_inspection_ref_count"], 12 - COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
 
     def test_output_budget_minimizes_oversized_runtime_rows_before_dropping_routes(self) -> None:
         result = {

@@ -11,7 +11,7 @@ from source.kg.file_formats._shared.common import endpoint_entity
 
 FRAMEWORK_IMPORT_ROOTS = ("django", "rest_framework", "flask", "flask_jwt_extended", "flask_login")
 
-DRF_PERMISSION_BASES = {"rest_framework.permissions.BasePermission", "BasePermission"}
+DRF_PERMISSION_BASES = {"rest_framework.permissions.BasePermission"}
 DRF_VIEW_BASE_NAMES = {
     "APIView",
     "GenericAPIView",
@@ -45,12 +45,34 @@ AUTHZ_EXCEPTION_ACCESS = {
     "rest_framework.exceptions.AuthenticationFailed": "authentication_failed",
     "rest_framework.exceptions.PermissionDenied": "permission_denied",
 }
+AUTHZ_FAILURE_STATUS_CODES_BY_SYMBOL = {
+    "rest_framework.status.HTTP_401_UNAUTHORIZED": 401,
+    "rest_framework.status.HTTP_403_FORBIDDEN": 403,
+    "http.HTTPStatus.UNAUTHORIZED": 401,
+    "http.HTTPStatus.FORBIDDEN": 403,
+}
+AUTHZ_FAILURE_RESPONSE_CALLS = {
+    "django.http.HttpResponseForbidden",
+    "django.http.response.HttpResponseForbidden",
+}
+AUTHZ_ABORT_CALLS = {
+    "flask.abort",
+    "werkzeug.exceptions.abort",
+}
+RESPONSE_LIKE_CALLS = {
+    "rest_framework.response.Response",
+    "django.http.HttpResponse",
+    "django.http.JsonResponse",
+    "django.http.response.HttpResponse",
+    "django.http.response.JsonResponse",
+}
 AUTHZ_ATTRIBUTE_CHECKS = {
     "request.user.is_authenticated": "authenticated",
     "request.user.is_staff": "privileged",
     "request.user.is_superuser": "privileged",
     "current_user.is_authenticated": "authenticated",
 }
+AUTHZ_FAILURE_STATUS_CODES = set(AUTHZ_FAILURE_STATUS_CODES_BY_SYMBOL.values())
 
 
 @dataclass(frozen=True)
@@ -104,11 +126,14 @@ def extract_python_authz_surface(
             recognized_import_roots=recognized_import_roots,
         )
 
-    symbols = _collect_class_and_function_symbols(repo, candidate_files, tenant_id=tenant_id)
+    symbols = _collect_class_and_function_symbols(repo, files, tenant_id=tenant_id)
     symbols_by_full_name = {f"{symbol.module_name}.{symbol.qualname}": symbol for symbol in symbols}
     symbols_by_node_id = {id(symbol.node): symbol for symbol in symbols}
-    symbols_by_short_name = _unique_by_short_name(symbols)
-    file_by_module = {file.module_name: file.path for file in candidate_files}
+    candidate_module_names = {file.module_name for file in candidate_files}
+    symbols_by_short_name = _unique_by_short_name(
+        [symbol for symbol in symbols if symbol.module_name in candidate_module_names]
+    )
+    file_by_module = {file.module_name: file.path for file in files}
 
     entities: list[Entity] = []
     facts: list[Fact] = []
@@ -173,12 +198,13 @@ def extract_python_authz_surface(
     for file in candidate_files:
         imports = _ImportResolver.from_module(file.module_name, file.tree)
         drf_view_method_node_ids = _drf_view_method_node_ids(file.tree, imports)
+        drf_permission_class_names = _drf_permission_class_names(file.tree, imports)
         for node in ast.walk(file.tree):
             if isinstance(node, ast.ClassDef):
                 class_symbol = symbols_by_full_name.get(f"{file.module_name}.{node.name}")
                 if class_symbol is None:
                     continue
-                if _is_drf_permission_class(node, imports):
+                if node.name in drf_permission_class_names:
                     add_symbol_entity(class_symbol)
                     base_policy = _external_symbol(repo, "rest_framework.permissions", "BasePermission", tenant_id)
                     add_entity(base_policy, file.path, getattr(node, "lineno", 1), getattr(node, "lineno", 1))
@@ -274,6 +300,9 @@ def extract_python_authz_surface(
                     repo,
                     node,
                     imports,
+                    file.module_name,
+                    symbols_by_full_name,
+                    file_by_module,
                     tenant_id,
                     allow_drf_self_checks=id(node) in drf_view_method_node_ids,
                     allow_request_user_checks=bool(endpoints or policies) or id(node) in drf_view_method_node_ids,
@@ -281,17 +310,22 @@ def extract_python_authz_surface(
                 if checks:
                     add_symbol_entity(symbol)
                 for check in checks:
-                    add_entity(check.entity, file.path, check.line, check.line)
+                    check_entity_file = check.entity_file_path or file.path
+                    check_entity_line = check.entity_line or check.line
+                    add_entity(check.entity, check_entity_file, check_entity_line, check_entity_line)
+                    qualifier = {
+                        "framework": check.framework,
+                        "source_kind": check.source_kind,
+                        "check": check.name,
+                        "access_level": check.access_level,
+                    }
+                    if check.guard_intent is not None:
+                        qualifier["guard_intent"] = check.guard_intent
                     add_fact(
                         "USES_AUTHZ_CHECK",
                         symbol.entity,
                         check.entity,
-                        {
-                            "framework": check.framework,
-                            "source_kind": check.source_kind,
-                            "check": check.name,
-                            "access_level": check.access_level,
-                        },
+                        qualifier,
                         file.path,
                         check.line,
                         check.line,
@@ -352,6 +386,9 @@ class _AuthzCheck:
     access_level: str
     framework: str
     line: int
+    entity_file_path: Path | None = None
+    entity_line: int | None = None
+    guard_intent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -412,13 +449,34 @@ def _unique_by_short_name(symbols: list[_SymbolRef]) -> dict[str, _SymbolRef]:
     return {symbol.short_name: symbol for symbol in symbols if counts[symbol.short_name] == 1}
 
 
-def _is_drf_permission_class(node: ast.ClassDef, imports: "_ImportResolver") -> bool:
+def _drf_permission_class_names(tree: ast.AST, imports: "_ImportResolver") -> set[str]:
+    classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    permission_names: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for node in classes:
+            if node.name in permission_names:
+                continue
+            if _is_drf_permission_class(node, imports, permission_names):
+                permission_names.add(node.name)
+                changed = True
+    return permission_names
+
+
+def _is_drf_permission_class(
+    node: ast.ClassDef,
+    imports: "_ImportResolver",
+    local_permission_class_names: set[str],
+) -> bool:
     for base in node.bases:
         dotted = _dotted_name(base)
         if dotted is None:
             continue
+        if dotted in local_permission_class_names:
+            return True
         resolved = imports.resolve_alias(dotted) or dotted
-        if resolved in DRF_PERMISSION_BASES or resolved.endswith(".BasePermission"):
+        if resolved in DRF_PERMISSION_BASES:
             return True
     return False
 
@@ -525,8 +583,9 @@ def _decorator_policies(
 
 def _drf_view_method_node_ids(tree: ast.AST, imports: "_ImportResolver") -> set[int]:
     method_ids: set[int] = set()
+    drf_class_names = _drf_view_class_names(tree, imports)
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef) or not _is_drf_view_class(node, imports):
+        if not isinstance(node, ast.ClassDef) or node.name not in drf_class_names:
             continue
         for statement in node.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -534,11 +593,28 @@ def _drf_view_method_node_ids(tree: ast.AST, imports: "_ImportResolver") -> set[
     return method_ids
 
 
-def _is_drf_view_class(node: ast.ClassDef, imports: "_ImportResolver") -> bool:
+def _drf_view_class_names(tree: ast.AST, imports: "_ImportResolver") -> set[str]:
+    classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    drf_names: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for node in classes:
+            if node.name in drf_names:
+                continue
+            if _is_drf_view_class(node, imports, drf_names):
+                drf_names.add(node.name)
+                changed = True
+    return drf_names
+
+
+def _is_drf_view_class(node: ast.ClassDef, imports: "_ImportResolver", local_drf_class_names: set[str]) -> bool:
     for base in node.bases:
         dotted = _dotted_name(base)
         if dotted is None:
             continue
+        if dotted in local_drf_class_names:
+            return True
         resolved = imports.resolve_alias(dotted)
         if resolved is None:
             continue
@@ -554,6 +630,9 @@ def _body_authz_checks(
     repo: RepoSnapshot,
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     imports: "_ImportResolver",
+    module_name: str,
+    symbols_by_full_name: dict[str, _SymbolRef],
+    file_by_module: dict[str, Path],
     tenant_id: str,
     *,
     allow_drf_self_checks: bool,
@@ -593,7 +672,253 @@ def _body_authz_checks(
             continue
         seen.add(key)
         checks.append(check)
+    for check in _custom_guard_checks(repo, node, imports, module_name, symbols_by_full_name, file_by_module, tenant_id):
+        key = (check.name, check.line, check.source_kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        checks.append(check)
     return checks
+
+
+@dataclass(frozen=True)
+class _CallRef:
+    dotted: str
+    line: int
+
+
+def _custom_guard_checks(
+    repo: RepoSnapshot,
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    imports: "_ImportResolver",
+    module_name: str,
+    symbols_by_full_name: dict[str, _SymbolRef],
+    file_by_module: dict[str, Path],
+    tenant_id: str,
+) -> list[_AuthzCheck]:
+    checks: list[_AuthzCheck] = []
+    assignments: dict[str, _CallRef] = {}
+
+    def visit_statements(statements: list[ast.stmt], inherited_assignments: dict[str, _CallRef]) -> None:
+        local_assignments = dict(inherited_assignments)
+        for statement in statements:
+            assignment = _guard_call_assignment(statement, imports, module_name, symbols_by_full_name)
+            if assignment is not None:
+                name, call_ref = assignment
+                local_assignments[name] = call_ref
+            if isinstance(statement, ast.If):
+                guarded_calls = _guarded_calls_from_test(
+                    statement.test,
+                    local_assignments,
+                    imports,
+                    module_name,
+                    symbols_by_full_name,
+                )
+                if guarded_calls and _contains_auth_failure_outcome(statement.body, imports):
+                    for call_ref in guarded_calls:
+                        checks.append(_custom_guard_check(repo, call_ref, symbols_by_full_name, file_by_module, tenant_id))
+                visit_statements(statement.body, local_assignments)
+                visit_statements(statement.orelse, local_assignments)
+            elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try, ast.Match)):
+                for nested in _nested_statement_blocks(statement):
+                    visit_statements(nested, local_assignments)
+
+    visit_statements(node.body, assignments)
+    return checks
+
+
+def _guard_call_assignment(
+    statement: ast.stmt,
+    imports: "_ImportResolver",
+    module_name: str,
+    symbols_by_full_name: dict[str, _SymbolRef],
+) -> tuple[str, _CallRef] | None:
+    target_name = _assignment_target_name(statement)
+    value = _assignment_value(statement)
+    if target_name is None or not isinstance(value, ast.Call):
+        return None
+    call_ref = _authz_guard_call_ref(value, imports, module_name, symbols_by_full_name)
+    if call_ref is None:
+        return None
+    return target_name, call_ref
+
+
+def _guarded_calls_from_test(
+    test: ast.AST,
+    assignments: dict[str, _CallRef],
+    imports: "_ImportResolver",
+    module_name: str,
+    symbols_by_full_name: dict[str, _SymbolRef],
+) -> list[_CallRef]:
+    calls: list[_CallRef] = []
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        calls.extend(_guarded_calls_from_operand(test.operand, assignments, imports, module_name, symbols_by_full_name))
+    elif isinstance(test, ast.Compare) and _is_none_check(test):
+        calls.extend(_guarded_calls_from_operand(test.left, assignments, imports, module_name, symbols_by_full_name))
+        for comparator in test.comparators:
+            calls.extend(_guarded_calls_from_operand(comparator, assignments, imports, module_name, symbols_by_full_name))
+    return calls
+
+
+def _guarded_calls_from_operand(
+    operand: ast.AST,
+    assignments: dict[str, _CallRef],
+    imports: "_ImportResolver",
+    module_name: str,
+    symbols_by_full_name: dict[str, _SymbolRef],
+) -> list[_CallRef]:
+    if isinstance(operand, ast.Name):
+        call_ref = assignments.get(operand.id)
+        return [call_ref] if call_ref is not None else []
+    if isinstance(operand, ast.Call):
+        call_ref = _authz_guard_call_ref(operand, imports, module_name, symbols_by_full_name)
+        return [call_ref] if call_ref is not None else []
+    return []
+
+
+def _authz_guard_call_ref(
+    call: ast.Call,
+    imports: "_ImportResolver",
+    module_name: str,
+    symbols_by_full_name: dict[str, _SymbolRef],
+) -> _CallRef | None:
+    dotted = _dotted_name(call.func)
+    if dotted is None:
+        return None
+    resolved = imports.resolve_alias(dotted)
+    if resolved is None:
+        if "." in dotted:
+            return None
+        same_module = f"{module_name}.{dotted}"
+        if same_module in symbols_by_full_name:
+            resolved = same_module
+        else:
+            return None
+    return _CallRef(dotted=resolved, line=getattr(call, "lineno", 1))
+
+
+def _custom_guard_check(
+    repo: RepoSnapshot,
+    call_ref: _CallRef,
+    symbols_by_full_name: dict[str, _SymbolRef],
+    file_by_module: dict[str, Path],
+    tenant_id: str,
+) -> _AuthzCheck:
+    local_symbol = symbols_by_full_name.get(call_ref.dotted)
+    if local_symbol is not None:
+        entity_line = int(local_symbol.entity.properties.get("line") or 1)
+        return _AuthzCheck(
+            entity=local_symbol.entity,
+            name=local_symbol.short_name,
+            source_kind="custom_guard_call",
+            access_level="custom_security_guard",
+            framework="custom",
+            line=call_ref.line,
+            entity_file_path=file_by_module.get(local_symbol.module_name),
+            entity_line=entity_line,
+            guard_intent="unknown",
+        )
+    module = call_ref.dotted.rsplit(".", 1)[0] if "." in call_ref.dotted else "python.authz"
+    name = call_ref.dotted.rsplit(".", 1)[-1]
+    return _AuthzCheck(
+        entity=_external_symbol(repo, module, name, tenant_id),
+        name=name,
+        source_kind="custom_guard_call",
+        access_level="custom_security_guard",
+        framework="custom",
+        line=call_ref.line,
+        guard_intent="unknown",
+    )
+
+
+def _is_none_check(node: ast.Compare) -> bool:
+    operators = node.ops
+    comparators = node.comparators
+    if len(operators) != 1 or len(comparators) != 1:
+        return False
+    if not isinstance(operators[0], (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)):
+        return False
+    return _is_none_literal(node.left) or _is_none_literal(comparators[0])
+
+
+def _is_none_literal(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _contains_auth_failure_outcome(statements: list[ast.stmt], imports: "_ImportResolver") -> bool:
+    for statement in statements:
+        if isinstance(statement, ast.Return) and _return_has_auth_failure_outcome(statement.value, imports):
+            return True
+        if isinstance(statement, ast.Raise):
+            dotted = _raise_exception_name(statement)
+            resolved = imports.resolve_alias(dotted) if dotted is not None else None
+            if resolved in AUTHZ_EXCEPTION_ACCESS:
+                return True
+    return False
+
+
+def _return_has_auth_failure_outcome(value: ast.AST | None, imports: "_ImportResolver") -> bool:
+    if value is None:
+        return False
+    if isinstance(value, ast.Tuple):
+        return any(_status_code(element, imports) in AUTHZ_FAILURE_STATUS_CODES for element in value.elts)
+    if isinstance(value, ast.Call):
+        call_name = _resolved_call_name(value, imports)
+        if call_name in AUTHZ_FAILURE_RESPONSE_CALLS:
+            return True
+        if call_name in AUTHZ_ABORT_CALLS and value.args:
+            return _status_code(value.args[0], imports) in AUTHZ_FAILURE_STATUS_CODES
+        if _is_response_like_call(value, imports):
+            for keyword in value.keywords:
+                if keyword.arg == "status" and _status_code(keyword.value, imports) in AUTHZ_FAILURE_STATUS_CODES:
+                    return True
+            if len(value.args) >= 2:
+                return _status_code(value.args[1], imports) in AUTHZ_FAILURE_STATUS_CODES
+    return _status_code(value, imports) in AUTHZ_FAILURE_STATUS_CODES
+
+
+def _status_code(node: ast.AST, imports: "_ImportResolver") -> int | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    dotted = _dotted_name(node)
+    if dotted is None:
+        return None
+    resolved = imports.resolve_alias(dotted)
+    if resolved is None:
+        return None
+    return AUTHZ_FAILURE_STATUS_CODES_BY_SYMBOL.get(resolved)
+
+
+def _is_response_like_call(node: ast.Call, imports: "_ImportResolver") -> bool:
+    return _resolved_call_name(node, imports) in RESPONSE_LIKE_CALLS
+
+
+def _resolved_call_name(node: ast.Call, imports: "_ImportResolver") -> str | None:
+    dotted = _dotted_name(node.func)
+    if dotted is None:
+        return None
+    return imports.resolve_alias(dotted) or dotted
+
+
+def _nested_statement_blocks(statement: ast.stmt) -> list[list[ast.stmt]]:
+    blocks: list[list[ast.stmt]] = []
+    for attr in ("body", "orelse", "finalbody"):
+        value = getattr(statement, attr, None)
+        if isinstance(value, list):
+            blocks.append([item for item in value if isinstance(item, ast.stmt)])
+    handlers = getattr(statement, "handlers", None)
+    if isinstance(handlers, list):
+        for handler in handlers:
+            body = getattr(handler, "body", None)
+            if isinstance(body, list):
+                blocks.append([item for item in body if isinstance(item, ast.stmt)])
+    cases = getattr(statement, "cases", None)
+    if isinstance(cases, list):
+        for case in cases:
+            body = getattr(case, "body", None)
+            if isinstance(body, list):
+                blocks.append([item for item in body if isinstance(item, ast.stmt)])
+    return blocks
 
 
 def _authz_method_call_allowed(
