@@ -7,6 +7,7 @@ from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject, canonical_json
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.framework_impact import framework_impact_packet
+from source.kg.product.ownership_context import ownership_context_packet
 from source.kg.product.output_budget import PLANNING_CONTEXT_ANCHORED_MAX_CHARS, enforce_planning_context_budget
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.call_site import call_site_from_qualifier
@@ -2941,6 +2942,12 @@ def _planning_context_output(
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
         include_legacy_sections=False,
     )
+    ownership_context = ownership_context_packet(
+        kg,
+        repo=runtime_repo,
+        services=bounded_services,
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
     related_facts = _planning_context_related_facts(
         kg=kg,
         services=bounded_services,
@@ -2986,6 +2993,7 @@ def _planning_context_output(
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
         "runtime_architecture": runtime_architecture,
+        "ownership_context": ownership_context,
         "anchors": {field: anchors.get(field) for field in _PLANNING_CONTEXT_ANCHOR_FIELDS},
         "services": bounded_services,
         "symbols": bounded_symbols,
@@ -3965,6 +3973,7 @@ _TOOLS: dict[str, McpTool] = {
             "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
+            "For ownership questions, read ownership_context.answer_packet; package authors and package maintainers are candidates only and must not be promoted to service owner unless an explicit ownership source is present. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "

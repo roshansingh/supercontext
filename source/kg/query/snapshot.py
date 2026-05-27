@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from json import JSONDecodeError
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
@@ -15,12 +17,14 @@ from .call_site import call_site_from_qualifier
 class KgSnapshot:
     def __init__(self, snapshot_dir: str | Path) -> None:
         root = Path(snapshot_dir).expanduser().resolve()
+        self.root: Path = root
         self.entities = read_jsonl(root / "entities.jsonl")
         self.facts = read_jsonl(root / "facts.jsonl")
         support_facts_path = root / "support_facts.jsonl"
         self.support_facts = read_jsonl(support_facts_path) if support_facts_path.exists() else []
         self.evidence = read_jsonl(root / "evidence.jsonl")
         self.coverage = read_jsonl(root / "coverage.jsonl")
+        self.manifest: JsonObject = _read_manifest(root / "manifest.json")
         self.entities_by_id = {entity["entity_id"]: entity for entity in self.entities}
         self.evidence_by_target = defaultdict(list)
         for row in self.evidence:
@@ -1093,6 +1097,18 @@ class KgSnapshot:
 
     def _display(self, entity: JsonObject) -> str:
         return display_entity(entity)
+
+
+def _read_manifest(path: Path) -> JsonObject:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        raise ValueError(f"Invalid KG manifest JSON: {path}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"KG manifest must be a JSON object: {path}")
+    return data
 
 
 def _dedupe_fact_results(rows: list[JsonObject]) -> list[JsonObject]:

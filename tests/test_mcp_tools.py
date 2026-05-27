@@ -78,6 +78,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
         self.assertIn("runtime_architecture", descriptions["planning_context"])
+        self.assertIn("ownership_context", descriptions["planning_context"])
         self.assertIn("review_answer_packet", descriptions["review_context"])
         self.assertIn("requested_surfaces", descriptions["review_context"])
         self.assertIn("framework_impact", descriptions["review_context"])
@@ -532,6 +533,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertLessEqual(len(answer_packet.get("domain_routing_map", [])), 15)
         self.assertTrue(answer_packet["investigation_brief"]["known_routes"])
         self.assertTrue(answer_packet["investigation_brief"]["known_routes"][0]["evidence_coordinates"])
+        self.assertIn("can_answer_owner", result["ownership_context"]["answer_packet"])
+        self.assertIn("unsupported_promotions", result["ownership_context"]["answer_packet"])
         self.assertIn("use narrower planning_context anchors", budget["advice"])
 
     def test_planning_context_budget_keeps_runtime_headstart_when_bulk_sections_are_dropped(self) -> None:

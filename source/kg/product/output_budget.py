@@ -284,6 +284,7 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         "snapshot_summary": result.get("snapshot_summary", {}),
         "snapshot_scope": result.get("snapshot_scope", {}),
         "runtime_architecture": compact_runtime,
+        "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
         "anchors": result.get("anchors", {}),
         "answerability": result.get("answerability", {}),
         "coverage_warnings": result.get("coverage_warnings", []),
@@ -449,6 +450,41 @@ def _minimal_runtime_rows(value: object, *, limit: int = 2) -> list[JsonObject]:
     return [_minimal_runtime_row(row) for row in _list_value(value)[:limit] if isinstance(row, dict)]
 
 
+def _compact_ownership_context(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    if not value:
+        return {}
+    answer_packet = value.get("answer_packet")
+    compact_answer = {
+        "can_answer_owner": None,
+        "service_identity": None,
+        "proven_owner": None,
+        "owner_candidates": [],
+        "final_answer_guidance": None,
+        "unsupported_promotions": [],
+    }
+    if isinstance(answer_packet, dict):
+        compact_answer = {
+            "can_answer_owner": answer_packet.get("can_answer_owner"),
+            "service_identity": answer_packet.get("service_identity"),
+            "proven_owner": answer_packet.get("proven_owner"),
+            "owner_candidates": _list_value(answer_packet.get("owner_candidates"))[:3],
+            "final_answer_guidance": answer_packet.get("final_answer_guidance"),
+            "unsupported_promotions": _list_value(answer_packet.get("unsupported_promotions"))[:3],
+        }
+    return {
+        "status": value.get("status"),
+        "scope": value.get("scope", {}),
+        "evidence_contract": value.get("evidence_contract"),
+        "answer_packet": compact_answer,
+        "proven_owners": _list_value(value.get("proven_owners"))[:3],
+        "candidate_maintainers": _list_value(value.get("candidate_maintainers"))[:3],
+        "missing_fact_families": value.get("missing_fact_families", []),
+        "recommended_source_checks": _list_value(value.get("recommended_source_checks"))[:3],
+    }
+
+
 def _compact_investigation_brief(value: object) -> JsonObject:
     if not isinstance(value, dict):
         return {}
@@ -599,6 +635,7 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         "snapshot_summary": result.get("snapshot_summary", {}),
         "snapshot_scope": result.get("snapshot_scope", {}),
         "runtime_architecture": compact_runtime,
+        "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
         "service_operational_surfaces": _compact_service_operational_surfaces(
             result.get("service_operational_surfaces", {})
         ),
