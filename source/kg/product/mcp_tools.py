@@ -6,6 +6,7 @@ from typing import Callable
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject, canonical_json
 from source.kg.product.application_impact import application_impact_packet
+from source.kg.product.authz_surface import authz_surface_packet
 from source.kg.product.framework_impact import framework_impact_packet
 from source.kg.product.ownership_context import ownership_context_packet
 from source.kg.product.output_budget import PLANNING_CONTEXT_ANCHORED_MAX_CHARS, enforce_planning_context_budget
@@ -189,6 +190,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
 
     service = matches[0]
     service_id = service["entity_id"]
+    service_row = _service_row(kg, service)
     related = _facts_touching_entity(kg, service_id)
     endpoints = _planning_context_dedupe_rows(
         [row for row in related if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}]
@@ -201,6 +203,13 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     )
     endpoint_consumer_packet = _endpoint_consumer_packet_for_service(kg, service, limit=limit)
     operational_surfaces = _service_operational_surfaces(kg, service, limit=limit)
+    service_repo = _service_repo(service)
+    authz_surface = authz_surface_packet(
+        kg,
+        repo=service_repo,
+        limit=limit,
+        allow_fleet=False,
+    )
     missing_fact_families = []
     next_actions = []
     if not deploy_mappings:
@@ -214,7 +223,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         )
     return {
         "status": "found",
-        "service": _service_row(kg, service),
+        "service": service_row,
         "summary": {
             "endpoint_fact_count": len(endpoints),
             "event_fact_count": len(events),
@@ -223,12 +232,15 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "endpoint_consumer_service_count": endpoint_consumer_packet["summary"]["consumer_service_count"],
             "domain_route_candidate_count": operational_surfaces["summary"]["domain_route_candidate_count"],
             "deploy_target_candidate_count": operational_surfaces["summary"]["deploy_target_candidate_count"],
+            "authz_endpoint_handler_count": authz_surface["summary"]["endpoint_handler_count"],
+            "authz_missing_or_unknown_count": authz_surface["summary"]["missing_or_unknown_authz_count"],
         },
         "endpoints": endpoints[:limit],
         "event_channels": events[:limit],
         "deploy_mappings": deploy_mappings[:limit],
         "endpoint_consumers": endpoint_consumer_packet,
         "operational_surfaces": operational_surfaces,
+        "authz_surface": authz_surface,
         "answerability": {
             "status": "partial" if missing_fact_families else "answerable",
             "missing_fact_families": missing_fact_families,
@@ -450,6 +462,17 @@ def _service_row(kg: KgSnapshot, service: JsonObject) -> JsonObject:
         "slug": identity.get("slug"),
         "evidence": kg.evidence_by_target.get(service.get("entity_id"), []),
     }
+
+
+def _service_repo(service: JsonObject) -> str | None:
+    identity = service.get("identity", {})
+    properties = service.get("properties", {})
+    if not isinstance(identity, dict):
+        identity = {}
+    if not isinstance(properties, dict):
+        properties = {}
+    repo = identity.get("repo") or properties.get("repo")
+    return repo if isinstance(repo, str) and repo.strip() else None
 
 
 def _facts_touching_entity(kg: KgSnapshot, entity_id: str) -> list[JsonObject]:
@@ -2947,6 +2970,11 @@ def _planning_context_output(
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
         include_legacy_sections=False,
     )
+    authz_surface = authz_surface_packet(
+        kg,
+        repo=runtime_repo,
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
     ownership_context = ownership_context_packet(
         kg,
         repo=runtime_repo,
@@ -2968,6 +2996,7 @@ def _planning_context_output(
         inventory=inventory,
         service_operational_surfaces=service_operational_surfaces,
         runtime_architecture=runtime_architecture,
+        authz_surface=authz_surface,
     )
     source_coordinates = _planning_context_source_coordinates(
         bounded_services,
@@ -2999,6 +3028,7 @@ def _planning_context_output(
         "service_operational_surfaces": service_operational_surfaces,
         "runtime_architecture": runtime_architecture,
         "ownership_context": ownership_context,
+        "authz_surface": authz_surface,
         "anchors": {field: anchors.get(field) for field in _PLANNING_CONTEXT_ANCHOR_FIELDS},
         "services": bounded_services,
         "symbols": bounded_symbols,
@@ -3357,6 +3387,7 @@ def _planning_context_related_facts(
     inventory: JsonObject,
     service_operational_surfaces: JsonObject,
     runtime_architecture: JsonObject,
+    authz_surface: JsonObject,
 ) -> JsonObject:
     return {
         "service_brief": _planning_context_service_brief(services, endpoints, endpoint_consumers, event_channels, domains),
@@ -3365,6 +3396,7 @@ def _planning_context_related_facts(
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
         "runtime_architecture": _planning_context_runtime_architecture_reference(runtime_architecture),
+        "authz_surface": authz_surface,
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -3980,6 +4012,7 @@ _TOOLS: dict[str, McpTool] = {
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
             "For ownership questions, read ownership_context.answer_packet; package authors and package maintainers are candidates only and must not be promoted to service owner unless an explicit ownership source is present. "
+            "For security/authz questions, read related_facts.authz_surface or get_service_brief.authz_surface; it separates endpoint handler bindings, applied policies, in-method checks, and missing/unknown authz instead of treating missing policy as public access. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "
@@ -4003,6 +4036,7 @@ _TOOLS: dict[str, McpTool] = {
             "Existing top-level changed_symbols, direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
             "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "framework_impact includes parser-backed support facts for Django/Celery model fields, model relations, serializers, view/model bindings, tasks, and bounded model relationship paths when present. "
+            "authz_surface is available from planning_context/get_service_brief for endpoint-to-handler permission evidence; use source inspection for dynamic middleware or framework defaults not represented in the packet. "
             "application_impact groups changed app/package namespace surfaces into API/model/serializer/worker/scheduled-job sections, app-scoped runtime facts, and unlinked cross-repo name leads that require separate verification. "
             "Use it when you know the changed files and need deterministic static review context before drilling into narrower MCP tools. "
             "Does not infer deploy blockers unless explicitly requested, summarize diffs with an LLM, or invent cross-repo and runtime-only impact."

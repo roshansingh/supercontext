@@ -45,6 +45,10 @@ PYTHON_AST_ADAPTER = ExtractorAdapter(
             "SERIALIZES_MODEL",
             "HANDLES_MODEL",
             "TASK_USES_MODEL",
+            "DEFINES_AUTHZ_POLICY",
+            "APPLIES_AUTHZ_POLICY",
+            "USES_AUTHZ_CHECK",
+            "HANDLES_ENDPOINT",
         ),
         produces_entity_kinds=(
             "Repo",

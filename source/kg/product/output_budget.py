@@ -285,6 +285,7 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         "snapshot_scope": result.get("snapshot_scope", {}),
         "runtime_architecture": compact_runtime,
         "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
+        "authz_surface": _compact_authz_surface(result.get("authz_surface", {})),
         "anchors": result.get("anchors", {}),
         "answerability": result.get("answerability", {}),
         "coverage_warnings": result.get("coverage_warnings", []),
@@ -485,6 +486,22 @@ def _compact_ownership_context(value: object) -> JsonObject:
     }
 
 
+def _compact_authz_surface(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    if not value:
+        return {}
+    return {
+        "status": value.get("status"),
+        "scope": value.get("scope", {}),
+        "summary": value.get("summary", {}),
+        "endpoint_authorization": _list_value(value.get("endpoint_authorization"))[:COMPACT_RUNTIME_HEADSTART_LIMIT],
+        "missing_or_unknown": _list_value(value.get("missing_or_unknown"))[:COMPACT_RUNTIME_HEADSTART_LIMIT],
+        "answerability": value.get("answerability", {}),
+        "assembly_contract": value.get("assembly_contract"),
+    }
+
+
 def _compact_investigation_brief(value: object) -> JsonObject:
     if not isinstance(value, dict):
         return {}
@@ -636,6 +653,7 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         "snapshot_scope": result.get("snapshot_scope", {}),
         "runtime_architecture": compact_runtime,
         "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
+        "authz_surface": _compact_authz_surface(result.get("authz_surface", {})),
         "service_operational_surfaces": _compact_service_operational_surfaces(
             result.get("service_operational_surfaces", {})
         ),

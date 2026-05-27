@@ -33,6 +33,7 @@ SuperContext provides deterministic, source-cited context from the indexed repos
 - KG inventory or repo coverage summary -> planning_context and read snapshot_summary/snapshot_scope.
 - Runtime architecture or domain-routing map -> planning_context first and read runtime_architecture.answer_packet, runtime_building_blocks, domain_routing_map, and deploy_kind_counts before source inspection; keep component deploy counts separate from unlinked route leads.
 - Service/repo ownership question -> planning_context first and read ownership_context.answer_packet; package authors and package maintainers are candidates only, not service owners, unless explicit CODEOWNERS/catalog/owner metadata proves ownership.
+- Endpoint authorization/security question -> planning_context first and read related_facts.authz_surface, or get_service_brief.authz_surface for a known service; treat missing_declared_policy as a source-inspection lead, not proof of public access.
 
 ## Answerability
 

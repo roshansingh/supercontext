@@ -9,6 +9,7 @@ from typing import Literal
 import warnings
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
+from source.kg.languages.python.extractors.authz_surface import extract_python_authz_surface
 from source.kg.languages.python.extractors.dataflow import (
     LiteralIndex,
     LiteralRef,
@@ -137,8 +138,17 @@ class PythonAstExtractor:
         build.entities.extend(django_framework.entities)
         build.support_facts.extend(django_framework.facts)
         build.evidence.extend(django_framework.evidence)
+        authz_surface = extract_python_authz_surface(
+            repo,
+            parsed_trees,
+            tenant_id=tenant_id,
+            source_system=self.source_system,
+        )
+        build.entities.extend(authz_surface.entities)
+        build.support_facts.extend(authz_surface.facts)
+        build.evidence.extend(authz_surface.evidence)
         # Coverage predicates describe extractor scope; support fact predicates remain separately allowlisted.
-        if django_framework.facts:
+        if django_framework.facts or authz_surface.facts:
             build.coverage.append(
                 Coverage(
                     tenant_id=tenant_id,
@@ -147,13 +157,16 @@ class PythonAstExtractor:
                         "repo": repo.name,
                         "language": "python",
                         "framework_family": "python_framework_stack",
-                        "framework_import_roots": list(django_framework.recognized_import_roots),
+                        "framework_import_roots": sorted(
+                            set(django_framework.recognized_import_roots)
+                            | set(authz_surface.recognized_import_roots)
+                        ),
                     },
                     state="instrumented",
                     source_system=self.source_system,
                 )
             )
-        elif django_framework.recognized_framework:
+        elif django_framework.recognized_framework or authz_surface.recognized_framework:
             build.coverage.append(
                 Coverage(
                     tenant_id=tenant_id,
@@ -162,7 +175,10 @@ class PythonAstExtractor:
                         "repo": repo.name,
                         "language": "python",
                         "framework_family": "python_framework_stack",
-                        "framework_import_roots": list(django_framework.recognized_import_roots),
+                        "framework_import_roots": sorted(
+                            set(django_framework.recognized_import_roots)
+                            | set(authz_surface.recognized_import_roots)
+                        ),
                         "reason": "recognized_framework_without_static_framework_impact_facts",
                     },
                     state="partially_instrumented",

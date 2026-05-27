@@ -8,6 +8,7 @@ from source.kg.build.pipeline import build_kg
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.store import JsonlKgStore
 from source.kg.languages.python.extractors.ast_extractor import KgBuild, PythonAstExtractor
+from source.kg.product.authz_surface import authz_surface_packet
 from source.kg.product.framework_impact import framework_impact_packet
 from source.kg.product.mcp_tools import call_tool
 from source.kg.query.snapshot import KgSnapshot
@@ -487,6 +488,230 @@ class PythonDjangoFrameworkExtractionTest(unittest.TestCase):
         self.assertLessEqual(max(len(path["model_path"]) for path in paths), 3)
         self.assertTrue(all(path["relation"]["relation_type"] == "ForeignKey" for path in paths))
         self.assertEqual(result["framework_impact"]["summary"]["relationship_path_count"], 2)
+
+    def test_drf_authz_surface_links_endpoint_handler_and_policies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.permissions import BasePermission, IsAuthenticated\n"
+                "from rest_framework.views import APIView\n\n"
+                "class StaffOnly(BasePermission):\n"
+                "    def has_permission(self, request, view):\n"
+                "        return request.user.is_staff\n\n"
+                "class OrderAdminView(APIView):\n"
+                "    permission_classes = [IsAuthenticated, StaffOnly]\n"
+                "    def post(self, request):\n"
+                "        self.check_permissions(request)\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import OrderAdminView\n\n"
+                "urlpatterns = [path('orders/admin/', OrderAdminView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        predicates = {fact.predicate for fact in build.support_facts}
+        self.assertIn("DEFINES_AUTHZ_POLICY", predicates)
+        self.assertIn("APPLIES_AUTHZ_POLICY", predicates)
+        self.assertIn("USES_AUTHZ_CHECK", predicates)
+        self.assertIn("HANDLES_ENDPOINT", predicates)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        authz = result["authz_surface"]
+        self.assertEqual(authz["status"], "found")
+        self.assertEqual(authz["scope"], {"repo": "orders", "mode": "repo"})
+        self.assertEqual(authz["summary"]["endpoint_handler_count"], 1)
+        self.assertEqual(authz["answerability"]["missing_fact_families"], [])
+        endpoint = authz["endpoint_authorization"][0]
+        self.assertEqual(endpoint["endpoint"]["path"], "/orders/admin/")
+        self.assertEqual(endpoint["handler"]["qualname"], "OrderAdminView")
+        self.assertEqual(endpoint["authz_status"], "authz_evidence_found")
+        policy_names = {row["qualifier"]["policy"] for row in endpoint["policies"]}
+        self.assertIn("IsAuthenticated", policy_names)
+        self.assertIn("StaffOnly", policy_names)
+        staff_policy = next(row for row in endpoint["policies"] if row["qualifier"]["policy"] == "StaffOnly")
+        self.assertEqual(staff_policy["object"]["kind"], "CodeSymbol")
+        self.assertEqual(staff_policy["object"]["qualname"], "StaffOnly")
+
+        fleet = call_tool(kg, "planning_context", {"limit": 10})
+        self.assertEqual(fleet["related_facts"]["authz_surface"]["scope"]["mode"], "fleet")
+        self.assertEqual(fleet["related_facts"]["authz_surface"]["summary"]["endpoint_handler_count"], 1)
+
+        unscoped = authz_surface_packet(kg, repo=None, limit=10, allow_fleet=False)
+        self.assertEqual(unscoped["scope"]["mode"], "unscoped")
+        self.assertEqual(unscoped["summary"]["endpoint_handler_count"], 0)
+        self.assertEqual(unscoped["answerability"]["missing_fact_families"], ["service_repo"])
+
+    def test_drf_authz_surface_separates_public_from_missing_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.permissions import AllowAny, IsAuthenticated\n"
+                "from rest_framework.views import APIView\n\n"
+                "class PublicStatusView(APIView):\n"
+                "    permission_classes = [AllowAny]\n"
+                "    def get(self, request):\n"
+                "        return None\n\n"
+                "class MixedPolicyView(APIView):\n"
+                "    permission_classes = [AllowAny, IsAuthenticated]\n"
+                "    def get(self, request):\n"
+                "        return None\n\n"
+                "class MissingPolicyView(APIView):\n"
+                "    def get(self, request):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import MissingPolicyView, MixedPolicyView, PublicStatusView\n\n"
+                "urlpatterns = [\n"
+                "    path('status/', PublicStatusView.as_view()),\n"
+                "    path('mixed/', MixedPolicyView.as_view()),\n"
+                "    path('orders/missing/', MissingPolicyView.as_view()),\n"
+                "]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        by_path = {row["endpoint"]["path"]: row for row in result["authz_surface"]["endpoint_authorization"]}
+
+        self.assertEqual(by_path["/status/"]["authz_status"], "declared_public")
+        self.assertEqual(by_path["/mixed/"]["authz_status"], "authz_evidence_found")
+        self.assertTrue(by_path["/mixed/"]["public_policy_present"])
+        self.assertEqual(by_path["/orders/missing/"]["authz_status"], "missing_declared_policy")
+        self.assertEqual(
+            result["authz_surface"]["answerability"]["missing_fact_families"],
+            ["endpoint_authz_policy"],
+        )
+        self.assertEqual(result["authz_surface"]["summary"]["missing_or_unknown_authz_count"], 1)
+
+    def test_authz_surface_requires_framework_proof_for_authz_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from rest_framework.views import APIView\n\n"
+                "class Helper:\n"
+                "    def has_perm(self, name):\n"
+                "        return True\n\n"
+                "class LocalCheckPermissions:\n"
+                "    def check_permissions(self, request):\n"
+                "        return None\n"
+                "    def run(self, request):\n"
+                "        self.check_permissions(request)\n"
+                "        return None\n\n"
+                "def standalone_permission_probe(request):\n"
+                "    return request.user.has_perm('orders.view_profile')\n\n"
+                "class ProfileView(APIView):\n"
+                "    def get(self, request):\n"
+                "        helper = Helper()\n"
+                "        return helper.has_perm('orders.view_profile')\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import ProfileView\n\n"
+                "urlpatterns = [path('profile/', ProfileView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        self.assertNotIn("USES_AUTHZ_CHECK", {fact.predicate for fact in build.support_facts})
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["authz_status"], "missing_declared_policy")
+        self.assertEqual(endpoint["checks"], [])
+
+    def test_authz_surface_joins_method_decorator_policy_to_class_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            views = app / "views.py"
+            urls = app / "urls.py"
+            views.write_text(
+                "from django.contrib.auth.decorators import login_required\n"
+                "from rest_framework.views import APIView\n\n"
+                "class SecureView(APIView):\n"
+                "    @login_required\n"
+                "    def get(self, request):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            urls.write_text(
+                "from django.urls import path\n"
+                "from .views import SecureView\n\n"
+                "urlpatterns = [path('secure/', SecureView.as_view())]\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (views, urls))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["endpoint"]["path"], "/secure/")
+        self.assertEqual(endpoint["authz_status"], "authz_evidence_found")
+        self.assertEqual(endpoint["policies"][0]["subject"]["qualname"], "SecureView.get")
+        self.assertEqual(endpoint["policies"][0]["qualifier"]["policy"], "login_required")
+
+    def test_flask_authz_surface_uses_route_decorator_and_auth_decorator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "orders"
+            app.mkdir()
+            flask_app = app / "app.py"
+            flask_app.write_text(
+                "from flask import Flask\n"
+                "from flask_jwt_extended import jwt_required\n"
+                "from flask_login import current_user\n\n"
+                "app = Flask(__name__)\n\n"
+                "@app.route('/admin', methods=['POST'])\n"
+                "@jwt_required()\n"
+                "def admin_action():\n"
+                "    if current_user.is_authenticated:\n"
+                "        return None\n"
+                "    return None\n",
+                encoding="utf-8",
+            )
+
+            build = _build(root, (flask_app,))
+            _assert_support_facts_reference_entities(build)
+            kg = _snapshot(root, build)
+
+        result = call_tool(kg, "get_service_brief", {"service": "orders", "limit": 10})
+        endpoint = result["authz_surface"]["endpoint_authorization"][0]
+        self.assertEqual(endpoint["endpoint"]["path"], "/admin")
+        self.assertEqual(endpoint["route"]["method"], "POST")
+        self.assertEqual(endpoint["handler"]["qualname"], "admin_action")
+        self.assertEqual(endpoint["authz_status"], "authz_evidence_found")
+        self.assertEqual(endpoint["policies"][0]["qualifier"]["policy"], "jwt_required")
+        self.assertEqual(endpoint["checks"][0]["qualifier"]["check"], "is_authenticated")
 
 
 def _build(root: Path, files: tuple[Path, ...]) -> KgBuild:
