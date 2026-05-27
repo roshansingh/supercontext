@@ -84,6 +84,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("framework_impact", descriptions["review_context"])
         self.assertIn("application_impact", descriptions["review_context"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callers"])
+        self.assertIn("import_consumer_leads", descriptions["find_callers"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callees"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
@@ -1414,6 +1415,89 @@ class McpToolsTest(unittest.TestCase):
         _assert_additive_fields(self, callees)
         _assert_additive_fields(self, radius)
 
+    def test_find_callers_returns_cross_repo_import_consumer_leads_on_call_miss(self) -> None:
+        with _cross_repo_import_consumer_snapshot() as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+            planning = call_tool(kg, "planning_context", {"symbol": "lib.predict.score_session"})
+
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(callers["caller_count"], 0)
+        leads = callers["import_consumer_leads"]
+        self.assertEqual(leads["status"], "found")
+        self.assertEqual(leads["lead_count"], 1)
+        self.assertEqual(leads["returned_count"], 1)
+        lead = leads["leads"][0]
+        self.assertEqual(lead["lead_kind"], "import_consumer")
+        self.assertEqual(lead["repo_relation"], "cross_repo")
+        self.assertEqual(lead["importer"]["repo"], "api")
+        self.assertEqual(lead["imported_module"]["module"], "lib.predict")
+        self.assertEqual(lead["imported_symbol"]["qualified_name"], "lib.predict.score_session")
+        self.assertEqual(lead["match"], {"match_kind": "imported_name", "matched_imported_names": ["score_session"]})
+        self.assertEqual(
+            [row["qualified_name"] for row in lead["importer_module_symbols"]],
+            ["api.views.score.ScoreView", "api.views.score.ScoreView.post"],
+        )
+        self.assertTrue(any("import_consumer_leads" in action for action in callers["next_actions"]))
+        self.assertEqual(
+            planning["related_facts"]["symbol_impact"]["import_consumer_leads"]["lead_count"],
+            1,
+        )
+
+    def test_find_callers_returns_package_linked_import_consumer_leads(self) -> None:
+        with _cross_repo_import_consumer_snapshot(linked_package_import=True) as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+
+        self.assertEqual(callers["status"], "not_found")
+        leads = callers["import_consumer_leads"]
+        self.assertEqual(leads["status"], "found")
+        self.assertEqual(leads["lead_count"], 1)
+        lead = leads["leads"][0]
+        self.assertEqual(lead["repo_relation"], "cross_repo")
+        self.assertEqual(lead["fact"]["object"], "lib")
+        self.assertEqual(lead["match"], {"match_kind": "linked_package_imported_name", "matched_imported_names": ["score_session"]})
+        self.assertEqual(
+            [row["qualified_name"] for row in lead["importer_module_symbols"]],
+            ["api.views.score.ScoreView", "api.views.score.ScoreView.post"],
+        )
+
+    def test_find_callers_treats_exact_module_import_as_consumer_lead(self) -> None:
+        with _cross_repo_import_consumer_snapshot(linked_package_import=True, imported_names=()) as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+
+        lead = callers["import_consumer_leads"]["leads"][0]
+        self.assertEqual(lead["match"], {"match_kind": "linked_package_module_import", "matched_imported_names": []})
+
+    def test_find_callers_does_not_use_package_link_to_other_tenant_repo(self) -> None:
+        with _cross_repo_import_consumer_snapshot(linked_package_import=True, provider_tenant_id="other") as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(callers["import_consumer_leads"]["status"], "empty")
+        self.assertEqual(callers["import_consumer_leads"]["lead_count"], 0)
+
+    def test_find_callers_does_not_use_module_from_other_tenant(self) -> None:
+        with _cross_repo_import_consumer_snapshot(provider_module_tenant_id="other") as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(callers["import_consumer_leads"]["status"], "missing_module")
+        self.assertEqual(callers["import_consumer_leads"]["lead_count"], 0)
+
+    def test_find_callers_rejects_missing_imported_names_qualifier(self) -> None:
+        with _cross_repo_import_consumer_snapshot(linked_package_import=True, imported_names=None) as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(callers["import_consumer_leads"]["status"], "empty")
+
+    def test_find_callers_skips_import_consumer_leads_when_callers_exist(self) -> None:
+        with _cross_repo_import_consumer_snapshot(proven_call=True) as kg:
+            callers = call_tool(kg, "find_callers", {"symbol": "lib.predict.score_session"})
+
+        self.assertEqual(callers["status"], "found")
+        self.assertEqual(callers["caller_count"], 1)
+        self.assertEqual(callers["import_consumer_leads"]["status"], "not_applicable")
+
     def test_symbol_tools_ambiguous_results_include_retry_guidance(self) -> None:
         with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
             callers = call_tool(kg, "find_callers", {"symbol": "charge_card"})
@@ -1427,6 +1511,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(callers["status"], "ambiguous")
         self.assertFalse(callers["result_computed"])
         self.assertEqual(callers["callers"], [])
+        self.assertNotIn("import_consumer_leads", callers)
         self.assertEqual(callers["target"]["candidate_count"], 2)
         self.assertEqual(callers["disambiguation"]["reason"], "ambiguous_symbol")
         self.assertEqual(callers["disambiguation"]["candidate_count"], 2)
@@ -1694,6 +1779,131 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(handler.sys_version, "")
         self.assertEqual(handler.version_string(fake_handler), "supercontext-local/0.1.0")
+
+
+class _cross_repo_import_consumer_snapshot:
+    def __init__(
+        self,
+        *,
+        linked_package_import: bool = False,
+        imported_names: tuple[str, ...] | None = ("score_session",),
+        proven_call: bool = False,
+        provider_tenant_id: str = "default",
+        provider_module_tenant_id: str = "default",
+    ) -> None:
+        self.linked_package_import = linked_package_import
+        self.imported_names = imported_names
+        self.proven_call = proven_call
+        self.provider_tenant_id = provider_tenant_id
+        self.provider_module_tenant_id = provider_module_tenant_id
+
+    def __enter__(self) -> KgSnapshot:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        root = Path(self._tmpdir.name)
+        provider_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": self.provider_module_tenant_id, "repo": "lib", "module": "lib.predict"},
+            properties={"path": "lib/predict.py"},
+        )
+        provider_symbol = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "lib",
+                "module": "lib.predict",
+                "qualname": "score_session",
+                "symbol_kind": "function",
+            },
+            properties={"path": "lib/predict.py", "line": 12, "end_line": 20},
+        )
+        importer_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "api", "module": "api.views.score"},
+            properties={"path": "api/views/score.py"},
+        )
+        view_class = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "api",
+                "module": "api.views.score",
+                "qualname": "ScoreView",
+                "symbol_kind": "class",
+            },
+            properties={"path": "api/views/score.py", "line": 5, "end_line": 25},
+        )
+        post_method = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "api",
+                "module": "api.views.score",
+                "qualname": "ScoreView.post",
+                "symbol_kind": "method",
+            },
+            properties={"path": "api/views/score.py", "line": 8, "end_line": 18},
+        )
+        provider_repo = Entity(
+            kind="Repo",
+            identity={"tenant_id": self.provider_tenant_id, "host": "local", "owner": "default", "name": "lib"},
+        )
+        provider_package = Entity(
+            kind="ExternalPackage",
+            identity={"tenant_id": "default", "repo": "api", "name": "lib"},
+            properties={"category": "unknown", "import_root": "lib"},
+        )
+        import_qualifier = {
+                "category": "unknown" if self.linked_package_import else "internal_module",
+                "module_name": None if self.linked_package_import else "lib.predict",
+                "raw_import": "lib.predict",
+                "import_root": "lib",
+            }
+        if self.imported_names is not None:
+            import_qualifier["imported_names"] = list(self.imported_names)
+        import_fact = Fact(
+            "IMPORTS",
+            importer_module.entity_id,
+            provider_package.entity_id if self.linked_package_import else provider_module.entity_id,
+            import_qualifier,
+        )
+        repo_link_fact = Fact(
+            "RESOLVES_TO_REPO",
+            provider_package.entity_id,
+            provider_repo.entity_id,
+            {"consumer_repo": "api", "package_name": "lib", "provider_repo": "lib"},
+        )
+        call_fact = Fact("CALLS", post_method.entity_id, provider_symbol.entity_id)
+        entities = [
+            provider_module,
+            provider_symbol,
+            importer_module,
+            view_class,
+            post_method,
+            *([provider_repo, provider_package] if self.linked_package_import else []),
+        ]
+        facts = [import_fact, *([repo_link_fact] if self.linked_package_import else []), *([call_fact] if self.proven_call else [])]
+        JsonlKgStore(root).write(
+            entities=entities,
+            facts=facts,
+            evidence=[
+                Evidence(
+                    target_type="fact",
+                    target_id=import_fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "api"},
+                    bytes_ref={"repo": "api", "path": "api/views/score.py", "line_start": 3, "line_end": 3},
+                    confidence=1.0,
+                )
+            ],
+            coverage=[],
+            manifest={"counts": {"entities": len(entities), "facts": len(facts)}},
+        )
+        self._kg = KgSnapshot(root)
+        return self._kg
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self._tmpdir.cleanup()
 
 
 class _fixture_snapshot:

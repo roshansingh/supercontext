@@ -255,6 +255,11 @@ def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> Js
     if payload.get("status") != "not_found":
         return payload
     next_actions = list(payload.get("next_actions", []))
+    import_leads = payload.get("import_consumer_leads")
+    if isinstance(import_leads, dict) and import_leads.get("status") == "found":
+        next_actions.append(
+            "Inspect import_consumer_leads as cross-repo source leads; they are not CALLS proof but may identify importer modules and symbols to verify."
+        )
     next_actions.extend(
         [
             f"Use source inspection to verify {direction}; this graph miss is not proof of absence.",
@@ -3424,17 +3429,17 @@ def _planning_context_symbol_impact(
     symbol_name = symbols[0].get("qualified_name") or symbols[0].get("qualname")
     if not isinstance(symbol_name, str) or not symbol_name:
         return {"status": "not_computed", "reason": "resolved symbol missing qualified name"}
+    callers = kg.find_callers(
+        symbol_name,
+        path=_optional_symbol_path(symbols[0]),
+        line=_optional_symbol_line(symbols[0]),
+        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    )
     return {
         "status": "found",
         "symbol": symbols[0],
-        "direct_callers": list(
-            kg.find_callers(
-                symbol_name,
-                path=_optional_symbol_path(symbols[0]),
-                line=_optional_symbol_line(symbols[0]),
-                limit=PLANNING_CONTEXT_SECTION_LIMIT,
-            ).get("callers", [])
-        ),
+        "direct_callers": list(callers.get("callers", [])),
+        "import_consumer_leads": callers.get("import_consumer_leads", {}),
         "direct_callees": list(
             kg.find_callees(
                 symbol_name,
@@ -3894,6 +3899,7 @@ _TOOLS: dict[str, McpTool] = {
             "Returns static CALLS edges whose downstream target matches the requested symbol, with optional path and line disambiguation. "
             "Use it when you need reverse call impact for a known function, method, or symbol in the indexed codebase. "
             "If status is ambiguous, do not treat the empty callers list as no callers; retry with disambiguation.retry_arguments or a candidate qualified_name. "
+            "If status is not_found but import_consumer_leads is found, inspect those importing modules and importer_module_symbols; they are source-inspection leads, not proven CALLS edges. "
             "Does not include transitive closure, runtime dispatch, cross-repo execution paths, endpoint/service-level rollups, or unresolved external-package call sites. "
             "A not_found result is not proof of absence; inspect source before finalizing."
         ),

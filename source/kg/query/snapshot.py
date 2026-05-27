@@ -81,6 +81,17 @@ class KgSnapshot:
             "target": resolution,
             "caller_count": len(results),
             "callers": results,
+            "import_consumer_leads": (
+                self._symbol_import_consumer_leads(resolution, limit=limit)
+                if not results
+                else {
+                    "status": "not_applicable",
+                    "reason": "proven CALLS callers were found; import leads are only returned on caller misses",
+                    "lead_count": 0,
+                    "returned_count": 0,
+                    "leads": [],
+                }
+            ),
         }
 
     def find_callees(
@@ -863,6 +874,221 @@ class KgSnapshot:
         if not entities:
             return self._resolve_symbol(callee_query, limit=limit, allow_fuzzy=False)
         return self._resolution_result(callee_query, "exact_name", entities, limit)
+
+    def _symbol_import_consumer_leads(self, resolution: JsonObject, *, limit: int) -> JsonObject:
+        if resolution.get("status") != "resolved":
+            return {
+                "status": "not_computed",
+                "reason": "requires one resolved symbol",
+                "lead_count": 0,
+                "returned_count": 0,
+                "leads": [],
+            }
+        resolved = resolution.get("resolved_symbol")
+        if not isinstance(resolved, dict):
+            return {
+                "status": "not_computed",
+                "reason": "resolved symbol missing",
+                "lead_count": 0,
+                "returned_count": 0,
+                "leads": [],
+            }
+        symbol = self.entities_by_id.get(resolved.get("symbol_id"))
+        if not symbol or symbol.get("kind") != "CodeSymbol":
+            return {
+                "status": "not_computed",
+                "reason": "resolved target is not a local CodeSymbol",
+                "lead_count": 0,
+                "returned_count": 0,
+                "leads": [],
+            }
+        module = self._module_entity_for_symbol(symbol)
+        if module is None:
+            return {
+                "status": "missing_module",
+                "lead_count": 0,
+                "returned_count": 0,
+                "leads": [],
+            }
+        imported_names = self._imported_name_candidates_for_symbol(symbol)
+        leads = []
+        linked_package_ids = self._linked_package_ids_for_symbol_repo(symbol)
+        for fact in self.facts:
+            if fact.get("predicate") != "IMPORTS":
+                continue
+            object_id = fact.get("object_id")
+            fact_object = self.entities_by_id.get(object_id)
+            if object_id == module["entity_id"]:
+                match = self._symbol_import_match(fact, imported_names)
+            elif object_id in linked_package_ids:
+                match = self._linked_package_symbol_import_match(fact, symbol, imported_names)
+            else:
+                continue
+            if match is None:
+                continue
+            importer = self.entities_by_id.get(fact.get("subject_id"))
+            if not importer or importer.get("kind") != "CodeModule":
+                continue
+            leads.append(self._symbol_import_consumer_lead(fact, importer, module, symbol, match, fact_object or module))
+        leads = sorted(
+            leads,
+            key=lambda row: (row["repo_relation"] != "cross_repo", row["importer"]["display_name"] or ""),
+        )
+        returned = leads[:limit]
+        return {
+            "status": "found" if returned else "empty",
+            "contract": (
+                "Import consumer leads are source-inspection leads derived from IMPORTS facts. "
+                "They show modules that import the target symbol or its module; they are not proof of runtime execution. "
+                "Module-import matches can be broad because importing a module makes multiple exported symbols available."
+            ),
+            "lead_count": len(leads),
+            "returned_count": len(returned),
+            "leads": returned,
+        }
+
+    def _linked_package_ids_for_symbol_repo(self, symbol: JsonObject) -> set[str]:
+        identity = symbol.get("identity", {})
+        tenant_id = identity.get("tenant_id")
+        repo_name = identity.get("repo")
+        if not isinstance(repo_name, str):
+            return set()
+        repo_entity_ids = {
+            entity["entity_id"]
+            for entity in self.entities
+            if entity.get("kind") == "Repo" and entity.get("identity", {}).get("name") == repo_name
+            and entity.get("identity", {}).get("tenant_id") == tenant_id
+        }
+        if not repo_entity_ids:
+            return set()
+        package_ids = set()
+        for fact in self.facts:
+            if fact.get("predicate") != "RESOLVES_TO_REPO" or fact.get("object_id") not in repo_entity_ids:
+                continue
+            package = self.entities_by_id.get(fact.get("subject_id"))
+            if package and package.get("kind") == "ExternalPackage":
+                package_ids.add(str(package["entity_id"]))
+        return package_ids
+
+    def _module_entity_for_symbol(self, symbol: JsonObject) -> JsonObject | None:
+        identity = symbol.get("identity", {})
+        repo = identity.get("repo")
+        module_name = identity.get("module")
+        if not isinstance(repo, str) or not isinstance(module_name, str):
+            return None
+        for entity in self.entities:
+            if entity.get("kind") != "CodeModule":
+                continue
+            entity_identity = entity.get("identity", {})
+            if (
+                entity_identity.get("tenant_id") == identity.get("tenant_id")
+                and entity_identity.get("repo") == repo
+                and entity_identity.get("module") == module_name
+            ):
+                return entity
+        return None
+
+    def _imported_name_candidates_for_symbol(self, symbol: JsonObject) -> set[str]:
+        identity = symbol.get("identity", {})
+        qualname = identity.get("qualname")
+        if not isinstance(qualname, str) or not qualname:
+            return set()
+        names = {qualname}
+        outer_name = qualname.split(".", 1)[0]
+        if outer_name:
+            names.add(outer_name)
+        return names
+
+    def _symbol_import_match(self, fact: JsonObject, imported_names: set[str]) -> JsonObject | None:
+        qualifier = fact.get("qualifier", {})
+        raw_imported_names = qualifier.get("imported_names")
+        if isinstance(raw_imported_names, list):
+            names = {name for name in raw_imported_names if isinstance(name, str) and name}
+            if not names:
+                return {"match_kind": "module_import", "matched_imported_names": []}
+            matched = sorted(names & imported_names)
+            if matched:
+                return {"match_kind": "imported_name", "matched_imported_names": matched}
+            return None
+        return None
+
+    def _linked_package_symbol_import_match(
+        self,
+        fact: JsonObject,
+        symbol: JsonObject,
+        imported_names: set[str],
+    ) -> JsonObject | None:
+        qualifier = fact.get("qualifier", {})
+        identity = symbol.get("identity", {})
+        module_name = identity.get("module")
+        if not isinstance(module_name, str) or not module_name:
+            return None
+        imported_module = qualifier.get("module_name") or qualifier.get("raw_import")
+        if imported_module != module_name:
+            return None
+        match = self._symbol_import_match(fact, imported_names)
+        if match is None:
+            return None
+        return {
+            **match,
+            "match_kind": f"linked_package_{match['match_kind']}",
+        }
+
+    def _symbol_import_consumer_lead(
+        self,
+        fact: JsonObject,
+        importer: JsonObject,
+        imported_module: JsonObject,
+        symbol: JsonObject,
+        match: JsonObject,
+        fact_object: JsonObject,
+    ) -> JsonObject:
+        importer_identity = importer.get("identity", {})
+        symbol_identity = symbol.get("identity", {})
+        importer_repo = importer_identity.get("repo")
+        symbol_repo = symbol_identity.get("repo")
+        return {
+            "lead_kind": "import_consumer",
+            "interpretation": (
+                "Importer module imports the changed symbol's module/name. "
+                "Treat as a source-inspection lead, not as proven runtime caller impact."
+            ),
+            "repo_relation": "same_repo" if importer_repo == symbol_repo else "cross_repo",
+            "importer": self._entity_reference(importer),
+            "imported_module": self._entity_reference(imported_module),
+            "imported_symbol": self._symbol_result(symbol),
+            "match": match,
+            "fact": self._fact_result(fact, importer, fact_object),
+            "importer_module_symbols": self._module_symbols(importer, limit=5),
+        }
+
+    def _module_symbols(self, module: JsonObject, *, limit: int) -> list[JsonObject]:
+        identity = module.get("identity", {})
+        repo = identity.get("repo")
+        module_name = identity.get("module")
+        if not isinstance(repo, str) or not isinstance(module_name, str):
+            return []
+        rows = [
+            self._symbol_result(entity)
+            for entity in self._symbol_entities()
+            if entity.get("kind") == "CodeSymbol"
+            and entity.get("identity", {}).get("repo") == repo
+            and entity.get("identity", {}).get("module") == module_name
+        ]
+        rows = sorted(rows, key=self._symbol_sort_key)
+        return rows[:limit]
+
+    def _entity_reference(self, entity: JsonObject) -> JsonObject:
+        identity = entity.get("identity", {})
+        properties = entity.get("properties", {})
+        return {
+            "entity_id": entity.get("entity_id"),
+            "kind": entity.get("kind"),
+            "display_name": self._display(entity),
+            "repo": identity.get("repo"),
+            "module": identity.get("module"),
+            "path": properties.get("path"),
+        }
 
     def _matching_symbols(self, symbol_query: str) -> list[JsonObject]:
         needle = symbol_query.lower()
