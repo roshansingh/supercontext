@@ -5,21 +5,29 @@ from copy import deepcopy
 from source.kg.core.models import JsonObject, canonical_json
 
 
-PLANNING_CONTEXT_MAX_CHARS = 20_000
+# Fleet runtime architecture questions need a compact head-start packet that
+# still carries known routes plus high-value unlinked leads. Keep this below the
+# server-side MCP spill threshold while avoiding 20k packet starvation.
+PLANNING_CONTEXT_MAX_CHARS = 40_000
 # Anchored packets serve detailed follow-up questions, so they preserve more
 # evidence while still staying below typical MCP message-size limits.
 PLANNING_CONTEXT_ANCHORED_MAX_CHARS = 150_000
 COMPACT_RUNTIME_COMPONENT_LIMIT = 4
 COMPACT_RUNTIME_ROUTE_LIMIT = 15
+COMPACT_RUNTIME_HEADSTART_LIMIT = 8
+COMPACT_RUNTIME_LEAD_LIMIT = 8
+COMPACT_RUNTIME_DEPLOY_UNIT_LIMIT = 2
+COMPACT_RUNTIME_SOURCE_CHECK_LIMIT = 15
 
 _RUNTIME_COMPONENTS_PATH = "runtime_architecture.answer_packet.runtime_building_blocks"
 _RUNTIME_ROUTES_PATH = "runtime_architecture.answer_packet.domain_routing_map"
 _RUNTIME_DEPLOY_UNITS_PATH = "runtime_architecture.answer_packet.deploy_runtime_map"
 _RUNTIME_CONSUMERS_PATH = "runtime_architecture.answer_packet.endpoint_consumer_map"
 _RUNTIME_DEPLOY_GUIDANCE_PATH = "runtime_architecture.answer_packet.deploy_order_guidance"
+_RUNTIME_INVESTIGATION_BRIEF_PATH = "runtime_architecture.answer_packet.investigation_brief"
 _PLANNING_BUDGET_ADVICE = (
-    "Use narrower or additional planning_context anchors such as repo+service, domain+repo, endpoint, path, or line "
-    "to retrieve omitted runtime detail."
+    "Use runtime_architecture.answer_packet.investigation_brief as the source-inspection head start, then use narrower "
+    "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
 )
 
 
@@ -116,6 +124,10 @@ def _runtime_answer_counts(result: JsonObject) -> dict[str, int]:
     components = answer_packet.get("runtime_building_blocks")
     routes = answer_packet.get("domain_routing_map")
     return {
+        "investigation_brief": _int_count(
+            summary.get("investigation_brief_anchor_count"),
+            fallback=_investigation_brief_anchor_count(answer_packet.get("investigation_brief")),
+        ),
         "runtime_building_blocks": _int_count(
             summary.get("runtime_building_block_count"),
             fallback=len(components) if isinstance(components, list) else 0,
@@ -179,6 +191,7 @@ def _attach_budget_metadata(
     omitted_counts = {
         key: max(0, original_counts.get(key, 0) - shown_counts.get(key, 0))
         for key in (
+            "investigation_brief",
             "runtime_building_blocks",
             "domain_routing_map",
             "deploy_runtime_map",
@@ -187,6 +200,8 @@ def _attach_budget_metadata(
         )
     }
     truncated_sections = []
+    if omitted_counts["investigation_brief"] > 0:
+        truncated_sections.append(_RUNTIME_INVESTIGATION_BRIEF_PATH)
     if omitted_counts["runtime_building_blocks"] > 0:
         truncated_sections.append(_RUNTIME_COMPONENTS_PATH)
     if omitted_counts["domain_routing_map"] > 0:
@@ -228,6 +243,7 @@ def _runtime_answer_shown_counts(result: JsonObject) -> dict[str, int]:
     components = answer_packet.get("runtime_building_blocks")
     routes = answer_packet.get("domain_routing_map")
     return {
+        "investigation_brief": _investigation_brief_anchor_count(answer_packet.get("investigation_brief")),
         "runtime_building_blocks": len(components) if isinstance(components, list) else 0,
         "domain_routing_map": len(routes) if isinstance(routes, list) else 0,
         "deploy_runtime_map": _answer_list_len(answer_packet, "deploy_runtime_map"),
@@ -244,6 +260,7 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         compact_answer: JsonObject = {}
         if isinstance(answer_packet, dict):
             compact_answer = {
+                "investigation_brief": _compact_investigation_brief(answer_packet.get("investigation_brief")),
                 "runtime_building_blocks": _list_value(answer_packet.get("runtime_building_blocks")),
                 "domain_routing_map": _list_value(answer_packet.get("domain_routing_map")),
                 "deploy_runtime_map": _list_value(answer_packet.get("deploy_runtime_map")),
@@ -300,6 +317,7 @@ def _minimize_runtime_answer_rows(result: JsonObject) -> None:
     if answer_packet is None:
         return
     for key in (
+        "investigation_brief",
         "runtime_building_blocks",
         "domain_routing_map",
         "deploy_runtime_map",
@@ -310,6 +328,9 @@ def _minimize_runtime_answer_rows(result: JsonObject) -> None:
         if not isinstance(rows, list):
             continue
         answer_packet[key] = [_minimal_runtime_row(row) for row in rows if isinstance(row, dict)]
+    brief = answer_packet.get("investigation_brief")
+    if isinstance(brief, dict):
+        answer_packet["investigation_brief"] = _compact_investigation_brief(brief)
 
 
 def _runtime_answer_packet(result: JsonObject) -> JsonObject | None:
@@ -428,6 +449,119 @@ def _minimal_runtime_rows(value: object, *, limit: int = 2) -> list[JsonObject]:
     return [_minimal_runtime_row(row) for row in _list_value(value)[:limit] if isinstance(row, dict)]
 
 
+def _compact_investigation_brief(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    compact = {
+        "purpose": value.get("purpose"),
+        "usage": value.get("usage"),
+        "runtime_anchors": [
+            _compact_headstart_row(row)
+            for row in _list_value(value.get("runtime_anchors"))[:COMPACT_RUNTIME_HEADSTART_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "known_routes": [
+            _compact_headstart_row(row)
+            for row in _list_value(value.get("known_routes"))[:COMPACT_RUNTIME_HEADSTART_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "unlinked_runtime_leads": [
+            _compact_headstart_row(row)
+            for row in _list_value(value.get("unlinked_runtime_leads"))[:COMPACT_RUNTIME_LEAD_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "deploy_units": [
+            _compact_headstart_row(row)
+            for row in _list_value(value.get("deploy_units"))[:COMPACT_RUNTIME_DEPLOY_UNIT_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "consumer_links": [
+            _compact_headstart_row(row)
+            for row in _list_value(value.get("consumer_links"))[:COMPACT_RUNTIME_DEPLOY_UNIT_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "recommended_source_checks": [
+            _compact_source_check(row)
+            for row in _list_value(value.get("recommended_source_checks"))[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "missing_fact_families": value.get("missing_fact_families", []),
+    }
+    return {key: item for key, item in compact.items() if item not in (None, [], {})}
+
+
+def _compact_headstart_row(row: JsonObject) -> JsonObject:
+    keys = (
+        "anchor_kind",
+        "status",
+        "kind",
+        "name",
+        "repo",
+        "slug",
+        "type",
+        "path",
+        "service",
+        "runtime_categories",
+        "deploy_kinds",
+        "counts",
+        "domain",
+        "target",
+        "source",
+        "services",
+        "deploy_kind",
+        "route_source_kind",
+        "deploy_target",
+        "deploy_details",
+        "domains",
+        "provider",
+        "provider_endpoint",
+        "consumers",
+        "consumer_count",
+        "match_basis",
+        "evidence_coordinates",
+        "source_coordinates",
+        "interpretation",
+    )
+    compact = {key: row[key] for key in keys if key in row}
+    for nested_key in (
+        "services",
+        "domains",
+        "consumers",
+    ):
+        nested = compact.get(nested_key)
+        if isinstance(nested, list):
+            compact[nested_key] = [
+                _compact_headstart_row(item) if isinstance(item, dict) else item
+                for item in nested
+            ]
+    for coordinate_key in ("evidence_coordinates", "source_coordinates"):
+        coordinates = compact.get(coordinate_key)
+        if isinstance(coordinates, list):
+            compact[coordinate_key] = [
+                _compact_coordinate(row)
+                for row in coordinates
+                if isinstance(row, dict)
+            ]
+    return compact
+
+
+def _compact_source_check(row: JsonObject) -> JsonObject:
+    keys = ("reason", "anchor", "repo", "path", "line_start", "line_end")
+    return {key: row[key] for key in keys if key in row}
+
+
+def _compact_coordinate(row: JsonObject) -> JsonObject:
+    keys = ("repo", "path", "line_start", "line_end")
+    return {key: row[key] for key in keys if key in row}
+
+
+def _investigation_brief_anchor_count(value: object) -> int:
+    if not isinstance(value, dict):
+        return 0
+    anchors = value.get("runtime_anchors")
+    return len(anchors) if isinstance(anchors, list) else 0
+
+
 def _compact_partition_counts(value: object) -> JsonObject:
     if not isinstance(value, dict):
         return {}
@@ -446,6 +580,7 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         compact_answer = {}
         if isinstance(answer_packet, dict):
             compact_answer = {
+                "investigation_brief": _compact_investigation_brief(answer_packet.get("investigation_brief")),
                 "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
                 "missing_fact_families": answer_packet.get("missing_fact_families", []),
                 "evidence_contract": answer_packet.get("evidence_contract"),

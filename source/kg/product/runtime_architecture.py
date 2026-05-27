@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+import ipaddress
+
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject
 from source.kg.query.snapshot import KgSnapshot
@@ -14,6 +17,9 @@ RUNTIME_COMPONENT_HARD_CAP = 25
 RUNTIME_COMPONENT_DETAIL_LIMIT = 1
 RUNTIME_ROUTE_LIMIT = 20
 RUNTIME_ROUTE_HARD_CAP = 50
+RUNTIME_INVESTIGATION_BRIEF_LIMIT = 8
+RUNTIME_INVESTIGATION_SOURCE_CHECK_LIMIT = 15
+RUNTIME_LEADS_PER_KIND_CAP = 2
 
 
 def runtime_architecture_packet(
@@ -88,6 +94,13 @@ def runtime_architecture_packet(
         domain_references=domain_references,
         limit=route_limit,
     )
+    investigation_domain_routing_map = _domain_routing_map(
+        kg,
+        domain_routes=domain_routes,
+        deploy_links=deploy_links,
+        domain_references=domain_references,
+        limit=RUNTIME_ROUTE_HARD_CAP,
+    )
     deploy_runtime_map = _deploy_runtime_map(deploy_links=deploy_links, domain_routes=domain_routes, limit=route_limit)
     endpoint_consumer_map, endpoint_consumer_missing_method_drop_count = _endpoint_consumer_map(
         endpoint_rows=endpoint_rows,
@@ -99,6 +112,14 @@ def runtime_architecture_packet(
     missing_fact_families = _runtime_missing_fact_families(
         deploy_order_guidance=deploy_order_guidance,
         endpoint_consumer_map=endpoint_consumer_map,
+    )
+    investigation_brief = _runtime_investigation_brief(
+        runtime_building_blocks=runtime_building_blocks,
+        domain_routing_map=investigation_domain_routing_map,
+        deploy_runtime_map=deploy_runtime_map,
+        endpoint_consumer_map=endpoint_consumer_map,
+        missing_fact_families=missing_fact_families,
+        limit=min(max(limit, RUNTIME_INVESTIGATION_BRIEF_LIMIT), RUNTIME_COMPONENT_HARD_CAP),
     )
 
     packet = {
@@ -116,12 +137,15 @@ def runtime_architecture_packet(
             "endpoint_consumer_map_count": len(endpoint_consumer_map),
             "endpoint_consumer_missing_method_drop_count": endpoint_consumer_missing_method_drop_count,
             "deploy_order_guidance_count": len(deploy_order_guidance),
+            "investigation_brief_anchor_count": len(investigation_brief["runtime_anchors"]),
+            "investigation_brief_source_check_count": len(investigation_brief["recommended_source_checks"]),
             "section_limit": limit,
             "component_limit": component_limit,
             "component_detail_limit": component_detail_limit,
             "route_limit": route_limit,
         },
         "answer_packet": {
+            "investigation_brief": investigation_brief,
             "runtime_building_blocks": runtime_building_blocks,
             "domain_routing_map": domain_routing_map,
             "deploy_runtime_map": deploy_runtime_map,
@@ -134,7 +158,8 @@ def runtime_architecture_packet(
                 "deploy_link rows come from DEPLOYS_VIA_CONFIG and link services to deploy targets. "
                 "endpoint_consumer_map rows are proven static CALLS_ENDPOINT consumers matched to provider endpoints. "
                 "deploy_order_guidance rows are practical compatibility inferences from those consumers, not canonical deploy-blocker facts. "
-                "unlinked_domain_reference rows are source leads only and must not be promoted to proven routes."
+                "unlinked_domain_reference rows are source leads only and must not be promoted to proven routes. "
+                "investigation_brief is a compact head start for agent source inspection, not a complete final answer."
             ),
         },
         "assembly_contract": (
@@ -503,6 +528,477 @@ def _runtime_missing_fact_families(
     return sorted(set(missing))
 
 
+def _runtime_investigation_brief(
+    *,
+    runtime_building_blocks: list[JsonObject],
+    domain_routing_map: list[JsonObject],
+    deploy_runtime_map: list[JsonObject],
+    endpoint_consumer_map: list[JsonObject],
+    missing_fact_families: list[str],
+    limit: int,
+) -> JsonObject:
+    component_anchors = [
+        _runtime_component_headstart(component)
+        for component in runtime_building_blocks[:limit]
+        if isinstance(component, dict)
+    ]
+    known_routes = _select_diverse_headstart_rows(sorted([
+        _runtime_route_headstart(route)
+        for route in domain_routing_map
+        if isinstance(route, dict) and route.get("status") == "known_route"
+    ], key=_route_headstart_sort_key), limit=limit, key_fn=_route_headstart_diversity_key)
+    unlinked_leads = _select_diverse_runtime_leads(sorted([
+        _runtime_route_headstart(route)
+        for route in domain_routing_map
+        if isinstance(route, dict) and route.get("status") == "unlinked_domain_reference"
+    ], key=_route_headstart_sort_key), limit=limit)
+    deploy_units = _select_diverse_headstart_rows(sorted([
+        _runtime_deploy_unit_headstart(unit)
+        for unit in deploy_runtime_map
+        if isinstance(unit, dict)
+    ], key=_deploy_unit_headstart_sort_key), limit=limit, key_fn=_deploy_unit_headstart_diversity_key)
+    consumer_links = _select_diverse_headstart_rows(sorted([
+        _runtime_consumer_headstart(row)
+        for row in endpoint_consumer_map
+        if isinstance(row, dict)
+    ], key=_consumer_headstart_diversity_key), limit=limit, key_fn=_consumer_headstart_diversity_key)
+    source_checks = _runtime_recommended_source_checks(
+        component_anchors=component_anchors,
+        known_routes=known_routes,
+        unlinked_leads=unlinked_leads,
+        deploy_units=deploy_units,
+        consumer_links=consumer_links,
+        limit=max(limit, RUNTIME_INVESTIGATION_SOURCE_CHECK_LIMIT),
+    )
+    return {
+        "purpose": "head_start_for_agent_source_investigation",
+        "usage": (
+            "Use these anchors to inspect current source files first. Treat known routes and deploy units as typed KG evidence; "
+            "treat unlinked leads and missing_fact_families as prompts for source verification, not final conclusions."
+        ),
+        "runtime_anchors": component_anchors,
+        "known_routes": known_routes,
+        "unlinked_runtime_leads": unlinked_leads,
+        "deploy_units": deploy_units,
+        "consumer_links": consumer_links,
+        "recommended_source_checks": source_checks,
+        "missing_fact_families": missing_fact_families,
+    }
+
+
+def _select_diverse_headstart_rows(
+    rows: list[JsonObject],
+    *,
+    limit: int,
+    key_fn: Callable[[JsonObject], tuple[object, ...]],
+) -> list[JsonObject]:
+    selected: list[JsonObject] = []
+    selected_ids: set[int] = set()
+    seen = set()
+    for row in rows:
+        key = key_fn(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(row)
+        selected_ids.add(id(row))
+        if len(selected) >= limit:
+            return selected
+    return selected
+
+
+def _select_diverse_runtime_leads(rows: list[JsonObject], *, limit: int) -> list[JsonObject]:
+    selected: list[JsonObject] = []
+    seen_keys = set()
+    per_kind_counts: dict[object, int] = {}
+    for row in rows:
+        kind = row.get("deploy_kind")
+        if per_kind_counts.get(kind, 0) >= RUNTIME_LEADS_PER_KIND_CAP:
+            continue
+        key = _route_headstart_diversity_key(row)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        per_kind_counts[kind] = per_kind_counts.get(kind, 0) + 1
+        selected.append(row)
+        if len(selected) >= limit:
+            return selected
+    for row in rows:
+        key = _route_headstart_diversity_key(row)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _route_headstart_diversity_key(row: JsonObject) -> tuple[object, ...]:
+    service_names = tuple(
+        service.get("name") or service.get("slug")
+        for service in _dict_list(row.get("services"))
+        if service.get("name") or service.get("slug")
+    )
+    domain = row.get("domain") if isinstance(row.get("domain"), dict) else {}
+    target = row.get("target") if isinstance(row.get("target"), dict) else {}
+    source = row.get("source") if isinstance(row.get("source"), dict) else {}
+    return (
+        row.get("status"),
+        row.get("deploy_kind"),
+        service_names,
+        _domain_suffix(domain.get("name")) if service_names else domain.get("name"),
+        target.get("repo") if service_names else None,
+    )
+
+
+def _route_headstart_sort_key(row: JsonObject) -> tuple[int, int, int, str, str]:
+    domain = row.get("domain") if isinstance(row.get("domain"), dict) else {}
+    services = _dict_list(row.get("services"))
+    return (
+        0 if services else 1,
+        _domain_environment_rank(domain.get("name")),
+        _evidence_environment_rank(row.get("evidence_coordinates")),
+        _route_kind_rank(row.get("deploy_kind")),
+        str(_domain_suffix(domain.get("name")) or ""),
+        str(domain.get("name") or ""),
+    )
+
+
+def _deploy_unit_headstart_diversity_key(row: JsonObject) -> tuple[object, ...]:
+    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+    target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+    return (
+        row.get("deploy_kind"),
+        service.get("name") or service.get("slug"),
+        service.get("repo"),
+        target.get("repo"),
+    )
+
+
+def _deploy_unit_headstart_sort_key(row: JsonObject) -> tuple[int, str, str, str]:
+    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+    target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+    return (
+        _route_kind_rank(row.get("deploy_kind")),
+        str(service.get("name") or service.get("slug") or ""),
+        str(service.get("repo") or ""),
+        str(target.get("name") or target.get("target") or ""),
+    )
+
+
+def _consumer_headstart_diversity_key(row: JsonObject) -> tuple[str, str]:
+    provider = row.get("provider") if isinstance(row.get("provider"), dict) else {}
+    endpoint = row.get("provider_endpoint") if isinstance(row.get("provider_endpoint"), dict) else {}
+    return (
+        str(provider.get("name") or provider.get("repo") or ""),
+        str(endpoint.get("path") or endpoint.get("name") or ""),
+    )
+
+
+def _domain_environment_rank(value: object) -> int:
+    if not isinstance(value, str):
+        return 4
+    first_label = value.lower().split(".", 1)[0]
+    parts = [part for part in first_label.replace("_", "-").split("-") if part]
+    if any(part in {"prod", "production"} for part in parts):
+        return 0
+    if any(part in {"staging", "stage", "qa"} for part in parts):
+        return 2
+    if any(part in {"dev", "test", "sandbox", "local"} for part in parts):
+        return 3
+    return 1
+
+
+def _evidence_environment_rank(value: object) -> int:
+    ranks = [
+        _path_environment_rank(coordinate.get("path"))
+        for coordinate in _dict_list(value)
+        if isinstance(coordinate.get("path"), str)
+    ]
+    if not ranks:
+        return 4
+    return min(ranks)
+
+
+def _path_environment_rank(value: object) -> int:
+    if not isinstance(value, str):
+        return 4
+    normalized = value.lower().replace("_", "-")
+    parts = [part for part in normalized.replace(".", "/").split("/") if part]
+    if any(part in {"prod", "production"} or part.endswith("-prod") for part in parts):
+        return 0
+    if any(part in {"staging", "stage", "qa"} or part.endswith("-staging") for part in parts):
+        return 2
+    if any(part in {"dev", "test", "sandbox", "local"} or part.endswith("-dev") for part in parts):
+        return 3
+    return 1
+
+
+def _domain_suffix(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    parts = [part for part in value.lower().split(".") if part]
+    if len(parts) < 2:
+        return value.lower()
+    return ".".join(parts[-2:])
+
+
+def _runtime_component_headstart(component: JsonObject) -> JsonObject:
+    summary = component.get("summary") if isinstance(component.get("summary"), dict) else {}
+    row = {
+        "anchor_kind": "runtime_component",
+        "name": component.get("name"),
+        "repo": component.get("repo"),
+        "service": _brief_entity(component.get("service")),
+        "runtime_categories": _string_list(component.get("runtime_categories")),
+        "deploy_kinds": _string_list(component.get("deploy_kinds")),
+        "counts": {
+            key: summary.get(key)
+            for key in (
+                "domain_count",
+                "deploy_target_count",
+                "endpoint_count",
+                "client_endpoint_call_count",
+                "event_count",
+                "domain_reference_lead_count",
+            )
+            if key in summary
+        },
+        "known_domains": [
+            _runtime_domain_headstart(domain)
+            for domain in _dict_list(component.get("domains"))[:2]
+        ],
+        "unlinked_domain_leads": [
+            _runtime_domain_headstart(lead)
+            for lead in _dict_list(component.get("domain_reference_leads"))[:2]
+        ],
+        "deploy_targets": [
+            _runtime_deploy_target_headstart(target)
+            for target in _dict_list(component.get("deploy_targets"))[:2]
+        ],
+        "source_coordinates": _dedupe_coordinates(_coordinates_from_rows(_component_detail_rows(component)))[:3],
+    }
+    return {key: value for key, value in row.items() if value not in (None, {}, [])}
+
+
+def _runtime_route_headstart(route: JsonObject) -> JsonObject:
+    row = {
+        "status": route.get("status"),
+        "anchor_kind": "domain_route",
+        "domain": _brief_entity(route.get("domain")),
+        "deploy_kind": route.get("deploy_kind"),
+        "target": _brief_entity(route.get("target")),
+        "source": _brief_entity(route.get("source")),
+        "services": [_brief_entity(service) for service in _dict_list(route.get("services"))],
+        "route_source_kind": route.get("route_source_kind"),
+        "evidence_coordinates": _dedupe_coordinates(_dict_list(route.get("evidence_coordinates")))[:2],
+        "interpretation": route.get("interpretation"),
+    }
+    return {key: value for key, value in row.items() if value not in (None, {}, [])}
+
+
+def _runtime_deploy_unit_headstart(unit: JsonObject) -> JsonObject:
+    row = {
+        "status": unit.get("status"),
+        "anchor_kind": "deploy_unit",
+        "service": _brief_entity(unit.get("service")),
+        "deploy_target": _brief_entity(unit.get("deploy_target")),
+        "deploy_kind": unit.get("deploy_kind"),
+        "deploy_details": unit.get("deploy_details") if isinstance(unit.get("deploy_details"), dict) else {},
+        "domains": [
+            _brief_entity(route.get("domain"))
+            for route in _dict_list(unit.get("ingress_or_domain_routes"))[:3]
+        ],
+        "evidence_coordinates": _dedupe_coordinates(_dict_list(unit.get("evidence_coordinates")))[:2],
+    }
+    return {key: value for key, value in row.items() if value not in (None, {}, [])}
+
+
+def _runtime_consumer_headstart(row: JsonObject) -> JsonObject:
+    consumers = [
+        _brief_entity(consumer.get("consumer"))
+        for consumer in _dict_list(row.get("consumers"))[:3]
+    ]
+    result = {
+        "anchor_kind": "endpoint_consumer_link",
+        "provider": _brief_entity(row.get("provider")),
+        "provider_endpoint": _brief_entity(row.get("provider_endpoint")),
+        "consumers": consumers,
+        "consumer_count": row.get("consumer_count"),
+        "match_basis": row.get("match_basis"),
+        "evidence_coordinates": _dedupe_coordinates(_dict_list(row.get("evidence_coordinates")))[:2],
+    }
+    return {key: value for key, value in result.items() if value not in (None, {}, [])}
+
+
+def _runtime_domain_headstart(row: JsonObject) -> JsonObject:
+    result = {
+        "domain": _brief_entity(row.get("domain")),
+        "target": _brief_entity(row.get("target")),
+        "deploy_kind": row.get("deploy_kind"),
+        "evidence_coordinates": _dedupe_coordinates(_dict_list(row.get("evidence_coordinates")))[:1],
+        "interpretation": row.get("interpretation"),
+    }
+    return {key: value for key, value in result.items() if value not in (None, {}, [])}
+
+
+def _runtime_deploy_target_headstart(row: JsonObject) -> JsonObject:
+    result = {
+        "deploy_kind": row.get("deploy_kind"),
+        "target": _brief_entity(row.get("target")),
+        "evidence_coordinates": _dedupe_coordinates(_dict_list(row.get("evidence_coordinates")))[:1],
+    }
+    return {key: value for key, value in result.items() if value not in (None, {}, [])}
+
+
+def _runtime_recommended_source_checks(
+    *,
+    component_anchors: list[JsonObject],
+    known_routes: list[JsonObject],
+    unlinked_leads: list[JsonObject],
+    deploy_units: list[JsonObject],
+    consumer_links: list[JsonObject],
+    limit: int,
+) -> list[JsonObject]:
+    buckets = [
+        [
+            check
+            for route in known_routes
+            for check in _source_checks_from_row(route, reason="verify known domain route and backend mapping")
+        ],
+        [
+            check
+            for lead in unlinked_leads
+            for check in _source_checks_from_row(lead, reason="verify unlinked runtime/domain lead before claiming routing")
+        ],
+        [
+            check
+            for unit in deploy_units
+            for check in _source_checks_from_row(unit, reason="verify deploy unit and runtime target")
+        ],
+        [
+            check
+            for link in consumer_links
+            for check in _source_checks_from_row(link, reason="verify static endpoint consumer evidence")
+        ],
+        [
+            check
+            for component in component_anchors
+            for check in _source_checks_from_row(component, reason="inspect runtime component evidence")
+        ],
+    ]
+    checks: list[JsonObject] = []
+    for index in range(max((len(bucket) for bucket in buckets), default=0)):
+        for bucket in buckets:
+            if index < len(bucket):
+                checks.append(bucket[index])
+    return _dedupe_source_checks(checks)[:limit]
+
+
+def _source_checks_from_row(row: JsonObject, *, reason: str) -> list[JsonObject]:
+    checks = []
+    anchor = _source_check_anchor(row)
+    for coordinate in _dict_list(row.get("evidence_coordinates")) + _dict_list(row.get("source_coordinates")):
+        check = {
+            "reason": reason,
+            "anchor": anchor,
+            "repo": coordinate.get("repo"),
+            "path": coordinate.get("path"),
+            "line_start": coordinate.get("line_start"),
+            "line_end": coordinate.get("line_end"),
+            "confidence": coordinate.get("confidence"),
+            "source_system": coordinate.get("source_system"),
+        }
+        checks.append({key: value for key, value in check.items() if value is not None})
+    return checks
+
+
+def _source_check_anchor(row: JsonObject) -> str | None:
+    for key in ("domain", "service", "provider", "name", "deploy_target"):
+        value = row.get(key)
+        if isinstance(value, dict):
+            name = value.get("name") or value.get("slug") or value.get("target")
+            if isinstance(name, str) and name:
+                return name
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _dedupe_source_checks(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = (row.get("repo"), row.get("path"), row.get("line_start"), row.get("anchor"), row.get("reason"))
+        if key in seen or row.get("path") is None:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _component_detail_rows(component: JsonObject) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for key in ("domains", "deploy_targets", "endpoints", "client_endpoint_calls", "events", "domain_reference_leads"):
+        rows.extend(_dict_list(component.get(key)))
+    return rows
+
+
+def _coordinates_from_rows(rows: list[JsonObject]) -> list[JsonObject]:
+    coordinates: list[JsonObject] = []
+    for row in rows:
+        coordinates.extend(_dict_list(row.get("evidence_coordinates")))
+    return coordinates
+
+
+def _dedupe_coordinates(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = (row.get("repo"), row.get("path"), row.get("line_start"), row.get("line_end"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _brief_entity(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    if not value:
+        return {}
+    identity = value.get("identity")
+    properties = value.get("properties")
+    if not isinstance(identity, dict):
+        identity = {}
+    if not isinstance(properties, dict):
+        properties = {}
+    result = {
+        "kind": value.get("kind"),
+        "name": value.get("name") or display_entity(value),
+        "repo": value.get("repo") or identity.get("repo") or properties.get("repo"),
+        "slug": value.get("slug") or identity.get("slug"),
+        "type": value.get("type") or identity.get("type"),
+        "target": value.get("target") or identity.get("target"),
+        "path": value.get("path") or identity.get("path") or properties.get("path"),
+    }
+    return {key: item for key, item in result.items() if item is not None}
+
+
+def _dict_list(value: object) -> list[JsonObject]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def _deploy_runtime_route(row: JsonObject) -> JsonObject:
     qualifier = _compact_qualifier(row.get("qualifier"))
     return {
@@ -820,11 +1316,35 @@ def _domain_reference_deploy_kind(row: JsonObject) -> str | None:
         return f"{source_kind}_reference"
     if source_kind in {"terraform_literal", "terraform_module_source"}:
         return "terraform_domain_reference"
+    if source_kind == "static_site_cname":
+        return "static_site_cname_reference"
     if source_kind in {"dotenv_assignment", "domain_env"}:
         return "env_domain_reference"
+    if source_kind == "source_domain_literal":
+        return None
     if source_kind == "kubernetes_ingress":
         return "kubernetes_ingress_domain_reference"
+    domain = row.get("object") if isinstance(row.get("object"), dict) else {}
+    identity = domain.get("identity") if isinstance(domain.get("identity"), dict) else {}
+    domain_name = str(identity.get("name") or domain.get("name") or "")
+    if _is_aws_api_gateway_domain(domain_name):
+        return "api_gateway_domain_reference"
+    if _is_ip_address(domain_name):
+        return "internal_address_reference"
     return None
+
+
+def _is_aws_api_gateway_domain(value: str) -> bool:
+    normalized = value.lower()
+    return ".execute-api." in normalized and normalized.endswith(".amazonaws.com")
+
+
+def _is_ip_address(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _domain_reference_category(row: JsonObject) -> str:
@@ -979,11 +1499,14 @@ def _route_kind_rank(value: object) -> int:
         "zappa_lambda": 1,
         "cloudfront_distribution": 2,
         "kubernetes_deployment": 3,
-        "apache_server_name_reference": 4,
-        "zappa_domain_reference": 5,
-        "kubernetes_ingress_domain_reference": 6,
-        "terraform_domain_reference": 7,
-        "env_domain_reference": 8,
+        "api_gateway_domain_reference": 4,
+        "internal_address_reference": 5,
+        "static_site_cname_reference": 6,
+        "apache_server_name_reference": 7,
+        "zappa_domain_reference": 8,
+        "env_domain_reference": 9,
+        "kubernetes_ingress_domain_reference": 10,
+        "terraform_domain_reference": 11,
     }
     return priority.get(value, 50)
 

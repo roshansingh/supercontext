@@ -40,6 +40,7 @@ IGNORED_CONFIG_FILENAMES = {
     "poetry.lock",
     "yarn.lock",
 }
+CONFIG_FILENAMES = {"CNAME"}
 # Keep config scanning bounded: files above 2 MB are usually generated
 # templates, caches, or artifacts, and now emit coverage instead of loading.
 MAX_SCAN_BYTES = 2_000_000
@@ -78,7 +79,7 @@ def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> Confi
             path = Path(dirpath) / filename
             if filename in IGNORED_CONFIG_FILENAMES:
                 continue
-            if path.suffix not in CONFIG_EXTENSIONS and not is_dotenv_filename(filename):
+            if path.suffix not in CONFIG_EXTENSIONS and filename not in CONFIG_FILENAMES and not is_dotenv_filename(filename):
                 continue
             candidates.append(path)
 

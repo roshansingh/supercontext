@@ -1,0 +1,8 @@
+{
+  "entities": {
+    "Domain": 1
+  },
+  "facts": {
+    "REFERENCES_DOMAIN": 1
+  }
+}

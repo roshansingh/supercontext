@@ -22,6 +22,7 @@ from source.kg.file_formats import REGISTERED_FILE_FORMATS, discover_file_format
 from source.kg.file_formats._shared.extractor_adapter import STATIC_CONFIG_ADAPTER
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.file_formats.adapters import config_shared
+from source.kg.file_formats.adapters.config_cname import CONFIG_CNAME_ADAPTER
 from source.kg.file_formats.adapters.config_domain_env import CONFIG_DOMAIN_ENV_ADAPTER
 from source.kg.file_formats.adapters.config_kubernetes_yaml import CONFIG_KUBERNETES_YAML_ADAPTER
 from source.kg.file_formats.adapters.config_serverless_yaml import CONFIG_SERVERLESS_YAML_ADAPTER
@@ -441,6 +442,7 @@ class AdapterFrameworkTest(unittest.TestCase):
             format_names,
             {
                 "apache_vhost",
+                "cname",
                 "domain_env",
                 "dotenv",
                 "event_channel_normalizer",
@@ -510,6 +512,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.capability.file_kinds, ("config",))
         for name in (
             "config-apache-vhost",
+            "config-cname",
             "config-domain-env",
             "config-dotenv",
             "config-kubernetes-yaml",
@@ -524,9 +527,24 @@ class AdapterFrameworkTest(unittest.TestCase):
     def test_file_format_modules_are_canonical(self) -> None:
         self.assertEqual(CONFIG_DOMAIN_ENV_ADAPTER.__class__.__module__, "source.kg.file_formats.adapters.config_domain_env")
         self.assertIs(
+            importlib.import_module("source.kg.file_formats.format_cname.format").FORMAT_SUPPORT.adapters()[0],
+            CONFIG_CNAME_ADAPTER,
+        )
+        self.assertIs(
+            importlib.import_module("source.kg.file_formats.adapters.config_cname").CONFIG_CNAME_ADAPTER,
+            {adapter.capability.name: adapter for adapter in file_format_adapters()}["config-cname"],
+        )
+        self.assertIs(
             importlib.import_module("source.kg.file_formats.adapters.config_openapi").CONFIG_OPENAPI_ADAPTER,
             {adapter.capability.name: adapter for adapter in file_format_adapters()}["config-openapi"],
         )
+
+    def test_cname_adapter_claims_static_site_domain_scope(self) -> None:
+        capability = CONFIG_CNAME_ADAPTER.capability
+
+        self.assertIn("static-site", capability.framework_tags)
+        self.assertIn("REFERENCES_DOMAIN", capability.produces_predicates)
+        self.assertIn("Domain", capability.produces_entity_kinds)
 
     def test_zappa_adapter_claims_parser_backed_public_scope(self) -> None:
         capability = CONFIG_ZAPPA_ADAPTER.capability
@@ -588,6 +606,7 @@ class AdapterFrameworkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / ".env").write_text('API_URL="https://api.example.com"\n', encoding="utf-8")
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
             (root / "openapi.yaml").write_text(
                 "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n",
                 encoding="utf-8",
@@ -648,6 +667,35 @@ class AdapterFrameworkTest(unittest.TestCase):
         self.assertEqual(len(deploy_facts), len(set(deploy_facts)))
         self.assertEqual(len(k8s_targets), 1)
         self.assertEqual(len(deploy_facts), 1)
+        cname_facts = [
+            fact.fact_id
+            for fact in split.facts
+            if fact.predicate == "REFERENCES_DOMAIN" and fact.qualifier.get("source_kind") == "static_site_cname"
+        ]
+        self.assertEqual(len(cname_facts), 1)
+
+    def test_cname_adapter_applies_only_when_cname_file_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="docs-site",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+            empty_repo = RepoSnapshot(
+                root=root / "missing",
+                name="missing-docs-site",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+            empty_repo.root.mkdir()
+
+            self.assertTrue(CONFIG_CNAME_ADAPTER.applies_to(repo, ExtractionContext()))
+            self.assertFalse(CONFIG_CNAME_ADAPTER.applies_to(empty_repo, ExtractionContext()))
 
     def test_config_split_adapters_share_one_config_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

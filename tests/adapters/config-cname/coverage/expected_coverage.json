@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "config-cname has no deterministic coverage branch yet"
+}

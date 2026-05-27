@@ -144,12 +144,14 @@ def _extract_zappa_http_deploy(
         target,
         repo,
         scanned.path,
-        min(domain_line, app_line),
-        max(domain_line, app_line),
+        # Route evidence should cite the route declaration. The deploy fact above
+        # separately preserves the app_function line for the same target.
+        domain_line,
         qualifier={
             "source_kind": "zappa_domain",
             "target_type": "zappa_lambda",
             "stage": stage_name,
+            "app_function": app_function,
             "path": scanned.relative_path,
         },
     )

@@ -150,7 +150,7 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
         query = _optional_string(arguments, "query")
         line = _optional_int(arguments, "line")
         anchors = _planning_context_anchors(arguments)
-        if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
+        if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors) or not _planning_context_has_resolved_anchor(payload):
             return enforce_planning_context_budget(payload)
         return enforce_planning_context_budget(
             payload,
@@ -3031,6 +3031,16 @@ def _is_planning_context_fleet_request(*, query: str | None, line: int | None, a
     return query is None and line is None and not any(anchors.values())
 
 
+def _planning_context_has_resolved_anchor(payload: JsonObject) -> bool:
+    answerability = payload.get("answerability") if isinstance(payload.get("answerability"), dict) else {}
+    answerability_status = answerability.get("status")
+    if answerability_status in {"ambiguous", "not_answerable", "not_found", "unsupported_by_current_kg"}:
+        return False
+    if payload.get("status") in {"ambiguous", "not_found"}:
+        return False
+    return True
+
+
 def _planning_context_summary(groups: dict[str, list[JsonObject]], *, source_coordinates: list[JsonObject]) -> JsonObject:
     return {
         "service_count": len(groups["services"]),
@@ -3954,6 +3964,7 @@ _TOOLS: dict[str, McpTool] = {
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
             "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
+            "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "

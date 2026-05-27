@@ -1,0 +1,1 @@
+"""CNAME file-format support."""

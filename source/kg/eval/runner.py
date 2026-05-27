@@ -286,7 +286,9 @@ Arm: {arm}""",
             """Rules:
 - Do not modify files.
 - Use the same ordinary source-inspection behavior you would use for a real coding task.
-- If SuperContext MCP tools are available, use them when they are relevant to the question.
+- If SuperContext MCP tools are available, use them as a starting point when they are relevant: read the MCP context first to choose targeted source files/anchors, then verify and complete with ordinary source inspection as needed.
+- Treat the expected answer shape as a coverage checklist. Before finalizing, make sure every named category in the user question and expected shape is answered, or explicitly marked unknown with the source/MCP evidence checked.
+- For runtime architecture tasks, verified `unlinked_runtime_leads` such as API Gateway hostnames, private IPs, and static-site CNAME domains should be reported as referenced runtime targets with a caveat that they are not proven route mappings.
 - If SuperContext cannot prove a fact, say what is unknown rather than guessing.""",
         ]
     )
