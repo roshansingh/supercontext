@@ -18,6 +18,18 @@ COMPACT_RUNTIME_HEADSTART_LIMIT = 8
 COMPACT_RUNTIME_LEAD_LIMIT = 8
 COMPACT_RUNTIME_DEPLOY_UNIT_LIMIT = 2
 COMPACT_RUNTIME_SOURCE_CHECK_LIMIT = 15
+COMPACT_AUTHZ_INSPECTION_REF_LIMIT = 3
+AUTHZ_COMPACT_LIST_KEYS = (
+    "review_leads",
+    "inspection_areas",
+    "inspection_index",
+    "endpoint_authorization",
+    "applied_policies",
+    "in_method_checks",
+    "declared_policies",
+    "missing_or_unknown",
+    "unsupported_scopes",
+)
 
 _RUNTIME_COMPONENTS_PATH = "runtime_architecture.answer_packet.runtime_building_blocks"
 _RUNTIME_ROUTES_PATH = "runtime_architecture.answer_packet.domain_routing_map"
@@ -25,6 +37,21 @@ _RUNTIME_DEPLOY_UNITS_PATH = "runtime_architecture.answer_packet.deploy_runtime_
 _RUNTIME_CONSUMERS_PATH = "runtime_architecture.answer_packet.endpoint_consumer_map"
 _RUNTIME_DEPLOY_GUIDANCE_PATH = "runtime_architecture.answer_packet.deploy_order_guidance"
 _RUNTIME_INVESTIGATION_BRIEF_PATH = "runtime_architecture.answer_packet.investigation_brief"
+_BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
+    ("runtime_architecture", "answer_packet", "investigation_brief", "runtime_anchors"),
+    ("runtime_architecture", "answer_packet", "investigation_brief", "known_routes"),
+    ("runtime_architecture", "answer_packet", "investigation_brief", "unlinked_runtime_leads"),
+    ("runtime_architecture", "answer_packet", "investigation_brief", "deploy_units"),
+    ("runtime_architecture", "answer_packet", "investigation_brief", "consumer_links"),
+    ("runtime_architecture", "answer_packet", "investigation_brief", "recommended_source_checks"),
+    *(("authz_surface", key) for key in AUTHZ_COMPACT_LIST_KEYS),
+    *(("related_facts", "authz_surface", key) for key in AUTHZ_COMPACT_LIST_KEYS),
+    ("runtime_architecture", "answer_packet", "runtime_building_blocks"),
+    ("runtime_architecture", "answer_packet", "domain_routing_map"),
+    ("runtime_architecture", "answer_packet", "deploy_runtime_map"),
+    ("runtime_architecture", "answer_packet", "endpoint_consumer_map"),
+    ("runtime_architecture", "answer_packet", "deploy_order_guidance"),
+)
 _PLANNING_BUDGET_ADVICE = (
     "Use runtime_architecture.answer_packet.investigation_brief as the source-inspection head start, then use narrower "
     "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
@@ -59,7 +86,13 @@ def enforce_planning_context_budget(
         )
         post_chars = _current_chars(result)
         if post_chars <= max_chars:
-            return result
+            return _backfill_planning_context(
+                result,
+                original_result,
+                measured_chars=measured_chars,
+                max_chars=max_chars,
+                original_counts=original_counts,
+            )
 
     for component_limit, route_limit in (
         (COMPACT_RUNTIME_COMPONENT_LIMIT, COMPACT_RUNTIME_ROUTE_LIMIT),
@@ -80,7 +113,14 @@ def enforce_planning_context_budget(
         )
         fallback_post_chars = _current_chars(fallback)
         if fallback_post_chars <= max_chars:
-            return fallback
+            return _backfill_planning_context(
+                fallback,
+                original_result,
+                measured_chars=measured_chars,
+                max_chars=max_chars,
+                original_counts=original_counts,
+                fallback=True,
+            )
 
     minimal_source = deepcopy(original_result)
     _truncate_runtime_answer(minimal_source, component_limit=0, route_limit=max(1, COMPACT_RUNTIME_ROUTE_LIMIT))
@@ -229,6 +269,117 @@ def _attach_budget_metadata(
     }
 
 
+def _backfill_planning_context(
+    result: JsonObject,
+    original_result: JsonObject,
+    *,
+    measured_chars: int,
+    max_chars: int,
+    original_counts: dict[str, int],
+    fallback: bool = False,
+) -> JsonObject:
+    candidate = deepcopy(result)
+    backfilled_counts: dict[str, int] = {}
+    for path in _BUDGET_BACKFILL_LIST_PATHS:
+        candidate, added = _backfill_list_path(
+            candidate,
+            original_result,
+            path,
+            measured_chars=measured_chars,
+            max_chars=max_chars,
+            original_counts=original_counts,
+            backfilled_counts=backfilled_counts,
+            fallback=fallback,
+        )
+        if added:
+            backfilled_counts[_path_label(path)] = backfilled_counts.get(_path_label(path), 0) + added
+    return _with_budget_metadata(
+        candidate,
+        measured_chars=measured_chars,
+        max_chars=max_chars,
+        original_counts=original_counts,
+        backfilled_counts=backfilled_counts,
+        fallback=fallback,
+    )
+
+
+def _backfill_list_path(
+    candidate: JsonObject,
+    original_result: JsonObject,
+    path: tuple[str, ...],
+    *,
+    measured_chars: int,
+    max_chars: int,
+    original_counts: dict[str, int],
+    backfilled_counts: dict[str, int],
+    fallback: bool,
+) -> tuple[JsonObject, int]:
+    source = _nested_list(original_result, path)
+    target = _nested_list(candidate, path)
+    if source is None or target is None or len(target) >= len(source):
+        return candidate, 0
+    added = 0
+    for row in source[len(target) :]:
+        trial_base = deepcopy(candidate)
+        trial_target = _nested_list(trial_base, path)
+        if trial_target is None:
+            break
+        trial_target.append(deepcopy(row))
+        proposed_counts = dict(backfilled_counts)
+        proposed_counts[_path_label(path)] = proposed_counts.get(_path_label(path), 0) + added + 1
+        trial = _with_budget_metadata(
+            trial_base,
+            measured_chars=measured_chars,
+            max_chars=max_chars,
+            original_counts=original_counts,
+            backfilled_counts=proposed_counts,
+            fallback=fallback,
+        )
+        if _current_chars(trial) > max_chars:
+            break
+        candidate = trial
+        added += 1
+    return candidate, added
+
+
+def _with_budget_metadata(
+    result: JsonObject,
+    *,
+    measured_chars: int,
+    max_chars: int,
+    original_counts: dict[str, int],
+    backfilled_counts: dict[str, int],
+    fallback: bool,
+) -> JsonObject:
+    payload = deepcopy(result)
+    _attach_budget_metadata(
+        payload,
+        measured_chars=measured_chars,
+        max_chars=max_chars,
+        original_counts=original_counts,
+        fallback=fallback,
+    )
+    if backfilled_counts:
+        payload["output_budget"]["backfilled_counts"] = {
+            key: value for key, value in sorted(backfilled_counts.items()) if value > 0
+        }
+    payload["output_budget"]["remaining_chars"] = max(0, max_chars - _current_chars(payload))
+    return payload
+
+
+def _nested_list(payload: JsonObject, path: tuple[str, ...]) -> list[object] | None:
+    current: object = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current if isinstance(current, list) else None
+
+
+def _path_label(path: tuple[str, ...]) -> str:
+    return ".".join(path)
+
+
 def _current_chars(result: JsonObject) -> int:
     return len(canonical_json(result))
 
@@ -286,6 +437,7 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         "runtime_architecture": compact_runtime,
         "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
         "authz_surface": _compact_authz_surface(result.get("authz_surface", {})),
+        "related_facts": _compact_related_facts(result.get("related_facts", {})),
         "anchors": result.get("anchors", {}),
         "answerability": result.get("answerability", {}),
         "coverage_warnings": result.get("coverage_warnings", []),
@@ -312,6 +464,16 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
             }
         )
     return {key: value for key, value in fallback.items() if value is not None}
+
+
+def _compact_related_facts(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    compact: JsonObject = {}
+    authz = value.get("authz_surface")
+    if isinstance(authz, dict):
+        compact["authz_surface"] = _compact_authz_surface(authz)
+    return compact
 
 
 def _minimize_runtime_answer_rows(result: JsonObject) -> None:
@@ -491,15 +653,42 @@ def _compact_authz_surface(value: object) -> JsonObject:
         return {}
     if not value:
         return {}
-    return {
+    compact = {
         "status": value.get("status"),
         "scope": value.get("scope", {}),
         "summary": value.get("summary", {}),
-        "endpoint_authorization": _list_value(value.get("endpoint_authorization"))[:COMPACT_RUNTIME_HEADSTART_LIMIT],
-        "missing_or_unknown": _list_value(value.get("missing_or_unknown"))[:COMPACT_RUNTIME_HEADSTART_LIMIT],
         "answerability": value.get("answerability", {}),
         "assembly_contract": value.get("assembly_contract"),
     }
+    for key in AUTHZ_COMPACT_LIST_KEYS:
+        rows = _list_value(value.get(key))
+        if key == "inspection_areas":
+            compact[key] = _compact_authz_inspection_areas(rows[:COMPACT_RUNTIME_HEADSTART_LIMIT])
+        elif key == "inspection_index":
+            compact[key] = rows[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+        else:
+            compact[key] = rows[:COMPACT_RUNTIME_HEADSTART_LIMIT]
+    return compact
+
+
+def _compact_authz_inspection_areas(rows: list[object]) -> list[JsonObject]:
+    compact = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        area = dict(row)
+        refs = _list_value(area.get("inspection_refs"))
+        if refs:
+            area["inspection_refs"] = refs[:COMPACT_AUTHZ_INSPECTION_REF_LIMIT]
+            omitted = len(refs) - len(area["inspection_refs"])
+            if omitted > 0:
+                existing_omitted = area.get("omitted_inspection_ref_count")
+                if isinstance(existing_omitted, bool) or not isinstance(existing_omitted, int):
+                    existing_omitted = 0
+                area["omitted_inspection_ref_count"] = existing_omitted + omitted
+                area["inspection_refs_truncated"] = True
+        compact.append(area)
+    return compact
 
 
 def _compact_investigation_brief(value: object) -> JsonObject:

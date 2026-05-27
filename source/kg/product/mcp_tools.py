@@ -9,7 +9,12 @@ from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.authz_surface import authz_surface_packet
 from source.kg.product.framework_impact import framework_impact_packet
 from source.kg.product.ownership_context import ownership_context_packet
-from source.kg.product.output_budget import PLANNING_CONTEXT_ANCHORED_MAX_CHARS, enforce_planning_context_budget
+from source.kg.product.output_budget import (
+    AUTHZ_COMPACT_LIST_KEYS,
+    COMPACT_AUTHZ_INSPECTION_REF_LIMIT,
+    PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
+    enforce_planning_context_budget,
+)
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.call_site import call_site_from_qualifier
 from source.kg.query.snapshot import KgSnapshot
@@ -3396,7 +3401,7 @@ def _planning_context_related_facts(
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
         "runtime_architecture": _planning_context_runtime_architecture_reference(runtime_architecture),
-        "authz_surface": authz_surface,
+        "authz_surface": _planning_context_authz_surface_reference(authz_surface),
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -3406,6 +3411,222 @@ def _planning_context_related_facts(
         ][:PLANNING_CONTEXT_SECTION_LIMIT],
         "domains": domains[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
+
+
+def _planning_context_authz_surface_reference(authz_surface: JsonObject) -> JsonObject:
+    reference: JsonObject = {
+        "status": authz_surface.get("status"),
+        "scope": authz_surface.get("scope", {}),
+        "summary": authz_surface.get("summary", {}),
+        "answerability": authz_surface.get("answerability", {}),
+        "assembly_contract": authz_surface.get("assembly_contract"),
+    }
+    for key in AUTHZ_COMPACT_LIST_KEYS:
+        rows = _json_object_list(authz_surface.get(key))
+        if key == "review_leads":
+            reference[key] = [
+                _planning_context_authz_lead_reference(row)
+                for row in rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+            ]
+        elif key in {"endpoint_authorization", "missing_or_unknown"}:
+            reference[key] = [
+                _planning_context_authz_endpoint_reference(row)
+                for row in rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+            ]
+        elif key in {"applied_policies", "in_method_checks", "declared_policies"}:
+            reference[key] = [
+                _planning_context_authz_fact_reference(row)
+                for row in rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+            ]
+        elif key == "inspection_areas":
+            reference[key] = [
+                _planning_context_authz_inspection_area_reference(row)
+                for row in rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+            ]
+        else:
+            reference[key] = rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+    return reference
+
+
+def _planning_context_authz_inspection_area_reference(row: JsonObject) -> JsonObject:
+    area = dict(row)
+    refs = area.get("inspection_refs")
+    if isinstance(refs, list):
+        area["inspection_refs"] = refs[:COMPACT_AUTHZ_INSPECTION_REF_LIMIT]
+        omitted = len(refs) - len(area["inspection_refs"])
+        if omitted > 0:
+            existing_omitted = area.get("omitted_inspection_ref_count")
+            if isinstance(existing_omitted, bool) or not isinstance(existing_omitted, int):
+                existing_omitted = 0
+            area["omitted_inspection_ref_count"] = existing_omitted + omitted
+            area["inspection_refs_truncated"] = True
+    return area
+
+
+def _planning_context_authz_lead_reference(row: JsonObject) -> JsonObject:
+    policies = _json_object_list(row.get("policies"))
+    checks = _json_object_list(row.get("checks"))
+    return {
+        "lead_type": row.get("lead_type"),
+        "priority": row.get("priority"),
+        "reason": row.get("reason"),
+        "endpoint": _planning_context_authz_endpoint_identity(row.get("endpoint"), row.get("route")),
+        "handler": _planning_context_authz_symbol_identity(row.get("handler")),
+        "authz_status": row.get("authz_status"),
+        "public_policy_present": row.get("public_policy_present", False),
+        "policy_names": _planning_context_authz_qualifier_names(policies, "policy"),
+        "check_names": _planning_context_authz_check_names(checks),
+        "source_coordinates": _planning_context_authz_coordinates(row, policies, checks),
+        "recommended_source_checks": row.get("recommended_source_checks", []),
+    }
+
+
+def _planning_context_authz_endpoint_reference(row: JsonObject) -> JsonObject:
+    policies = _json_object_list(row.get("policies"))
+    checks = _json_object_list(row.get("checks"))
+    return {
+        "endpoint": _planning_context_authz_endpoint_identity(row.get("endpoint"), row.get("route")),
+        "handler": _planning_context_authz_symbol_identity(row.get("handler")),
+        "authz_status": row.get("authz_status"),
+        "public_policy_present": row.get("public_policy_present", False),
+        "policy_count": len(policies),
+        "check_count": len(checks),
+        "policy_names": _planning_context_authz_qualifier_names(policies, "policy"),
+        "check_names": _planning_context_authz_check_names(checks),
+        "source_coordinates": _planning_context_authz_coordinates(row, policies, checks),
+    }
+
+
+def _planning_context_authz_fact_reference(row: JsonObject) -> JsonObject:
+    return {
+        "predicate": row.get("predicate"),
+        "subject": _planning_context_authz_symbol_identity(row.get("subject")),
+        "object": _planning_context_authz_symbol_identity(row.get("object")),
+        "qualifier": _planning_context_authz_qualifier(row.get("qualifier")),
+        "source_coordinates": _planning_context_authz_coordinates(row),
+    }
+
+
+def _planning_context_authz_endpoint_identity(endpoint: object, route: object) -> JsonObject:
+    endpoint_row = endpoint if isinstance(endpoint, dict) else {}
+    route_row = route if isinstance(route, dict) else {}
+    path = endpoint_row.get("path")
+    if not isinstance(path, str) or not path:
+        path = route_row.get("path")
+    return _drop_none(
+        {
+            "repo": endpoint_row.get("repo"),
+            "method": route_row.get("method") or endpoint_row.get("method"),
+            "path": path,
+            "framework": route_row.get("framework"),
+            "source_kind": route_row.get("source_kind"),
+        }
+    )
+
+
+def _planning_context_authz_symbol_identity(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    properties = value.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+    return _drop_none(
+        {
+            "repo": value.get("repo"),
+            "path": value.get("path") or properties.get("path"),
+            "line": value.get("line") or properties.get("line") or properties.get("start_line"),
+            "module": value.get("module"),
+            "qualname": value.get("qualname"),
+            "symbol_kind": value.get("symbol_kind"),
+            "name": value.get("name"),
+            "kind": value.get("kind"),
+        }
+    )
+
+
+def _planning_context_authz_coordinates(row: JsonObject, *related_groups: list[JsonObject]) -> list[JsonObject]:
+    coordinates = list(_planning_context_row_source_coordinates(row))
+    for ref in (
+        _planning_context_coordinate_from_authz_symbol(row.get("handler")),
+        _planning_context_coordinate_from_authz_symbol(row.get("subject")),
+        _planning_context_coordinate_from_authz_symbol(row.get("object")),
+    ):
+        if ref is not None:
+            coordinates.append(ref)
+    for group in related_groups:
+        for related in group:
+            coordinates.extend(_planning_context_row_source_coordinates(related))
+            for ref in (
+                _planning_context_coordinate_from_authz_symbol(related.get("subject")),
+                _planning_context_coordinate_from_authz_symbol(related.get("object")),
+            ):
+                if ref is not None:
+                    coordinates.append(ref)
+    deduped = []
+    seen = set()
+    for coordinate in coordinates:
+        key = _coordinate_location_key(coordinate)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(coordinate)
+        if len(deduped) >= 4:
+            return deduped
+    return deduped
+
+
+def _planning_context_coordinate_from_authz_symbol(value: object) -> JsonObject | None:
+    if not isinstance(value, dict):
+        return None
+    properties = value.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+    path = value.get("path") or properties.get("path")
+    line = value.get("line") or properties.get("line") or properties.get("start_line")
+    if not isinstance(path, str) or not path.strip():
+        return None
+    if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+        return None
+    return {
+        "repo": value.get("repo"),
+        "provenance": "authz_symbol",
+        "path": path,
+        "line_start": line,
+        "line_end": line,
+    }
+
+
+def _planning_context_authz_qualifier(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    keys = ("access_level", "framework", "policy", "check", "source_kind", "guard_intent", "method", "path")
+    return {key: value[key] for key in keys if key in value}
+
+
+def _planning_context_authz_qualifier_names(rows: list[JsonObject], key: str) -> list[str]:
+    names = []
+    for row in rows:
+        qualifier = row.get("qualifier")
+        if isinstance(qualifier, dict) and isinstance(qualifier.get(key), str):
+            names.append(qualifier[key])
+    return sorted(set(names))
+
+
+def _planning_context_authz_check_names(rows: list[JsonObject]) -> list[str]:
+    names = []
+    for key in ("check", "guard", "policy"):
+        names.extend(_planning_context_authz_qualifier_names(rows, key))
+    return sorted(set(names))
+
+
+def _json_object_list(value: object) -> list[JsonObject]:
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def _drop_none(row: JsonObject) -> JsonObject:
+    return {key: value for key, value in row.items() if value not in (None, [], {})}
 
 
 def _planning_context_runtime_architecture_reference(runtime_architecture: JsonObject) -> JsonObject:
@@ -4012,7 +4233,7 @@ _TOOLS: dict[str, McpTool] = {
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
             "For ownership questions, read ownership_context.answer_packet; package authors and package maintainers are candidates only and must not be promoted to service owner unless an explicit ownership source is present. "
-            "For security/authz questions, read related_facts.authz_surface or get_service_brief.authz_surface; it separates endpoint handler bindings, applied policies, in-method checks, and missing/unknown authz instead of treating missing policy as public access. "
+            "For security/authz questions, read top-level authz_surface.review_leads plus inspection_areas/inspection_index when present, related_facts.authz_surface as a compact reference, or get_service_brief.authz_surface; it separates endpoint handler bindings, applied policies, in-method checks, unsupported_scopes, and missing/unknown authz instead of treating missing policy as public access. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "
