@@ -50,7 +50,7 @@ Pull traces, compute deltas, judge, and render:
   --out data/ab_runs/<run-id>/deltas.jsonl
 
 .venv/bin/python -m source.scripts.judge_ab_quality \
-  --judge-model gpt-4.1-mini \
+  --judge-model gpt-5.4-mini \
   --deltas data/ab_runs/<run-id>/deltas.jsonl \
   --out data/ab_runs/<run-id>/judged-deltas.jsonl \
   --seed <seed>
@@ -65,9 +65,11 @@ Pull traces, compute deltas, judge, and render:
   --out docs/evaluation/ab-runs/<run-id> \
   --run-id <run-id> \
   --date <YYYY-MM-DD> \
-  --judge-model gpt-4.1-mini \
+  --judge-model gpt-5.4-mini \
   --seed <seed>
 ```
+
+`compute_ab_deltas` is the standard fail-closed gate between trace capture and judging. Do not run the judge or aggregate reports directly from pulled traces. By default it rejects `mcp_on` SuperContext tool denials/errors and any trace with `incomplete_background_task_ids`; use `--allow-mcp-tool-failures` or `--allow-incomplete-background-tasks` only for explicit forensic analysis, not for promoted A/B reports.
 
 ## What Git Can Recreate
 
@@ -94,5 +96,6 @@ Older raw and sanitized A/B reports may be deleted after a newer run is explicit
 ## Expected Checks
 
 - `compute_ab_deltas` should fail closed if any `mcp_on` row has SuperContext MCP denials or tool errors.
+- `compute_ab_deltas` should fail closed if any row has `incomplete_background_task_ids`; the runner records these for forensics, but promoted judged reports must exclude them unless explicitly labelled forensic.
 - The final sanitized report should show `MCP Denied = 0`.
 - Interpret token, cost, and latency only after checking the quality rubric.
