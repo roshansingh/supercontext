@@ -109,6 +109,7 @@ class LangSmithEmitterTest(unittest.TestCase):
         self.assertNotIn("record", root.outputs)
         self.assertIn("arm:mcp_off", root.tags)
         self.assertIn("task_id:Q003", root.tags)
+        self.assertNotIn("incomplete_background_tasks:true", root.tags)
         self.assertEqual(root.project_name, "supercontext-ab-eval")
         self.assertEqual(root.metadata["run_group_id"], "group-1")
         self.assertEqual(root.metadata["mcp_tools_called"], [])
@@ -129,6 +130,24 @@ class LangSmithEmitterTest(unittest.TestCase):
             {"input_tokens": 10, "output_tokens": 15, "total_tokens": 25},
         )
         self.assertEqual(llm_span.metadata["usage_metadata"], llm_span.outputs["usage_metadata"])
+
+    def test_emit_run_tags_incomplete_background_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            messages_path = Path(tmp) / "messages.jsonl"
+            messages_path.write_text(
+                json.dumps({"type": "ResultMessage", "data": {"content": "done"}}) + "\n",
+                encoding="utf-8",
+            )
+            record = replace(
+                _record(messages_path=messages_path),
+                incomplete_background_task_ids=["bg-1"],
+            )
+
+            with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=False):
+                emit_run(record, messages_path, run_tree_cls=FakeRunTree)
+
+        self.assertIn("incomplete_background_tasks:true", FakeRunTree.roots[0].tags)
+        self.assertEqual(FakeRunTree.roots[0].metadata["incomplete_background_task_ids"], ["bg-1"])
 
     def test_emit_run_fails_closed_without_langsmith_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

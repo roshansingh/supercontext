@@ -14,7 +14,9 @@ MCP responses are wrapped by `call_tool(...)` with these common or optional fiel
 | `status` | Result state such as `found`, `not_found`, `ambiguous`, `partial`, or `unsupported_by_current_kg`. | Skills say to read this before answering and to inspect source for partial/not-found/unsupported results. |
 | `packet_contract` | Common response contract and claim rule for the producing tool. | Read this as the field legend: SuperContext is a source-inspection head start, not a replacement for code inspection. |
 | `answerability` | Whether the packet can answer directly, partially, ambiguously, or not at all. | Use this to decide whether to answer from KG-backed context, retry/disambiguate, or inspect source/config. |
+| `intent_answerability` | Optional per-intent answerability map for packets that serve multiple question types. | Check this before treating an answerable packet as sufficient for deploy order, schema safety, runtime usage, ownership, authz, or other specialized intents. |
 | `proven_facts` | Compact index of KG-backed/static fields present in the packet, with counts and claim boundary. | Treat listed fields as the strongest returned evidence, then cite the underlying rows/evidence coordinates rather than the index itself. |
+| `covered_areas` | Normalized map of KG-backed/static packet sections already returned, with `area`, `field`, `count`, `evidence_refs`, and `confidence`. | Use this to avoid rediscovering already-covered proven facts; spend source inspection on uncovered `inspection_areas`, candidate leads, omitted rows, ambiguous anchors, and requested categories not covered. |
 | `candidate_leads` | Compact index of plausible but unproven fields such as import-only, unlinked, ambiguous, or inferred leads. | Use as the bounded source-inspection plan. Do not claim these as proven until source inspection verifies them. |
 | `coverage_gaps` | Normalized missing, unsupported, truncated, ambiguous, not-found, or unproven scopes. | Mention relevant gaps and inspect before claiming absence, deploy safety, runtime behavior, authz completeness, or ownership. |
 | `inspection_areas` | Normalized follow-up rows with `area`, `reason`, `trigger`, `inspection_refs`, and `search_terms`. | Use these to read/search only the uncovered areas instead of starting broad grep. If the packet is small enough, inspect all relevant refs; if compacted, prioritize rows by task relevance. |
@@ -31,7 +33,9 @@ Common nested row shapes:
 | Fact row | `fact_id`, `predicate`, `subject`, `object`, `qualifier`, `evidence`, optional `call_site` | A KG edge with human-readable endpoints, metadata, evidence, and optional call-site coordinates. |
 | Service row | `service_id`, `urn`, `name`, `identity`, `repo`, `namespace`, `slug`, `evidence` | A service identity plus source evidence. |
 | Answerability | `status`, `missing_fact_families`, `recommended_source_checks` or `recommended_followups`, optional `cannot_prove` | Whether the packet can answer directly, what is missing, and where to inspect next. |
+| Intent answerability | per-intent keys with `status`, `covered_fields`, `missing_fact_families`, and `claim_boundary` | Explains which common question intents are answerable from this packet and which remain partial. |
 | Proven facts | `status`, `sources`, `claim_boundary` | Compact index of KG-backed/static fields returned by the tool. |
+| Covered area | `area`, `field`, `count`, `evidence_refs`, `confidence` | Normalized list of already-covered static sections. |
 | Candidate leads | `status`, `sources`, `claim_boundary` | Compact index of plausible but unverified fields returned by the tool. |
 | Coverage gap | `trigger`, plus `detail` or `fact_family` | Normalized explanation of missing, unsupported, truncated, ambiguous, or not-found coverage. |
 | Inspection area | `area`, `reason`, `trigger`, `inspection_refs`, `search_terms`, truncation metadata | Structured source-inspection guidance for bounded or partial packets. `inspection_refs` may be structured `{repo,path,line,symbol,...}` objects; `search_terms` may be scalar or list input but is normalized to strings. Tool-specific aliases such as `source_inspection_areas` may still appear, but the normalized common field is `inspection_areas`. |
@@ -44,6 +48,7 @@ Common packet example:
   "tool": "reverse_impact",
   "status": "partial",
   "proven_facts": {"status": "found", "sources": [{"field": "roots", "count": 1}]},
+  "covered_areas": [{"area": "roots", "field": "roots", "count": 1, "evidence_refs": [], "confidence": "kg_static"}],
   "candidate_leads": {"status": "found", "sources": [{"field": "terminal_import_consumer_leads", "count": 2, "lead_kind": "import_only_source_lead"}]},
   "coverage_gaps": [{"trigger": "missing_fact_family", "fact_family": "reverse_callers"}],
   "inspection_areas": [{"area": "candidate_leads", "reason": "Candidate leads require source verification before final claims.", "trigger": "candidate_leads_present", "inspection_refs": [], "search_terms": []}]
@@ -100,11 +105,12 @@ Purpose: compact service fact sheet for one unambiguous service.
 | `operational_surfaces` | Service deploy/domain/runtime surfaces split into known linked, unlinked evidence, and missing contracts. |
 | `authz_surface` | Endpoint-to-handler authz packet for the service repo when available. |
 | `answerability` | Whether linked service facts are enough and which fact families are missing. |
+| `intent_answerability` | Per-intent status for service identity, endpoint inventory, event inventory, deploy/runtime mapping, deploy-order/schema safety, and authorization surface. |
 
 Example:
 
 ```json
-{"service": {"name": "api", "repo": "backend"}, "summary": {"endpoint_fact_count": 8, "deploy_mapping_count": 1}, "answerability": {"status": "answerable"}}
+{"service": {"name": "api", "repo": "backend"}, "summary": {"endpoint_fact_count": 8, "deploy_mapping_count": 1}, "answerability": {"status": "answerable"}, "intent_answerability": {"deploy_order_or_schema_safety": {"status": "partial"}}}
 ```
 
 Prompt usage: skills say to keep `operational_surfaces.evidence_partition` buckets separate and not promote unlinked evidence into deploy proof.
@@ -148,6 +154,7 @@ Purpose: bounded reverse dependency head-start from one symbol anchor.
 | `source_inspection_areas` | Source-inspection plan for tests, scripts, notebooks, entry points, and import-only modules outside the returned `CALLS` graph. |
 | `affected_symbols` | Flat list of affected symbol rows with depth/root metadata. |
 | `candidate_impact_previews` | Ambiguous-candidate previews ranked by direct caller count and stable tie-breakers. `selection_basis` explains whether constructor targets were included, so preview counts may differ from exact `find_callers`. |
+| `candidate_impact_preview_claim_boundary` | Section-local warning that preview rank is not proof of user intent; retry with path/line before answering a single-symbol question. |
 | `ambiguity_guidance` | Instructions for choosing one candidate instead of aggregating. |
 | `answerability` | Missing anchor/caller facts and recommended source checks. |
 | `contract` | Evidence boundary: static head start, not runtime proof. |
@@ -193,6 +200,7 @@ Purpose: static consumers of an event channel.
 | `channel` | Event channel query string. |
 | `event_fact_count` | Number of matching static event facts. |
 | `returned_count` | Number returned after `limit`. |
+| `event_inventory` | Static event inventory counts and sample channel names for the query. Only `matched_fact_count` is query-scoped; `snapshot_*` counts are loaded-snapshot context. |
 | `answerability` | Static-event scope, missing fact families, and runtime claims it cannot prove. |
 | `consumers` | `CONSUMES_EVENT` fact rows. |
 
@@ -213,6 +221,7 @@ Purpose: static producers of an event channel.
 | `channel` | Event channel query string. |
 | `event_fact_count` | Number of matching static event facts. |
 | `returned_count` | Number returned after `limit`. |
+| `event_inventory` | Static event inventory counts and sample channel names for the query. Only `matched_fact_count` is query-scoped; `snapshot_*` counts are loaded-snapshot context. |
 | `answerability` | Static-event scope, missing fact families, and runtime claims it cannot prove. |
 | `producers` | `PRODUCES_EVENT` fact rows. |
 
@@ -283,6 +292,7 @@ Purpose: composed planning packet for fleet or anchored repo/service/symbol/pack
 | `related_facts` | Anchor-specific packets such as `dependency_importers`, `symbol_impact`, `authz_surface`, runtime references, dependencies, endpoints, endpoint consumers, event channels, deploy mappings, and domains. In compacted packets it may contain its own `inspection_areas` for omitted related rows. |
 | `source_coordinates` | Bounded coordinates extracted from grouped rows. |
 | `answerability` | Missing fact families and follow-up checks for the supplied anchors. |
+| `intent_answerability` | Per-intent map for repo inventory, service/symbol identity, endpoint/event/domain inventory, and deploy/runtime decision support. |
 | `evidence` | Evidence rows from grouped context. |
 | `output_budget` | Added by budget enforcement when output was compacted/truncated; includes omitted sections/counts, budget advice, backfill counts, and remaining character budget when available. |
 
@@ -322,7 +332,7 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | `runtime_surfaces` | Bounded endpoints, endpoint consumers, event channels, and deploy mappings. |
 | `framework_impact` | Parser-backed framework facts such as Django/Celery model fields, relations, serializers, views, and tasks. |
 | `application_impact` | App/package namespace surfaces, runtime facts, and cross-repo name leads. |
-| `surface_status` | Requested review surface status: known, unlinked, missing, or unsupported. |
+| `surface_status` | Requested review surface status: known, unlinked, missing, or unsupported. Canonical requested surfaces are `ui_screens`, `scheduled_jobs`, `sqs_consumers`, `delivery_workers`, `tracking_paths`, `api_surfaces`, `models`, `serializers`, and `schemas`; common aliases such as UI, workers, SQS, contracts, and schemas normalize to these values. |
 | `source_coordinates` | Coordinates from changed and related rows. |
 | `answerability` | Missing review fact families and follow-up checks. |
 | `unsupported_review_scopes` | Alias of unsupported scopes for review-specific consumers. |

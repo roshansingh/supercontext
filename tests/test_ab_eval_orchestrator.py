@@ -751,7 +751,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(_incomplete_background_task_ids(messages), {"bbgn0p55y"})
         with self.assertRaisesRegex(RuntimeError, "incomplete background task.*bbgn0p55y"):
-            _raise_for_host_error_messages(messages)
+            _raise_for_host_error_messages(messages, fail_on_incomplete_background_tasks=True)
 
     def test_system_background_patch_alone_fails_closed(self) -> None:
         messages = [
@@ -776,7 +776,43 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(_incomplete_background_task_ids(messages), {"bg-from-system"})
         with self.assertRaisesRegex(RuntimeError, "incomplete background task.*bg-from-system"):
-            _raise_for_host_error_messages(messages)
+            _raise_for_host_error_messages(messages, fail_on_incomplete_background_tasks=True)
+
+    def test_successful_eval_run_can_ignore_incomplete_background_task_marker(self) -> None:
+        messages = [
+            {
+                "type": "UserMessage",
+                "data": {
+                    "tool_use_result": {
+                        "backgroundTaskId": "bg-1",
+                        "stdout": "",
+                        "stderr": "",
+                    }
+                },
+            },
+            {
+                "type": "ResultMessage",
+                "data": {
+                    "is_error": False,
+                    "result": "Final answer already produced.",
+                },
+            },
+        ]
+
+        self.assertEqual(_incomplete_background_task_ids(messages), {"bg-1"})
+        _raise_for_host_error_messages(messages, fail_on_incomplete_background_tasks=False)
+
+    def test_run_record_defaults_incomplete_background_task_ids(self) -> None:
+        record = _record(
+            task=_task(),
+            arm="mcp_on",
+            run_group_id="group-1",
+            pre=(),
+            post=(),
+        )
+
+        self.assertEqual(record.incomplete_background_task_ids, [])
+        self.assertEqual(record.to_json()["incomplete_background_task_ids"], [])
 
     def test_completed_background_task_does_not_fail(self) -> None:
         _raise_for_host_error_messages(

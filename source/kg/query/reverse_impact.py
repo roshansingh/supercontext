@@ -59,6 +59,10 @@ def reverse_impact_packet(
             "truncated_terminal_symbols": [],
             "affected_symbols": [],
             "candidate_impact_previews": _candidate_impact_previews(kg, resolution, limit=limit),
+            "candidate_impact_preview_claim_boundary": (
+                "Preview rows are disambiguation aids only. impact_preview_rank sorts by bounded static caller "
+                "visibility and tie-breakers; it is not proof of the user-intended symbol."
+            ),
             "source_inspection_areas": _source_inspection_areas([], query=symbol_query, candidates=candidates),
             "ambiguity_guidance": _AMBIGUITY_GUIDANCE,
             "answerability": _answerability("ambiguous"),
@@ -679,6 +683,10 @@ def _candidate_impact_previews(kg: KgSnapshot, resolution: JsonObject, *, limit:
                 "selection_basis": (
                     "previewed_direct_caller_count; constructor targets are included for classes and __init__ methods, "
                     "so this can differ from find_callers on the exact symbol"
+                ),
+                "claim_boundary": (
+                    "This preview ranks candidate graph visibility, not semantic intent. Retry with this candidate's "
+                    "path/line before answering a single-symbol question."
                 ),
                 "caller_samples": caller_samples,
                 "retry_arguments": kg._symbol_retry_arguments(candidate, str(resolution.get("query", ""))),

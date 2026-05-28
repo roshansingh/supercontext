@@ -77,6 +77,7 @@ class RunRecord:
     mcp_tool_successes: list[str] = field(default_factory=list)
     mcp_tool_denials: list[str] = field(default_factory=list)
     mcp_tool_errors: list[str] = field(default_factory=list)
+    incomplete_background_task_ids: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -183,7 +184,8 @@ async def async_run_single_task(
                 message_stream.flush()
                 if isinstance(message, ResultMessage):
                     final_answer = str(getattr(message, "result", ""))
-    _raise_for_host_error_messages(serialized_messages)
+    incomplete_background_task_ids = sorted(_incomplete_background_task_ids(serialized_messages))
+    _raise_for_host_error_messages(serialized_messages, fail_on_incomplete_background_tasks=False)
     tokens_in, tokens_out = _usage_tokens(serialized_messages)
     mcp_tools, non_mcp_tools = _tool_calls(serialized_messages)
     tool_attempts = _tool_attempts(serialized_messages)
@@ -223,6 +225,7 @@ async def async_run_single_task(
         mcp_tool_successes=mcp_observations["successes"],
         mcp_tool_denials=mcp_observations["denials"],
         mcp_tool_errors=mcp_observations["errors"],
+        incomplete_background_task_ids=incomplete_background_task_ids,
     )
     (arm_dir / "record.json").write_text(json.dumps(record.to_json(), indent=2, sort_keys=True), encoding="utf-8")
     return record
@@ -340,7 +343,11 @@ def _message_to_json(message: object) -> dict[str, Any]:
     }
 
 
-def _raise_for_host_error_messages(messages: list[dict[str, Any]]) -> None:
+def _raise_for_host_error_messages(
+    messages: list[dict[str, Any]],
+    *,
+    fail_on_incomplete_background_tasks: bool = False,
+) -> None:
     saw_result_message = False
     for message in messages:
         data = message.get("data")
@@ -360,7 +367,8 @@ def _raise_for_host_error_messages(messages: list[dict[str, Any]]) -> None:
             raise RuntimeError(f"Claude host message failed: {data.get('error')}")
     if not saw_result_message:
         raise RuntimeError("Claude host run failed: missing ResultMessage")
-    _raise_for_incomplete_background_tasks(messages)
+    if fail_on_incomplete_background_tasks:
+        _raise_for_incomplete_background_tasks(messages)
 
 
 def _raise_for_incomplete_background_tasks(messages: list[dict[str, Any]]) -> None:

@@ -61,6 +61,7 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
     testcase.assertIn("next_actions", payload)
     testcase.assertIn("answerability", payload)
     testcase.assertIn("proven_facts", payload)
+    testcase.assertIn("covered_areas", payload)
     testcase.assertIn("candidate_leads", payload)
     testcase.assertIn("coverage_gaps", payload)
     testcase.assertIn("inspection_areas", payload)
@@ -70,6 +71,7 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
     testcase.assertIsInstance(payload["next_actions"], list)
     testcase.assertIsInstance(payload["answerability"], dict)
     testcase.assertIsInstance(payload["proven_facts"], dict)
+    testcase.assertIsInstance(payload["covered_areas"], list)
     testcase.assertIsInstance(payload["candidate_leads"], dict)
     testcase.assertIsInstance(payload["coverage_gaps"], list)
     testcase.assertIsInstance(payload["inspection_areas"], list)
@@ -119,6 +121,7 @@ class McpToolsTest(unittest.TestCase):
         for description in descriptions.values():
             self.assertIn("packet_contract", description)
             self.assertIn("proven_facts", description)
+            self.assertIn("covered_areas", description)
             self.assertIn("candidate_leads", description)
             self.assertIn("coverage_gaps", description)
             self.assertIn("inspection_areas", description)
@@ -128,6 +131,8 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(payload["answerability"]["status"], "answerable")
         self.assertEqual(payload["proven_facts"]["status"], "found")
+        self.assertEqual(payload["covered_areas"][0]["area"], "services")
+        self.assertEqual(payload["covered_areas"][0]["confidence"], "kg_static")
         self.assertEqual(payload["candidate_leads"]["status"], "empty")
 
     def test_default_tool_metadata_treats_empty_missing_status_as_not_answerable(self) -> None:
@@ -135,6 +140,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(payload["answerability"]["status"], "not_answerable")
         self.assertEqual(payload["proven_facts"]["status"], "empty")
+        self.assertEqual(payload["covered_areas"], [])
         self.assertEqual(payload["candidate_leads"]["status"], "empty")
 
     def test_default_tool_metadata_does_not_downgrade_found_candidate_matches(self) -> None:
@@ -276,10 +282,12 @@ class McpToolsTest(unittest.TestCase):
         with _fixture_snapshot(extra_consumers=1) as kg:
             result = call_tool(kg, "planning_context", {"repo": "consumer-0"})
 
-        self.assertEqual(result["status"], "not_found")
-        self.assertEqual(result["answerability"]["status"], "not_answerable")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertEqual(result["dependencies"], [])
         self.assertEqual(result["snapshot_scope"]["repo"], "consumer-0")
         self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
+        self.assertEqual(result["intent_answerability"]["repo_inventory"]["status"], "answerable")
         self.assertTrue(any("snapshot_summary" in action for action in result["next_actions"]))
 
     def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
@@ -1338,6 +1346,17 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(missing["answerability"]["status"], "not_answerable")
         self.assertEqual(missing["answerability"]["missing_fact_families"], ["primary_anchor"])
 
+    def test_planning_context_repo_scope_is_partial_when_inventory_exists_without_first_class_rows(self) -> None:
+        with _fixture_snapshot(symbol_repo="ml") as kg:
+            result = call_tool(kg, "planning_context", {"repo": "ml"})
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
+        self.assertEqual(result["intent_answerability"]["repo_inventory"]["status"], "answerable")
+        self.assertEqual(result["intent_answerability"]["deploy_or_runtime_decision"]["covered_fields"], ["runtime_architecture"])
+        self.assertTrue(any("snapshot_scope" in action for action in result["next_actions"]))
+
     def test_planning_context_related_sections_are_capped(self) -> None:
         with _fixture_snapshot(extra_consumers=125) as kg:
             result = call_tool(kg, "planning_context", {"event_channel": "orders-created", "limit": 100})
@@ -1424,9 +1443,17 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(packet["summary"]["consumer_fact_count"], 1)
         self.assertEqual(packet["summary"]["consumer_service_count"], 1)
         self.assertEqual(packet["summary"]["host_resolution_kind_counts"], {"env_backed_unresolved": 1})
+        self.assertIn("claim_boundary", packet)
         self.assertEqual(packet["consumers"][0]["consumer"]["slug"], "web")
         self.assertEqual(packet["consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
         self.assertEqual(packet["consumers"][0]["match_basis"], "literal_normalized_endpoint_path_and_compatible_method")
+        self.assertEqual(result["intent_answerability"]["deploy_order_or_schema_safety"]["status"], "partial")
+        self.assertEqual(result["intent_answerability"]["deploy_runtime_mapping"]["covered_fields"], [])
+        self.assertIn(
+            "canonical_service_deploy_blocker",
+            result["intent_answerability"]["deploy_order_or_schema_safety"]["missing_fact_families"],
+        )
+        self.assertEqual(result["intent_answerability"]["authorization_surface"]["covered_fields"], [])
         self.assertTrue(any("endpoint_consumers" in action for action in result["next_actions"]))
 
     def test_get_service_brief_surfaces_operational_deploy_candidates(self) -> None:
@@ -1442,6 +1469,7 @@ class McpToolsTest(unittest.TestCase):
         )
         self.assertEqual(surfaces["evidence_partition"]["known_linked"]["status"], "found")
         self.assertEqual(surfaces["evidence_partition"]["unlinked_evidence"]["status"], "empty")
+        self.assertEqual(result["intent_answerability"]["deploy_runtime_mapping"]["covered_fields"], [])
         self.assertTrue(
             any(
                 item["contract"] == "canonical_service_deploy_blocker"
@@ -1485,6 +1513,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(surfaces["domain_route_candidates"][0]["match_basis"], "route_deploy_target_linked_to_service")
         self.assertEqual(surfaces["deploy_target_candidates"], [])
         self.assertEqual(surfaces["deploy_link_facts"][0]["predicate"], "DEPLOYS_VIA_CONFIG")
+        self.assertEqual(
+            result["intent_answerability"]["deploy_runtime_mapping"]["covered_fields"],
+            ["deploy_mappings", "operational_surfaces.deploy_runtime_units"],
+        )
 
     def test_get_service_brief_treats_provider_any_method_as_compatible(self) -> None:
         with _fixture_snapshot(
@@ -1573,7 +1605,7 @@ class McpToolsTest(unittest.TestCase):
                 {
                     "repo": "payments",
                     "changed_files": ["payments/checkout.py"],
-                    "requested_surfaces": ["UI", "scheduled_jobs", "SQS", "workers", "tracking"],
+                    "requested_surfaces": ["UI", "scheduled_jobs", "SQS", "workers", "tracking", "contracts"],
                     "limit": 10,
                 },
             )
@@ -1585,10 +1617,49 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(statuses["ui_screens"]["status"], "unlinked")
         self.assertEqual(statuses["sqs_consumers"]["status"], "known")
         self.assertEqual(statuses["tracking_paths"]["status"], "missing")
+        self.assertEqual(statuses["schemas"]["status"], "missing")
         self.assertIn("ui_screens", result["answerability"]["unlinked_fact_families"])
         self.assertNotIn("sqs_consumers", result["answerability"]["missing_fact_families"])
         self.assertIn("tracking_paths", result["answerability"]["missing_fact_families"])
+        self.assertIn("schemas", result["answerability"]["missing_fact_families"])
         self.assertEqual(result["review_answer_packet"]["surface_status"], result["surface_status"])
+
+    def test_review_context_accepts_schema_surface_aliases_as_missing_surface(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "requested_surfaces": ["api_surfaces", "models", "serializers", "schemas"],
+                    "limit": 10,
+                },
+            )
+
+        statuses = {row["surface"]: row for row in result["surface_status"]}
+        self.assertEqual(statuses["schemas"]["status"], "missing")
+        self.assertEqual(statuses["schemas"]["known_count"], 0)
+        self.assertIn("schemas", result["answerability"]["missing_fact_families"])
+
+    def test_review_context_schema_surface_uses_serializer_schema_evidence(self) -> None:
+        with _fixture_snapshot(app_schema_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "requested_surfaces": ["contracts", "serializers"],
+                    "limit": 10,
+                },
+            )
+
+        statuses = {row["surface"]: row for row in result["surface_status"]}
+        self.assertEqual(statuses["schemas"]["status"], "known")
+        self.assertEqual(statuses["serializers"]["status"], "known")
+        self.assertEqual(statuses["schemas"]["evidence_path"], "application_impact.same_repo_surfaces.serializers")
+        self.assertNotIn("schemas", result["answerability"]["missing_fact_families"])
 
     def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
@@ -2142,6 +2213,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(impact["mode"], "ambiguous")
         self.assertFalse(impact["result_computed"])
         self.assertEqual(len(impact["candidate_impact_previews"]), 2)
+        self.assertIn("not proof", impact["candidate_impact_preview_claim_boundary"])
+        self.assertIn("not semantic intent", impact["candidate_impact_previews"][0]["claim_boundary"])
         self.assertIn("Do not aggregate all candidates", impact["ambiguity_guidance"])
         self.assertGreaterEqual(
             impact["candidate_impact_previews"][0]["direct_caller_count"],
@@ -2212,6 +2285,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(consumers["status"], "not_found")
         self.assertEqual(consumers["answerability"]["status"], "partial")
         self.assertEqual(consumers["answerability"]["missing_fact_families"], ["static_event_facts"])
+        self.assertEqual(consumers["event_inventory"]["matched_fact_count"], 0)
+        self.assertGreater(consumers["event_inventory"]["snapshot_event_channel_entity_count"], 0)
+        self.assertIn("snapshot_* counts", consumers["event_inventory"]["claim_boundary"])
+        self.assertEqual(consumers["inspection_areas"][0]["trigger"], "event_channel_static_miss")
+        self.assertIn("missing-channel", consumers["inspection_areas"][0]["search_terms"])
         self.assertTrue(any("no indexed static event facts" in action for action in consumers["next_actions"]))
 
     def test_event_tools_scan_all_matching_facts_before_limiting(self) -> None:
@@ -2717,6 +2795,7 @@ class _fixture_snapshot:
         upstream_checkout_cycle: bool = False,
         containing_checkout_class: bool = False,
         app_surface: bool = False,
+        app_schema_surface: bool = False,
         static_hosting_domain_reference: bool = False,
         kubernetes_operational_deploy: bool = False,
         runtime_pressure_routes: int = 0,
@@ -2744,6 +2823,7 @@ class _fixture_snapshot:
         self.upstream_checkout_cycle = upstream_checkout_cycle
         self.containing_checkout_class = containing_checkout_class
         self.app_surface = app_surface
+        self.app_schema_surface = app_schema_surface
         self.static_hosting_domain_reference = static_hosting_domain_reference
         self.kubernetes_operational_deploy = kubernetes_operational_deploy
         self.runtime_pressure_routes = runtime_pressure_routes
@@ -2976,6 +3056,17 @@ class _fixture_snapshot:
             kind="CodeModule",
             identity={"tenant_id": "default", "repo": "web", "module": "src.views.PaymentsScreen"},
             properties={"path": "src/views/PaymentsScreen.tsx"},
+        )
+        app_schema_symbol = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.schemas",
+                "qualname": "PaymentSchema",
+                "symbol_kind": "class",
+            },
+            properties={"path": "payments/schemas.py", "line": 6, "end_line": 16},
         )
         infra_service = Entity(
             kind="Service",
@@ -3356,6 +3447,7 @@ class _fixture_snapshot:
                 if self.app_surface
                 else []
             ),
+            *([app_schema_symbol] if self.app_schema_surface else []),
             *([infra_service, hosted_domain] if self.static_hosting_domain_reference else []),
             *runtime_services,
             *runtime_domains,
