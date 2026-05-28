@@ -21,6 +21,14 @@ def main() -> None:
     callers.add_argument("--include-all", action="store_true")
     callers.add_argument("--limit", type=int, default=25)
 
+    reverse = subparsers.add_parser("reverse-impact")
+    reverse.add_argument("symbol")
+    reverse.add_argument("--path")
+    reverse.add_argument("--line", type=int)
+    reverse.add_argument("--include-all", action="store_true")
+    reverse.add_argument("--depth", type=int, default=3)
+    reverse.add_argument("--limit", type=int, default=25)
+
     callees = subparsers.add_parser("find-callees")
     callees.add_argument("symbol")
     callees.add_argument("--path")
@@ -143,6 +151,15 @@ def main() -> None:
         result = kg.find_callers(
             args.symbol,
             limit=args.limit,
+            path=args.path,
+            line=args.line,
+            include_all=args.include_all,
+        )
+    elif args.command == "reverse-impact":
+        result = kg.reverse_impact(
+            args.symbol,
+            depth=min(max(1, args.depth), 6),
+            limit=min(max(1, args.limit), 100),
             path=args.path,
             line=args.line,
             include_all=args.include_all,

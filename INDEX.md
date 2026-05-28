@@ -11,6 +11,7 @@ Annotated index for agents and contributors. Read this before opening many docs 
 | [docs/PRD.md](docs/PRD.md) | Product | Product 1 rationale, target users, eight MCP tools, UX principles, surfaces, and risks. Read before changing product scope, MCP contracts, or user-facing claims. |
 | [docs/PLATFORM-PRD.md](docs/PLATFORM-PRD.md) | Product | Broader platform direction beyond the local KG prototype. Read when a change might affect enterprise context graph, hosted surfaces, or long-term platform positioning. |
 | [docs/mcp/HOST_SKILL_EVALUATION.md](docs/mcp/HOST_SKILL_EVALUATION.md) | MCP/product | Checklist for testing whether Codex and Claude Code actually use the installed SuperContext MCP skill during planning, coding, and review. Read when evaluating host-agent behavior after installing MCP skills. |
+| [docs/mcp/MCP-TOOL-OUTPUT-FIELDS.md](docs/mcp/MCP-TOOL-OUTPUT-FIELDS.md) | MCP/product | Field reference for every exposed MCP tool response, common row shapes, prompt usage notes, and known duplicate follow-up/inspection fields. Read before changing tool outputs, packet fields, or prompt routing. |
 
 ## Architecture Decisions
 

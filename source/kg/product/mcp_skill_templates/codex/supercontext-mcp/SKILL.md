@@ -21,6 +21,12 @@ supercontext-init --serve
 
 Register the printed local HTTP `/mcp` URL in Codex. Keep the server loopback-bound unless the user intentionally accepts an unauthenticated public bind.
 
+## Common Packet Contract
+
+For every MCP result, read `packet_contract`, `answerability`, `proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas` before deciding what to inspect next. `proven_facts` points to KG-backed/static fields and their counts; cite the underlying detailed rows or file/line evidence, not just the index. `candidate_leads` contains plausible but unverified leads such as import-only consumers, unlinked runtime evidence, ambiguous candidates, or inferred guidance. `coverage_gaps` lists what the KG could not prove.
+
+Use SuperContext as a head start for source inspection: do not reread every proven row when the packet already covers it, but do inspect uncovered `inspection_areas` when task quality depends on completeness. If the packet is compacted or too large, prioritize the most task-relevant `inspection_areas`; still name the other concrete refs/search terms as follow-up areas when they matter. Do not claim candidate leads, missing gaps, or unsupported scopes as facts until source inspection verifies them.
+
 ## Planning
 
 Call `planning_context` before broad search for broad planning, architecture, dependency, or impact questions when the user task names or implies a service, repo, symbol, package, endpoint, event channel, domain, or file path.
@@ -30,7 +36,13 @@ Use structured anchors when known:
 - `service`, `repo`, `symbol`, `path`, `line`
 - `package`, `endpoint`, `event_channel`, `domain`
 
-Read `summary`, `inventory`, `entry_points`, `related_facts`, `source_coordinates`, `answerability`, and any `runtime_architecture.answer_packet.investigation_brief` before deciding what to inspect next. For dependency questions, check `related_facts.dependency_importers`; for ownership questions, check `ownership_context.answer_packet` and do not promote package authors or maintainers to service owner unless explicit CODEOWNERS/catalog/owner metadata proves ownership. For endpoint authorization/security questions, check top-level `authz_surface`, `related_facts.authz_surface`, or `get_service_brief.authz_surface`; read `review_leads` first, then `applied_policies`, `in_method_checks`, `inspection_areas`, `inspection_index`, and `unsupported_scopes`, and use them as a targeted source-inspection plan. Separate endpoint-handler bindings, applied policies, in-method checks, unsupported scopes, and missing/unknown authz, and do not treat a missing policy as proven public access. For service planning, check `service_operational_surfaces.evidence_partition`, `deploy_runtime_units`, and `deploy_order_guidance`, and keep buckets separate: `known_linked` is exact KG/repo-linked evidence, `unlinked_evidence` is source leads only, and `missing_contracts` are claims SuperContext cannot prove. Treat `service_operational_surfaces.deploy_link_facts` / `DEPLOYS_VIA_CONFIG` and `deploy_runtime_units` as service-to-deploy-target evidence; treat `deploy_order_guidance` as practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. Use `investigation_brief.recommended_source_checks` and `source_coordinates` for targeted source reads instead of starting with broad grep.
+Read `summary`, `inventory`, `entry_points`, `related_facts`, `source_coordinates`, and the common packet fields before deciding what to inspect next.
+
+- Dependency questions: check `related_facts.dependency_importers`.
+- Ownership questions: check `ownership_context.answer_packet`; package authors and maintainers are not service owners unless explicit CODEOWNERS/catalog/owner metadata proves ownership.
+- Endpoint authorization/security questions: check top-level `authz_surface`, `related_facts.authz_surface`, or `get_service_brief.authz_surface`. Read `review_leads`, `applied_policies`, `in_method_checks`, `inspection_areas`, `inspection_index`, and `unsupported_scopes`; do not treat a missing policy as proven public access.
+- Service planning: check `service_operational_surfaces.evidence_partition`, `service_operational_surfaces.deploy_link_facts` / `DEPLOYS_VIA_CONFIG`, `deploy_runtime_units`, and `deploy_order_guidance`. Keep `known_linked`, `unlinked_evidence`, and `missing_contracts` separate. Do not promote unlinked domain routes into deploy proof.
+- Source inspection: use `inspection_areas`, `runtime_architecture.answer_packet.investigation_brief.recommended_source_checks`, and `source_coordinates` for targeted reads instead of starting with broad grep.
 
 The primary `limit` controls top-level result rows. Nested packets such as `entry_points`, `related_facts`, and `source_coordinates` are intentionally capped by the returned `summary.section_limit` to keep planning context compact. Fleet planning packets use a compact output cap; anchored planning packets allow more detail but are still bounded. For runtime architecture questions, read `runtime_architecture.answer_packet.investigation_brief` first. Use `runtime_anchors`, `known_routes`, `unlinked_runtime_leads`, `deploy_units`, `consumer_links`, and `recommended_source_checks` as the investigation plan, then inspect files or call `planning_context` again with narrower `repo`, `service`, `domain`, or `endpoint` anchors for omitted detail. In the final answer, include verified `unlinked_runtime_leads` such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat that they are source leads rather than proven route mappings. Before finalizing, compare the answer against every category named by the user and every category named in the expected answer shape. If any requested category is missing, partially covered, or only present as a missing fact family, do a targeted follow-up source read/search or a narrower SuperContext call for that category, then explicitly mark it found or unknown. `runtime_architecture.summary.client_endpoint_call_count` is path-scoped candidate fact count, so inspect `endpoint_consumer_missing_method_drop_count` before treating it as usable consumer evidence.
 
@@ -41,12 +53,17 @@ If `answerability.status` is `answerable`, answer from returned graph context wi
 Use SuperContext for exact graph questions while editing:
 
 - `find_callers` before changing a known symbol with downstream users.
+- `reverse_impact` for reverse dependency and caller-impact analysis from a resolved symbol anchor; use it when you need transitive upstream callers, entry-point leads, or `inspection_areas` instead of manually chaining repeated `find_callers` calls.
 - `find_callees` to understand immediate dependencies of a changed symbol.
 - `blast_radius` only for static downstream CALLS closure from an exact symbol.
 - `get_service_brief` for a concise service fact sheet when no broader planning or impact context is needed; read `operational_surfaces.evidence_partition` and `operational_surfaces.deploy_link_facts`, and do not promote `unlinked_evidence` into deploy/runtime proof.
 - `get_event_consumers` and `get_event_producers` for exact known async channel impact.
 
-Still read the relevant source files before editing. Do not treat SuperContext as a replacement for code inspection.
+Still read the relevant source files before editing. If `reverse_impact` is ambiguous, use `candidate_impact_previews` and `disambiguation.retry_arguments` to choose an exact anchor. Treat `reverse_impact.terminal_import_consumer_leads` as source-inspection leads, not runtime-call proof. Use common `inspection_areas` first, and `reverse_impact.source_inspection_areas` as the tool-specific detail, to inspect tests, scripts, notebooks, entry points, and import-only modules outside the returned CALLS graph. Do not treat SuperContext as a replacement for code inspection.
+
+When the user gives only an unqualified symbol name, call the symbol tool with that name first so SuperContext can surface all candidates. Add `path`/`line` only when the user supplied that location or a prior SuperContext result returned it as a disambiguation candidate; do not use a first source-search hit as the anchor.
+
+For ambiguous symbol-impact results, do not aggregate all candidates unless the user asks for all matches or exploratory impact. Use `candidate_impact_previews` as ranking hints, then retry one exact candidate when the intended edit site is clear; otherwise report the ambiguity and ask for `path`/`line`.
 
 ## Review
 
@@ -56,7 +73,7 @@ Before reviewing a diff, call `review_context` with:
 - `changed_files`
 - `changed_ranges` when line ranges are known
 
-Read `changed_surface`, `impact`, `runtime_surfaces`, `framework_impact`, `application_impact`, `source_coordinates`, `answerability`, and `unsupported_review_scopes` before deciding what to inspect next. Use `application_impact.same_repo_surfaces` for app-level API/model/serializer/worker/scheduled-job context, `application_impact.runtime_facts` for app-scoped typed runtime facts, and `application_impact.cross_repo_name_leads` only as unlinked source-inspection leads, not as proven impact. Use `source_coordinates` for targeted diff/source reads. Drill into primitive tools only for concrete follow-up findings or missing details.
+Read `changed_surface`, `impact`, `runtime_surfaces`, `framework_impact`, `application_impact`, `source_coordinates`, `answerability`, `proven_facts`, `candidate_leads`, `coverage_gaps`, `inspection_areas`, and `unsupported_review_scopes` before deciding what to inspect next. Use `application_impact.same_repo_surfaces` for app-level API/model/serializer/worker/scheduled-job context, `application_impact.runtime_facts` for app-scoped typed runtime facts, and `application_impact.cross_repo_name_leads` only as unlinked source-inspection leads, not as proven impact. Use `inspection_areas` and `source_coordinates` for targeted diff/source reads. Drill into primitive tools only for concrete follow-up findings or missing details.
 
 ## Trace Evaluation
 

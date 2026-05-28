@@ -72,6 +72,14 @@ python -m source.scripts.coverage_report \
 
 Prefer small, language-scoped modules over large generic scripts. Keep deterministic extraction and normalization separate. Use descriptive names such as `PythonAstExtractor`, `TypeScriptCompilerApiExtractor`, and `normalize_import`. Python code should follow standard 4-space indentation and type hints where useful. Avoid LLM calls in default extraction paths; if enrichment is added, route it through `source.kg.integrations.llm.LightLlmClient`.
 
+## Prompt and Tool Wording Discipline
+
+Tool descriptions, MCP instructions, and skill text are routing contracts. Do not phrase them around a goldset question, fixture wording, repo name, service name, or one benchmark scenario. Describe the semantic operation, required anchors, evidence contract, and when to inspect source next.
+
+SuperContext's product position is to give the agent the best head start possible, not to return everything or replace source inspection. If a packet must omit detail for budget reasons, keep the highest-signal evidence rows and add explicit inspection leads for omitted important rows with file/path/location hints where available; count-only omissions are not useful.
+
+When fixing an eval miss, ask whether the wording and implementation would still make sense for unrelated OSS repositories and adjacent questions. Ask Claude Code specifically whether the change is overfit or makes the general OSS product stronger before finalizing.
+
 ## Testing Guidelines
 
 There is no full test suite yet. For now, verify changes with `compileall`, at least one KG build, and one or more query smoke checks. For behavior changes, add or update a concise note under `docs/evaluation/` with before/after results. Do not claim language support without fixture evidence.
@@ -157,7 +165,7 @@ For iterative MCP quality work, use tiered validation. Do not treat a single-que
 - Before merge or before claiming a direction-level improvement, run the full 18-question A/B, or full 18 with reused MCP-off records if the harness, prompts, fixtures, and task text are unchanged and only MCP/KG behavior changed.
 - Recompute MCP-off only for fresh merge-gating runs, new baselines, harness changes that invalidate cached records, or when the task prompt/fixture changed.
 - Report the previous-loss-set outcome after focused wins, not only the target question. If a target win creates or preserves other MCP-off wins, classify those regressions before further coding.
-- Use a proper judge pass for comparisons; raw answer inspection is acceptable for diagnosis but not for claiming an eval win.
+- Use `gpt-5.4-mini` for A/B judge passes unless the user explicitly changes the judge model. This is a local evaluation alias supplied to the A/B judge runner in this workspace, not a public OpenAI model SKU or checked-in portability contract; do not auto-substitute another model. If the judge provider rejects it, stop and ask. Raw answer inspection is acceptable for diagnosis but not for claiming an eval win.
 
 ## Pre-PR Validation Discipline
 

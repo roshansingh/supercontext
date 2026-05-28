@@ -26,6 +26,7 @@ SuperContext provides deterministic, source-cited context from the indexed repos
 - Broad planning, architecture, dependency, or impact question with a repo, service, symbol, package, endpoint, event channel, domain, or path anchor -> planning_context first.
 - PR or code review question with changed files or line ranges -> review_context first, then targeted primitive tools or source reads.
 - Exact reverse callers for a known symbol -> find_callers.
+- Reverse dependency or caller-impact analysis from a resolved symbol anchor -> reverse_impact.
 - Exact downstream callees for a known symbol -> find_callees.
 - Static downstream call closure from an exact edit-site symbol -> blast_radius.
 - Service endpoint/event/deploy fact sheet -> get_service_brief.
@@ -35,11 +36,19 @@ SuperContext provides deterministic, source-cited context from the indexed repos
 - Service/repo ownership question -> planning_context first and read ownership_context.answer_packet; package authors and package maintainers are candidates only, not service owners, unless explicit CODEOWNERS/catalog/owner metadata proves ownership.
 - Endpoint authorization/security question -> planning_context first and read top-level authz_surface.review_leads, applied_policies, in_method_checks, inspection_areas, inspection_index, and unsupported_scopes when present, related_facts.authz_surface as a compact reference, or get_service_brief.authz_surface for a known service; treat missing_declared_policy as a source-inspection lead, not proof of public access.
 
+## Common packet contract
+
+Every tool result includes `packet_contract`, `answerability`, `proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`. Treat these as the normalized first-read fields across all tools. Use `proven_facts` to find the strongest KG-backed fields, then cite the underlying evidence rows or file/line coordinates. Use `candidate_leads` and `inspection_areas` as the bounded source-inspection plan for uncovered tests, scripts, notebooks, entry points, import-only consumers, config, manifests, runtime routes, or other areas outside the proven packet. Use `coverage_gaps` to state what the graph could not prove. Do not claim candidate leads, missing gaps, or unsupported scopes as facts until source inspection verifies them.
+
 ## Answerability
 
-Read answerability, coverage_warnings, unsupported_scopes, and next_actions before finalizing. If a SuperContext result is partial, ambiguous, unsupported_by_current_kg, or not_found, say what the graph could not prove and inspect the relevant workspace source files with ordinary Read/Grep before finalizing. For runtime event time windows and deploy-safety claims, static graph facts are context only; inspect operational/config/source evidence. Do not treat a graph miss as proof of absence.
+Read answerability, proven_facts, candidate_leads, coverage_gaps, inspection_areas, coverage_warnings, unsupported_scopes, and next_actions before finalizing. If a SuperContext result is partial, ambiguous, unsupported_by_current_kg, or not_found, say what the graph could not prove and inspect the relevant workspace source files with ordinary Read/Grep before finalizing. For runtime event time windows and deploy-safety claims, static graph facts are context only; inspect operational/config/source evidence. Do not treat a graph miss as proof of absence.
 
-For symbol callers, callees, and blast-radius tools, an ambiguous result means no result was computed. Do not interpret an empty callers/callees/edges list as absence; use disambiguation.retry_arguments, a candidate qualified_name, or candidate path+line to retry the exact symbol.
+For symbol callers, reverse impact, callees, and blast-radius tools, an ambiguous result means no exact result was computed. Do not interpret an empty callers/edges/callees list as absence; use disambiguation.retry_arguments, candidate_impact_previews, a candidate qualified_name, or candidate path+line to retry the exact symbol. For reverse dependency or caller-impact analysis, prefer reverse_impact over manually chaining repeated find_callers calls, then verify the returned source coordinates and `inspection_areas`; `source_inspection_areas` is a compatibility alias with tool-specific detail.
+
+When the user gives only an unqualified symbol name, call the symbol tool with that name first so SuperContext can return candidate ambiguity. Do not add path or line from a first source-search hit unless the user supplied that location or a prior SuperContext disambiguation candidate did.
+
+For ambiguous symbol-impact results, do not aggregate all candidates unless the user asks for all matches or exploratory impact. Use candidate_impact_previews as ranking hints, then retry one exact candidate when the intended edit site is clear; otherwise report the ambiguity and ask for path/line.
 
 For service operational evidence, read operational_surfaces.evidence_partition or service_operational_surfaces.evidence_partition. Keep known_linked, unlinked_evidence, and missing_contracts separate: known_linked is exact KG/repo-linked evidence, unlinked_evidence is source leads only, and missing_contracts are claims the KG cannot prove. Treat deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof.
 

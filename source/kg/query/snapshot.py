@@ -12,9 +12,18 @@ from source.kg.core.store import read_jsonl
 
 from . import aggregations, path_search
 from .call_site import call_site_from_qualifier
+from .reverse_impact import reverse_impact_packet
 
 
 class KgSnapshot:
+    """Read-only KG snapshot plus query helpers shared by query submodules.
+
+    Underscore-prefixed symbol/fact helpers below are internal to the query
+    layer, not public CLI/API contracts. Query modules such as
+    reverse_impact may reuse them to keep symbol resolution, public row
+    formatting, import-consumer leads, and disambiguation behavior consistent.
+    """
+
     def __init__(self, snapshot_dir: str | Path) -> None:
         root = Path(snapshot_dir).expanduser().resolve()
         self.root: Path = root
@@ -29,6 +38,9 @@ class KgSnapshot:
         self.evidence_by_target = defaultdict(list)
         for row in self.evidence:
             self.evidence_by_target[row["target_id"]].append(row)
+        self._reverse_impact_incoming_call_facts_cache: dict[str, list[JsonObject]] | None = None
+        self._reverse_impact_class_symbol_index_cache: dict[tuple[object, object, object, object], JsonObject] | None = None
+        self._reverse_impact_init_symbol_index_cache: dict[tuple[object, object, object, object], JsonObject] | None = None
 
     def summary(self) -> JsonObject:
         by_kind: dict[str, int] = defaultdict(int)
@@ -194,6 +206,25 @@ class KgSnapshot:
             "edge_count": len(results),
             "edges": results,
         }
+
+    def reverse_impact(
+        self,
+        symbol_query: str,
+        depth: int = 3,
+        limit: int = 25,
+        path: str | None = None,
+        line: int | None = None,
+        include_all: bool = False,
+    ) -> JsonObject:
+        return reverse_impact_packet(
+            self,
+            symbol_query,
+            depth=depth,
+            limit=limit,
+            path=path,
+            line=line,
+            include_all=include_all,
+        )
 
     def modules_importing(self, package_name: str, limit: int = 25) -> list[JsonObject]:
         results: list[JsonObject] = []

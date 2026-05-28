@@ -16,6 +16,7 @@ from source.kg.product.mcp_tools import (
     _planning_context_has_resolved_anchor,
     _planning_context_authz_surface_reference,
     _planning_context_symbol_impact,
+    _with_default_tool_metadata,
     call_tool,
     tool_definitions,
 )
@@ -25,8 +26,10 @@ from source.kg.product.output_budget import (
     COMPACT_RUNTIME_HEADSTART_LIMIT,
     PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
     PLANNING_CONTEXT_MAX_CHARS,
+    RELATED_FACT_SECTION_KEYS,
     _BUDGET_BACKFILL_LIST_PATHS,
     _compact_authz_surface,
+    _compact_disambiguation,
     enforce_planning_context_budget,
 )
 from source.kg.product.runtime_architecture import runtime_architecture_packet
@@ -56,9 +59,21 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
     testcase.assertIn("coverage_warnings", payload)
     testcase.assertIn("unsupported_scopes", payload)
     testcase.assertIn("next_actions", payload)
+    testcase.assertIn("answerability", payload)
+    testcase.assertIn("proven_facts", payload)
+    testcase.assertIn("candidate_leads", payload)
+    testcase.assertIn("coverage_gaps", payload)
+    testcase.assertIn("inspection_areas", payload)
+    testcase.assertIn("packet_contract", payload)
     testcase.assertIsInstance(payload["coverage_warnings"], list)
     testcase.assertIsInstance(payload["unsupported_scopes"], list)
     testcase.assertIsInstance(payload["next_actions"], list)
+    testcase.assertIsInstance(payload["answerability"], dict)
+    testcase.assertIsInstance(payload["proven_facts"], dict)
+    testcase.assertIsInstance(payload["candidate_leads"], dict)
+    testcase.assertIsInstance(payload["coverage_gaps"], list)
+    testcase.assertIsInstance(payload["inspection_areas"], list)
+    testcase.assertIsInstance(payload["packet_contract"], dict)
 
 
 class McpToolsTest(unittest.TestCase):
@@ -70,6 +85,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(schemas["search_services"]["properties"]["query"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["path"]["type"], ["string", "null"])
         self.assertEqual(schemas["find_callers"]["properties"]["line"]["type"], ["integer", "null"])
+        self.assertEqual(schemas["reverse_impact"]["properties"]["depth"]["default"], 3)
+        self.assertEqual(schemas["reverse_impact"]["properties"]["include_all"]["default"], False)
         self.assertEqual(schemas["planning_context"]["properties"]["symbol"]["type"], ["string", "null"])
         self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
         self.assertEqual(schemas["review_context"]["properties"]["requested_surfaces"]["type"], "array")
@@ -84,14 +101,78 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
         self.assertIn("runtime_architecture", descriptions["planning_context"])
+        self.assertIn("related_facts.symbol_impact.reverse_impact", descriptions["planning_context"])
         self.assertIn("ownership_context", descriptions["planning_context"])
         self.assertIn("review_answer_packet", descriptions["review_context"])
         self.assertIn("requested_surfaces", descriptions["review_context"])
         self.assertIn("framework_impact", descriptions["review_context"])
         self.assertIn("application_impact", descriptions["review_context"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callers"])
+        self.assertIn("unqualified symbol name", schemas["reverse_impact"]["properties"]["symbol"]["description"])
+        self.assertIn("__init__", descriptions["reverse_impact"])
+        self.assertIn("terminal import_consumer_leads", descriptions["reverse_impact"])
+        self.assertIn("source_inspection_areas", descriptions["reverse_impact"])
+        self.assertNotIn("what is affected if this symbol changes", descriptions["reverse_impact"])
+        self.assertNotIn("what breaks if I change this", descriptions["reverse_impact"])
         self.assertIn("import_consumer_leads", descriptions["find_callers"])
         self.assertIn("disambiguation.retry_arguments", descriptions["find_callees"])
+        for description in descriptions.values():
+            self.assertIn("packet_contract", description)
+            self.assertIn("proven_facts", description)
+            self.assertIn("candidate_leads", description)
+            self.assertIn("coverage_gaps", description)
+            self.assertIn("inspection_areas", description)
+
+    def test_default_tool_metadata_treats_missing_status_as_answerable(self) -> None:
+        payload = _with_default_tool_metadata({"services": [{"name": "api"}]}, tool_name="search_services")
+
+        self.assertEqual(payload["answerability"]["status"], "answerable")
+        self.assertEqual(payload["proven_facts"]["status"], "found")
+        self.assertEqual(payload["candidate_leads"]["status"], "empty")
+
+    def test_default_tool_metadata_treats_empty_missing_status_as_not_answerable(self) -> None:
+        payload = _with_default_tool_metadata({"query": "api"}, tool_name="search_services")
+
+        self.assertEqual(payload["answerability"]["status"], "not_answerable")
+        self.assertEqual(payload["proven_facts"]["status"], "empty")
+        self.assertEqual(payload["candidate_leads"]["status"], "empty")
+
+    def test_default_tool_metadata_does_not_downgrade_found_candidate_matches(self) -> None:
+        payload = _with_default_tool_metadata(
+            {"status": "found", "candidates": [{"qualified_name": "pkg.Symbol"}]},
+            tool_name="find_callers",
+        )
+
+        self.assertEqual(payload["answerability"]["status"], "answerable")
+        self.assertEqual(payload["candidate_leads"]["status"], "found")
+        self.assertEqual(payload["candidate_leads"]["sources"][0]["lead_kind"], "candidate_match")
+
+    def test_default_tool_metadata_ignores_found_status_without_rows(self) -> None:
+        payload = _with_default_tool_metadata(
+            {"status": "found", "import_consumer_leads": {"status": "found"}},
+            tool_name="find_callers",
+        )
+
+        self.assertEqual(payload["candidate_leads"]["status"], "empty")
+        self.assertEqual(payload["answerability"]["status"], "answerable")
+
+    def test_default_tool_metadata_does_not_count_empty_row_lists_as_facts(self) -> None:
+        payload = _with_default_tool_metadata(
+            {"status": "found", "import_consumer_leads": {"lead_count": 5, "leads": []}},
+            tool_name="find_callers",
+        )
+
+        self.assertEqual(payload["candidate_leads"]["status"], "empty")
+
+    def test_default_tool_metadata_marks_unknown_status_partial(self) -> None:
+        payload = _with_default_tool_metadata(
+            {"status": "ok", "services": [{"name": "api"}]},
+            tool_name="search_services",
+        )
+
+        self.assertEqual(payload["answerability"]["status"], "partial")
+        self.assertEqual(payload["answerability"]["missing_fact_families"], ["unknown_status"])
+        self.assertEqual(payload["proven_facts"]["status"], "found")
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:
@@ -157,6 +238,10 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ambiguous")
         self.assertGreaterEqual(len(result["symbols"]), 2)
+        symbol_impact = result["related_facts"]["symbol_impact"]
+        self.assertEqual(symbol_impact["status"], "ambiguous")
+        self.assertEqual(symbol_impact["reverse_impact"]["status"], "ambiguous")
+        self.assertEqual(len(symbol_impact["reverse_impact"]["candidate_impact_previews"]), 2)
         self.assertTrue(result["next_actions"])
 
     def test_planning_context_multiple_primary_anchors_intersect(self) -> None:
@@ -781,6 +866,312 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(len(area["inspection_refs"]), COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
         self.assertTrue(area["inspection_refs_truncated"])
         self.assertEqual(area["omitted_inspection_ref_count"], 12 - COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
+
+    def test_common_metadata_preserves_existing_inspection_area_keys(self) -> None:
+        payload = _with_default_tool_metadata(
+            {
+                "status": "found",
+                "inspection_areas": [
+                    {
+                        "area": "omitted_endpoint_rows",
+                        "trigger": "truncated",
+                        "reason": "large authz packet",
+                        "inspection_refs": [{"endpoint": {"path": "/orders/"}}],
+                        "inspection_refs_truncated": True,
+                        "omitted_inspection_ref_count": 7,
+                    }
+                ],
+            },
+            tool_name="planning_context",
+        )
+
+        area = payload["inspection_areas"][0]
+        self.assertEqual(area["area"], "omitted_endpoint_rows")
+        self.assertEqual(area["trigger"], "truncated")
+        self.assertTrue(area["inspection_refs_truncated"])
+        self.assertEqual(area["omitted_inspection_ref_count"], 7)
+
+    def test_common_metadata_normalizes_incomplete_inspection_area_rows(self) -> None:
+        payload = _with_default_tool_metadata(
+            {
+                "status": "found",
+                "inspection_areas": [
+                    {
+                        "path_hints": ["app/views.py"],
+                        "repos": ["api"],
+                    }
+                ],
+            },
+            tool_name="planning_context",
+        )
+
+        area = payload["inspection_areas"][0]
+        self.assertEqual(area["area"], "tool_specific")
+        self.assertEqual(area["trigger"], "tool_specific")
+        self.assertEqual(area["inspection_refs"], [{"path": "app/views.py", "repo": "api"}])
+
+    def test_common_metadata_wraps_structured_inspection_refs_without_dropping(self) -> None:
+        payload = _with_default_tool_metadata(
+            {
+                "status": "found",
+                "inspection_areas": [
+                    {
+                        "area": "authz_checks",
+                        "inspection_refs": {"repo": "api", "path": "app/views.py", "line_start": 12},
+                        "search_terms": "permission_classes",
+                        "authz_status": "missing_declared_policy",
+                    }
+                ],
+            },
+            tool_name="planning_context",
+        )
+
+        area = payload["inspection_areas"][0]
+        self.assertEqual(area["inspection_refs"], [{"repo": "api", "path": "app/views.py", "line_start": 12}])
+        self.assertEqual(area["search_terms"], ["permission_classes"])
+        self.assertEqual(area["authz_status"], "missing_declared_policy")
+
+    def test_related_fact_budget_key_allowlist_matches_planning_context_output(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {})
+
+        self.assertEqual(set(result["related_facts"]), set(RELATED_FACT_SECTION_KEYS))
+
+    def test_compact_disambiguation_preserves_retry_argument_shape(self) -> None:
+        list_retry = _compact_disambiguation(
+            {
+                "retry_arguments": [
+                    {"symbol": "a"},
+                    {"symbol": "b"},
+                ]
+            }
+        )
+        dict_retry = _compact_disambiguation({"retry_arguments": {"symbol": "a"}})
+
+        self.assertEqual(list_retry["retry_arguments"], [{"symbol": "a"}, {"symbol": "b"}])
+        self.assertEqual(dict_retry["retry_arguments"], {"symbol": "a"})
+
+    def test_output_budget_preserves_compact_symbol_impact_headstart(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "summary": {"symbol_count": 1},
+            "runtime_architecture": {
+                "scope": {"kind": "fleet"},
+                "summary": {"runtime_building_block_count": 0, "domain_routing_map_count": 12},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [
+                        {
+                            "status": "unlinked_domain_reference",
+                            "domain": {"name": f"domain-{index}.example.test"},
+                            "evidence_coordinates": [{"repo": "repo", "path": "infra.tf", "line_start": index + 1}],
+                            "payload": "x" * 5_000,
+                        }
+                        for index in range(12)
+                    ],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "typed facts only",
+                },
+            },
+            "related_facts": {
+                "service_brief": {
+                    "status": "found",
+                    "summary": {"endpoint_fact_count": 12},
+                    "endpoints": [
+                        {
+                            "predicate": "EXPOSES_ENDPOINT",
+                            "endpoint": {"path": f"/endpoint-{index}"},
+                            "source_coordinates": [{"repo": "api", "path": "api/routes.py", "line_start": index + 1}],
+                            "payload": "x" * 5_000,
+                        }
+                        for index in range(12)
+                    ],
+                },
+                "dependency_importers": {
+                    "status": "found",
+                    "package_count": 1,
+                    "importers": [
+                        {
+                            "name": f"importer-{index}",
+                            "path": f"pkg/module_{index}.py",
+                            "payload": "x" * 5_000,
+                        }
+                        for index in range(12)
+                    ],
+                },
+                "inventory": {
+                    "status": "found",
+                    "top_dependencies": [
+                        {
+                            "name": f"dep-{index}",
+                            "sample_evidence": [{"payload": "x" * 5_000}],
+                        }
+                        for index in range(12)
+                    ],
+                },
+                "runtime_architecture": {
+                    "status": "found",
+                    "summary": {"deploy_unit_count": 2},
+                    "answer_packet": {
+                        "deploy_kind_counts": {"component_deploy_kind_counts": {"kubernetes": 1}},
+                        "missing_fact_families": ["production_deploy_mapping"],
+                    },
+                },
+                "dependencies": [
+                    {
+                        "predicate": "IMPORTS",
+                        "name": f"dep-{index}",
+                        "source_coordinates": [{"repo": "api", "path": "requirements.txt", "line_start": index + 1}],
+                        "payload": "x" * 5_000,
+                    }
+                    for index in range(12)
+                ],
+                "symbol_impact": {
+                    "status": "found",
+                    "symbol": {
+                        "qualified_name": "lib.features.build_features",
+                        "qualname": "build_features",
+                        "repo": "lib",
+                        "path": "lib/features.py",
+                        "line": 10,
+                        "evidence": [{"payload": "x" * 5_000}],
+                    },
+                    "reverse_impact": {
+                        "status": "found",
+                        "summary": {"affected_symbol_count": 2, "constructor_bridge_count": 1},
+                        "tiers": [
+                            {
+                                "depth": 1,
+                                "symbol_count": 1,
+                                "symbols": [
+                                    {
+                                        "depth": 1,
+                                        "symbol": {
+                                            "qualified_name": "train.Builder.build_features",
+                                            "qualname": "Builder.build_features",
+                                            "repo": "train",
+                                            "path": "train/pipeline.py",
+                                            "line": 40,
+                                            "evidence": [{"payload": "x" * 5_000}],
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "depth": 2,
+                                "symbol_count": 1,
+                                "symbols": [
+                                    {
+                                        "depth": 2,
+                                        "symbol": {
+                                            "qualified_name": "api.TrainView.post",
+                                            "qualname": "TrainView.post",
+                                            "repo": "api",
+                                            "path": "api/views.py",
+                                            "line": 5,
+                                            "evidence": [{"payload": "x" * 5_000}],
+                                        },
+                                    }
+                                ],
+                            },
+                        ],
+                        "terminal_import_consumer_leads": [
+                            {
+                                "depth": 2,
+                                "for_symbol": {
+                                    "qualified_name": "api.TrainView.post",
+                                    "qualname": "TrainView.post",
+                                    "repo": "api",
+                                    "path": "api/views.py",
+                                    "line": 5,
+                                },
+                                "import_consumer_leads": {
+                                    "status": "found",
+                                    "lead_count": 1,
+                                    "leads": [
+                                        {
+                                            "lead_kind": "import_consumer",
+                                            "importer": {
+                                                "display_name": "api.views",
+                                                "repo": "api",
+                                                "path": "api/views.py",
+                                            },
+                                            "importer_module_symbols": [
+                                                {
+                                                    "qualified_name": "api.TrainView.post",
+                                                    "qualname": "TrainView.post",
+                                                    "repo": "api",
+                                                    "path": "api/views.py",
+                                                    "line": 5,
+                                                }
+                                            ],
+                                            "fact": {
+                                                "evidence": [
+                                                    {
+                                                        "bytes_ref": {
+                                                            "repo": "api",
+                                                            "path": "api/views.py",
+                                                            "line_start": 2,
+                                                            "line_end": 2,
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "source_inspection_areas": [
+                            {
+                                "area": "same_repo_tests_scripts_notebooks",
+                                "repos": ["lib"],
+                                "path_hints": ["lib/features.py"],
+                                "search_terms": ["build_features(", "lib.features.build_features"],
+                            }
+                        ],
+                    },
+                }
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_planning_context_budget(
+            result,
+            max_chars=9_000,
+            preserve_planning_sections=True,
+        )
+
+        serialized = canonical_json(budgeted)
+        self.assertLessEqual(len(serialized), 9_000)
+        self.assertNotIn('"payload"', serialized)
+        impact = budgeted["related_facts"]["symbol_impact"]["reverse_impact"]
+        self.assertIn("service_brief", budgeted["related_facts"])
+        self.assertIn("dependency_importers", budgeted["related_facts"])
+        self.assertIn("inventory", budgeted["related_facts"])
+        self.assertIn("runtime_architecture", budgeted["related_facts"])
+        self.assertIn("inspection_areas", budgeted["related_facts"])
+        self.assertTrue(
+            any(
+                area["area"] == "related_facts.service_brief.endpoints" and area["inspection_refs"]
+                for area in budgeted["related_facts"]["inspection_areas"]
+            )
+        )
+        self.assertEqual(impact["summary"]["constructor_bridge_count"], 1)
+        self.assertEqual(
+            [row["symbols"][0]["symbol"]["qualname"] for row in impact["tiers"]],
+            ["Builder.build_features", "TrainView.post"],
+        )
+        terminal = impact["terminal_import_consumer_leads"][0]
+        self.assertEqual(terminal["for_symbol"]["path"], "api/views.py")
+        self.assertEqual(terminal["import_consumer_leads"]["lead_count"], 1)
+        self.assertEqual(
+            impact["source_inspection_areas"][0]["search_terms"],
+            ["build_features(", "lib.features.build_features"],
+        )
 
     def test_output_budget_minimizes_oversized_runtime_rows_before_dropping_routes(self) -> None:
         result = {
@@ -1515,20 +1906,117 @@ class McpToolsTest(unittest.TestCase):
         _assert_additive_fields(self, missing)
 
     def test_symbol_tools_wrap_snapshot_query_methods(self) -> None:
-        with _fixture_snapshot() as kg:
+        with _fixture_snapshot(upstream_checkout_caller=True, upstream_checkout_grandcaller=True) as kg:
             callers = call_tool(kg, "find_callers", {"symbol": "charge_card"})
+            impact = call_tool(kg, "reverse_impact", {"symbol": "charge_card", "depth": 3})
             callees = call_tool(kg, "find_callees", {"symbol": "handle_checkout"})
             radius = call_tool(kg, "blast_radius", {"symbol": "handle_checkout", "depth": 1})
 
         self.assertEqual(callers["status"], "found")
         self.assertEqual(callers["caller_count"], 1)
+        self.assertEqual(callers["candidate_leads"]["status"], "empty")
+        self.assertEqual(callers["answerability"]["status"], "answerable")
+        self.assertFalse(any(row["trigger"] == "candidate_leads_present" for row in callers["inspection_areas"]))
+        self.assertEqual(impact["status"], "found")
+        self.assertEqual(impact["summary"]["edge_count"], 3)
+        self.assertEqual(
+            [tier["depth"] for tier in impact["tiers"]],
+            [1, 2, 3],
+        )
+        self.assertEqual(
+            [row["symbol"]["qualname"] for row in impact["tiers"][0]["symbols"]],
+            ["handle_checkout"],
+        )
         self.assertEqual(callees["status"], "found")
         self.assertEqual(callees["callee_count"], 1)
         self.assertEqual(radius["status"], "found")
         self.assertEqual(radius["edge_count"], 1)
         _assert_additive_fields(self, callers)
+        _assert_additive_fields(self, impact)
         _assert_additive_fields(self, callees)
         _assert_additive_fields(self, radius)
+
+    def test_reverse_impact_bridges_constructor_and_terminal_import_leads(self) -> None:
+        with _constructor_reverse_impact_snapshot() as kg:
+            impact = call_tool(
+                kg,
+                "reverse_impact",
+                {
+                    "symbol": "lib.features.build_features",
+                    "path": "lib/features.py",
+                    "line": 10,
+                    "depth": 4,
+                },
+            )
+            planning = call_tool(
+                kg,
+                "planning_context",
+                {"symbol": "lib.features.build_features", "path": "lib/features.py", "line": 10},
+            )
+            limited = call_tool(
+                kg,
+                "reverse_impact",
+                {
+                    "symbol": "lib.features.build_features",
+                    "path": "lib/features.py",
+                    "line": 10,
+                    "depth": 4,
+                    "limit": 1,
+                },
+            )
+
+        self.assertEqual(impact["status"], "found")
+        self.assertEqual(impact["summary"]["constructor_bridge_count"], 1)
+        self.assertEqual(impact["summary"]["roots_unexpanded_count"], 0)
+        self.assertEqual(impact["summary"]["affected_symbol_count"], 3)
+        self.assertEqual(impact["summary"]["affected_symbol_returned_count"], 3)
+        self.assertEqual(impact["summary"]["affected_symbol_multiplicity"], "unique_global")
+        self.assertEqual(
+            [tier["symbols"][0]["symbol"]["qualname"] for tier in impact["tiers"]],
+            ["Builder.build_features", "Builder.__init__", "train_company"],
+        )
+        bridge = impact["constructor_bridges"][0]
+        self.assertEqual(bridge["from_init"]["qualname"], "Builder.__init__")
+        self.assertEqual(bridge["to_class"]["qualname"], "Builder")
+        terminal = impact["terminal_import_consumer_leads"][0]
+        self.assertEqual(terminal["for_symbol"]["qualname"], "train_company")
+        self.assertEqual(terminal["terminal_reason"], "no_incoming_callers")
+        self.assertEqual(terminal["import_consumer_leads"]["lead_count"], 1)
+        importer_qualnames = {
+            row["qualname"]
+            for row in terminal["import_consumer_leads"]["leads"][0]["importer_module_symbols"]
+        }
+        self.assertIn("TrainView.post", importer_qualnames)
+        inspection_area = impact["source_inspection_areas"][0]
+        self.assertEqual(inspection_area["area"], "same_repo_tests_scripts_notebooks")
+        self.assertIn("lib", inspection_area["repos"])
+        self.assertIn("lib/features.py", inspection_area["path_hints"])
+        self.assertIn("build_features(", inspection_area["search_terms"])
+        self.assertEqual(impact["proven_facts"]["status"], "found")
+        self.assertIn("edges", {row["field"] for row in impact["proven_facts"]["sources"]})
+        self.assertEqual(impact["candidate_leads"]["status"], "found")
+        self.assertIn(
+            "terminal_import_consumer_leads",
+            {row["field"] for row in impact["candidate_leads"]["sources"]},
+        )
+        normalized_area = next(row for row in impact["inspection_areas"] if row["area"] == "same_repo_tests_scripts_notebooks")
+        self.assertIn({"path": "lib/features.py", "repo": "lib"}, normalized_area["inspection_refs"])
+        self.assertIn("build_features(", normalized_area["search_terms"])
+        self.assertIn("proven_facts", impact["packet_contract"]["common_fields"])
+        self.assertEqual(
+            planning["related_facts"]["symbol_impact"]["reverse_impact"]["summary"]["constructor_bridge_count"],
+            1,
+        )
+        self.assertTrue(limited["summary"]["walk_truncated"])
+        self.assertEqual(limited["summary"]["truncated_terminal_symbol_count"], 2)
+        self.assertEqual(limited["summary"]["truncated_terminal_symbol_returned_count"], 2)
+        truncated_by_qualname = {
+            row["symbol"]["qualname"]: row["terminal_reason"] for row in limited["truncated_terminal_symbols"]
+        }
+        self.assertEqual(truncated_by_qualname["build_features"], "truncated_before_expansion")
+        self.assertEqual(truncated_by_qualname["Builder.build_features"], "truncated_after_incoming_edge")
+        self.assertEqual(limited["candidate_leads"]["sources"][0]["field"], "truncated_terminal_symbols")
+        self.assertEqual(limited["answerability"]["status"], "partial")
 
     def test_find_callers_returns_cross_repo_import_consumer_leads_on_call_miss(self) -> None:
         with _cross_repo_import_consumer_snapshot() as kg:
@@ -1553,6 +2041,16 @@ class McpToolsTest(unittest.TestCase):
             ["api.views.score.ScoreView", "api.views.score.ScoreView.post"],
         )
         self.assertTrue(any("import_consumer_leads" in action for action in callers["next_actions"]))
+        reverse_impact = call_tool(kg, "reverse_impact", {"symbol": "lib.predict.score_session"})
+        self.assertEqual(reverse_impact["status"], "partial")
+        self.assertEqual(reverse_impact["summary"]["edge_count"], 0)
+        self.assertEqual(reverse_impact["summary"]["terminal_import_lead_count"], 1)
+        self.assertEqual(reverse_impact["answerability"]["missing_fact_families"], ["reverse_callers"])
+        self.assertEqual(reverse_impact["proven_facts"]["status"], "found")
+        self.assertIn("roots", {row["field"] for row in reverse_impact["proven_facts"]["sources"]})
+        self.assertEqual(reverse_impact["candidate_leads"]["status"], "found")
+        self.assertEqual(reverse_impact["coverage_gaps"][0]["trigger"], "missing_fact_family")
+        self.assertTrue(any(row["trigger"] == "candidate_leads_present" for row in reverse_impact["inspection_areas"]))
         self.assertEqual(
             planning["related_facts"]["symbol_impact"]["import_consumer_leads"]["lead_count"],
             1,
@@ -1616,6 +2114,7 @@ class McpToolsTest(unittest.TestCase):
     def test_symbol_tools_ambiguous_results_include_retry_guidance(self) -> None:
         with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
             callers = call_tool(kg, "find_callers", {"symbol": "charge_card"})
+            impact = call_tool(kg, "reverse_impact", {"symbol": "charge_card"})
             callees = call_tool(kg, "find_callees", {"symbol": "charge_card"})
             disambiguated = call_tool(
                 kg,
@@ -1639,6 +2138,18 @@ class McpToolsTest(unittest.TestCase):
             callers["disambiguation"]["retry_arguments"],
         )
         self.assertTrue(any("include_all=true" in action for action in callers["next_actions"]))
+        self.assertEqual(impact["status"], "ambiguous")
+        self.assertEqual(impact["mode"], "ambiguous")
+        self.assertFalse(impact["result_computed"])
+        self.assertEqual(len(impact["candidate_impact_previews"]), 2)
+        self.assertIn("Do not aggregate all candidates", impact["ambiguity_guidance"])
+        self.assertGreaterEqual(
+            impact["candidate_impact_previews"][0]["direct_caller_count"],
+            impact["candidate_impact_previews"][1]["direct_caller_count"],
+        )
+        self.assertEqual(impact["candidate_impact_previews"][0]["impact_preview_rank"], 1)
+        self.assertIn("constructor targets are included", impact["candidate_impact_previews"][0]["selection_basis"])
+        self.assertEqual(impact["edges"], [])
         self.assertEqual(callees["status"], "ambiguous")
         self.assertFalse(callees["result_computed"])
         self.assertIn("no callees result was computed", callees["disambiguation"]["message"])
@@ -1790,6 +2301,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_evidence", instructions)
         self.assertIn("missing_contracts", instructions)
         self.assertIn("disambiguation.retry_arguments", instructions)
+        self.assertIn("unqualified symbol name", instructions)
+        self.assertIn("first source-search hit", instructions)
+        self.assertIn("do not aggregate all candidates", instructions)
+        self.assertIn("Common packet contract", instructions)
+        self.assertIn("proven_facts", instructions)
+        self.assertIn("candidate_leads", instructions)
+        self.assertIn("coverage_gaps", instructions)
+        self.assertIn("inspection_areas", instructions)
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(initialized_with_client_version["result"]["instructions"], instructions)
         self.assertEqual(ping["result"], {})
@@ -1797,10 +2316,12 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
         listed_tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
         self.assertIn("downstream static CALLS closure", listed_tools["blast_radius"]["description"])
+        self.assertIn("packet_contract", listed_tools["blast_radius"]["description"])
         self.assertEqual(called["result"]["structuredContent"]["status"], "found")
         _assert_additive_fields(self, called["result"]["structuredContent"])
         self.assertFalse(called["result"]["isError"])
         self.assertEqual(unsupported["result"]["structuredContent"]["status"], "unsupported_by_current_kg")
+        self.assertEqual(unsupported["result"]["structuredContent"]["answerability"]["status"], "not_answerable")
         self.assertFalse(unsupported["result"]["isError"])
 
     def test_json_rpc_reports_protocol_errors(self) -> None:
@@ -1894,6 +2415,159 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(handler.sys_version, "")
         self.assertEqual(handler.version_string(fake_handler), "supercontext-local/0.1.0")
+
+
+class _constructor_reverse_impact_snapshot:
+    def __enter__(self) -> KgSnapshot:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        root = Path(self._tmpdir.name)
+        feature_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "lib", "module": "lib.features"},
+            properties={"path": "lib/features.py"},
+        )
+        feature_class = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "lib",
+                "module": "lib.features",
+                "qualname": "build_features",
+                "symbol_kind": "class",
+            },
+            properties={"path": "lib/features.py", "line": 10, "end_line": 100},
+        )
+        train_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "train", "module": "train.pipeline"},
+            properties={"path": "train/pipeline.py"},
+        )
+        builder_class = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "train",
+                "module": "train.pipeline",
+                "qualname": "Builder",
+                "symbol_kind": "class",
+            },
+            properties={"path": "train/pipeline.py", "line": 20, "end_line": 80},
+        )
+        builder_init = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "train",
+                "module": "train.pipeline",
+                "qualname": "Builder.__init__",
+                "symbol_kind": "method",
+            },
+            properties={"path": "train/pipeline.py", "line": 25, "end_line": 35},
+        )
+        builder_method = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "train",
+                "module": "train.pipeline",
+                "qualname": "Builder.build_features",
+                "symbol_kind": "method",
+            },
+            properties={"path": "train/pipeline.py", "line": 40, "end_line": 50},
+        )
+        train_company = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "train",
+                "module": "train.pipeline",
+                "qualname": "train_company",
+                "symbol_kind": "function",
+            },
+            properties={"path": "train/pipeline.py", "line": 90, "end_line": 110},
+        )
+        api_module = Entity(
+            kind="CodeModule",
+            identity={"tenant_id": "default", "repo": "api", "module": "api.views.train"},
+            properties={"path": "api/views/train.py"},
+        )
+        api_view = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "api",
+                "module": "api.views.train",
+                "qualname": "TrainView",
+                "symbol_kind": "class",
+            },
+            properties={"path": "api/views/train.py", "line": 3, "end_line": 10},
+        )
+        api_post = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "api",
+                "module": "api.views.train",
+                "qualname": "TrainView.post",
+                "symbol_kind": "method",
+            },
+            properties={"path": "api/views/train.py", "line": 5, "end_line": 9},
+        )
+        direct_fact = Fact("CALLS", builder_method.entity_id, feature_class.entity_id, {"call": "features.build_features"})
+        init_fact = Fact("CALLS", builder_init.entity_id, builder_method.entity_id, {"call": "self.build_features"})
+        constructor_fact = Fact(
+            "CALLS",
+            train_company.entity_id,
+            builder_class.entity_id,
+            {"call": "Builder", "resolution_kind": "python_constructor_call"},
+        )
+        import_fact = Fact(
+            "IMPORTS",
+            api_module.entity_id,
+            train_module.entity_id,
+            {
+                "category": "internal_module",
+                "raw_import": "train.pipeline",
+                "module_name": "train.pipeline",
+                "imported_names": ["train_company"],
+            },
+        )
+        entities = [
+            feature_module,
+            feature_class,
+            train_module,
+            builder_class,
+            builder_init,
+            builder_method,
+            train_company,
+            api_module,
+            api_view,
+            api_post,
+        ]
+        facts = [direct_fact, init_fact, constructor_fact, import_fact]
+        JsonlKgStore(root).write(
+            entities=entities,
+            facts=facts,
+            evidence=[
+                Evidence(
+                    target_type="fact",
+                    target_id=fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"predicate": fact.predicate},
+                    bytes_ref={"repo": "test", "path": f"fixture/{index}.py", "line_start": index, "line_end": index},
+                    confidence=1.0,
+                )
+                for index, fact in enumerate(facts, start=1)
+            ],
+            coverage=[],
+            manifest={"counts": {"entities": len(entities), "facts": len(facts)}},
+        )
+        self._kg = KgSnapshot(root)
+        return self._kg
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self._tmpdir.cleanup()
 
 
 class _cross_repo_import_consumer_snapshot:

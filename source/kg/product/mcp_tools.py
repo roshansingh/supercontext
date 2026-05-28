@@ -24,6 +24,7 @@ TOOL_NAMES = (
     "search_services",
     "get_service_brief",
     "find_callers",
+    "reverse_impact",
     "find_callees",
     "get_event_consumers",
     "get_event_producers",
@@ -123,20 +124,47 @@ def tool_definitions() -> list[JsonObject]:
     return [
         {
             "name": tool.name,
-            "description": tool.description,
+            "description": _with_common_output_contract(tool.description),
             "inputSchema": tool.input_schema,
         }
         for tool in _TOOLS.values()
     ]
 
 
-def _with_default_tool_metadata(payload: JsonObject) -> JsonObject:
-    return {
+def _with_common_output_contract(description: str) -> str:
+    return (
+        f"{description} "
+        "Returns common packet contract fields: `packet_contract`, `answerability`, `proven_facts`, "
+        "`candidate_leads`, `coverage_gaps`, and `inspection_areas`."
+    )
+
+
+def _with_default_tool_metadata(payload: JsonObject, *, tool_name: str) -> JsonObject:
+    normalized = {
         **payload,
         "coverage_warnings": payload.get("coverage_warnings", []),
         "unsupported_scopes": payload.get("unsupported_scopes", []),
         "next_actions": payload.get("next_actions", []),
     }
+    proven_facts = _normalized_proven_facts(normalized)
+    candidate_leads = _normalized_candidate_leads(normalized)
+    if "answerability" not in normalized:
+        normalized["answerability"] = _default_answerability(
+            normalized,
+            proven_facts=proven_facts,
+            candidate_leads=candidate_leads,
+        )
+    if "proven_facts" not in normalized:
+        normalized["proven_facts"] = proven_facts
+    if "candidate_leads" not in normalized:
+        normalized["candidate_leads"] = candidate_leads
+    if "coverage_gaps" not in normalized:
+        normalized["coverage_gaps"] = _normalized_coverage_gaps(normalized)
+    # Inspection areas are normalized and augmented instead of preserved verbatim
+    # so every tool exposes the same follow-up shape.
+    normalized["inspection_areas"] = _normalized_inspection_areas(normalized, candidate_leads=candidate_leads)
+    normalized.setdefault("packet_contract", _packet_contract(tool_name))
+    return normalized
 
 
 def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) -> JsonObject:
@@ -148,7 +176,7 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
         raise ValueError("MCP tool arguments must be a JSON object")
     tool = _TOOLS[name]
     _validate_declared_arguments(tool, arguments)
-    result = _with_default_tool_metadata(tool.handler(kg, arguments))
+    result = _with_default_tool_metadata(tool.handler(kg, arguments), tool_name=name)
     payload = {
         **result,
         "tool": name,
@@ -165,6 +193,405 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
             preserve_planning_sections=True,
         )
     return payload
+
+
+def _packet_contract(tool_name: str) -> JsonObject:
+    return {
+        "tool": tool_name,
+        "positioning": (
+            "SuperContext returns a source-inspection head start. Use proven_facts as KG-backed evidence, "
+            "candidate_leads as leads to verify, coverage_gaps as limits on what can be claimed, and "
+            "inspection_areas as the bounded follow-up plan."
+        ),
+        "common_fields": {
+            "proven_facts": "KG-backed rows or field pointers that can be cited after checking evidence boundaries.",
+            "candidate_leads": "Plausible but not fully proven rows such as import-only, unlinked, ambiguous, or inferred leads.",
+            "coverage_gaps": "Missing, unsupported, truncated, parse-error, or otherwise unproven scopes.",
+            "inspection_areas": "Concrete source/config/search follow-ups for facts outside the indexed packet.",
+            "answerability": "Whether the packet can answer directly or is partial/ambiguous/unsupported.",
+        },
+        "claim_rule": (
+            "Do not treat candidate_leads or coverage_gaps as proven facts. If the final answer relies on them, "
+            "inspect source or state the caveat."
+        ),
+    }
+
+
+def _default_answerability(
+    payload: JsonObject,
+    *,
+    proven_facts: JsonObject,
+    candidate_leads: JsonObject,
+) -> JsonObject:
+    status = str(payload.get("status") or "unknown")
+    missing: list[str] = []
+    if status == "unknown":
+        if proven_facts.get("status") == "found":
+            answerability_status = "partial" if _candidate_leads_require_verification(candidate_leads) else "answerable"
+        elif candidate_leads.get("status") == "found" or payload.get("coverage_warnings") or payload.get("unsupported_scopes"):
+            answerability_status = "partial"
+        else:
+            answerability_status = "not_answerable"
+    elif status == "found":
+        answerability_status = "partial" if _candidate_leads_require_verification(candidate_leads) else "answerable"
+    elif status == "partial":
+        answerability_status = "partial"
+    elif status == "ambiguous":
+        answerability_status = "not_answerable"
+        missing = ["ambiguous_anchor"]
+    elif status == "not_found":
+        answerability_status = "not_answerable"
+        missing = ["requested_fact"]
+    elif status == "unsupported_by_current_kg":
+        answerability_status = "not_answerable"
+        missing = ["unsupported_contract"]
+    else:
+        answerability_status = "partial"
+        missing = ["unknown_status"]
+    return {
+        "status": answerability_status,
+        "missing_fact_families": missing,
+        "recommended_source_checks": [],
+    }
+
+
+def _normalized_proven_facts(payload: JsonObject) -> JsonObject:
+    sources = []
+    for field in _PROVEN_FACT_FIELDS:
+        value = payload.get(field)
+        count = _field_count(value, allow_singleton_dict=field in _SINGLETON_PROVEN_FACT_FIELDS)
+        if count:
+            sources.append({"field": field, "count": count})
+    return {
+        "status": "found" if sources else "empty",
+        "sources": sources,
+        "claim_boundary": (
+            "Rows in these fields are KG-backed/static evidence. Verify relevant source coordinates before "
+            "using them for code-change, runtime, or deploy claims."
+        ),
+    }
+
+
+def _normalized_candidate_leads(payload: JsonObject) -> JsonObject:
+    sources = []
+    for field in _CANDIDATE_LEAD_FIELDS:
+        value = payload.get(field)
+        count = _field_count(value)
+        if count:
+            sources.append({"field": field, "count": count, "lead_kind": _candidate_lead_kind(field)})
+    for field, nested_path in _NESTED_CANDIDATE_LEAD_FIELDS:
+        value = _nested_get(payload, nested_path)
+        count = _field_count(value)
+        if count:
+            sources.append({"field": field, "count": count, "lead_kind": _candidate_lead_kind(field)})
+    return {
+        "status": "found" if sources else "empty",
+        "sources": sources,
+        "claim_boundary": (
+            "Candidate leads are search and inspection leads only. They are not proof of runtime execution, "
+            "ownership, deploy order, or direct impact until verified."
+        ),
+    }
+
+
+def _candidate_leads_require_verification(leads: JsonObject) -> bool:
+    for source in _as_list(leads.get("sources")):
+        if not isinstance(source, dict):
+            continue
+        # Ambiguous candidate rows guide disambiguation, but they do not by themselves
+        # downgrade a found packet. Import-only, unlinked, inferred, and truncated rows do.
+        if source.get("lead_kind") in {
+            "import_only_source_lead",
+            "unlinked_source_lead",
+            "inference_or_guidance",
+            "truncated_source_inspection_lead",
+        }:
+            return True
+    return False
+
+
+def _normalized_coverage_gaps(payload: JsonObject) -> list[JsonObject]:
+    gaps: list[JsonObject] = []
+    for warning in _as_list(payload.get("coverage_warnings")):
+        gaps.append({"trigger": "coverage_warning", "detail": warning})
+    for scope in _as_list(payload.get("unsupported_scopes")):
+        gaps.append({"trigger": "unsupported_scope", "detail": scope})
+    answerability = payload.get("answerability")
+    if isinstance(answerability, dict):
+        for family in _as_list(answerability.get("missing_fact_families")):
+            gaps.append({"trigger": "missing_fact_family", "fact_family": family})
+        for item in _as_list(answerability.get("cannot_prove")):
+            gaps.append({"trigger": "cannot_prove", "detail": item})
+    output_budget = payload.get("output_budget")
+    if isinstance(output_budget, dict):
+        if output_budget.get("truncated") is True:
+            gaps.append(
+                {
+                    "trigger": "truncated_output",
+                    "detail": {
+                        "truncated_sections": output_budget.get("truncated_sections", []),
+                        "omitted_counts": output_budget.get("omitted_counts", {}),
+                    },
+                }
+            )
+    if payload.get("status") in {"not_found", "unsupported_by_current_kg", "ambiguous"}:
+        gaps.append({"trigger": str(payload.get("status")), "detail": "Packet status is not fully answerable."})
+    return _dedupe_json_rows(gaps)
+
+
+def _normalized_inspection_areas(payload: JsonObject, *, candidate_leads: JsonObject | None = None) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for row in _as_list(payload.get("inspection_areas")):
+        if isinstance(row, dict):
+            rows.append(_normalize_inspection_area(row, default_trigger="tool_specific"))
+    for row in _as_list(payload.get("source_inspection_areas")):
+        if isinstance(row, dict):
+            rows.append(_normalize_inspection_area(row, default_trigger="source_inspection_area"))
+
+    answerability = payload.get("answerability")
+    if isinstance(answerability, dict):
+        for check in _as_list(answerability.get("recommended_source_checks")):
+            rows.append(_inspection_area_from_text(check, trigger="answerability_recommended_source_check"))
+        for check in _as_list(answerability.get("recommended_followups")):
+            rows.append(_inspection_area_from_text(check, trigger="answerability_recommended_followup"))
+    for action in _as_list(payload.get("next_actions")):
+        rows.append(_inspection_area_from_text(action, trigger="next_action"))
+
+    for field, nested_path in _NESTED_INSPECTION_AREA_FIELDS:
+        value = _nested_get(payload, nested_path)
+        if isinstance(value, list):
+            for row in value:
+                if isinstance(row, dict):
+                    rows.append(_normalize_inspection_area(row, default_trigger=field))
+                else:
+                    rows.append(_inspection_area_from_text(row, trigger=field))
+        elif isinstance(value, dict):
+            rows.append(_normalize_inspection_area(value, default_trigger=field))
+
+    if candidate_leads is None:
+        candidate_leads = _normalized_candidate_leads(payload)
+    if candidate_leads.get("status") == "found":
+        rows.append(
+            {
+                "area": "candidate_leads",
+                "reason": "Candidate leads require source verification before final claims.",
+                "trigger": "candidate_leads_present",
+                "inspection_refs": [],
+                "search_terms": [],
+            }
+        )
+    return _dedupe_json_rows([row for row in rows if row])
+
+
+def _inspection_area_from_text(value: object, *, trigger: str) -> JsonObject:
+    text = str(value).strip()
+    if not text:
+        return {}
+    return {
+        "area": trigger,
+        "reason": text,
+        "trigger": trigger,
+        "inspection_refs": [],
+        "search_terms": [],
+    }
+
+
+def _normalize_inspection_area(row: JsonObject, *, default_trigger: str) -> JsonObject:
+    raw_search_terms = row.get("search_terms")
+    raw_inspection_refs = row.get("inspection_refs")
+    if isinstance(raw_search_terms, list):
+        search_terms = raw_search_terms
+    elif isinstance(raw_search_terms, (str, int, float)):
+        search_terms = [raw_search_terms]
+    else:
+        search_terms = []
+    if isinstance(raw_inspection_refs, list):
+        inspection_refs = raw_inspection_refs
+    elif isinstance(raw_inspection_refs, dict):
+        inspection_refs = [raw_inspection_refs]
+    elif "inspection_refs" in row:
+        inspection_refs = []
+    else:
+        inspection_refs = _inspection_refs_from_path_hints(row.get("path_hints"), repos=row.get("repos"))
+    normalized = {
+        **row,
+        "area": str(row.get("area") or default_trigger),
+        "reason": str(row.get("reason") or row.get("scope_hint") or ""),
+        "trigger": str(row.get("trigger") or default_trigger),
+        "inspection_refs": inspection_refs,
+        "search_terms": [str(item) for item in search_terms if isinstance(item, (str, int, float))],
+    }
+    return normalized
+
+
+def _inspection_refs_from_path_hints(path_hints: object, *, repos: object) -> list[JsonObject]:
+    paths = [item for item in _as_list(path_hints) if isinstance(item, str) and item.strip()]
+    repo_values = [item for item in _as_list(repos) if isinstance(item, str) and item.strip()]
+    refs = []
+    for path in paths:
+        refs.append({"path": path, "repo": repo_values[0] if len(repo_values) == 1 else None})
+    return refs
+
+
+def _field_count(value: object, *, allow_singleton_dict: bool = False) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        for key in (
+            "returned_count",
+            "lead_count",
+            "count",
+            "symbol_count",
+            "caller_count",
+            "callee_count",
+            "edge_count",
+            "consumer_count",
+            "producer_count",
+            "affected_symbol_count",
+        ):
+            raw = value.get(key)
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                rows_key = _COUNT_FIELD_ROWS.get(key)
+                rows = value.get(rows_key) if rows_key else None
+                if isinstance(rows, list):
+                    return min(raw, len(rows))
+                return raw
+        for key in (
+            "leads",
+            "rows",
+            "items",
+            "candidates",
+            "consumers",
+            "producers",
+            "services",
+            "symbols",
+            "practical_deploy_order",
+            "proven_endpoint_consumers",
+        ):
+            rows = value.get(key)
+            if isinstance(rows, list):
+                return len(rows)
+        status = value.get("status")
+        if isinstance(status, str):
+            normalized_status = status.strip().lower()
+            if (
+                normalized_status in {"empty", "not_found", "not_answerable", "not_computed", "unsupported_by_current_kg"}
+                or normalized_status.startswith("no_")
+            ):
+                return 0
+        if allow_singleton_dict and value:
+            return 1
+    return 0
+
+
+_COUNT_FIELD_ROWS = {
+    "returned_count": "rows",
+    "lead_count": "leads",
+    "symbol_count": "symbols",
+    "caller_count": "callers",
+    "callee_count": "callees",
+    "edge_count": "edges",
+    "consumer_count": "consumers",
+    "producer_count": "producers",
+    "affected_symbol_count": "affected_symbols",
+}
+
+
+def _nested_get(payload: JsonObject, path: tuple[str, ...]) -> object:
+    current: object = payload
+    for part in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _as_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]
+
+
+def _dedupe_json_rows(rows: list[JsonObject]) -> list[JsonObject]:
+    seen: set[str] = set()
+    deduped = []
+    for row in rows:
+        key = canonical_json(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _candidate_lead_kind(field: str) -> str:
+    if "truncated" in field:
+        return "truncated_source_inspection_lead"
+    if "import" in field:
+        return "import_only_source_lead"
+    if "unlinked" in field:
+        return "unlinked_source_lead"
+    if "candidate" in field:
+        return "candidate_match"
+    if "guidance" in field:
+        return "inference_or_guidance"
+    return "candidate_lead"
+
+
+_PROVEN_FACT_FIELDS = (
+    "services",
+    "service",
+    "symbols",
+    "dependencies",
+    "endpoints",
+    "event_channels",
+    "domains",
+    "callers",
+    "callees",
+    "edges",
+    "roots",
+    "tiers",
+    "affected_symbols",
+    "consumers",
+    "producers",
+    "deploy_mappings",
+    "deploy_runtime_units",
+    "changed_symbols",
+    "changed_file_symbols",
+    "direct_callers",
+    "direct_callees",
+    "transitive_callers",
+    "repo_dependencies",
+)
+
+_SINGLETON_PROVEN_FACT_FIELDS = ("service",)
+
+_CANDIDATE_LEAD_FIELDS = (
+    "candidates",
+    "candidate_impact_previews",
+    "import_consumer_leads",
+    "terminal_import_consumer_leads",
+    "truncated_terminal_symbols",
+    "endpoint_consumers",
+    "deploy_order_guidance",
+    "unlinked_domain_route_samples",
+)
+
+_NESTED_CANDIDATE_LEAD_FIELDS = (
+    ("operational_surfaces.evidence_partition.unlinked_evidence", ("operational_surfaces", "evidence_partition", "unlinked_evidence")),
+    ("service_operational_surfaces.evidence_partition.unlinked_evidence", ("service_operational_surfaces", "evidence_partition", "unlinked_evidence")),
+    ("application_impact.cross_repo_name_leads", ("application_impact", "cross_repo_name_leads")),
+    ("runtime_architecture.answer_packet.unlinked_runtime_leads", ("runtime_architecture", "answer_packet", "unlinked_runtime_leads")),
+)
+
+_NESTED_INSPECTION_AREA_FIELDS = (
+    ("authz_surface.inspection_areas", ("authz_surface", "inspection_areas")),
+    ("related_facts.authz_surface.inspection_areas", ("related_facts", "authz_surface", "inspection_areas")),
+    ("runtime_architecture.answer_packet.investigation_brief.recommended_source_checks", ("runtime_architecture", "answer_packet", "investigation_brief", "recommended_source_checks")),
+    ("review_answer_packet.inspection_areas", ("review_answer_packet", "inspection_areas")),
+)
 
 
 def _search_services(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
@@ -265,6 +692,20 @@ def _find_callers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             include_all=_optional_bool(arguments, "include_all", default=False),
         ),
         direction="callers",
+    )
+
+
+def _reverse_impact(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
+    return _with_symbol_miss_next_actions(
+        kg.reverse_impact(
+            _required_string(arguments, "symbol"),
+            depth=_bounded_int(arguments.get("depth", 3), field="depth", minimum=1, maximum=6),
+            limit=_limit(arguments),
+            path=_optional_string(arguments, "path"),
+            line=_optional_int(arguments, "line"),
+            include_all=_optional_bool(arguments, "include_all", default=False),
+        ),
+        direction="reverse impact",
     )
 
 
@@ -1291,7 +1732,7 @@ def _limit_schema() -> JsonObject:
 def _symbol_properties() -> JsonObject:
     return {
         "symbol": _string_schema(
-            "Symbol name or exact qualified name. If a prior result was ambiguous, retry with a candidate `qualified_name`."
+            "Symbol name or exact qualified name. If the user supplied only an unqualified symbol name, call with that name first so the graph can surface ambiguity; add path/line only from a user-provided location or a prior disambiguation candidate. If a prior result was ambiguous, retry with a candidate `qualified_name`."
         ),
         "path": _nullable_string_schema("Optional source-file path for disambiguation."),
         "line": _nullable_line_schema(),
@@ -1410,6 +1851,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 domains=domains,
                 next_actions=next_actions,
                 status="ambiguous",
+                line=line,
             )
         if len(matches) == 1:
             related = _planning_context_service_related_rows(kg, matches[0], limit=limit)
@@ -1436,6 +1878,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 domains=domains,
                 next_actions=next_actions,
                 status="ambiguous",
+                line=line,
             )
         if resolution["status"] == "resolved" and resolution.get("resolved_symbol") is not None:
             symbols = [resolution["resolved_symbol"]]
@@ -1484,6 +1927,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             domains=domains,
             next_actions=next_actions,
             status="ambiguous",
+            line=line,
         )
 
     base_category = _planning_context_base_category(anchors)
@@ -1516,6 +1960,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         domains=domains,
         next_actions=next_actions,
         status=status,
+        line=line,
     )
 
 
@@ -2944,6 +3389,7 @@ def _planning_context_output(
     domains: list[JsonObject],
     next_actions: list[str],
     status: str,
+    line: int | None = None,
 ) -> JsonObject:
     dependency_importers = _dependency_importer_packet(kg, dependencies, limit=PLANNING_CONTEXT_SECTION_LIMIT)
     bounded_services = _planning_context_public_rows(services)
@@ -2997,6 +3443,7 @@ def _planning_context_output(
         domains=bounded_domains,
         anchors=anchors,
         status=status,
+        line=line,
         dependency_importers=dependency_importers,
         inventory=inventory,
         service_operational_surfaces=service_operational_surfaces,
@@ -3393,10 +3840,11 @@ def _planning_context_related_facts(
     service_operational_surfaces: JsonObject,
     runtime_architecture: JsonObject,
     authz_surface: JsonObject,
+    line: int | None = None,
 ) -> JsonObject:
     return {
         "service_brief": _planning_context_service_brief(services, endpoints, endpoint_consumers, event_channels, domains),
-        "symbol_impact": _planning_context_symbol_impact(kg, symbols, anchors=anchors, status=status),
+        "symbol_impact": _planning_context_symbol_impact(kg, symbols, anchors=anchors, status=status, line=line),
         "dependency_importers": dependency_importers,
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
@@ -3676,7 +4124,20 @@ def _planning_context_symbol_impact(
     *,
     anchors: dict[str, str | None],
     status: str,
+    line: int | None = None,
 ) -> JsonObject:
+    if status == "ambiguous" and anchors.get("symbol"):
+        reverse_impact = kg.reverse_impact(
+            anchors["symbol"] or "",
+            path=anchors.get("path"),
+            line=line if anchors.get("path") else None,
+            depth=3,
+            limit=max(PLANNING_CONTEXT_SECTION_LIMIT * 3, 15),
+        )
+        return {
+            "status": "ambiguous",
+            "reverse_impact": reverse_impact,
+        }
     if status != "found" or not anchors.get("symbol") or len(symbols) != 1:
         return {"status": "not_computed", "reason": "symbol impact requires one resolved symbol anchor"}
     symbol_name = symbols[0].get("qualified_name") or symbols[0].get("qualname")
@@ -3688,10 +4149,18 @@ def _planning_context_symbol_impact(
         line=_optional_symbol_line(symbols[0]),
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
+    reverse_impact = kg.reverse_impact(
+        symbol_name,
+        path=_optional_symbol_path(symbols[0]),
+        line=_optional_symbol_line(symbols[0]),
+        depth=3,
+        limit=max(PLANNING_CONTEXT_SECTION_LIMIT * 3, 15),
+    )
     return {
         "status": "found",
         "symbol": symbols[0],
         "direct_callers": list(callers.get("callers", [])),
+        "reverse_impact": reverse_impact,
         "import_consumer_leads": callers.get("import_consumer_leads", {}),
         "direct_callees": list(
             kg.find_callees(
@@ -4150,7 +4619,7 @@ _TOOLS: dict[str, McpTool] = {
         name="find_callers",
         description=(
             "Returns static CALLS edges whose downstream target matches the requested symbol, with optional path and line disambiguation. "
-            "Use it when you need reverse call impact for a known function, method, or symbol in the indexed codebase. "
+            "Use it when you need immediate reverse callers for a known function, method, or symbol in the indexed codebase. "
             "If status is ambiguous, do not treat the empty callers list as no callers; retry with disambiguation.retry_arguments or a candidate qualified_name. "
             "If status is not_found but import_consumer_leads is found, inspect those importing modules and importer_module_symbols; they are source-inspection leads, not proven CALLS edges. "
             "Does not include transitive closure, runtime dispatch, cross-repo execution paths, endpoint/service-level rollups, or unresolved external-package call sites. "
@@ -4158,6 +4627,21 @@ _TOOLS: dict[str, McpTool] = {
         ),
         input_schema=_object_schema(_symbol_properties(), required=["symbol"]),
         handler=_find_callers,
+    ),
+    "reverse_impact": McpTool(
+        name="reverse_impact",
+        description=(
+            "Returns a bounded reverse dependency head-start packet from a resolved symbol anchor. "
+            "It walks incoming static CALLS recursively, groups affected symbols by depth, bridges Python __init__ methods to containing class instantiations, and includes terminal import_consumer_leads as source-inspection leads. "
+            "Use this instead of chaining repeated find_callers calls when the task needs transitive upstream callers, caller-impact tiers, entry-point leads, or source_inspection_areas for a symbol anchor. "
+            "If status is ambiguous, do not treat the empty edge list as no impact; use candidate_impact_previews and disambiguation.retry_arguments, or include_all=true only for exploratory aggregation. "
+            "Terminal import leads are not runtime-call proof; verify source before claiming endpoint or cross-repo execution."
+        ),
+        input_schema=_object_schema(
+            {**_symbol_properties(), "depth": {"type": "integer", "minimum": 1, "maximum": 6, "default": 3}},
+            required=["symbol"],
+        ),
+        handler=_reverse_impact,
     ),
     "find_callees": McpTool(
         name="find_callees",
@@ -4232,6 +4716,7 @@ _TOOLS: dict[str, McpTool] = {
             "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
+            "For symbol impact anchors, read related_facts.symbol_impact.reverse_impact; it is a bounded reverse-caller head start with constructor bridges and terminal import leads for targeted source inspection. "
             "For ownership questions, read ownership_context.answer_packet; package authors and package maintainers are candidates only and must not be promoted to service owner unless an explicit ownership source is present. "
             "For security/authz questions, read top-level authz_surface.review_leads plus inspection_areas/inspection_index when present, related_facts.authz_surface as a compact reference, or get_service_brief.authz_surface; it separates endpoint handler bindings, applied policies, in-method checks, unsupported_scopes, and missing/unknown authz instead of treating missing policy as public access. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
