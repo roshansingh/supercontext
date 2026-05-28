@@ -17,12 +17,18 @@ def main() -> None:
         action="store_true",
         help="Allow mcp_on rows with denied/errored SuperContext tool calls instead of failing closed.",
     )
+    parser.add_argument(
+        "--allow-incomplete-background-tasks",
+        action="store_true",
+        help="Allow rows with incomplete Claude SDK background-task markers instead of failing closed.",
+    )
     args = parser.parse_args()
 
     rows = compute_deltas(
         load_jsonl(Path(args.traces)),
         allow_unpaired=args.allow_unpaired,
         allow_mcp_tool_failures=args.allow_mcp_tool_failures,
+        allow_incomplete_background_tasks=args.allow_incomplete_background_tasks,
     )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,6 +42,7 @@ def compute_deltas(
     *,
     allow_unpaired: bool = False,
     allow_mcp_tool_failures: bool = False,
+    allow_incomplete_background_tasks: bool = False,
 ) -> list[dict[str, Any]]:
     pairs: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(dict)
     for trace in traces:
@@ -60,6 +67,9 @@ def compute_deltas(
             )
         on = arms["mcp_on"]
         off = arms["mcp_off"]
+        if not allow_incomplete_background_tasks:
+            _reject_incomplete_background_tasks(on, run_group_id=run_group_id, task_id=task_id, arm="mcp_on")
+            _reject_incomplete_background_tasks(off, run_group_id=run_group_id, task_id=task_id, arm="mcp_off")
         if not allow_mcp_tool_failures:
             _reject_mcp_on_tool_failures(on, run_group_id=run_group_id, task_id=task_id)
         cost_status = _paired_cost_status(on, off)
@@ -158,6 +168,7 @@ def _arm_summary(trace: dict[str, Any]) -> dict[str, Any]:
         "total_cost": trace.get("total_cost"),
         "cost_status": trace.get("cost_status"),
         "wall_time_seconds": trace.get("wall_time_seconds"),
+        "incomplete_background_task_ids": _string_list(trace, "incomplete_background_task_ids"),
     }
 
 
@@ -201,8 +212,25 @@ def _reject_mcp_on_tool_failures(on: dict[str, Any], *, run_group_id: str, task_
         )
 
 
+def _reject_incomplete_background_tasks(trace: dict[str, Any], *, run_group_id: str, task_id: str, arm: str) -> None:
+    task_ids = _string_list(trace, "incomplete_background_task_ids")
+    if not task_ids:
+        return
+    raise ValueError(
+        f"invalid trace for run_group_id={run_group_id!r} task_id={task_id!r} arm={arm!r}: "
+        f"incomplete background tasks={', '.join(task_ids)}"
+    )
+
+
 def _list_len(trace: dict[str, Any], key: str) -> int:
     return len(_list(trace, key))
+
+
+def _string_list(trace: dict[str, Any], key: str) -> list[str]:
+    values = _list(trace, key)
+    if any(not isinstance(value, str) for value in values):
+        raise ValueError(f"trace field {key!r} must be a list of strings")
+    return values
 
 
 def _list(trace: dict[str, Any], key: str) -> list[Any]:
