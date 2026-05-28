@@ -19,7 +19,7 @@ MCP_PROTOCOL_VERSION = "2025-03-26"
 REQUEST_READ_TIMEOUT_SECONDS = 5.0
 SUPERCONTEXT_MCP_INSTRUCTIONS = """# SuperContext - repository knowledge graph
 
-SuperContext provides deterministic, source-cited context from the indexed repository graph. Use it as an early map, then verify with ordinary source inspection when the graph is partial or when code details matter.
+SuperContext provides deterministic, source-cited context from the indexed repository graph. Use it as an early source-inspection map, then verify with ordinary source inspection when the graph is partial, compacted, or when code details matter.
 
 ## Tool selection by intent
 
@@ -38,7 +38,7 @@ SuperContext provides deterministic, source-cited context from the indexed repos
 
 ## Common packet contract
 
-Every tool result includes `packet_contract`, `answerability`, `proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`. Treat these as the normalized first-read fields across all tools. Use `proven_facts` to find the strongest KG-backed fields, then cite the underlying evidence rows or file/line coordinates. Use `candidate_leads` and `inspection_areas` as the bounded source-inspection plan for uncovered tests, scripts, notebooks, entry points, import-only consumers, config, manifests, runtime routes, or other areas outside the proven packet. Use `coverage_gaps` to state what the graph could not prove. Do not claim candidate leads, missing gaps, or unsupported scopes as facts until source inspection verifies them.
+Every tool result includes `packet_contract`, `answerability`, `proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`. Some large planning packets also include `output_budget`. Treat these as the normalized first-read fields across all tools. Use `proven_facts` to find the strongest KG-backed fields, then cite the underlying evidence rows or file/line coordinates. Use `candidate_leads` and `inspection_areas` as the bounded source-inspection plan for uncovered tests, scripts, notebooks, entry points, import-only consumers, config, manifests, runtime routes, or other areas outside the proven packet. If `output_budget.truncated` is true, use omitted counts and backfilled counts as truncation metadata, not absence proof; follow returned inspection refs/search terms or call narrower anchors for omitted categories that matter. Use `coverage_gaps` to state what the graph could not prove. Do not claim candidate leads, missing gaps, or unsupported scopes as facts until source inspection verifies them.
 
 ## Answerability
 

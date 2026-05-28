@@ -4725,7 +4725,7 @@ _TOOLS: dict[str, McpTool] = {
             "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Calling it with no anchor returns a fleet packet with compact service identities plus runtime_architecture.answer_packet. "
-            "Output is bounded with a compact fleet cap and a larger anchored-detail cap; when truncated, output_budget.omitted_counts and output_budget.advice describe what was omitted and how to retrieve detail via narrower anchors. "
+            "Output is bounded with a compact fleet cap and a larger anchored-detail cap; when truncated, output_budget.omitted_counts, output_budget.backfilled_counts, output_budget.advice, and inspection_areas describe what was omitted and how to retrieve detail via narrower anchors. "
             "For exact caller, callee, service-brief, or event producer/consumer questions, prefer the exact primitive tool. "
             "Does not expand free-form natural language, call an LLM, or fan one query across multiple ambiguous resolver paths."
         ),

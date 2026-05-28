@@ -2,11 +2,11 @@
 
 This file documents the public MCP tool response shapes so we can review overlap, missing inspection guidance, and prompt usage without rereading implementation code.
 
-Source of truth: `source/kg/product/mcp_tools.py`, `source/kg/query/snapshot.py`, and packet modules under `source/kg/product/`.
+Source of truth: `source/kg/product/mcp_tools.py`, `source/kg/product/output_budget.py`, `source/kg/query/snapshot.py`, and packet modules under `source/kg/product/` and `source/kg/query/`.
 
 ## Common Response Fields
 
-Every MCP response is wrapped by `call_tool(...)` with these fields:
+MCP responses are wrapped by `call_tool(...)` with these common or optional fields:
 
 | Field | Definition | Prompt / Skill Usage |
 |---|---|---|
@@ -21,6 +21,7 @@ Every MCP response is wrapped by `call_tool(...)` with these fields:
 | `coverage_warnings` | Explicit coverage warnings attached to the packet. | Skills tell agents not to treat warnings as proof of absence. |
 | `unsupported_scopes` | Capabilities or scopes the KG cannot currently prove. | Skills tell agents to state unsupported scopes and inspect source/config. |
 | `next_actions` | Suggested refinements or source checks. | Skills tell agents to follow these before finalizing partial/ambiguous results. |
+| `output_budget` | Planning-context budget metadata when a packet had to be compacted. | Treat as truncation guidance, not source evidence. Use `remaining_chars`, `backfilled_counts`, `omitted_counts`, and `inspection_areas` to decide narrow follow-ups. |
 
 Common nested row shapes:
 
@@ -33,7 +34,8 @@ Common nested row shapes:
 | Proven facts | `status`, `sources`, `claim_boundary` | Compact index of KG-backed/static fields returned by the tool. |
 | Candidate leads | `status`, `sources`, `claim_boundary` | Compact index of plausible but unverified fields returned by the tool. |
 | Coverage gap | `trigger`, plus `detail` or `fact_family` | Normalized explanation of missing, unsupported, truncated, ambiguous, or not-found coverage. |
-| Inspection area | `area`, `reason`, `trigger`, `inspection_refs`, `search_terms`, truncation metadata | Structured source-inspection guidance for bounded or partial packets. Tool-specific aliases such as `source_inspection_areas` may still appear, but the normalized common field is `inspection_areas`. |
+| Inspection area | `area`, `reason`, `trigger`, `inspection_refs`, `search_terms`, truncation metadata | Structured source-inspection guidance for bounded or partial packets. `inspection_refs` may be structured `{repo,path,line,symbol,...}` objects; `search_terms` may be scalar or list input but is normalized to strings. Tool-specific aliases such as `source_inspection_areas` may still appear, but the normalized common field is `inspection_areas`. |
+| Output budget | `truncated`, `measured_chars`, `max_chars`, `omitted_counts`, `truncated_sections`, `advice`, `fallback`, `minimized`, optional `backfilled_counts`, `remaining_chars`, `exceeded_after_minimization` | Explains what was compacted and how much detail was restored under budget. When rows are omitted, the packet should include inspection guidance rather than only an omitted count. |
 
 Common packet example:
 
@@ -47,6 +49,19 @@ Common packet example:
   "inspection_areas": [{"area": "candidate_leads", "reason": "Candidate leads require source verification before final claims.", "trigger": "candidate_leads_present", "inspection_refs": [], "search_terms": []}]
 }
 ```
+
+## Budgeted / Compact Packet Contract
+
+Budgeting is currently enforced for `planning_context`, with reusable compaction helpers in `source/kg/product/output_budget.py`.
+
+When a packet is too large:
+
+- Return the best head-start rows that fit within the budget.
+- Preserve concrete inspection guidance for omitted rows through `inspection_areas`, using `inspection_refs` and `search_terms` whenever available.
+- Use remaining budget to backfill additional compact rows instead of stopping after the first coarse truncation.
+- Never rely on an omitted-row count alone; counts without refs or search terms are not useful to an agent.
+
+Budgeted `related_facts` sections are allowlisted so unknown sections do not pass through raw oversized payloads. Current sections are `service_brief`, `symbol_impact`, `dependency_importers`, `inventory`, `service_operational_surfaces`, `runtime_architecture`, `authz_surface`, `dependencies`, `endpoints`, `endpoint_consumers`, `event_channels`, `deploy_mappings`, and `domains`.
 
 ## Tool Fields
 
@@ -121,18 +136,18 @@ Purpose: bounded reverse dependency head-start from one symbol anchor.
 | Field | Definition |
 |---|---|
 | `source` | Symbol-resolution packet for the anchor. |
-| `mode` | `exact_symbol` or `all_matching_symbols`. |
+| `mode` | `exact_symbol`, `ambiguous`, or `all_matching_symbols`. |
 | `depth` | Maximum reverse traversal depth used. |
-| `summary` | Root, affected-symbol, edge, constructor-bridge, terminal-lead, truncation, limit, and multiplicity counts. |
+| `summary` | Root, affected-symbol, edge, constructor-bridge, terminal-lead, truncation, limit, and multiplicity counts. Also includes `terminal_import_lead_returned_count`, `terminal_import_lead_total_in_returned_rows`, `truncated_terminal_symbol_returned_count`, `roots_unexpanded_count`, `edge_multiplicity`, `affected_symbol_multiplicity`, `tier_symbol_multiplicity`, and `affected_root_projection`. |
 | `roots` | Resolved root symbol rows. |
 | `tiers` | Affected symbols grouped by reverse depth. |
 | `edges` | Reverse `CALLS` traversal fact rows. |
 | `constructor_bridges` | Python `__init__` to class bridge rows so class instantiation callers are visible. |
 | `terminal_import_consumer_leads` | Import-consumer source leads for terminal graph nodes; not runtime-call proof. |
-| `truncated_terminal_symbols` | Symbols where reverse traversal stopped because the global section limit was reached; inspect these before claiming the returned impact is complete. |
+| `truncated_terminal_symbols` | Symbols where reverse traversal stopped because the global section limit was reached; inspect these before claiming the returned impact is complete. `truncated_before_expansion` means queued incoming callers for that symbol were not explored. |
 | `source_inspection_areas` | Source-inspection plan for tests, scripts, notebooks, entry points, and import-only modules outside the returned `CALLS` graph. |
 | `affected_symbols` | Flat list of affected symbol rows with depth/root metadata. |
-| `candidate_impact_previews` | Ambiguous-candidate previews ranked by direct caller count and stable tie-breakers. |
+| `candidate_impact_previews` | Ambiguous-candidate previews ranked by direct caller count and stable tie-breakers. `selection_basis` explains whether constructor targets were included, so preview counts may differ from exact `find_callers`. |
 | `ambiguity_guidance` | Instructions for choosing one candidate instead of aggregating. |
 | `answerability` | Missing anchor/caller facts and recommended source checks. |
 | `contract` | Evidence boundary: static head start, not runtime proof. |
@@ -265,11 +280,11 @@ Purpose: composed planning packet for fleet or anchored repo/service/symbol/pack
 | `anchors` | Structured anchors used: `repo`, `path`, `symbol`, `service`, `package`, `endpoint`, `event_channel`, `domain`. |
 | `services`, `symbols`, `dependencies`, `endpoints`, `endpoint_consumers`, `event_channels`, `domains` | Bounded grouped rows matching the anchors. |
 | `entry_points` | Compact service/symbol/endpoint/event/domain entry rows for scanning. |
-| `related_facts` | Anchor-specific packets such as `dependency_importers`, `symbol_impact`, `authz_surface`, or runtime references. |
+| `related_facts` | Anchor-specific packets such as `dependency_importers`, `symbol_impact`, `authz_surface`, runtime references, dependencies, endpoints, endpoint consumers, event channels, deploy mappings, and domains. In compacted packets it may contain its own `inspection_areas` for omitted related rows. |
 | `source_coordinates` | Bounded coordinates extracted from grouped rows. |
 | `answerability` | Missing fact families and follow-up checks for the supplied anchors. |
 | `evidence` | Evidence rows from grouped context. |
-| `output_budget` | Added by budget enforcement when output was compacted/truncated. |
+| `output_budget` | Added by budget enforcement when output was compacted/truncated; includes omitted sections/counts, budget advice, backfill counts, and remaining character budget when available. |
 
 Example:
 
@@ -283,6 +298,8 @@ Example:
 ```
 
 Prompt usage: skills say call this first for broad planning/runtime/domain/dependency questions, then inspect `answerability`, `runtime_architecture.answer_packet.investigation_brief`, `service_operational_surfaces`, `authz_surface`, and `related_facts.symbol_impact.reverse_impact` as applicable.
+
+Important compact-packet usage: if `output_budget.truncated` is true, use returned rows as the head start and then follow `inspection_areas` or `runtime_architecture.answer_packet.investigation_brief.recommended_source_checks` for omitted detail. Do not treat missing rows in a compacted section as absence.
 
 ### `review_context`
 
@@ -329,6 +346,8 @@ Prompt usage: skills say read `review_answer_packet` first, keep `changed_symbol
 - `inspection_areas` is now the normalized common follow-up field. It is assembled from tool-specific inspection rows, `source_inspection_areas`, answerability follow-ups, next actions, runtime investigation briefs, and nested authz/review inspection rows when present.
 - Tool-specific fields such as `reverse_impact.source_inspection_areas`, `authz_surface.inspection_areas`, and `runtime_architecture.answer_packet.investigation_brief` remain for compatibility and richer domain detail, but prompt and skill text should prefer the common `inspection_areas` field when choosing what source to inspect next.
 - `proven_facts`, `candidate_leads`, and `coverage_gaps` are normalized indexes, not replacements for the detailed tool fields. Cite detailed rows/evidence coordinates in final answers.
+- Counted normalized indexes fail closed when possible: if a field says `caller_count: 10` but the corresponding row list is empty, the common index should not count it as ten returned facts.
+- `candidate_leads` includes top-level lead fields and selected nested lead fields, including operational unlinked evidence, application cross-repo name leads, and runtime unlinked leads.
 - `direct_callers` and `direct_callers_of_changed_symbols` are aliases in `review_context`; same for `direct_callees` and `direct_callees_from_changed_symbols`.
 - `unsupported_scopes` and `unsupported_review_scopes` duplicate review gaps for compatibility.
-- `output_budget` appears only after planning-context budget enforcement and should be treated as metadata about omitted/compacted sections, not source evidence.
+- `output_budget` appears only after planning-context budget enforcement and should be treated as metadata about omitted/compacted sections, not source evidence. The preferred behavior is "best rows plus inspection guidance for omitted rows," not "top rows plus an opaque omitted count."

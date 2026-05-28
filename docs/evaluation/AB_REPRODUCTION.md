@@ -77,15 +77,19 @@ Git does not contain private repo snapshots, raw Claude SDK messages, raw answer
 
 ## Current Clean Baseline
 
-For context-tool improvement work, compare against the clean local baseline generated after PR #124:
+For context-tool improvement work, compare against the clean local baseline generated on `main` after the reverse-impact head-start packet work:
 
-- `data/ab_runs/eval-harness-baseline-full-2026-05-24/report/ab-report.md`
+- Sanitized report: `docs/evaluation/ab-runs/main-full-18-post-q016-2026-05-28/ab-report.md`
+- Local raw report: `data/ab_runs/main-full-18-post-q016-2026-05-28/report/ab-report.md`
+- Snapshot: `data/kg_runs/q053_authz_budget_backfill_2026-05-27`
 - Seed: `119`
 - Fixture overrides: `docs/evaluation/default-v1-fixture-overrides.yaml`
-- Result: `mcp_on=4`, `mcp_off=6`, `tie=8`
+- Judge: `gpt-5.4-mini`
+- Result: `mcp_on=9`, `mcp_off=7`, `tie=2`
+- Resources: MCP-on saved 202 tool calls, 127,207 total tokens, 447.14 seconds wall time, and $0.742113.
 - Integrity checks: zero MCP denials, zero MCP errors, zero judge errors
 
-Historical sanitized reports under `docs/evaluation/ab-runs/` are retained for provenance and should not be deleted just because a newer clean baseline exists.
+Older raw and sanitized A/B reports may be deleted after a newer run is explicitly promoted to baseline. Keep the current baseline report above.
 
 ## Expected Checks
 

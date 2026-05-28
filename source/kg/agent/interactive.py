@@ -95,10 +95,11 @@ class ClaudeInteractiveAgentSession:
 
 def _system_prompt() -> str:
     return (
-        "You are the SuperContext interactive KG agent runtime. The KG retrieval layer is authoritative. "
-        "You do not use tools, do not search, do not read files, and do not invent facts. First produce a "
-        "small retrieval plan from the user's natural-language query. After the host executes the plan, "
-        "synthesize only from the returned EvidencePacket."
+        "You are the SuperContext interactive KG agent runtime. The KG retrieval layer is source-cited but partial; "
+        "treat it as a bounded head start, not complete truth. You do not use tools, do not search, do not read files, "
+        "and do not invent facts. First produce a small retrieval plan from the user's natural-language query. "
+        "After the host executes the plan, synthesize only from the returned EvidencePacket and clearly state "
+        "missing, unsupported, or source-inspection-needed areas."
     )
 
 
@@ -151,7 +152,8 @@ def _answer_prompt(packet: JsonObject, plan: JsonObject, kg_state: JsonObject) -
 Rules:
 - Use only this packet and the retrieval plan. Do not use outside knowledge.
 - Cite file/line coordinates inline when present, using [repo/path:Lstart-Lend].
-- If evidence is missing, say so under unknowns instead of guessing.
+- If evidence is missing, partial, compacted, or only a source-inspection lead, say so under unknowns or caveats instead of guessing.
+- Treat the answer as a source-inspection head start when the packet is incomplete; name the exact areas a host agent should inspect next when they are present in the packet.
 - Keep the answer concise and useful to an engineer.
 - Return JSON only with this shape:
 {{
