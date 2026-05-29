@@ -102,12 +102,16 @@ SuperContext MCP tools are a head start for the agent, not a replacement for sou
 
 Use **Head-Start Budgeting** when a composed MCP packet would exceed useful output size:
 
+- Apply budgeting at the MCP transport boundary so internal query/tool functions can stay exact for tests and composition while the agent-facing response stays inline as grep-style rows (`locator [tag] category fact`) plus `gaps` and `next`.
+- Account for the current wire shape: the MCP response carries the compact packet in both `content[].text` and `structuredContent`, so one-copy caps must leave room for the doubled host message.
 - Return complete relevant evidence when it fits comfortably.
-- When it does not fit, keep the highest-signal evidence rows with concrete coordinates.
+- When it does not fit, keep the highest-signal evidence rows with concrete coordinates and move omitted/unproven work into `more`, `gaps`, and `next`.
 - Preserve total and omitted counts, but never rely on counts alone.
-- Convert omitted but relevant rows into `inspection_areas` with `repo`, `path`, `line`, `symbol`/`qualname`, endpoint/domain/event-channel context, and search terms when available.
+- Convert omitted but relevant rows into `gaps` and `next` guidance with `repo`, `path`, `line`, `symbol`/`qualname`, endpoint/domain/event-channel context, and search terms when available.
 - Use remaining budget to backfill useful rows or details instead of returning an unnecessarily tiny compact packet.
 - Keep `known_linked`, `candidate_or_unlinked`, and `missing_or_unknown` evidence separate. Do not let truncation imply absence.
+- Preserve candidate/unlinked leads as candidate-tagged rows, such as `[candidate:unlinked_source_lead]`; never merge them into `[proven]` rows.
+- After evals, check `mcp_packet_saved_file_count` and `mcp_packet_jq_attempt_count`; nonzero values mean the agent paid packet-navigation tax instead of using MCP as an inline head start.
 
 When fixing eval failures, avoid packet churn that only helps one question. Ask whether the change makes SuperContext stronger for similar OSS repositories and adjacent workflows. Prefer extraction/linking or deterministic retrieval fixes over adding more prompt prose.
 

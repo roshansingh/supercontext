@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from source.kg.core.models import Entity
+from source.kg.core.models import Entity, Evidence
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.mcp_tools import call_tool
 from source.kg.query.snapshot import KgSnapshot
@@ -70,7 +70,7 @@ authors = [{name = "Package Author"}]
                 "CODEOWNERS": "# no usable owners here\n/bad @ foo@\n",
                 ".github/CODEOWNERS": """
 # service owners
-/services/checkout @platform/checkout-team # primary owner
+* @platform/checkout-team # primary owner
 /bad @ foo@
 """.lstrip(),
                 "docs/CODEOWNERS": "/ignored @other/team\n",
@@ -89,10 +89,44 @@ authors = [{name = "Package Author"}]
         self.assertTrue(ownership["answer_packet"]["can_answer_owner"])
         self.assertEqual(ownership["answer_packet"]["proven_owner"]["owners"], ["@platform/checkout-team"])
         self.assertEqual(ownership["answer_packet"]["proven_owner"]["source_kind"], "codeowners")
-        self.assertEqual(ownership["answer_packet"]["proven_owner"]["scope_pattern"], "/services/checkout")
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owner_scope"], "repo_wide")
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["scope_pattern"], "*")
         self.assertEqual(len(ownership["proven_owners"]), 1)
         self.assertEqual(ownership["candidate_maintainers"][0]["candidate"], "Package Author <author@example.com>")
         self.assertFalse(ownership["candidate_maintainers"][0]["promotion_allowed"])
+
+    def test_path_scoped_codeowners_without_service_path_is_not_flat_service_owner(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "/services/checkout @platform/checkout-team\n",
+            }
+        ) as kg:
+            result = call_tool(kg, "planning_context", {"repo": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "partial")
+        self.assertFalse(ownership["answer_packet"]["can_answer_owner"])
+        self.assertEqual(ownership["proven_owners"], [])
+        self.assertEqual(ownership["missing_fact_families"], ["service_ownership"])
+
+    def test_path_scoped_codeowners_matching_service_source_is_proven_owner(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "/services/checkout @platform/checkout-team\n",
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "answerable")
+        self.assertTrue(ownership["answer_packet"]["can_answer_owner"])
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owners"], ["@platform/checkout-team"])
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owner_scope"], "service_path_match")
+        self.assertEqual(
+            ownership["answer_packet"]["proven_owner"]["matched_service_paths"],
+            ["services/checkout/service.py"],
+        )
 
     def test_manifest_relative_repo_path_is_resolved_from_snapshot_root(self) -> None:
         with _ownership_snapshot(
@@ -163,9 +197,16 @@ spec:
 
 
 class _ownership_snapshot:
-    def __init__(self, files: dict[str, str], *, relative_manifest_path: bool = False) -> None:
+    def __init__(
+        self,
+        files: dict[str, str],
+        *,
+        relative_manifest_path: bool = False,
+        service_evidence_path: str | None = None,
+    ) -> None:
         self.files = files
         self.relative_manifest_path = relative_manifest_path
+        self.service_evidence_path = service_evidence_path
 
     def __enter__(self) -> KgSnapshot:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -183,10 +224,28 @@ class _ownership_snapshot:
             identity={"tenant_id": "default", "namespace": "default", "repo": "checkout-api", "slug": "checkout-api"},
             properties={"repo": "checkout-api"},
         )
+        evidence = []
+        if self.service_evidence_path is not None:
+            evidence.append(
+                Evidence(
+                    target_type="entity",
+                    target_id=service.entity_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "checkout-api"},
+                    bytes_ref={
+                        "repo": "checkout-api",
+                        "path": self.service_evidence_path,
+                        "line_start": 1,
+                        "line_end": 1,
+                    },
+                    confidence=1.0,
+                )
+            )
         JsonlKgStore(snapshot_root).write(
             entities=[service],
             facts=[],
-            evidence=[],
+            evidence=evidence,
             coverage=[],
             manifest={
                 "counts": {"entities": 1, "facts": 0},

@@ -149,9 +149,10 @@ _CONTRACT = (
 
 _AMBIGUITY_GUIDANCE = (
     "This unqualified symbol matched multiple candidates. Do not aggregate all candidates unless the user asks for all "
-    "matches or exploratory impact. For a single-symbol answer, choose one exact candidate only when user-provided "
-    "location, source evidence, or the previewed impact ranking supports that anchor; otherwise report the ambiguity "
-    "and ask for path/line."
+    "matches or exploratory impact. For a single-symbol answer, choose one exact candidate only when the user supplied "
+    "a repo/path/line, a previous disambiguation candidate gives that location, or explicit source evidence identifies "
+    "the intended edit site; otherwise report the ambiguity and ask for path/line. Candidate impact preview rank is a "
+    "scan-order hint, not proof of user intent."
 )
 
 
@@ -200,7 +201,7 @@ def _answerability(status: str) -> JsonObject:
             "status": "not_answerable",
             "missing_fact_families": ["unambiguous_primary_anchor"],
             "recommended_source_checks": [
-                "Pick one exact candidate from disambiguation.retry_arguments before answering a single-symbol impact question.",
+                "Pick one exact candidate from disambiguation.retry_arguments only when user-provided location or source evidence identifies the intended edit site.",
                 "Use include_all only when the user asks for all matching symbols or exploratory aggregation.",
             ],
         }
@@ -535,7 +536,6 @@ def _constructor_bridge_for_symbol(
         "from_init": kg._symbol_result(symbol),
         "to_class": kg._symbol_result(candidate),
     }
-
 
 
 def _terminal_import_leads(

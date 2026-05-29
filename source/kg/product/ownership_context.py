@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 import tomllib
+from fnmatch import fnmatchcase
 
 import yaml
 
@@ -66,7 +68,8 @@ def ownership_context_packet(
         ]
         return packet
 
-    proven = _explicit_owners(repo_root, limit=limit)
+    service_paths = _service_source_paths(services)
+    proven = _explicit_owners(repo_root, service_paths=service_paths, limit=limit)
     candidates = _package_maintainer_candidates(repo_root, limit=limit)
     packet["checked_sources"] = _checked_sources(repo_root)
     packet["proven_owners"] = proven
@@ -157,15 +160,15 @@ def _service_identity(kg: KgSnapshot, repo: str, services: list[JsonObject]) -> 
     return None
 
 
-def _explicit_owners(repo_root: Path, *, limit: int) -> list[JsonObject]:
+def _explicit_owners(repo_root: Path, *, service_paths: list[str], limit: int) -> list[JsonObject]:
     rows: list[JsonObject] = []
-    rows.extend(_codeowners_rows(repo_root, limit=limit))
+    rows.extend(_codeowners_rows(repo_root, service_paths=service_paths, limit=limit))
     if len(rows) < limit:
         rows.extend(_catalog_owner_rows(repo_root, limit=limit - len(rows)))
     return rows[:limit]
 
 
-def _codeowners_rows(repo_root: Path, *, limit: int) -> list[JsonObject]:
+def _codeowners_rows(repo_root: Path, *, service_paths: list[str], limit: int) -> list[JsonObject]:
     if limit <= 0:
         return []
     rows: list[JsonObject] = []
@@ -173,6 +176,7 @@ def _codeowners_rows(repo_root: Path, *, limit: int) -> list[JsonObject]:
         path = repo_root / relative
         if not path.is_file():
             continue
+        parsed_any = False
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.split("#", 1)[0].strip()
             if not stripped:
@@ -183,10 +187,15 @@ def _codeowners_rows(repo_root: Path, *, limit: int) -> list[JsonObject]:
             owners = _valid_codeowners_tokens(parts[1:])
             if not owners:
                 continue
+            parsed_any = True
+            scope = _codeowners_owner_scope(parts[0], service_paths)
+            if scope is None:
+                continue
             rows.append(
                 {
                     "owners": owners,
                     "owner_kind": "code_owner",
+                    **scope,
                     "source_kind": "codeowners",
                     "scope_pattern": parts[0],
                     "source": _source_ref(relative, line_number),
@@ -194,9 +203,76 @@ def _codeowners_rows(repo_root: Path, *, limit: int) -> list[JsonObject]:
             )
             if len(rows) >= limit:
                 return rows
-        if rows:
+        if rows or parsed_any:
             break
     return rows
+
+
+def _service_source_paths(services: list[JsonObject]) -> list[str]:
+    paths: list[str] = []
+    for service in services:
+        for key in ("path",):
+            value = service.get(key)
+            if isinstance(value, str) and value.strip():
+                paths.append(value.strip())
+        for evidence in service.get("evidence", []):
+            if not isinstance(evidence, dict):
+                continue
+            bytes_ref = evidence.get("bytes_ref")
+            if not isinstance(bytes_ref, dict):
+                continue
+            path = bytes_ref.get("path")
+            if isinstance(path, str) and path.strip():
+                paths.append(path.strip())
+    return _dedupe_strings(paths)
+
+
+def _codeowners_owner_scope(pattern: str, service_paths: list[str]) -> JsonObject | None:
+    if _codeowners_pattern_is_repo_wide(pattern):
+        return {"owner_scope": "repo_wide"}
+    matched_paths = [
+        path
+        for path in service_paths
+        if _codeowners_pattern_matches_path(pattern, path)
+    ]
+    if matched_paths:
+        return {"owner_scope": "service_path_match", "matched_service_paths": matched_paths[:3]}
+    return None
+
+
+def _codeowners_pattern_is_repo_wide(pattern: str) -> bool:
+    normalized = pattern.strip()
+    return normalized in {"*", "**", "/", "/*", "/**"}
+
+
+def _codeowners_pattern_matches_path(pattern: str, path: str) -> bool:
+    normalized_pattern = pattern.strip().lstrip("/")
+    normalized_path = path.strip().lstrip("/")
+    if not normalized_pattern or not normalized_path:
+        return False
+    if normalized_pattern.endswith("/"):
+        prefix = normalized_pattern.rstrip("/") + "/"
+        return normalized_path.startswith(prefix)
+    if fnmatchcase(normalized_path, normalized_pattern):
+        return True
+    if "/" not in normalized_pattern and fnmatchcase(PurePosixPath(normalized_path).name, normalized_pattern):
+        return True
+    if normalized_pattern.endswith("/*"):
+        prefix = normalized_pattern[:-2].rstrip("/") + "/"
+        return normalized_path.startswith(prefix)
+    literal_prefix = normalized_pattern.rstrip("/") + "/"
+    return normalized_path == normalized_pattern or normalized_path.startswith(literal_prefix)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def _catalog_owner_rows(repo_root: Path, *, limit: int) -> list[JsonObject]:

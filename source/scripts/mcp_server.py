@@ -9,50 +9,52 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from source.kg.core.models import JsonObject
+from source.kg.core.models import JsonObject, canonical_json
 from source.kg.product.mcp_tools import call_tool, tool_definitions
+from source.kg.product.output_budget import render_grep_response
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_host import format_host_for_url, is_loopback_host
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
 REQUEST_READ_TIMEOUT_SECONDS = 5.0
-SUPERCONTEXT_MCP_INSTRUCTIONS = """# SuperContext - repository knowledge graph
+# This initialize.instructions block is the load-bearing agent contract for
+# SuperContext MCP behavior; keep anti-overclaim rules here, not per tool.
+SUPERCONTEXT_MCP_INSTRUCTIONS = """# SuperContext KG
 
-SuperContext provides deterministic, source-cited context from the indexed repository graph. Use it as an early source-inspection map, then verify with ordinary source inspection when the graph is partial, compacted, or when code details matter.
+Use SuperContext as a source-inspection head start. Default tool results are compact grep-style packets with grep-style rows. Read `status`, `answerability`, `boundary`, `covered`, and `must_inspect` first, then scan `rows` shaped as `locator [tag] category fact`. Open cited source or follow `next` for a narrower anchor; verify partial, candidate, risky, or code-detail claims with ordinary source tools.
 
-## Tool selection by intent
+## Tool Routing
 
-- Broad planning, architecture, dependency, or impact question with a repo, service, symbol, package, endpoint, event channel, domain, or path anchor -> planning_context first.
-- PR or code review question with changed files or line ranges -> review_context first, then targeted primitive tools or source reads.
-- Exact reverse callers for a known symbol -> find_callers.
-- Reverse dependency or caller-impact analysis from a resolved symbol anchor -> reverse_impact.
-- Exact downstream callees for a known symbol -> find_callees.
-- Static downstream call closure from an exact edit-site symbol -> blast_radius.
-- Service endpoint/event/deploy fact sheet -> get_service_brief.
-- Exact event channel producers or consumers -> get_event_producers or get_event_consumers.
-- KG inventory or repo coverage summary -> planning_context and read snapshot_summary/snapshot_scope.
-- Runtime architecture or domain-routing map -> planning_context first and read runtime_architecture.answer_packet, runtime_building_blocks, domain_routing_map, and deploy_kind_counts before source inspection; keep component deploy counts separate from unlinked route leads.
-- Service/repo ownership question -> planning_context first and read ownership_context.answer_packet; package authors and package maintainers are candidates only, not service owners, unless explicit CODEOWNERS/catalog/owner metadata proves ownership.
-- Endpoint authorization/security question -> planning_context first and read top-level authz_surface.review_leads, applied_policies, in_method_checks, inspection_areas, inspection_index, and unsupported_scopes when present, related_facts.authz_surface as a compact reference, or get_service_brief.authz_surface for a known service; treat missing_declared_policy as a source-inspection lead, not proof of public access.
+- Broad planning/arch/deps/ownership/runtime/domain/inventory/impact -> planning_context first.
+- PR/review with changed files/ranges -> review_context first.
+- Reverse callers -> find_callers; transitive reverse impact -> reverse_impact.
+- Callees -> find_callees; downstream static CALLS closure -> blast_radius.
+- Service facts -> get_service_brief.
+- Event producers/consumers -> get_event_producers/get_event_consumers.
 
-## Common packet contract
+## Result Contract
 
-Every tool result includes `packet_contract`, `answerability`, `proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`. Some large planning packets also include `output_budget`. Treat these as the normalized first-read fields across all tools. Use `proven_facts` to find the strongest KG-backed fields, then cite the underlying evidence rows or file/line coordinates. Use `candidate_leads` and `inspection_areas` as the bounded source-inspection plan for uncovered tests, scripts, notebooks, entry points, import-only consumers, config, manifests, runtime routes, or other areas outside the proven packet. If `output_budget.truncated` is true, use omitted counts and backfilled counts as truncation metadata, not absence proof; follow returned inspection refs/search terms or call narrower anchors for omitted categories that matter. Use `coverage_gaps` to state what the graph could not prove. Do not claim candidate leads, missing gaps, or unsupported scopes as facts until source inspection verifies them.
+Default results contain `tool`, `query`, `status`, `answerability`, `boundary`, `covered`, `must_inspect`, `shown`, `more`, `rows`, `gaps`, and `next`. `[proven]` rows are KG-backed/static source pointers, not a substitute for reading code when editing or making risky claims. `[candidate]` and `[candidate:*]` rows are inspection leads only. `covered` says which fact families are already represented. `must_inspect` points to omitted or unproven areas with coordinates/search terms when available. `gaps` names what SuperContext could not prove. `next` is one narrower MCP call or source-inspection lead.
 
-## Answerability
+## Behavior Rules
 
-Read answerability, proven_facts, candidate_leads, coverage_gaps, inspection_areas, coverage_warnings, unsupported_scopes, and next_actions before finalizing. If a SuperContext result is partial, ambiguous, unsupported_by_current_kg, or not_found, say what the graph could not prove and inspect the relevant workspace source files with ordinary Read/Grep before finalizing. For runtime event time windows and deploy-safety claims, static graph facts are context only; inspect operational/config/source evidence. Do not treat a graph miss as proof of absence.
+- Graph miss is not absence: partial/not_found/unsupported_by_current_kg/indexed_scope_no_match need source inspection; indexed_scope_no_match only proves scoped inventory.
+- Runtime windows, event/deploy safety, and dynamic dispatch need source/config/ops evidence.
+- Ambiguous symbol results are not empty impact/caller proof. Use `next` or path/line anchors; candidate preview rows are scan-order/risk hints, not intent proof.
+- Do not use a first source-search hit as a symbol anchor unless user/disambiguation supplied it.
+- For not_found event/symbol rows, use near matches, indexed counts, candidate rows, `gaps`, and `next` as inspection leads before absence claims.
+- Keep known_linked, unlinked_evidence, and missing_contracts separate. Only linked deploy facts / DEPLOYS_VIA_CONFIG prove service-to-deploy evidence; unlinked routes are inspection leads.
+- Package authors/maintainers are candidates only; service owners require CODEOWNERS/catalog/explicit metadata.
+- Missing declared authz policy is an inspection lead, not public-access proof.
+- client_endpoint_call_count is path-scoped; inspect method/host/env before runtime dependency claims.
+- deploy_order_guidance is inference, not a canonical deploy-blocker fact.
 
-For symbol callers, reverse impact, callees, and blast-radius tools, an ambiguous result means no exact result was computed. Do not interpret an empty callers/edges/callees list as absence; use disambiguation.retry_arguments, candidate_impact_previews, a candidate qualified_name, or candidate path+line to retry the exact symbol. For reverse dependency or caller-impact analysis, prefer reverse_impact over manually chaining repeated find_callers calls, then verify the returned source coordinates and `inspection_areas`; `source_inspection_areas` is a compatibility alias with tool-specific detail.
+## Anti-Patterns
 
-When the user gives only an unqualified symbol name, call the symbol tool with that name first so SuperContext can return candidate ambiguity. Do not add path or line from a first source-search hit unless the user supplied that location or a prior SuperContext disambiguation candidate did.
-
-For ambiguous symbol-impact results, do not aggregate all candidates unless the user asks for all matches or exploratory impact. Use candidate_impact_previews as ranking hints, then retry one exact candidate when the intended edit site is clear; otherwise report the ambiguity and ask for path/line.
-
-For service operational evidence, read operational_surfaces.evidence_partition or service_operational_surfaces.evidence_partition. Keep known_linked, unlinked_evidence, and missing_contracts separate: known_linked is exact KG/repo-linked evidence, unlinked_evidence is source leads only, and missing_contracts are claims the KG cannot prove. Treat deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof.
-
-For PR review impact, read review_context.review_answer_packet first, then review_context.application_impact alongside framework_impact and runtime_surfaces. When the prompt names expected impact categories such as UI screens, scheduled jobs, SQS consumers, delivery workers, or tracking paths, pass requested_surfaces so surface_status can separate known, unlinked, and missing evidence. application_impact groups same-repo app/package namespace surfaces such as API, models, serializers, workers, and scheduled jobs, and separates app-scoped runtime facts from unlinked cross-repo name leads. Use cross_repo_name_leads only as source-inspection leads, not as proven impact.
+- Do not finalize partial results without checking relevant `gaps` / `next` leads or saying what remains unknown.
+- Do not copy raw packets; summarize with citations.
+- Do not trust partial multi-repo evidence without verification.
 """
 
 
@@ -275,12 +277,39 @@ def _tools_call_result(kg: KgSnapshot, params: JsonObject) -> JsonObject:
         arguments = {}
     if not isinstance(arguments, dict):
         raise ValueError("tools/call arguments must be an object")
-    result = call_tool(kg, name.strip(), arguments)
+    result = _render_tool_result_for_transport(call_tool(kg, name.strip(), arguments))
     return {
-        "content": [{"type": "text", "text": json.dumps(result, indent=2, sort_keys=True)}],
+        "content": [{"type": "text", "text": canonical_json(result)}],
         "structuredContent": result,
         "isError": False,
     }
+
+
+def _render_tool_result_for_transport(result: JsonObject) -> JsonObject:
+    try:
+        return render_grep_response(result)
+    except Exception as exc:
+        tool = result.get("tool") if isinstance(result.get("tool"), str) else "unknown"
+        print(
+            f"SuperContext MCP renderer failed for tool={tool}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        query = result.get("query") or result.get("symbol") or result.get("service") or ""
+        return {
+            "tool": tool,
+            "query": str(query),
+            "status": "partial",
+            "answerability": "partial: MCP renderer failed; use this as an inspection-only result.",
+            "boundary": "render_error: do not treat missing rows as absence; inspect source or retry with a narrower anchor.",
+            "covered": [],
+            "must_inspect": ["render_error: inspect source and retry the MCP tool with narrower arguments if useful"],
+            "shown": 0,
+            "more": 0,
+            "rows": [],
+            "gaps": f"render_error:{type(exc).__name__}",
+            "next": "inspect source; retry the same MCP tool with narrower arguments if useful",
+        }
 
 
 def _json_rpc_result(request_id: object, result: JsonObject) -> JsonObject:

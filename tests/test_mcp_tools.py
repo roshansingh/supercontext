@@ -6,14 +6,15 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
-from source.kg.core.models import Entity, Evidence, Fact, canonical_json
+from source.kg.core.models import Coverage, Entity, Evidence, Fact, canonical_json
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import (
     TOOL_NAMES,
-    _planning_context_has_resolved_anchor,
+    _event_near_matches,
     _planning_context_authz_surface_reference,
     _planning_context_symbol_impact,
     _with_default_tool_metadata,
@@ -24,13 +25,14 @@ from source.kg.product.output_budget import (
     AUTHZ_COMPACT_LIST_KEYS,
     COMPACT_AUTHZ_INSPECTION_REF_LIMIT,
     COMPACT_RUNTIME_HEADSTART_LIMIT,
-    PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
-    PLANNING_CONTEXT_MAX_CHARS,
+    GREP_RESPONSE_KEYS,
+    MCP_INLINE_HARD_MAX_CHARS,
     RELATED_FACT_SECTION_KEYS,
     _BUDGET_BACKFILL_LIST_PATHS,
     _compact_authz_surface,
     _compact_disambiguation,
     enforce_planning_context_budget,
+    render_grep_response,
 )
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.snapshot import KgSnapshot
@@ -76,6 +78,45 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
     testcase.assertIsInstance(payload["packet_contract"], dict)
 
 
+def _assert_grep_transport_shape(testcase: unittest.TestCase, payload: dict[str, object]) -> None:
+    testcase.assertEqual(set(payload), set(GREP_RESPONSE_KEYS))
+    testcase.assertIsInstance(payload["tool"], str)
+    testcase.assertIsInstance(payload["query"], str)
+    testcase.assertIsInstance(payload["status"], str)
+    testcase.assertIsInstance(payload["answerability"], str)
+    testcase.assertIsInstance(payload["boundary"], str)
+    testcase.assertIsInstance(payload["covered"], list)
+    testcase.assertTrue(all(isinstance(row, str) for row in payload["covered"]))
+    testcase.assertIsInstance(payload["must_inspect"], list)
+    testcase.assertTrue(all(isinstance(row, str) for row in payload["must_inspect"]))
+    testcase.assertIsInstance(payload["shown"], int)
+    testcase.assertIsInstance(payload["more"], int)
+    testcase.assertIsInstance(payload["rows"], list)
+    testcase.assertTrue(all(isinstance(row, str) for row in payload["rows"]))
+    testcase.assertIsInstance(payload["gaps"], str)
+    testcase.assertIsInstance(payload["next"], str)
+    testcase.assertLessEqual(len(canonical_json(payload)), MCP_INLINE_HARD_MAX_CHARS)
+    for forbidden in ("packet_contract", "proven_facts", "candidate_leads", "coverage_gaps", "output_budget"):
+        testcase.assertNotIn(forbidden, payload)
+
+
+def _transport_call(kg: KgSnapshot, name: str, arguments: dict[str, object] | None = None) -> dict[str, object]:
+    return _transport_rpc(kg, name, arguments)["result"]["structuredContent"]
+
+
+def _transport_rpc(kg: KgSnapshot, name: str, arguments: dict[str, object] | None = None) -> dict[str, object]:
+    rpc = _handle_json_rpc(
+        kg,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments or {}},
+        },
+    )
+    return rpc
+
+
 class McpToolsTest(unittest.TestCase):
     def test_tool_definitions_include_adr_names_and_workflow_extensions(self) -> None:
         definitions = tool_definitions()
@@ -91,37 +132,24 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
         self.assertEqual(schemas["review_context"]["properties"]["requested_surfaces"]["type"], "array")
         self.assertNotIn("depth", schemas["review_context"]["properties"])
-        self.assertIn("operational_surfaces.evidence_partition", descriptions["get_service_brief"])
-        self.assertIn("operational_surfaces.deploy_link_facts", descriptions["get_service_brief"])
-        self.assertIn("DEPLOYS_VIA_CONFIG", descriptions["get_service_brief"])
-        self.assertIn("service_operational_surfaces.evidence_partition", descriptions["planning_context"])
-        self.assertIn("service_operational_surfaces.deploy_link_facts", descriptions["planning_context"])
-        self.assertIn("DEPLOYS_VIA_CONFIG", descriptions["planning_context"])
-        self.assertIn("known_linked", descriptions["planning_context"])
-        self.assertIn("unlinked_evidence", descriptions["planning_context"])
-        self.assertIn("missing_contracts", descriptions["planning_context"])
-        self.assertIn("runtime_architecture", descriptions["planning_context"])
-        self.assertIn("related_facts.symbol_impact.reverse_impact", descriptions["planning_context"])
-        self.assertIn("ownership_context", descriptions["planning_context"])
-        self.assertIn("review_answer_packet", descriptions["review_context"])
+        self.assertIn("compact linked fact sheet", descriptions["get_service_brief"])
+        self.assertIn("runtime architecture", descriptions["planning_context"])
+        self.assertLessEqual(len(descriptions["planning_context"]), 800)
         self.assertIn("requested_surfaces", descriptions["review_context"])
-        self.assertIn("framework_impact", descriptions["review_context"])
-        self.assertIn("application_impact", descriptions["review_context"])
-        self.assertIn("disambiguation.retry_arguments", descriptions["find_callers"])
+        self.assertIn("changed-file set", descriptions["review_context"])
+        self.assertLessEqual(len(descriptions["review_context"]), 600)
         self.assertIn("unqualified symbol name", schemas["reverse_impact"]["properties"]["symbol"]["description"])
         self.assertIn("__init__", descriptions["reverse_impact"])
-        self.assertIn("terminal import_consumer_leads", descriptions["reverse_impact"])
-        self.assertIn("source_inspection_areas", descriptions["reverse_impact"])
+        self.assertIn("import-only terminal leads", descriptions["reverse_impact"])
         self.assertNotIn("what is affected if this symbol changes", descriptions["reverse_impact"])
         self.assertNotIn("what breaks if I change this", descriptions["reverse_impact"])
-        self.assertIn("import_consumer_leads", descriptions["find_callers"])
-        self.assertIn("disambiguation.retry_arguments", descriptions["find_callees"])
         for description in descriptions.values():
-            self.assertIn("packet_contract", description)
-            self.assertIn("proven_facts", description)
-            self.assertIn("candidate_leads", description)
-            self.assertIn("coverage_gaps", description)
-            self.assertIn("inspection_areas", description)
+            self.assertNotIn("Returns common packet contract fields", description)
+            self.assertNotIn("packet_contract", description)
+            self.assertNotIn("proven_facts", description)
+            self.assertNotIn("candidate_leads", description)
+            self.assertNotIn("coverage_gaps", description)
+            self.assertNotIn("inspection_areas", description)
 
     def test_default_tool_metadata_treats_missing_status_as_answerable(self) -> None:
         payload = _with_default_tool_metadata({"services": [{"name": "api"}]}, tool_name="search_services")
@@ -173,6 +201,12 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(payload["answerability"]["status"], "partial")
         self.assertEqual(payload["answerability"]["missing_fact_families"], ["unknown_status"])
         self.assertEqual(payload["proven_facts"]["status"], "found")
+
+    def test_default_tool_metadata_recognizes_indexed_scope_no_match(self) -> None:
+        payload = _with_default_tool_metadata({"status": "indexed_scope_no_match"}, tool_name="planning_context")
+
+        self.assertEqual(payload["answerability"]["status"], "partial")
+        self.assertEqual(payload["answerability"]["missing_fact_families"], ["matching_first_class_rows"])
 
     def test_planning_context_resolves_structured_and_query_inputs(self) -> None:
         with _fixture_snapshot() as kg:
@@ -273,14 +307,28 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["services"][0]["slug"], "payments")
 
     def test_planning_context_repo_scope_hint_does_not_promote_missing_rows(self) -> None:
-        with _fixture_snapshot(extra_consumers=1) as kg:
-            result = call_tool(kg, "planning_context", {"repo": "consumer-0"})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_var = Entity(
+                kind="EnvVar",
+                identity={"tenant_id": "default", "repo": "indexed-only", "name": "CONFIG_ONLY"},
+            )
+            JsonlKgStore(root).write(
+                entities=[env_var],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"counts": {"entities": 1, "facts": 0}},
+            )
+            result = call_tool(KgSnapshot(root), "planning_context", {"repo": "indexed-only"})
 
-        self.assertEqual(result["status"], "not_found")
-        self.assertEqual(result["answerability"]["status"], "not_answerable")
-        self.assertEqual(result["snapshot_scope"]["repo"], "consumer-0")
+        self.assertEqual(result["status"], "indexed_scope_no_match")
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertEqual(result["answerability"]["missing_fact_families"], ["matching_first_class_rows"])
+        self.assertEqual(result["snapshot_scope"]["repo"], "indexed-only")
         self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
         self.assertTrue(any("snapshot_summary" in action for action in result["next_actions"]))
+        self.assertFalse(any(row["trigger"] == "not_found" for row in result["coverage_gaps"]))
 
     def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
         with _fixture_snapshot() as kg:
@@ -338,6 +386,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(len(result["services"]), 1)
         self.assertEqual(result["services"][0]["slug"], "payments")
         self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"RESOLVES_TO_REPO"})
+
+    def test_planning_context_repo_anchor_includes_owned_services(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"repo": "payments"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["service_count"], 1)
+        self.assertEqual(result["services"][0]["slug"], "payments")
 
     def test_planning_context_service_anchor_returns_composed_context(self) -> None:
         with _fixture_snapshot() as kg:
@@ -604,66 +660,35 @@ class McpToolsTest(unittest.TestCase):
 
     def test_planning_context_output_budget_truncates_runtime_architecture_shape(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
-            result = call_tool(kg, "planning_context", {})
+            result = _transport_call(kg, "planning_context", {})
 
-        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
+        _assert_grep_transport_shape(self, result)
         self.assertEqual(result["tool"], "planning_context")
-        budget = result["output_budget"]
-        self.assertTrue(budget["truncated"])
-        self.assertLessEqual(len(canonical_json(result)), budget["max_chars"])
-        self.assertGreater(budget["omitted_counts"]["runtime_building_blocks"], 0)
-        self.assertGreater(budget["omitted_counts"]["domain_routing_map"], 0)
-        self.assertIn("runtime_architecture.answer_packet.runtime_building_blocks", budget["truncated_sections"])
-        self.assertIn("runtime_architecture.answer_packet.domain_routing_map", budget["truncated_sections"])
-        architecture = result["runtime_architecture"]
-        answer_packet = architecture["answer_packet"]
-        self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
-        self.assertIn("investigation_brief", answer_packet)
-        self.assertGreater(len(answer_packet["investigation_brief"]["runtime_anchors"]), 1)
-        self.assertTrue(answer_packet["investigation_brief"]["recommended_source_checks"])
-        self.assertLessEqual(len(answer_packet.get("runtime_building_blocks", [])), 4)
-        self.assertLessEqual(len(answer_packet.get("domain_routing_map", [])), 15)
-        self.assertTrue(answer_packet["investigation_brief"]["known_routes"])
-        self.assertTrue(answer_packet["investigation_brief"]["known_routes"][0]["evidence_coordinates"])
-        self.assertIn("can_answer_owner", result["ownership_context"]["answer_packet"])
-        self.assertIn("unsupported_promotions", result["ownership_context"]["answer_packet"])
-        self.assertIn("use narrower planning_context anchors", budget["advice"])
+        self.assertGreater(result["shown"], 0)
+        self.assertTrue(any("[proven]" in row for row in result["rows"]))
+        self.assertTrue(result["next"])
 
     def test_planning_context_budget_keeps_runtime_headstart_when_bulk_sections_are_dropped(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=2_500) as kg:
-            result = call_tool(kg, "planning_context", {})
+            result = _transport_call(kg, "planning_context", {})
 
-        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
-        answer_packet = result["runtime_architecture"]["answer_packet"]
-        brief = answer_packet["investigation_brief"]
-        self.assertEqual(brief["purpose"], "head_start_for_agent_source_investigation")
-        self.assertGreaterEqual(len(brief["runtime_anchors"]), 4)
-        self.assertTrue(brief["known_routes"])
-        self.assertTrue(brief["recommended_source_checks"])
-        self.assertTrue(all("path" in row for row in brief["recommended_source_checks"]))
-        self.assertTrue(result["output_budget"]["truncated"])
-        self.assertTrue(result["output_budget"]["truncated_sections"])
-        self.assertIn("investigation_brief", result["output_budget"]["advice"])
+        _assert_grep_transport_shape(self, result)
+        self.assertEqual(result["tool"], "planning_context")
+        self.assertGreater(result["shown"], 0)
+        self.assertTrue(any("runtime" in row or "services" in row for row in result["rows"]))
 
     def test_planning_context_unresolved_anchor_uses_compact_fleet_budget(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=2_500) as kg:
-            result = call_tool(kg, "planning_context", {"service": "missing-product-name"})
+            result = _transport_call(kg, "planning_context", {"service": "missing-product-name"})
 
-        self.assertEqual(result["answerability"]["status"], "not_answerable")
-        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
-        self.assertEqual(result["output_budget"]["max_chars"], PLANNING_CONTEXT_MAX_CHARS)
-
-    def test_planning_context_anchor_resolution_gate_compacts_only_explicit_failures(self) -> None:
-        self.assertFalse(_planning_context_has_resolved_anchor({"answerability": {"status": "not_answerable"}}))
-        self.assertFalse(_planning_context_has_resolved_anchor({"status": "ambiguous"}))
-        self.assertTrue(_planning_context_has_resolved_anchor({"answerability": {"status": "answerable"}}))
-        self.assertTrue(_planning_context_has_resolved_anchor({}))
+        _assert_grep_transport_shape(self, result)
+        self.assertEqual(result["tool"], "planning_context")
+        self.assertIn("not_found", result["gaps"])
 
     def test_planning_context_service_anchor_scopes_runtime_before_budgeting(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
             result = call_tool(kg, "planning_context", {"service": "runtime-service-0"})
 
-        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
         self.assertEqual(result["tool"], "planning_context")
         self.assertNotIn("output_budget", result)
         self.assertEqual(result["runtime_architecture"]["scope"], {"kind": "repo", "repo": "runtime-repo-0"})
@@ -675,20 +700,17 @@ class McpToolsTest(unittest.TestCase):
             runtime_pressure_payload_size=2_500,
             runtime_pressure_same_repo=True,
         ) as kg:
-            result = call_tool(kg, "planning_context", {"service": "runtime-service-0"})
+            rpc = _transport_rpc(kg, "planning_context", {"service": "runtime-service-0"})
+            result = rpc["result"]["structuredContent"]
 
-        self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
+        text = rpc["result"]["content"][0]["text"]
+        self.assertEqual(text, canonical_json(result))
+        self.assertLessEqual(len(canonical_json(result)), MCP_INLINE_HARD_MAX_CHARS)
+        self.assertLessEqual(len(text) + len(canonical_json(result)), MCP_INLINE_HARD_MAX_CHARS * 2)
+        _assert_grep_transport_shape(self, result)
         self.assertEqual(result["tool"], "planning_context")
-        budget = result["output_budget"]
-        self.assertTrue(budget["truncated"])
-        self.assertEqual(budget["max_chars"], PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
-        self.assertTrue(
-            any(
-                section.startswith("runtime_architecture.answer_packet.deploy_runtime_map")
-                for section in budget["truncated_sections"]
-            )
-        )
-        self.assertIn("runtime_architecture.answer_packet.domain_routing_map", budget["truncated_sections"])
+        self.assertGreater(result["shown"], 0)
+        self.assertTrue(result["next"])
 
     def test_planning_context_output_budget_preserves_valid_json_transport_shape(self) -> None:
         with _fixture_snapshot(runtime_pressure_routes=24, runtime_pressure_payload_size=900) as kg:
@@ -705,7 +727,515 @@ class McpToolsTest(unittest.TestCase):
         structured = rpc["result"]["structuredContent"]
         parsed_text = json.loads(rpc["result"]["content"][0]["text"])
         self.assertEqual(parsed_text, structured)
-        self.assertTrue(structured["output_budget"]["truncated"])
+        _assert_grep_transport_shape(self, structured)
+
+    def test_transport_falls_back_when_renderer_fails(self) -> None:
+        stderr = io.StringIO()
+        with _fixture_snapshot(extra_charge_card_callers=1) as kg:
+            with mock.patch(
+                "source.scripts.mcp_server.render_grep_response",
+                side_effect=RuntimeError("boom"),
+            ), mock.patch("sys.stderr", stderr):
+                rpc = _transport_rpc(kg, "find_callers", {"symbol": "charge_card"})
+
+        structured = rpc["result"]["structuredContent"]
+        parsed_text = json.loads(rpc["result"]["content"][0]["text"])
+        self.assertEqual(parsed_text, structured)
+        _assert_grep_transport_shape(self, structured)
+        self.assertEqual(structured["status"], "partial")
+        self.assertIn("render_error", structured["boundary"])
+        self.assertIn("RuntimeError", structured["gaps"])
+        self.assertIn("SuperContext MCP renderer failed", stderr.getvalue())
+        self.assertIn("Traceback", stderr.getvalue())
+
+    def test_mcp_transport_budget_compacts_real_non_planning_tool_with_omitted_refs(self) -> None:
+        with _fixture_snapshot(extra_charge_card_callers=80) as kg:
+            rpc = _transport_rpc(kg, "find_callers", {"symbol": "charge_card", "limit": 100})
+
+        result = rpc["result"]["structuredContent"]
+        text = rpc["result"]["content"][0]["text"]
+        self.assertEqual(text, canonical_json(result))
+        self.assertLessEqual(len(text) + len(canonical_json(result)), MCP_INLINE_HARD_MAX_CHARS * 2)
+        _assert_grep_transport_shape(self, result)
+        self.assertEqual(result["tool"], "find_callers")
+        self.assertGreater(result["shown"], 0)
+        self.assertGreaterEqual(result["more"], 0)
+        self.assertTrue(all("[proven]" in row for row in result["rows"]))
+        self.assertTrue(any("payments/bulk_" in row for row in result["rows"]))
+        self.assertIn("find_callers", result["next"])
+
+
+    def test_render_grep_response_returns_flat_default_transport_shape(self) -> None:
+        payload = {
+            "tool": "find_callers",
+            "status": "found",
+            "symbol": "score_session",
+            "proven_facts": {"status": "found", "sources": [{"field": "callers", "count": 1}]},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "callers": [
+                {
+                    "predicate": "CALLS",
+                    "subject": {"kind": "CodeSymbol", "name": "consumer.run", "repo": "consumer"},
+                    "object": {"kind": "CodeSymbol", "name": "lib.score_session", "repo": "lib"},
+                    "evidence_coordinates": [{"repo": "consumer", "path": "runner.py", "line_start": 20}],
+                }
+            ],
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertEqual(rendered["rows"], ["consumer/runner.py:20  [proven] callers  consumer.run -CALLS-> lib.score_session"])
+        self.assertEqual(rendered["gaps"], "none")
+        self.assertIn("find_callers", rendered["next"])
+
+    def test_render_grep_response_preserves_candidate_not_proof_boundary(self) -> None:
+        payload = {
+            "tool": "reverse_impact",
+            "status": "partial",
+            "symbol": "score_session",
+            "proven_facts": {"status": "empty", "sources": []},
+            "candidate_leads": {
+                "status": "found",
+                "sources": [
+                    {
+                        "field": "terminal_import_consumer_leads",
+                        "count": 1,
+                        "lead_kind": "import_only_source_lead",
+                    }
+                ],
+            },
+            "coverage_gaps": [{"trigger": "missing_fact_family", "fact_family": "direct_call_chain"}],
+            "terminal_import_consumer_leads": [
+                {
+                    "symbol": {"name": "consumer", "repo": "consumer", "path": "consumer.py", "line_start": 5},
+                    "evidence_coordinates": [{"repo": "consumer", "path": "consumer.py", "line_start": 5}],
+                }
+            ],
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertTrue(rendered["rows"])
+        self.assertIn("[candidate:import_only_source_lead]", rendered["rows"][0])
+        self.assertNotIn("[proven]", rendered["rows"][0])
+        self.assertIn("terminal_import_consumer_leads requires source verification", rendered["gaps"])
+        self.assertTrue(rendered["next"])
+
+    def test_render_grep_response_marks_authz_backfill_rows_as_candidate(self) -> None:
+        payload = {
+            "tool": "planning_context",
+            "status": "partial",
+            "proven_facts": {"status": "empty", "sources": []},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "authz_surface": {
+                "review_leads": [
+                    {
+                        "lead_type": "declared_public",
+                        "reason": "Missing declared permission policy.",
+                        "handler": {"name": "WebhookView.post"},
+                        "evidence_coordinates": [{"repo": "api", "path": "views.py", "line_start": 42}],
+                    }
+                ],
+                "endpoint_authorization": [
+                    {
+                        "endpoint": {"path": "/webhooks", "method": "POST"},
+                        "authz_status": "unknown",
+                        "evidence_coordinates": [{"repo": "api", "path": "urls.py", "line_start": 10}],
+                    }
+                ],
+            },
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertTrue(rendered["rows"])
+        self.assertTrue(all("[candidate]" in row for row in rendered["rows"]))
+        self.assertFalse(any("[proven]" in row for row in rendered["rows"]))
+
+    def test_render_grep_response_downgrades_unlinked_domain_routes_per_row(self) -> None:
+        payload = {
+            "tool": "planning_context",
+            "status": "partial",
+            "proven_facts": {"status": "empty", "sources": []},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "runtime_architecture": {
+                "answer_packet": {
+                    "domain_routing_map": [
+                        {
+                            "status": "known_route",
+                            "domain": {"name": "api.example.com"},
+                            "deploy_kind": "zappa_lambda",
+                            "evidence_coordinates": [{"repo": "api", "path": "zappa_settings.json", "line_start": 3}],
+                        },
+                        {
+                            "status": "unlinked_domain_reference",
+                            "domain": {"name": "internal.example.com"},
+                            "deploy_kind": "env_domain_reference",
+                            "evidence_coordinates": [{"repo": "api", "path": ".env", "line_start": 8}],
+                        },
+                    ]
+                }
+            },
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        known = next(row for row in rendered["rows"] if "api.example.com" in row)
+        unlinked = next(row for row in rendered["rows"] if "internal.example.com" in row)
+        self.assertIn("[proven]", known)
+        self.assertIn("status=known_route", known)
+        self.assertIn("[candidate:unlinked_source_lead]", unlinked)
+        self.assertIn("status=unlinked_domain_reference", unlinked)
+        self.assertNotIn("[proven]", unlinked)
+
+    def test_render_grep_response_fallback_surface_status_is_candidate(self) -> None:
+        payload = {
+            "tool": "review_context",
+            "status": "partial",
+            "proven_facts": {"status": "empty", "sources": []},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "surface_status": [
+                {
+                    "surface": "authz",
+                    "status": "missing_or_unknown",
+                    "reason": "No declared policy row.",
+                }
+            ],
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertEqual(rendered["shown"], 1)
+        self.assertIn("[candidate]", rendered["rows"][0])
+        self.assertNotIn("[proven]", rendered["rows"][0])
+
+    def test_render_grep_response_preserves_scalar_zero_rows(self) -> None:
+        payload = {
+            "tool": "custom_tool",
+            "status": "found",
+            "proven_facts": {"status": "found", "sources": [{"field": "count_row", "count": 1}]},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "count_row": 0,
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertEqual(rendered["shown"], 1)
+        self.assertEqual(rendered["more"], 0)
+        self.assertTrue(rendered["rows"][0].endswith("count_row  0"))
+
+    def test_render_grep_response_shrinks_by_dropping_rows_and_incrementing_more(self) -> None:
+        payload = {
+            "tool": "find_callers",
+            "status": "found",
+            "symbol": "score_session",
+            "proven_facts": {"status": "found", "sources": [{"field": "callers", "count": 40}]},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "callers": [
+                {
+                    "predicate": "CALLS",
+                    "subject": {"kind": "CodeSymbol", "name": f"consumer_{index}.run", "repo": f"consumer_{index}"},
+                    "object": {"kind": "CodeSymbol", "name": "lib.score_session", "repo": "lib"},
+                    "evidence_coordinates": [
+                        {"repo": f"consumer_{index}", "path": f"runner_{index}.py", "line_start": index + 1}
+                    ],
+                    "payload": "x" * 800,
+                }
+                for index in range(40)
+            ],
+        }
+
+        rendered = render_grep_response(payload, max_chars=1_200, target_chars=900)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertLessEqual(len(canonical_json(rendered)), 1_200)
+        self.assertLess(rendered["shown"], 40)
+        self.assertGreater(rendered["more"], 0)
+        self.assertIn("additional rows omitted", rendered["gaps"])
+        self.assertIn(f"{rendered['more']} additional rows omitted", rendered["gaps"])
+        self.assertTrue(rendered["next"])
+
+    def test_render_grep_response_balances_deploy_rows_before_endpoint_flood(self) -> None:
+        payload = {
+            "tool": "get_service_brief",
+            "status": "found",
+            "service": {"name": "api", "repo": "api"},
+            "proven_facts": {
+                "status": "found",
+                "sources": [
+                    {"field": "service", "count": 1},
+                    {"field": "endpoints", "count": 50},
+                    {"field": "deploy_mappings", "count": 1},
+                ],
+            },
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "service": {"name": "api", "repo": "api", "evidence_coordinates": [{"repo": "api", "path": "pyproject.toml", "line_start": 1}]},
+            "endpoints": [
+                {
+                    "predicate": "EXPOSES_ENDPOINT",
+                    "subject": "api",
+                    "object": f"GET /endpoint-{index}",
+                    "evidence_coordinates": [{"repo": "api", "path": "urls.py", "line_start": index + 1}],
+                }
+                for index in range(50)
+            ],
+            "deploy_mappings": [
+                {
+                    "predicate": "DEPLOYS_VIA_CONFIG",
+                    "subject": "api",
+                    "object": "kubernetes_deployment:api",
+                    "qualifier": {
+                        "kubernetes_kind": "Deployment",
+                        "workload": "api",
+                        "namespace": "default",
+                        "source_kind": "kubernetes_manifest",
+                        "path": "k8s/api.yaml",
+                    },
+                    "evidence_coordinates": [{"repo": "api", "path": "k8s/api.yaml", "line_start": 4}],
+                }
+            ],
+        }
+
+        rendered = render_grep_response(payload, max_chars=2_500, target_chars=2_000)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertIn("deploy_mappings: shown 1/1", rendered["covered"])
+        self.assertTrue(any("deploy_mappings" in row and "kind=Deployment" in row for row in rendered["rows"][:3]))
+        self.assertGreater(rendered["more"], 0)
+        self.assertTrue(any("endpoints" in row for row in rendered["must_inspect"]))
+
+    def test_render_grep_response_dependency_rows_preserve_consumer_repo(self) -> None:
+        payload = {
+            "tool": "planning_context",
+            "status": "found",
+            "proven_facts": {"status": "found", "sources": [{"field": "dependencies", "count": 1}]},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "dependencies": [
+                {
+                    "predicate": "RESOLVES_TO_SERVICE",
+                    "subject": "shared_lib",
+                    "object": "shared-lib",
+                    "evidence": [
+                        {
+                            "source_ref": {
+                                "consumer_repo": "api",
+                                "provider_repo": "shared_lib",
+                                "provider_package_name": "shared-lib",
+                            }
+                        }
+                    ],
+                    "evidence_coordinates": [{"repo": "shared_lib", "path": "pyproject.toml", "line_start": 1}],
+                }
+            ],
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertIn("consumer_repo=api", rendered["rows"][0])
+        self.assertIn("provider_repo=shared_lib", rendered["rows"][0])
+
+    def test_render_grep_response_ambiguous_planning_avoids_service_only_next(self) -> None:
+        payload = {
+            "tool": "planning_context",
+            "status": "ambiguous",
+            "query": "ShopAgain",
+            "proven_facts": {"status": "found", "sources": [{"field": "services", "count": 2}]},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "answerability": {"status": "not_answerable", "missing_fact_families": ["unambiguous_primary_anchor"]},
+            "next_mcp_calls": [{"tool": "planning_context", "arguments": {"service": "acme-api", "limit": 25}}],
+            "services": [
+                {"name": "acme-api", "repo": "docs", "evidence_coordinates": [{"repo": "docs", "path": "package.json", "line_start": 1}]},
+                {"name": "api", "repo": "api", "evidence_coordinates": [{"repo": "api", "path": "pyproject.toml", "line_start": 1}]},
+            ],
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertIn("status=ambiguous", rendered["rows"][0])
+        self.assertNotIn("service='acme-api'", rendered["next"])
+        self.assertIn("explicit repo/service/domain/path", rendered["next"])
+
+    def test_render_grep_response_service_brief_does_not_surface_unrequested_authz_groups(self) -> None:
+        payload = {
+            "tool": "get_service_brief",
+            "status": "found",
+            "proven_facts": {"status": "found", "sources": [{"field": "service", "count": 1}]},
+            "candidate_leads": {"status": "empty", "sources": []},
+            "coverage_gaps": [],
+            "service": {"name": "api", "repo": "api", "evidence_coordinates": [{"repo": "api", "path": "pyproject.toml", "line_start": 1}]},
+            "authz_surface": {
+                "review_leads": [
+                    {
+                        "endpoint": {"method": "GET", "path": "/admin"},
+                        "authz_status": "missing_declared_policy",
+                        "evidence_coordinates": [{"repo": "api", "path": "urls.py", "line_start": 10}],
+                    }
+                ]
+            },
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertFalse(any("authz_surface" in row for row in rendered["rows"]))
+
+    def test_render_grep_response_surfaces_ownership_candidates_as_non_owner_guidance(self) -> None:
+        payload = {
+            "tool": "get_service_brief",
+            "status": "found",
+            "repo": "payments",
+            "proven_facts": {"status": "found", "sources": [{"field": "service", "count": 1}]},
+            "candidate_leads": {
+                "status": "found",
+                "sources": [
+                    {
+                        "field": "ownership_context.candidate_maintainers",
+                        "count": 1,
+                        "lead_kind": "inference_or_guidance",
+                    }
+                ],
+            },
+            "coverage_gaps": [],
+            "answerability": {"status": "partial", "missing_fact_families": ["service_ownership"]},
+            "service": {
+                "name": "payments",
+                "repo": "payments",
+                "evidence_coordinates": [{"repo": "payments", "path": "pyproject.toml", "line_start": 1}],
+            },
+            "ownership_context": {
+                "candidate_maintainers": [
+                    {
+                        "candidate": "Alex Maintainer <alex@example.com>",
+                        "candidate_kind": "package_author",
+                        "source_kind": "pyproject_project_authors",
+                        "promotion_allowed": False,
+                        "promotion_blocked_reason": "Package metadata is not service ownership metadata.",
+                        "source": {"path": "pyproject.toml", "line_start": 3, "line_end": 3},
+                    }
+                ],
+                "answer_packet": {
+                    "unsupported_promotions": [
+                        {
+                            "candidate_kinds": ["package_author", "package_maintainer"],
+                            "reason": "Packaging metadata identifies authors or maintainers of the package, not the operational service owner.",
+                        }
+                    ]
+                },
+            },
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        joined_rows = "\n".join(rendered["rows"])
+        self.assertIn("ownership_context.candidate_maintainers", joined_rows)
+        self.assertIn("promotion_allowed=false", joined_rows)
+        self.assertIn("Package metadata is not service ownership metadata", joined_rows)
+        self.assertIn("missing service_ownership", rendered["gaps"])
+
+    def test_render_grep_response_suppresses_supplemental_rows_for_indexed_scope_no_match(self) -> None:
+        payload = {
+            "tool": "planning_context",
+            "status": "indexed_scope_no_match",
+            "repo": "payments",
+            "proven_facts": {"status": "empty", "sources": []},
+            "candidate_leads": {
+                "status": "found",
+                "sources": [
+                    {
+                        "field": "ownership_context.candidate_maintainers",
+                        "count": 1,
+                        "lead_kind": "inference_or_guidance",
+                    }
+                ],
+            },
+            "coverage_gaps": [],
+            "answerability": {"status": "partial", "missing_fact_families": ["matching_first_class_rows"]},
+            "next_actions": [
+                "The repo anchor has indexed snapshot scope but no matching first-class dependency, endpoint, event, domain, service, or symbol rows for the supplied filters."
+            ],
+            "ownership_context": {
+                "candidate_maintainers": [
+                    {
+                        "candidate": "Package Author <author@example.com>",
+                        "candidate_kind": "package_author",
+                        "promotion_allowed": False,
+                    }
+                ]
+            },
+            "runtime_architecture": {
+                "answer_packet": {
+                    "investigation_brief": {
+                        "recommended_source_checks": [
+                            {
+                                "reason": "runtime source check",
+                                "repo": "payments",
+                                "path": "payments/frame.py",
+                                "line_start": 7,
+                            }
+                        ]
+                    },
+                    "domain_routing_map": [
+                        {
+                            "status": "unlinked_domain_reference",
+                            "domain": {"name": "pd.api.types"},
+                            "evidence_coordinates": [{"repo": "payments", "path": "payments/frame.py", "line_start": 7}],
+                        }
+                    ]
+                }
+            },
+            "authz_surface": {
+                "review_leads": [
+                    {
+                        "reason": "No matching scoped route.",
+                        "evidence_coordinates": [{"repo": "payments", "path": "urls.py", "line_start": 10}],
+                    }
+                ]
+            },
+        }
+
+        rendered = render_grep_response(payload)
+
+        _assert_grep_transport_shape(self, rendered)
+        self.assertEqual(rendered["shown"], 1)
+        self.assertIn("status=indexed_scope_no_match", rendered["rows"][0])
+        joined_rows = "\n".join(rendered["rows"])
+        self.assertNotIn("pd.api.types", joined_rows)
+        self.assertNotIn("Package Author", joined_rows)
+        self.assertNotIn("runtime_architecture", joined_rows)
+        self.assertNotIn("authz_surface", joined_rows)
+        self.assertNotIn("ownership_context", joined_rows)
+        self.assertNotIn("ownership_context", rendered["gaps"])
+        self.assertNotIn("payments/frame.py", "\n".join(rendered["must_inspect"]))
+        self.assertIn("repo anchor has indexed snapshot scope", rendered["next"])
+
+    def test_call_tool_keeps_structured_metadata_while_transport_is_flat(self) -> None:
+        with _fixture_snapshot(extra_charge_card_callers=3) as kg:
+            internal = call_tool(kg, "find_callers", {"symbol": "charge_card", "limit": 5})
+            transport = _transport_call(kg, "find_callers", {"symbol": "charge_card", "limit": 5})
+
+        self.assertIn("proven_facts", internal)
+        self.assertIn("answerability", internal)
+        self.assertIn("packet_contract", internal)
+        _assert_grep_transport_shape(self, transport)
+        self.assertNotIn("proven_facts", transport)
 
     def test_planning_context_output_budget_leaves_under_budget_and_exact_tools_precise(self) -> None:
         with _fixture_snapshot() as kg:
@@ -1413,6 +1943,56 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(len(result["endpoints"]), 1)
 
+    def test_get_service_brief_keeps_package_authors_as_ownership_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "kg"
+            repo_root = Path(tmpdir) / "payments"
+            repo_root.mkdir()
+            (repo_root / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "payments"',
+                        'authors = [{name = "Alex Maintainer", email = "alex@example.com"}]',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "payments", "repo": "payments"},
+            )
+            JsonlKgStore(root).write(
+                entities=[service],
+                facts=[],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=service.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"repo": "payments"},
+                        bytes_ref={"repo": "payments", "path": "pyproject.toml", "line_start": 1, "line_end": 1},
+                        confidence=1.0,
+                    )
+                ],
+                coverage=[],
+                manifest={
+                    "counts": {"entities": 1, "facts": 0},
+                    "repos": [{"repo_name": "payments", "repo_path": str(repo_root)}],
+                },
+            )
+            result = call_tool(KgSnapshot(root), "get_service_brief", {"service": "payments", "limit": 5})
+
+        ownership = result["ownership_context"]
+        candidate = ownership["candidate_maintainers"][0]
+        self.assertEqual(ownership["status"], "partial")
+        self.assertEqual(candidate["candidate_kind"], "package_author")
+        self.assertFalse(candidate["promotion_allowed"])
+        self.assertIsNone(ownership["answer_packet"]["proven_owner"])
+        self.assertIn("service_ownership", result["answerability"]["missing_fact_families"])
+        self.assertEqual(result["summary"]["ownership_candidate_maintainer_count"], 1)
+
     def test_get_service_brief_surfaces_bounded_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
             result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
@@ -1427,6 +2007,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(packet["consumers"][0]["consumer"]["slug"], "web")
         self.assertEqual(packet["consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
         self.assertEqual(packet["consumers"][0]["match_basis"], "literal_normalized_endpoint_path_and_compatible_method")
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertIn("endpoint_consumer_runtime_resolution", result["answerability"]["missing_fact_families"])
+        self.assertIn("endpoint_contract_change_classification", result["answerability"]["missing_fact_families"])
         self.assertTrue(any("endpoint_consumers" in action for action in result["next_actions"]))
 
     def test_get_service_brief_surfaces_operational_deploy_candidates(self) -> None:
@@ -1450,6 +2033,9 @@ class McpToolsTest(unittest.TestCase):
         )
         self.assertEqual(surfaces["domain_route_candidates"][0]["predicate"], "ROUTES_DOMAIN_TO_DEPLOY")
         self.assertIn("exact repo-identity evidence", surfaces["coverage_note"])
+        self.assertEqual(result["answerability"]["status"], "partial")
+        self.assertIn("canonical_service_deploy_blocker", result["answerability"]["missing_fact_families"])
+        self.assertIn("runtime_host_resolution", result["answerability"]["missing_fact_families"])
 
     def test_get_service_brief_does_not_infer_deploy_from_target_text(self) -> None:
         with _fixture_snapshot(operational_deploy_mapping=True) as kg:
@@ -1890,7 +2476,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(brief["service"]["slug"], "payments")
         self.assertEqual(brief["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(brief["answerability"]["status"], "partial")
-        self.assertEqual(brief["answerability"]["missing_fact_families"], ["deploy_mapping"])
+        self.assertEqual(
+            brief["answerability"]["missing_fact_families"],
+            [
+                "deploy_mapping",
+                "canonical_service_deploy_blocker",
+                "runtime_host_resolution",
+                "service_to_deploy_target",
+                "service_ownership",
+            ],
+        )
         self.assertTrue(brief["next_actions"])
         self.assertEqual(limited_brief["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
@@ -2002,7 +2597,9 @@ class McpToolsTest(unittest.TestCase):
         normalized_area = next(row for row in impact["inspection_areas"] if row["area"] == "same_repo_tests_scripts_notebooks")
         self.assertIn({"path": "lib/features.py", "repo": "lib"}, normalized_area["inspection_refs"])
         self.assertIn("build_features(", normalized_area["search_terms"])
-        self.assertIn("proven_facts", impact["packet_contract"]["common_fields"])
+        self.assertIn("claim_rule", impact["packet_contract"])
+        self.assertNotIn("common_fields", impact["packet_contract"])
+        self.assertLessEqual(len(json.dumps(impact["packet_contract"], sort_keys=True)), 300)
         self.assertEqual(
             planning["related_facts"]["symbol_impact"]["reverse_impact"]["summary"]["constructor_bridge_count"],
             1,
@@ -2143,6 +2740,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertFalse(impact["result_computed"])
         self.assertEqual(len(impact["candidate_impact_previews"]), 2)
         self.assertIn("Do not aggregate all candidates", impact["ambiguity_guidance"])
+        self.assertIn("preview rank is a scan-order hint", impact["ambiguity_guidance"])
+        self.assertNotIn("previewed impact ranking supports that anchor", impact["ambiguity_guidance"])
         self.assertGreaterEqual(
             impact["candidate_impact_previews"][0]["direct_caller_count"],
             impact["candidate_impact_previews"][1]["direct_caller_count"],
@@ -2212,7 +2811,70 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(consumers["status"], "not_found")
         self.assertEqual(consumers["answerability"]["status"], "partial")
         self.assertEqual(consumers["answerability"]["missing_fact_families"], ["static_event_facts"])
+        self.assertEqual(consumers["indexed_channel_count"], 1)
+        self.assertEqual(consumers["near_matches"], [])
+        self.assertEqual(consumers["inspection_areas"][0]["area"], "event_channel_source_search")
+        self.assertIn("missing_channel", consumers["inspection_areas"][0]["search_terms"])
         self.assertTrue(any("no indexed static event facts" in action for action in consumers["next_actions"]))
+
+    def test_event_tools_not_found_include_near_matches_and_search_terms(self) -> None:
+        with _fixture_snapshot() as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "orders-creatd"})
+
+        self.assertEqual(consumers["status"], "not_found")
+        self.assertEqual(consumers["indexed_channel_count"], 1)
+        self.assertEqual(consumers["near_matches"][0]["channel_address"], "orders-created")
+        self.assertEqual(consumers["near_matches"][0]["match_value"], "orders-created")
+        search_terms = consumers["inspection_areas"][0]["search_terms"]
+        self.assertIn("orders-creatd", search_terms)
+        self.assertIn("orders-created", search_terms)
+
+    def test_event_tools_surface_same_repo_uninstrumented_coverage_leads(self) -> None:
+        with _fixture_snapshot(event_coverage_gap=True) as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "orders"})
+            rendered = render_grep_response(consumers)
+
+        self.assertEqual(consumers["status"], "found")
+        self.assertEqual(consumers["answerability"]["status"], "partial")
+        self.assertIn("uninstrumented_event_scopes", consumers["answerability"]["missing_fact_families"])
+        self.assertEqual(consumers["coverage_gap_lead_count"], 1)
+        self.assertEqual(consumers["coverage_gap_leads"][0]["expression"], "settings.DYNAMIC_QUEUE")
+        self.assertEqual(consumers["coverage_gap_leads"][0]["channel_scope"], "unknown_unresolved_transport_channel")
+        self.assertTrue(
+            any(
+                source["field"] == "coverage_gap_leads" and source["lead_kind"] == "coverage_gap_lead"
+                for source in consumers["candidate_leads"]["sources"]
+            )
+        )
+        self.assertIn("coverage_gap_leads requires source verification", rendered["gaps"])
+        self.assertTrue(
+            any(
+                "payments/payments/consumer.py:42" in row
+                and "[candidate:coverage_gap_lead] coverage_gap_leads" in row
+                and "expression=settings.DYNAMIC_QUEUE" in row
+                for row in rendered["rows"]
+            )
+        )
+
+    def test_event_near_matches_ignore_empty_query_and_no_alnum_candidates(self) -> None:
+        self.assertEqual(_event_near_matches("!!!", indexed_channels=[], limit=5), [])
+        self.assertEqual(_event_near_matches("orders", indexed_channels=[], limit=5), [])
+        self.assertEqual(
+            _event_near_matches(
+                "orders",
+                indexed_channels=[
+                    {
+                        "event_channel_id": "EventChannel:punctuation",
+                        "display_name": "EventChannel:punctuation",
+                        "channel_address": "---",
+                        "name": "...",
+                        "match_values": ["---", "..."],
+                    }
+                ],
+                limit=5,
+            ),
+            [],
+        )
 
     def test_event_tools_scan_all_matching_facts_before_limiting(self) -> None:
         with _fixture_snapshot(extra_consumers=125) as kg:
@@ -2292,23 +2954,25 @@ class McpToolsTest(unittest.TestCase):
         instructions = initialized["result"]["instructions"]
         self.assertIn("planning_context first", instructions)
         self.assertIn("review_context first", instructions)
-        self.assertIn("review_context.application_impact", instructions)
-        self.assertIn("inspect the relevant workspace source files", instructions)
-        self.assertIn("service_operational_surfaces.evidence_partition", instructions)
-        self.assertIn("deploy_link_facts", instructions)
+        self.assertIn("source-inspection head start", instructions)
+        self.assertIn("Behavior Rules", instructions)
+        self.assertIn("ordinary source tools", instructions)
         self.assertIn("DEPLOYS_VIA_CONFIG", instructions)
         self.assertIn("known_linked", instructions)
         self.assertIn("unlinked_evidence", instructions)
         self.assertIn("missing_contracts", instructions)
-        self.assertIn("disambiguation.retry_arguments", instructions)
-        self.assertIn("unqualified symbol name", instructions)
+        self.assertIn("path/line anchors", instructions)
         self.assertIn("first source-search hit", instructions)
-        self.assertIn("do not aggregate all candidates", instructions)
-        self.assertIn("Common packet contract", instructions)
-        self.assertIn("proven_facts", instructions)
-        self.assertIn("candidate_leads", instructions)
-        self.assertIn("coverage_gaps", instructions)
-        self.assertIn("inspection_areas", instructions)
+        self.assertIn("candidate preview rows are scan-order/risk hints", instructions)
+        self.assertIn("indexed_scope_no_match", instructions)
+        self.assertIn("CODEOWNERS", instructions)
+        self.assertIn("Missing declared authz policy", instructions)
+        self.assertNotIn("Common packet contract", instructions)
+        self.assertIn("grep-style rows", instructions)
+        self.assertIn("[proven]", instructions)
+        self.assertIn("[candidate]", instructions)
+        self.assertIn("gaps", instructions)
+        self.assertIn("next", instructions)
         self.assertEqual(initialized_with_client_version["result"]["protocolVersion"], MCP_PROTOCOL_VERSION)
         self.assertEqual(initialized_with_client_version["result"]["instructions"], instructions)
         self.assertEqual(ping["result"], {})
@@ -2316,12 +2980,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(listed["result"]["tools"][0]["name"], "search_services")
         listed_tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
         self.assertIn("downstream static CALLS closure", listed_tools["blast_radius"]["description"])
-        self.assertIn("packet_contract", listed_tools["blast_radius"]["description"])
-        self.assertEqual(called["result"]["structuredContent"]["status"], "found")
-        _assert_additive_fields(self, called["result"]["structuredContent"])
+        self.assertNotIn("packet_contract", listed_tools["blast_radius"]["description"])
+        self.assertEqual(called["result"]["structuredContent"]["tool"], "search_services")
+        _assert_grep_transport_shape(self, called["result"]["structuredContent"])
         self.assertFalse(called["result"]["isError"])
-        self.assertEqual(unsupported["result"]["structuredContent"]["status"], "unsupported_by_current_kg")
-        self.assertEqual(unsupported["result"]["structuredContent"]["answerability"]["status"], "not_answerable")
+        self.assertEqual(unsupported["result"]["structuredContent"]["tool"], "deploy_blockers_for")
+        _assert_grep_transport_shape(self, unsupported["result"]["structuredContent"])
+        self.assertIn("unsupported_by_current_kg", unsupported["result"]["structuredContent"]["gaps"])
         self.assertFalse(unsupported["result"]["isError"])
 
     def test_json_rpc_reports_protocol_errors(self) -> None:
@@ -2700,6 +3365,7 @@ class _fixture_snapshot:
         self,
         extra_consumers: int = 0,
         extra_package_importers: int = 0,
+        extra_charge_card_callers: int = 0,
         extra_charge_card_symbol: bool = False,
         duplicate_endpoint_fact: bool = False,
         extra_service_endpoint: bool = False,
@@ -2723,10 +3389,12 @@ class _fixture_snapshot:
         runtime_pressure_payload_size: int = 0,
         runtime_pressure_same_repo: bool = False,
         env_domain_reference_lead: bool = False,
+        event_coverage_gap: bool = False,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
         self.extra_package_importers = extra_package_importers
+        self.extra_charge_card_callers = extra_charge_card_callers
         self.extra_charge_card_symbol = extra_charge_card_symbol
         self.duplicate_endpoint_fact = duplicate_endpoint_fact
         self.extra_service_endpoint = extra_service_endpoint
@@ -2750,6 +3418,7 @@ class _fixture_snapshot:
         self.runtime_pressure_payload_size = runtime_pressure_payload_size
         self.runtime_pressure_same_repo = runtime_pressure_same_repo
         self.env_domain_reference_lead = env_domain_reference_lead
+        self.event_coverage_gap = event_coverage_gap
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -3157,6 +3826,20 @@ class _fixture_snapshot:
             )
             for index in range(self.extra_package_importers)
         ]
+        extra_charge_card_callers = [
+            Entity(
+                kind="CodeSymbol",
+                identity={
+                    "tenant_id": "default",
+                    "repo": "payments",
+                    "module": f"payments.bulk_{index}",
+                    "qualname": f"bulk_checkout_{index}",
+                    "symbol_kind": "function",
+                },
+                properties={"path": f"payments/bulk_{index}.py", "line": 10 + index, "end_line": 10 + index},
+            )
+            for index in range(self.extra_charge_card_callers)
+        ]
         extra_consume_facts = [Fact("CONSUMES_EVENT", extra_service.entity_id, channel.entity_id) for extra_service in extra_services]
         extra_import_facts = [
             Fact(
@@ -3166,6 +3849,10 @@ class _fixture_snapshot:
                 {"category": "third_party", "import_root": "shared_lib", "distribution_name": "shared-lib"},
             )
             for extra_module in extra_modules
+        ]
+        extra_charge_card_call_facts = [
+            Fact("CALLS", extra_caller.entity_id, callee.entity_id, {"call": "charge_card"})
+            for extra_caller in extra_charge_card_callers
         ]
         evidence = [
             Evidence(
@@ -3331,6 +4018,23 @@ class _fixture_snapshot:
                     confidence=1.0,
                 )
             )
+        for index, fact in enumerate(extra_charge_card_call_facts):
+            evidence.append(
+                Evidence(
+                    target_type="fact",
+                    target_id=fact.fact_id,
+                    derivation_class="deterministic_static",
+                    source_system="test",
+                    source_ref={"repo": "payments"},
+                    bytes_ref={
+                        "repo": "payments",
+                        "path": f"payments/bulk_{index}.py",
+                        "line_start": 10 + index,
+                        "line_end": 10 + index,
+                    },
+                    confidence=1.0,
+                )
+            )
         entities = [
             service,
             *([containing_class] if self.containing_checkout_class else []),
@@ -3362,6 +4066,7 @@ class _fixture_snapshot:
             *runtime_targets,
             *extra_services,
             *extra_modules,
+            *extra_charge_card_callers,
         ]
         facts = [
             call_fact,
@@ -3384,12 +4089,31 @@ class _fixture_snapshot:
             *([endpoint_fact] if self.duplicate_endpoint_fact else []),
             *extra_consume_facts,
             *extra_import_facts,
+            *extra_charge_card_call_facts,
         ]
+        coverage = []
+        if self.event_coverage_gap:
+            coverage.append(
+                Coverage(
+                    tenant_id="default",
+                    predicate="CONSUMES_EVENT",
+                    scope_ref={
+                        "repo": "payments",
+                        "language": "python",
+                        "path": "payments/consumer.py",
+                        "line": 42,
+                        "expression": "settings.DYNAMIC_QUEUE",
+                        "reason": "unknown_attribute_root",
+                    },
+                    state="uninstrumented",
+                    source_system="python_ast_v0",
+                )
+            )
         JsonlKgStore(root).write(
             entities=entities,
             facts=facts,
             evidence=evidence,
-            coverage=[],
+            coverage=coverage,
             manifest={"counts": {"entities": len(entities), "facts": len(facts)}},
         )
         self._kg = KgSnapshot(root)

@@ -5,20 +5,76 @@ from copy import deepcopy
 from source.kg.core.models import JsonObject, canonical_json
 
 
-# Fleet runtime architecture questions need a compact head-start packet that
-# still carries known routes plus high-value unlinked leads. Keep this below the
-# server-side MCP spill threshold while avoiding 20k packet starvation.
-PLANNING_CONTEXT_MAX_CHARS = 40_000
-# Anchored packets serve detailed follow-up questions, so they preserve more
-# evidence while still staying below typical MCP message-size limits.
-PLANNING_CONTEXT_ANCHORED_MAX_CHARS = 150_000
+# Default MCP responses must stay inline in host agents. Once Claude Code saves
+# a large tool result to a sidecar file, agents tend to spend turns doing jq
+# archaeology instead of source inspection. MCP responses currently include the
+# same packet in `content[].text` and `structuredContent`, so keep the one-copy
+# hard cap near 12K to leave room for the doubled wire payload.
+MCP_INLINE_TARGET_CHARS = 8_000
+MCP_INLINE_HARD_MAX_CHARS = 12_000
+PLANNING_CONTEXT_MAX_CHARS = MCP_INLINE_HARD_MAX_CHARS
+PLANNING_CONTEXT_ANCHORED_MAX_CHARS = MCP_INLINE_HARD_MAX_CHARS
+INLINE_HEADSTART_ROW_LIMIT = 3
+INLINE_INSPECTION_AREA_LIMIT = 8
+INLINE_NEXT_MCP_CALL_LIMIT = 6
+INLINE_COVERED_AREA_LIMIT = 8
+INLINE_INSPECTION_REF_LIMIT = 3
+GREP_RESPONSE_KEYS = (
+    "tool",
+    "query",
+    "status",
+    "answerability",
+    "boundary",
+    "covered",
+    "must_inspect",
+    "shown",
+    "more",
+    "rows",
+    "gaps",
+    "next",
+)
+GREP_ROW_CANDIDATE_KINDS = frozenset(
+    {
+        "import_only_source_lead",
+        "unlinked_source_lead",
+        "inference_or_guidance",
+        "truncated_source_inspection_lead",
+        "coverage_gap_lead",
+    }
+)
+GREP_RENDER_SOURCE_ROW_LIMIT = 200
+GREP_RENDER_SOURCE_GROUP_ROW_LIMIT = 80
+GREP_COVERED_SUMMARY_LIMIT = 8
+GREP_MUST_INSPECT_LIMIT = 8
+GREP_MUST_INSPECT_REF_LIMIT = 2
+GREP_FALLBACK_FIELD_TAGS = {
+    "surface_status": "candidate",
+}
+INLINE_PRESERVED_TOP_LEVEL_KEYS = frozenset(
+    {
+        "tool",
+        "status",
+        "query",
+        "repo",
+        "anchors",
+        "summary",
+        "answerability",
+        "packet_contract",
+        "proven_facts",
+        "candidate_leads",
+        "coverage_gaps",
+        "inspection_areas",
+        "next_actions",
+        "output_budget",
+    }
+)
 COMPACT_RUNTIME_COMPONENT_LIMIT = 4
 COMPACT_RUNTIME_ROUTE_LIMIT = 15
 COMPACT_RUNTIME_HEADSTART_LIMIT = 8
 COMPACT_RUNTIME_LEAD_LIMIT = 8
 COMPACT_RUNTIME_DEPLOY_UNIT_LIMIT = 2
 COMPACT_RUNTIME_SOURCE_CHECK_LIMIT = 15
-COMPACT_AUTHZ_INSPECTION_REF_LIMIT = 3
+COMPACT_AUTHZ_INSPECTION_REF_LIMIT = INLINE_INSPECTION_REF_LIMIT
 AUTHZ_COMPACT_LIST_KEYS = (
     "review_leads",
     "inspection_areas",
@@ -47,6 +103,34 @@ RELATED_FACT_SECTION_KEYS = frozenset(
         "domains",
     }
 )
+INLINE_CORE_ROW_KEYS = (
+    "services",
+    "symbols",
+    "dependencies",
+    "endpoints",
+    "endpoint_consumers",
+    "event_channels",
+    "consumers",
+    "producers",
+    "callers",
+    "callees",
+    "edges",
+    "affected_symbols",
+    "deploy_mappings",
+    "domains",
+    "entry_points",
+    "changed_symbols",
+    "changed_file_symbols",
+    "direct_callers",
+    "direct_callees",
+    "direct_callers_of_changed_symbols",
+    "direct_callees_from_changed_symbols",
+    "transitive_callers",
+    "repo_dependencies",
+    "source_coordinates",
+    "evidence",
+    "surface_status",
+)
 
 _RUNTIME_COMPONENTS_PATH = "runtime_architecture.answer_packet.runtime_building_blocks"
 _RUNTIME_ROUTES_PATH = "runtime_architecture.answer_packet.domain_routing_map"
@@ -68,6 +152,10 @@ _BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
     ("runtime_architecture", "answer_packet", "deploy_runtime_map"),
     ("runtime_architecture", "answer_packet", "endpoint_consumer_map"),
     ("runtime_architecture", "answer_packet", "deploy_order_guidance"),
+    ("ownership_context", "proven_owners"),
+    ("ownership_context", "candidate_maintainers"),
+    ("ownership_context", "answer_packet", "unsupported_promotions"),
+    ("ownership_context", "recommended_source_checks"),
     ("related_facts", "service_brief", "services"),
     ("related_facts", "service_brief", "endpoints"),
     ("related_facts", "service_brief", "endpoint_consumers"),
@@ -87,10 +175,1168 @@ _BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
     ("related_facts", "symbol_impact", "reverse_impact", "truncated_terminal_symbols"),
     ("related_facts", "symbol_impact", "reverse_impact", "source_inspection_areas"),
 )
+GREP_BACKFILL_PATH_TAGS: dict[tuple[str, ...], str] = {
+    **{("authz_surface", key): "candidate" for key in AUTHZ_COMPACT_LIST_KEYS},
+    **{("related_facts", "authz_surface", key): "candidate" for key in AUTHZ_COMPACT_LIST_KEYS},
+    (
+        "runtime_architecture",
+        "answer_packet",
+        "investigation_brief",
+        "unlinked_runtime_leads",
+    ): "candidate:unlinked_source_lead",
+    (
+        "runtime_architecture",
+        "answer_packet",
+        "investigation_brief",
+        "recommended_source_checks",
+    ): "candidate",
+    ("runtime_architecture", "answer_packet", "deploy_order_guidance"): "candidate:inference_or_guidance",
+    ("ownership_context", "candidate_maintainers"): "candidate",
+    ("ownership_context", "answer_packet", "unsupported_promotions"): "candidate:inference_or_guidance",
+    ("ownership_context", "recommended_source_checks"): "candidate",
+    (
+        "related_facts",
+        "symbol_impact",
+        "reverse_impact",
+        "terminal_import_consumer_leads",
+    ): "candidate:import_only_source_lead",
+    (
+        "related_facts",
+        "symbol_impact",
+        "reverse_impact",
+        "truncated_terminal_symbols",
+    ): "candidate:truncated_source_inspection_lead",
+    (
+        "related_facts",
+        "symbol_impact",
+        "reverse_impact",
+        "source_inspection_areas",
+    ): "candidate",
+}
 _PLANNING_BUDGET_ADVICE = (
     "Use runtime_architecture.answer_packet.investigation_brief as the source-inspection head start, then use narrower "
     "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
 )
+
+
+def render_grep_response(
+    result: JsonObject,
+    *,
+    max_chars: int = MCP_INLINE_HARD_MAX_CHARS,
+    target_chars: int = MCP_INLINE_TARGET_CHARS,
+) -> JsonObject:
+    """Render a tool packet as flat source-pointer rows for MCP transport.
+
+    Internal callers still receive the structured `call_tool` packet. The MCP
+    transport default is intentionally grep-shaped so host agents read the
+    result as pointers to source, not as a nested document to navigate.
+    """
+
+    rows, more, covered, must_inspect = _grep_rows(result)
+    packet: JsonObject = {
+        "tool": _short_text(result.get("tool"), limit=80),
+        "query": _grep_query(result),
+        "status": _grep_status(result),
+        "answerability": _grep_answerability_status(result),
+        "boundary": _grep_boundary(result),
+        "covered": covered,
+        "must_inspect": must_inspect,
+        "shown": len(rows),
+        "more": more,
+        "rows": rows,
+        "gaps": _grep_gaps(result),
+        "next": _grep_next(result),
+    }
+    budget_chars = target_chars if 0 < target_chars < max_chars else max_chars
+    for _ in range(8):
+        previous_more = _non_bool_int(packet.get("more"))
+        _refresh_grep_omission_gap(packet)
+        _shrink_grep_response_to_budget(packet, max_chars=budget_chars, target_chars=target_chars)
+        if _non_bool_int(packet.get("more")) == previous_more and _current_chars(packet) <= budget_chars:
+            break
+    if _current_chars(packet) > max_chars:
+        for _ in range(4):
+            previous_more = _non_bool_int(packet.get("more"))
+            _shrink_grep_response_to_budget(packet, max_chars=max_chars, target_chars=target_chars)
+            _refresh_grep_omission_gap(packet)
+            if _non_bool_int(packet.get("more")) == previous_more and _current_chars(packet) <= max_chars:
+                break
+    return packet
+
+
+def _grep_rows(result: JsonObject) -> tuple[list[str], int, list[str], list[str]]:
+    groups = _grep_row_groups(result)
+    if not groups:
+        groups = _grep_fallback_groups(result)
+    rows, more, group_summaries = _select_balanced_grep_rows(groups, limit=GREP_RENDER_SOURCE_ROW_LIMIT)
+    covered = _grep_covered_summary(group_summaries)
+    must_inspect = _grep_must_inspect_summary(result, group_summaries)
+    return rows, more, covered, must_inspect
+
+
+def _grep_row_groups(result: JsonObject) -> list[JsonObject]:
+    groups: list[JsonObject] = []
+    status_group = _grep_status_group(result)
+    if status_group:
+        groups.append(status_group)
+        if result.get("status") == "indexed_scope_no_match":
+            return groups
+
+    proven_facts = result.get("proven_facts")
+    if isinstance(proven_facts, dict):
+        for source in _list_value(proven_facts.get("sources")):
+            if not isinstance(source, dict):
+                continue
+            field = source.get("field")
+            if not isinstance(field, str) or not field:
+                continue
+            group = _grep_source_group(
+                result,
+                field=field,
+                tag="proven",
+                source_count=_non_bool_int(source.get("count")),
+            )
+            if group:
+                groups.append(group)
+
+    candidate_leads = result.get("candidate_leads")
+    if isinstance(candidate_leads, dict):
+        for source in _list_value(candidate_leads.get("sources")):
+            if not isinstance(source, dict):
+                continue
+            field = source.get("field")
+            if not isinstance(field, str) or not field:
+                continue
+            tag = _grep_candidate_tag(source.get("lead_kind"))
+            group = _grep_source_group(
+                result,
+                field=field,
+                tag=tag,
+                source_count=_non_bool_int(source.get("count")),
+            )
+            if group:
+                groups.append(group)
+
+    emitted_fields = {group["field"] for group in groups if isinstance(group.get("field"), str)}
+    groups.extend(_grep_supplemental_path_groups(result, emitted_fields=emitted_fields))
+    return groups
+
+
+def _grep_status_group(result: JsonObject) -> JsonObject:
+    status = result.get("status")
+    if status not in {"ambiguous", "not_found", "unsupported_by_current_kg", "indexed_scope_no_match"}:
+        return {}
+    answerability = _grep_answerability_status(result)
+    row = (
+        f"{_grep_fallback_locator(result)}  [candidate] status  "
+        f"status={status} answerability={answerability} boundary=inspect_before_claiming"
+    )
+    return _grep_group(
+        field="status",
+        tag="candidate",
+        rows=[row],
+        total=1,
+        priority=0,
+        raw_rows=[{"status": status, "answerability": answerability}],
+    )
+
+
+def _grep_source_group(result: JsonObject, *, field: str, tag: str, source_count: int = 0) -> JsonObject:
+    value = _grep_field_value(result, field)
+    raw_rows = _grep_field_rows(value)
+    rows: list[str] = []
+    for raw_row in raw_rows[:GREP_RENDER_SOURCE_GROUP_ROW_LIMIT]:
+        row = _grep_row_from_value(raw_row, tag=tag, category=field, fallback_locator=_grep_fallback_locator(result))
+        if row:
+            rows.append(row)
+    total = source_count or len(raw_rows)
+    return _grep_group(
+        field=field,
+        tag=tag,
+        rows=rows,
+        total=max(total, len(raw_rows)),
+        priority=_grep_field_priority(result, field, tag),
+        raw_rows=raw_rows,
+    )
+
+
+def _grep_field_value(result: JsonObject, field: str) -> object:
+    if "." in field:
+        return _nested_value(result, tuple(part for part in field.split(".") if part))
+    return result.get(field)
+
+
+def _grep_field_rows(value: object) -> list[object]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    if value not in (None, "", []):
+        return [value]
+    return []
+
+
+def _grep_row_count(value: object) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        return 1
+    if value not in (None, "", []):
+        return 1
+    return 0
+
+
+def _grep_fallback_groups(result: JsonObject) -> list[JsonObject]:
+    groups: list[JsonObject] = []
+    for field in INLINE_CORE_ROW_KEYS:
+        value = result.get(field)
+        raw_rows = _grep_field_rows(value)
+        if not raw_rows:
+            continue
+        tag = GREP_FALLBACK_FIELD_TAGS.get(field, "proven")
+        rows = [
+            row
+            for row in (
+                _grep_row_from_value(
+                    raw_row,
+                    tag=tag,
+                    category=field,
+                    fallback_locator=_grep_fallback_locator(result),
+                )
+                for raw_row in raw_rows[:GREP_RENDER_SOURCE_GROUP_ROW_LIMIT]
+            )
+            if row
+        ]
+        groups.append(
+            _grep_group(
+                field=field,
+                tag=tag,
+                rows=rows,
+                total=len(raw_rows),
+                priority=_grep_field_priority(result, field, tag),
+                raw_rows=raw_rows,
+            )
+        )
+    status = _short_text(result.get("status"), limit=120)
+    if status and not groups:
+        groups.append(_grep_status_group(result) or _grep_group(
+            field="status",
+            tag="candidate",
+            rows=[f"{_grep_fallback_locator(result)}  [candidate] status  {status}"],
+            total=1,
+            priority=0,
+            raw_rows=[{"status": status}],
+        ))
+    return [group for group in groups if group.get("rows")]
+
+
+def _grep_supplemental_path_groups(
+    result: JsonObject,
+    *,
+    emitted_fields: set[str],
+) -> list[JsonObject]:
+    if result.get("status") == "indexed_scope_no_match":
+        return []
+    groups: list[JsonObject] = []
+    for path in _BUDGET_BACKFILL_LIST_PATHS:
+        field = _path_label(path)
+        if field in emitted_fields:
+            continue
+        if "authz_surface" in field and not _should_include_authz_transport_group(result):
+            continue
+        if field.startswith("related_facts.authz_surface") and _nested_list(result, ("authz_surface", path[-1])):
+            continue
+        values = _nested_list(result, path)
+        if not values:
+            continue
+        rows: list[str] = []
+        for value in values[:GREP_RENDER_SOURCE_GROUP_ROW_LIMIT]:
+            tag = _grep_tag_for_backfill_row(path, value)
+            if isinstance(value, dict):
+                value = _compact_backfill_row(path, value)
+            row = _grep_row_from_value(value, tag=tag, category=field, fallback_locator=_grep_fallback_locator(result))
+            if row:
+                rows.append(row)
+        groups.append(
+            _grep_group(
+                field=field,
+                tag=_grep_tag_for_path(path),
+                rows=rows,
+                total=len(values),
+                priority=_grep_field_priority(result, field, _grep_tag_for_path(path)),
+                raw_rows=values,
+            )
+        )
+    return [group for group in groups if group.get("rows")]
+
+
+def _should_include_authz_transport_group(result: JsonObject) -> bool:
+    if result.get("tool") == "review_context":
+        return True
+    return _grep_has_intent_token(result, {"auth", "authz", "authorization", "permission", "policy", "security"})
+
+
+def _grep_group(
+    *,
+    field: str,
+    tag: str,
+    rows: list[str],
+    total: int,
+    priority: int,
+    raw_rows: list[object],
+) -> JsonObject:
+    return {
+        "field": field,
+        "tag": tag,
+        "rows": _dedupe_strings([row for row in rows if row]),
+        "total": max(0, total),
+        "priority": priority,
+        "raw_rows": raw_rows,
+    }
+
+
+def _grep_field_priority(result: JsonObject, field: str, tag: str) -> int:
+    lowered = field.lower()
+    status = result.get("status")
+    if field == "status":
+        return 0
+    if _grep_has_intent_token(result, {"auth", "authz", "authorization", "permission", "policy", "security"}) and any(
+        token in lowered for token in ("authz", "authorization", "policy", "permission")
+    ):
+        if "review_leads" in lowered:
+            return 5
+        if "inspection_index" in lowered or "inspection_areas" in lowered:
+            return 6
+        if "endpoint_authorization" in lowered:
+            return 7
+        if "missing_or_unknown" in lowered or "in_method_checks" in lowered:
+            return 8
+        if "declared_policies" in lowered or "applied_policies" in lowered:
+            return 9
+        if "unsupported_scopes" in lowered:
+            return 30
+        return 8
+    if any(token in lowered for token in ("dependency", "dependencies", "importer", "repo_dependencies")):
+        return 9
+    if any(token in lowered for token in ("deploy", "kubernetes")):
+        return 10
+    if "ownership_context" in lowered:
+        if "proven_owners" in lowered:
+            return 18
+        if "candidate_maintainers" in lowered or "unsupported_promotions" in lowered:
+            return 19
+        return 20
+    if any(token in lowered for token in ("authz", "authorization", "policy", "permission")):
+        tool = result.get("tool")
+        return 14 if tool in {"planning_context", "review_context"} else 75
+    if lowered in {"service", "services"} or lowered.endswith(".services"):
+        return 16
+    if "runtime_building_blocks" in lowered or "runtime_anchors" in lowered:
+        return 18
+    if any(token in lowered for token in ("caller", "callee", "edges", "affected_symbols", "symbol_impact")):
+        return 20
+    if "changed_symbols" in lowered:
+        return 22
+    if any(token in lowered for token in ("domain_routing_map", "known_routes", "runtime_anchors")):
+        return 24
+    if "endpoint_consumer" in lowered or "consumer_links" in lowered:
+        return 28
+    if "event" in lowered:
+        return 34
+    if lowered == "endpoints" or lowered.endswith(".endpoints"):
+        return 45
+    if "domains" in lowered:
+        return 50
+    if "symbols" in lowered:
+        return 55
+    return 40
+
+
+def _grep_intent_text(result: JsonObject) -> str:
+    values: list[str] = []
+    for value in (
+        result.get("query"),
+        result.get("service"),
+        result.get("repo"),
+        result.get("symbol"),
+        result.get("domain"),
+        result.get("endpoint"),
+    ):
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            values.append(str(value))
+        elif isinstance(value, dict):
+            values.append(canonical_json(value))
+    anchors = result.get("anchors")
+    if isinstance(anchors, dict):
+        for value in anchors.values():
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                values.append(str(value))
+    return " ".join(values).lower()
+
+
+def _grep_has_intent_token(result: JsonObject, tokens: set[str]) -> bool:
+    return any(token in tokens for token in _word_tokens(_grep_intent_text(result)))
+
+
+def _word_tokens(value: str) -> set[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in value.lower():
+        if char.isalnum():
+            current.append(char)
+        elif current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return set(tokens)
+
+
+def _select_balanced_grep_rows(groups: list[JsonObject], *, limit: int) -> tuple[list[str], int, list[JsonObject]]:
+    sorted_groups = sorted(
+        [group for group in groups if isinstance(group.get("rows"), list)],
+        key=lambda group: (group.get("priority", 100), str(group.get("field", ""))),
+    )
+    selected: list[str] = []
+    shown_by_group: dict[int, int] = {index: 0 for index, _ in enumerate(sorted_groups)}
+    max_depth = max((len(group.get("rows", [])) for group in sorted_groups), default=0)
+    for depth in range(max_depth):
+        for index, group in enumerate(sorted_groups):
+            if len(selected) >= limit:
+                break
+            rows = group.get("rows")
+            if not isinstance(rows, list) or depth >= len(rows):
+                continue
+            row = rows[depth]
+            if isinstance(row, str) and row and row not in selected:
+                selected.append(row)
+                shown_by_group[index] += 1
+        if len(selected) >= limit:
+            break
+    summaries: list[JsonObject] = []
+    more = 0
+    for index, group in enumerate(sorted_groups):
+        rows = group.get("rows")
+        total = _non_bool_int(group.get("total"))
+        shown = shown_by_group.get(index, 0)
+        available = len(rows) if isinstance(rows, list) else 0
+        group_more = max(0, total - shown)
+        if total == 0:
+            group_more = max(0, available - shown)
+        more += group_more
+        summaries.append(
+            {
+                "field": group.get("field"),
+                "tag": group.get("tag"),
+                "shown": shown,
+                "available": available,
+                "total": total or available,
+                "omitted": group_more,
+                "priority": group.get("priority", 100),
+                "raw_rows": group.get("raw_rows", []),
+            }
+        )
+    return _dedupe_strings(selected), more, summaries
+
+
+def _grep_tag_for_path(path: tuple[str, ...]) -> str:
+    return GREP_BACKFILL_PATH_TAGS.get(path, "proven")
+
+
+def _grep_tag_for_backfill_row(path: tuple[str, ...], row: object) -> str:
+    if path == ("runtime_architecture", "answer_packet", "domain_routing_map") and isinstance(row, dict):
+        if row.get("status") == "unlinked_domain_reference":
+            return "candidate:unlinked_source_lead"
+    return _grep_tag_for_path(path)
+
+
+def _grep_row_from_value(value: object, *, tag: str, category: str, fallback_locator: str) -> str:
+    if isinstance(value, dict):
+        locator = _grep_locator(value) or fallback_locator
+        fact = _grep_fact_text(value, category=category)
+    else:
+        locator = fallback_locator
+        scalar_text = "" if value is None else str(value).strip()
+        fact = _short_text(scalar_text, limit=220)
+    if not fact:
+        return ""
+    return _short_text(f"{locator}  [{tag}] {category}  {fact}", limit=360)
+
+
+def _grep_locator(row: JsonObject) -> str:
+    refs = _first_inspection_refs(row, limit=1)
+    ref = refs[0] if refs else _compact_coordinate(row)
+    if not ref:
+        return ""
+    repo = ref.get("repo")
+    path = ref.get("path")
+    line = ref.get("line_start") or ref.get("line")
+    if isinstance(repo, str) and repo and isinstance(path, str) and path:
+        locator = f"{repo}/{path}"
+    elif isinstance(path, str) and path:
+        locator = path
+    elif isinstance(repo, str) and repo:
+        locator = repo
+    else:
+        for key in ("domain", "endpoint", "event_channel", "module", "qualname", "qualified_name", "name", "kind"):
+            value = ref.get(key)
+            if isinstance(value, str) and value:
+                locator = value
+                break
+        else:
+            return ""
+    if isinstance(line, int) and not isinstance(line, bool):
+        return f"{locator}:{line}"
+    return locator
+
+
+def _grep_fallback_locator(result: JsonObject) -> str:
+    repo = result.get("repo")
+    if isinstance(repo, str) and repo.strip():
+        return repo.strip()
+    anchors = result.get("anchors")
+    if isinstance(anchors, dict):
+        for key in ("repo", "path", "service", "domain", "endpoint", "event_channel", "symbol"):
+            value = anchors.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    tool = result.get("tool")
+    return f"<{tool}>" if isinstance(tool, str) and tool else "<supercontext>"
+
+
+def _grep_status(result: JsonObject) -> str:
+    status = result.get("status")
+    return status if isinstance(status, str) and status else "unknown"
+
+
+def _grep_answerability_status(result: JsonObject) -> str:
+    answerability = result.get("answerability")
+    if isinstance(answerability, dict):
+        status = answerability.get("status")
+        if isinstance(status, str) and status:
+            return status
+    status = result.get("status")
+    if status in {"ambiguous", "not_found", "unsupported_by_current_kg", "indexed_scope_no_match"}:
+        return "not_answerable"
+    if status in {"partial"}:
+        return "partial"
+    if status in {"found"}:
+        return "answerable_or_partial"
+    return "unknown"
+
+
+def _grep_boundary(result: JsonObject) -> str:
+    status = _grep_status(result)
+    if status in {"ambiguous", "not_found", "unsupported_by_current_kg", "indexed_scope_no_match"}:
+        return "[candidate] rows are leads only; inspect before absence/impact claims"
+    candidate_leads = result.get("candidate_leads")
+    if isinstance(candidate_leads, dict) and candidate_leads.get("status") == "found":
+        return "[proven] rows are KG/static pointers; [candidate] rows need source verification"
+    return "[proven] rows are KG/static pointers; verify risky code/runtime claims in source"
+
+
+def _grep_covered_summary(group_summaries: list[JsonObject]) -> list[str]:
+    rows: list[str] = []
+    for group in sorted(group_summaries, key=lambda item: (item.get("priority", 100), str(item.get("field", "")))):
+        shown = _non_bool_int(group.get("shown"))
+        if shown <= 0:
+            continue
+        total = _non_bool_int(group.get("total")) or shown
+        rows.append(f"{group.get('field')}: shown {shown}/{total}")
+        if len(rows) >= GREP_COVERED_SUMMARY_LIMIT:
+            break
+    return rows
+
+
+def _grep_must_inspect_summary(result: JsonObject, group_summaries: list[JsonObject]) -> list[str]:
+    if result.get("status") == "indexed_scope_no_match":
+        return [
+            "no first-class rows matched the supplied filters: inspect source/config or retry with a broader primary anchor"
+        ]
+    rows: list[str] = []
+    for group in sorted(group_summaries, key=lambda item: (-_non_bool_int(item.get("omitted")), item.get("priority", 100))):
+        omitted = _non_bool_int(group.get("omitted"))
+        if omitted <= 0:
+            continue
+        refs = _grep_omitted_refs(group, limit=GREP_MUST_INSPECT_REF_LIMIT)
+        if refs:
+            rows.append(f"{group.get('field')}: {omitted} omitted; inspect {', '.join(refs)}")
+        else:
+            rows.append(f"{group.get('field')}: {omitted} omitted; narrow with repo/path/service or source search")
+        if len(rows) >= GREP_MUST_INSPECT_LIMIT:
+            break
+    for area in _list_value(result.get("inspection_areas")):
+        if len(rows) >= GREP_MUST_INSPECT_LIMIT:
+            break
+        if not isinstance(area, dict):
+            continue
+        area_name = _short_text(area.get("area") or area.get("reason") or "inspection_area", limit=80)
+        refs = [_grep_locator(ref) for ref in _first_inspection_refs(area, limit=GREP_MUST_INSPECT_REF_LIMIT)]
+        refs = [ref for ref in refs if ref]
+        if refs:
+            rows.append(f"{area_name}: inspect {', '.join(refs)}")
+            continue
+        terms = _first_search_terms(area, limit=2)
+        if terms:
+            rows.append(f"{area_name}: search {' '.join(terms)}")
+    if not rows and _grep_answerability_status(result) in {"partial", "not_answerable"}:
+        rows.append("user-requested categories not covered by rows: inspect source/config before final claims")
+    return _dedupe_strings(rows)[:GREP_MUST_INSPECT_LIMIT]
+
+
+def _grep_omitted_refs(group: JsonObject, *, limit: int) -> list[str]:
+    raw_rows = group.get("raw_rows")
+    shown = _non_bool_int(group.get("shown"))
+    if not isinstance(raw_rows, list):
+        return []
+    refs: list[str] = []
+    for row in raw_rows[shown:]:
+        if isinstance(row, dict):
+            locator = _grep_locator(row)
+            if locator:
+                refs.append(locator)
+        if len(refs) >= limit:
+            break
+    return _dedupe_strings(refs)
+
+
+def _grep_fact_text(row: JsonObject, *, category: str) -> str:
+    deploy_text = _grep_deploy_fact_text(row, category=category)
+    if deploy_text:
+        return deploy_text
+    dependency_text = _grep_dependency_fact_text(row, category=category)
+    if dependency_text:
+        return dependency_text
+    authz_text = _grep_authz_fact_text(row, category=category)
+    if authz_text:
+        return authz_text
+    ownership_text = _grep_ownership_fact_text(row, category=category)
+    if ownership_text:
+        return ownership_text
+    compact = _inline_row(row)
+    predicate = compact.get("predicate") or row.get("predicate")
+    subject = _grep_entity_label(compact.get("subject") if isinstance(compact.get("subject"), dict) else row.get("subject"))
+    obj = _grep_entity_label(compact.get("object") if isinstance(compact.get("object"), dict) else row.get("object"))
+    if subject and obj:
+        arrow = f" -{predicate}-> " if isinstance(predicate, str) and predicate else " -> "
+        return _short_text(f"{subject}{arrow}{obj}", limit=220)
+    for first, second in (
+        ("caller_symbol", "callee_symbol"),
+        ("caller", "callee"),
+        ("provider", "consumer"),
+        ("provider_endpoint", "matched_provider_endpoint"),
+        ("service", "endpoint"),
+        ("domain", "target"),
+        ("deploy_target", "service"),
+    ):
+        left = _grep_entity_label(compact.get(first) if first in compact else row.get(first))
+        right = _grep_entity_label(compact.get(second) if second in compact else row.get(second))
+        if left and right:
+            return _short_text(f"{left} -> {right}", limit=220)
+    pieces: list[str] = []
+    for key in (
+        "name",
+        "display_name",
+        "slug",
+        "status",
+        "kind",
+        "repo",
+        "module",
+        "qualname",
+        "qualified_name",
+        "symbol_kind",
+        "method",
+        "path",
+        "predicate",
+        "state",
+        "expression",
+        "domain",
+        "target",
+        "deploy_kind",
+        "authz_status",
+        "reason",
+        "recommendation",
+    ):
+        value = compact.get(key)
+        if isinstance(value, (str, int, float, bool)) and value not in ("", None):
+            pieces.append(f"{key}={value}")
+        elif isinstance(value, dict):
+            label = _grep_entity_label(value)
+            if label:
+                pieces.append(f"{key}={label}")
+    if not pieces:
+        for key, value in compact.items():
+            if isinstance(value, (str, int, float, bool)) and value not in ("", None):
+                pieces.append(f"{key}={value}")
+            if len(pieces) >= 6:
+                break
+    if not pieces:
+        return _short_text(canonical_json(compact or row), limit=220)
+    return _short_text(" ".join(pieces[:8]), limit=220)
+
+
+def _grep_ownership_fact_text(row: JsonObject, *, category: str) -> str:
+    if "ownership_context" not in category.lower():
+        return ""
+    pieces: list[str] = []
+    owners = row.get("owners")
+    if isinstance(owners, list):
+        owner_text = ",".join(str(owner).strip() for owner in owners if str(owner).strip())
+        if owner_text:
+            pieces.append(f"owners={owner_text}")
+    candidate = _first_text(row.get("candidate"))
+    if candidate:
+        pieces.append(f"candidate={candidate}")
+    candidate_kind = _first_text(row.get("candidate_kind"))
+    if candidate_kind:
+        pieces.append(f"candidate_kind={candidate_kind}")
+    candidate_kinds = row.get("candidate_kinds")
+    if isinstance(candidate_kinds, list):
+        kind_text = ",".join(str(kind).strip() for kind in candidate_kinds if str(kind).strip())
+        if kind_text:
+            pieces.append(f"candidate_kinds={kind_text}")
+    owner_kind = _first_text(row.get("owner_kind"))
+    if owner_kind:
+        pieces.append(f"owner_kind={owner_kind}")
+    owner_scope = _first_text(row.get("owner_scope"))
+    if owner_scope:
+        pieces.append(f"owner_scope={owner_scope}")
+    source_kind = _first_text(row.get("source_kind"))
+    if source_kind:
+        pieces.append(f"source_kind={source_kind}")
+    promotion_allowed = row.get("promotion_allowed")
+    if isinstance(promotion_allowed, bool):
+        pieces.append(f"promotion_allowed={str(promotion_allowed).lower()}")
+    blocked_reason = _first_text(row.get("promotion_blocked_reason"), row.get("reason"))
+    if blocked_reason:
+        pieces.append(f"reason={blocked_reason}")
+    guidance = _first_text(row.get("final_answer_guidance"))
+    if guidance:
+        pieces.append(f"guidance={guidance}")
+    return _short_text(" ".join(pieces), limit=220)
+
+
+def _grep_deploy_fact_text(row: JsonObject, *, category: str) -> str:
+    lowered = category.lower()
+    predicate = row.get("predicate")
+    qualifier = row.get("qualifier") if isinstance(row.get("qualifier"), dict) else {}
+    has_deploy_qualifier = bool(
+        qualifier
+        and (
+            qualifier.get("kubernetes_kind")
+            or qualifier.get("target_type") in {"kubernetes_deployment", "wsgi", "zappa_lambda", "cloudfront_distribution"}
+            or qualifier.get("source_kind") in {"kubernetes_manifest", "runtime_linker", "zappa_settings", "apache_vhost"}
+            or qualifier.get("workload")
+        )
+    )
+    if "deploy" not in lowered and predicate != "DEPLOYS_VIA_CONFIG" and not has_deploy_qualifier:
+        return ""
+    subject = _grep_entity_label(row.get("subject")) or _grep_entity_label(row.get("service"))
+    target = _grep_entity_label(row.get("object")) or _grep_entity_label(row.get("deploy_target"))
+    kind = _first_text(
+        qualifier.get("kubernetes_kind"),
+        qualifier.get("target_type"),
+        row.get("deploy_kind"),
+        row.get("kind"),
+    )
+    workload = _first_text(qualifier.get("workload"), row.get("name"), target)
+    namespace = _first_text(qualifier.get("namespace"))
+    source_kind = _first_text(qualifier.get("source_kind"), row.get("route_source_kind"))
+    path = _first_text(qualifier.get("path"), row.get("path"))
+    images = qualifier.get("images")
+    image = ""
+    if isinstance(images, list) and images:
+        image = _short_text(images[0], limit=80)
+    pieces = []
+    if subject:
+        pieces.append(f"service={subject}")
+    if kind:
+        pieces.append(f"kind={kind}")
+    if workload:
+        pieces.append(f"workload={workload}")
+    if namespace:
+        pieces.append(f"namespace={namespace}")
+    if source_kind:
+        pieces.append(f"source_kind={source_kind}")
+    if path:
+        pieces.append(f"path={path}")
+    if image:
+        pieces.append(f"image={image}")
+    if not pieces and target:
+        pieces.append(f"target={target}")
+    return _short_text(" ".join(pieces), limit=220)
+
+
+def _grep_dependency_fact_text(row: JsonObject, *, category: str) -> str:
+    lowered = category.lower()
+    predicate = row.get("predicate")
+    if not any(token in lowered for token in ("dependency", "dependencies", "importer", "imports", "resolves")) and predicate not in {
+        "RESOLVES_TO_SERVICE",
+        "RESOLVES_TO_REPO",
+        "IMPORTS",
+    }:
+        return ""
+    source_ref = _first_evidence_source_ref(row)
+    consumer_repo = _first_text(source_ref.get("consumer_repo") if source_ref else None, row.get("consumer_repo"))
+    provider_repo = _first_text(source_ref.get("provider_repo") if source_ref else None, row.get("provider_repo"))
+    provider_package = _first_text(source_ref.get("provider_package_name") if source_ref else None, row.get("package"))
+    subject = _grep_entity_label(row.get("subject"))
+    obj = _grep_entity_label(row.get("object"))
+    predicate_text = _first_text(predicate)
+    pieces = []
+    if consumer_repo:
+        pieces.append(f"consumer_repo={consumer_repo}")
+    elif subject:
+        pieces.append(f"consumer={subject}")
+    if obj:
+        pieces.append(f"target={obj}")
+    if provider_package:
+        pieces.append(f"package={provider_package}")
+    if provider_repo:
+        pieces.append(f"provider_repo={provider_repo}")
+    if predicate_text:
+        pieces.append(f"edge={predicate_text}")
+    if not pieces and subject and obj:
+        pieces.append(f"{subject} -> {obj}")
+    return _short_text(" ".join(pieces), limit=220)
+
+
+def _grep_authz_fact_text(row: JsonObject, *, category: str) -> str:
+    lowered = category.lower()
+    if not any(token in lowered for token in ("authz", "authorization", "policy", "permission")):
+        return ""
+    endpoint = row.get("endpoint")
+    handler = row.get("handler")
+    policies = row.get("policies")
+    checks = row.get("checks")
+    pieces = []
+    endpoint_text = _endpoint_label(endpoint)
+    if endpoint_text:
+        pieces.append(f"endpoint={endpoint_text}")
+    handler_text = _grep_entity_label(handler)
+    if handler_text:
+        pieces.append(f"handler={handler_text}")
+    for key in ("authz_status", "access_level", "policy", "reason", "lead_type"):
+        value = row.get(key)
+        if isinstance(value, (str, int, float, bool)) and value not in ("", None):
+            pieces.append(f"{key}={value}")
+    if isinstance(policies, list) and policies:
+        policy_labels = [_grep_entity_label(item) for item in policies[:2]]
+        policy_labels = [label for label in policy_labels if label]
+        if policy_labels:
+            pieces.append(f"policies={','.join(policy_labels)}")
+    if isinstance(checks, list) and checks:
+        check_labels = []
+        for check in checks[:2]:
+            if isinstance(check, dict):
+                check_labels.append(_grep_entity_label(check.get("object")) or _first_text((check.get("qualifier") or {}).get("check")))
+        check_labels = [label for label in check_labels if label]
+        if check_labels:
+            pieces.append(f"checks={','.join(check_labels)}")
+    return _short_text(" ".join(pieces), limit=220)
+
+
+def _first_evidence_source_ref(row: JsonObject) -> JsonObject:
+    evidence = row.get("evidence")
+    if not isinstance(evidence, list):
+        return {}
+    for item in evidence:
+        if isinstance(item, dict):
+            source_ref = item.get("source_ref")
+            if isinstance(source_ref, dict):
+                return source_ref
+    return {}
+
+
+def _endpoint_label(value: object) -> str:
+    if isinstance(value, dict):
+        method = _first_text(value.get("method"))
+        path = _first_text(value.get("path"), value.get("name"))
+        if method and path:
+            return f"{method} {path}"
+        return path or method or _grep_entity_label(value)
+    return _grep_entity_label(value)
+
+
+def _first_text(*values: object) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float, bool)) and value not in ("", None):
+            return str(value)
+    return ""
+
+
+def _grep_entity_label(value: object) -> str:
+    if isinstance(value, dict):
+        for key in ("qualified_name", "qualname", "display_name", "name", "slug", "path", "domain", "target", "repo", "kind"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        identity = value.get("identity")
+        if isinstance(identity, dict):
+            return _grep_entity_label(identity)
+    elif isinstance(value, (str, int, float, bool)) and value not in ("", None):
+        return str(value)
+    return ""
+
+
+def _grep_candidate_tag(lead_kind: object) -> str:
+    if isinstance(lead_kind, str) and lead_kind in GREP_ROW_CANDIDATE_KINDS:
+        return f"candidate:{lead_kind}"
+    return "candidate"
+
+
+def _grep_gaps(result: JsonObject) -> str:
+    clauses: list[str] = []
+    candidate_leads = result.get("candidate_leads")
+    if (
+        result.get("status") != "indexed_scope_no_match"
+        and isinstance(candidate_leads, dict)
+        and candidate_leads.get("status") == "found"
+    ):
+        for source in _list_value(candidate_leads.get("sources")):
+            if not isinstance(source, dict):
+                continue
+            field = source.get("field")
+            if isinstance(field, str) and field:
+                clauses.append(f"{field} requires source verification")
+    for gap in _list_value(result.get("coverage_gaps")):
+        if isinstance(gap, dict):
+            clauses.append(_grep_gap_clause(gap))
+        else:
+            clauses.append(_short_text(gap, limit=160))
+    answerability = result.get("answerability")
+    if isinstance(answerability, dict):
+        for family in _list_value(answerability.get("missing_fact_families")):
+            clauses.append(f"missing {family}")
+        for item in _list_value(answerability.get("cannot_prove")):
+            clauses.append(f"cannot prove {_short_text(item, limit=120)}")
+    if result.get("status") in {"not_found", "unsupported_by_current_kg", "ambiguous"}:
+        clauses.append(f"status={result.get('status')}")
+    clauses = _dedupe_strings([clause for clause in clauses if clause])
+    if not clauses:
+        return "none"
+    suffix = f"; +{len(clauses) - 3} more" if len(clauses) > 3 else ""
+    return _short_text("; ".join(clauses[:3]) + suffix, limit=420)
+
+
+def _grep_gap_clause(gap: JsonObject) -> str:
+    trigger = gap.get("trigger")
+    if isinstance(trigger, str) and trigger:
+        prefix = trigger
+    else:
+        prefix = "gap"
+    for key in ("fact_family", "detail", "reason", "area"):
+        value = gap.get(key)
+        if isinstance(value, (str, int, float, bool)) and value not in ("", None):
+            return _short_text(f"{prefix}: {value}", limit=160)
+        if isinstance(value, dict) and value:
+            return _short_text(f"{prefix}: {canonical_json(value)}", limit=160)
+    return _short_text(prefix, limit=160)
+
+
+def _grep_next(result: JsonObject) -> str:
+    calls = _inline_next_mcp_calls(result, limit=1)
+    if calls and _grep_next_call_is_safe(result, calls[0]):
+        return _grep_call_text(calls[0])
+    current_tool = result.get("tool")
+    symbol_anchor = _symbol_anchor_from_result(result)
+    if current_tool in {"find_callers", "find_callees", "blast_radius", "reverse_impact"} and symbol_anchor:
+        refs = _first_inspection_refs(result, limit=1)
+        if refs:
+            path = refs[0].get("path")
+            line = refs[0].get("line_start") or refs[0].get("line")
+            if isinstance(path, str) and path:
+                arguments: JsonObject = {"symbol": symbol_anchor, "path": path, "limit": 25}
+                if isinstance(line, int) and not isinstance(line, bool):
+                    arguments["line"] = line
+                return _grep_call_text({"tool": current_tool, "arguments": arguments})
+    if (
+        current_tool == "planning_context"
+        and result.get("status") == "ambiguous"
+        and not _grep_has_intent_token(result, {"auth", "authz", "authorization", "permission", "policy", "security"})
+    ):
+        return "inspect must_inspect rows; rerun with explicit repo/service/domain/path after source confirms anchor"
+    if current_tool == "planning_context" and result.get("status") == "indexed_scope_no_match":
+        for action in _string_list(result.get("next_actions"), limit=2):
+            return action
+        return "inspect source/config or retry planning_context with a broader primary anchor"
+    for area in _list_value(result.get("inspection_areas")):
+        if not isinstance(area, dict):
+            continue
+        refs = _first_inspection_refs(area, limit=1)
+        if refs:
+            return f"inspect {_grep_locator(refs[0]) or canonical_json(refs[0])}"
+        terms = _first_search_terms(area, limit=2)
+        if terms:
+            return f"source search: {' '.join(terms)}"
+    terms = _first_search_terms(result, limit=2)
+    if terms:
+        return f"source search: {' '.join(terms)}"
+    for action in _string_list(result.get("next_actions"), limit=1):
+        return action
+    if result.get("status") in {"ambiguous", "not_found", "unsupported_by_current_kg", "indexed_scope_no_match"}:
+        return "inspect must_inspect rows or rerun with explicit repo/path/line/domain/endpoint anchor"
+    return "inspect source for user-requested categories not covered by rows"
+
+
+def _grep_next_call_is_safe(result: JsonObject, call: JsonObject) -> bool:
+    status = result.get("status")
+    if status not in {"ambiguous", "not_found", "unsupported_by_current_kg", "indexed_scope_no_match"}:
+        return True
+    arguments = call.get("arguments")
+    if not isinstance(arguments, dict):
+        return False
+    tool = call.get("tool")
+    if tool in {"find_callers", "find_callees", "reverse_impact", "blast_radius"}:
+        return any(key in arguments for key in ("path", "line"))
+    # For broad planning ambiguity, a service-only retry often over-anchors on the
+    # first candidate. Require a stronger coordinate or let source inspection lead.
+    return any(key in arguments for key in ("repo", "path", "line", "domain", "endpoint", "event_channel"))
+
+
+def _grep_call_text(call: JsonObject) -> str:
+    tool = call.get("tool")
+    arguments = call.get("arguments")
+    if not isinstance(tool, str) or not tool:
+        return _short_text(call, limit=240)
+    if not isinstance(arguments, dict):
+        return tool
+    parts = []
+    for key in sorted(arguments):
+        value = arguments[key]
+        if isinstance(value, (str, int, float, bool)) and value not in ("", None):
+            parts.append(f"{key}={value!r}")
+    return _short_text(f"{tool}({', '.join(parts)})", limit=260)
+
+
+def _grep_query(result: JsonObject) -> str:
+    parts: list[str] = []
+    for key in ("query", "symbol", "repo", "service", "domain", "channel", "event_channel", "endpoint", "path"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{key}={value.strip()}")
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            parts.append(f"{key}={value}")
+    anchors = result.get("anchors")
+    if isinstance(anchors, dict):
+        for key in ("repo", "service", "symbol", "domain", "endpoint", "event_channel", "path"):
+            value = anchors.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{key}={value.strip()}")
+    status = result.get("status")
+    if isinstance(status, str) and status:
+        parts.append(f"status={status}")
+    return _short_text(" ".join(_dedupe_strings(parts)), limit=260)
+
+
+def _shrink_grep_response_to_budget(result: JsonObject, *, max_chars: int, target_chars: int) -> None:
+    rows = result.get("rows")
+    if not isinstance(rows, list):
+        result["rows"] = []
+        rows = result["rows"]
+    while rows and _current_chars(result) > max_chars:
+        _add_dropped_row_inspection_hint(result, rows.pop())
+        result["more"] = _non_bool_int(result.get("more")) + 1
+        result["shown"] = len(rows)
+    if _current_chars(result) <= max_chars:
+        return
+    result["rows"] = [_short_text(row, limit=180) for row in rows if isinstance(row, str)]
+    result["shown"] = len(result["rows"])
+    while result["rows"] and _current_chars(result) > max_chars:
+        _add_dropped_row_inspection_hint(result, result["rows"].pop())
+        result["more"] = _non_bool_int(result.get("more")) + 1
+        result["shown"] = len(result["rows"])
+    if _current_chars(result) <= max_chars:
+        return
+    must_inspect = result.get("must_inspect")
+    if isinstance(must_inspect, list):
+        while must_inspect and _current_chars(result) > max_chars:
+            must_inspect.pop()
+    if _current_chars(result) <= max_chars:
+        return
+    covered = result.get("covered")
+    if isinstance(covered, list):
+        while covered and _current_chars(result) > max_chars:
+            covered.pop()
+    if _current_chars(result) <= max_chars:
+        return
+    result["boundary"] = _short_text(result.get("boundary"), limit=120)
+    if _current_chars(result) <= max_chars:
+        return
+    result["gaps"] = _short_text(result.get("gaps"), limit=160)
+    if _current_chars(result) <= max_chars:
+        return
+    result["query"] = _short_text(result.get("query"), limit=120)
+    result["next"] = _short_text(result.get("next"), limit=160)
+    if _current_chars(result) > max_chars:
+        result["more"] = _non_bool_int(result.get("more")) + len(result["rows"])
+        for row in list(result["rows"]):
+            _add_dropped_row_inspection_hint(result, row)
+        result["rows"] = []
+        result["shown"] = 0
+        result["gaps"] = _short_text(result.get("gaps"), limit=80)
+        result["next"] = _short_text(result.get("next"), limit=120) or "inspect source for uncovered areas"
+
+
+def _add_dropped_row_inspection_hint(result: JsonObject, row: object) -> None:
+    if not isinstance(row, str) or not row.strip():
+        return
+    locator, category = _parse_grep_row_locator_category(row)
+    if not category:
+        return
+    if locator:
+        hint = f"{category}: omitted by byte budget; inspect {locator}"
+    else:
+        hint = f"{category}: omitted by byte budget; inspect narrowed source/category"
+    must_inspect = result.get("must_inspect")
+    if not isinstance(must_inspect, list):
+        must_inspect = []
+        result["must_inspect"] = must_inspect
+    if hint not in must_inspect:
+        must_inspect.insert(0, hint)
+    del must_inspect[GREP_MUST_INSPECT_LIMIT:]
+
+
+def _parse_grep_row_locator_category(row: str) -> tuple[str, str]:
+    marker = "  ["
+    before, separator, after = row.partition(marker)
+    if not separator:
+        return "", ""
+    _tag, separator, remainder = after.partition("] ")
+    if not separator:
+        return before.strip(), ""
+    category = remainder.split("  ", 1)[0].strip()
+    return before.strip(), category
+
+
+def _refresh_grep_omission_gap(result: JsonObject) -> None:
+    more = _non_bool_int(result.get("more"))
+    if more <= 0:
+        return
+    clause = f"{more} additional rows omitted; use must_inspect refs/categories"
+    gaps = result.get("gaps")
+    if not isinstance(gaps, str) or not gaps.strip() or gaps == "none":
+        result["gaps"] = clause
+        return
+    clauses = [
+        part.strip()
+        for part in gaps.split(";")
+        if part.strip()
+        and "additional rows omitted" not in part
+        and "must_inspect refs/categories" not in part
+    ]
+    clauses.append(clause)
+    result["gaps"] = _short_text("; ".join(clauses), limit=420)
+
+
+def _non_bool_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    return 0
 
 
 def enforce_planning_context_budget(
@@ -99,6 +1345,13 @@ def enforce_planning_context_budget(
     max_chars: int = PLANNING_CONTEXT_MAX_CHARS,
     preserve_planning_sections: bool = False,
 ) -> JsonObject:
+    """Legacy planning-only compactor retained for direct regression coverage.
+
+    The MCP server uses `render_grep_response` at the transport boundary. Keep
+    this helper isolated so old planning-budget tests can guard the previous
+    backfill behavior without reintroducing a second MCP production budget path.
+    """
+
     measured_chars = len(canonical_json(result))
     if measured_chars <= max_chars:
         return result
@@ -731,37 +1984,6 @@ def _compact_budgeted_rows(
     return [row for row in compact_rows if row], ([inspection_area] if inspection_area else [])
 
 
-def _call_row_compactor(row_compactor: object, row: JsonObject) -> JsonObject:
-    if callable(row_compactor):
-        compacted = row_compactor(row)
-        return compacted if isinstance(compacted, dict) else {}
-    return {}
-
-
-def _compact_headstart_or_relation_row(row: JsonObject) -> JsonObject:
-    compact = _minimal_runtime_row(row)
-    if compact:
-        return compact
-    compact = _compact_headstart_row(row)
-    if compact:
-        return compact
-    compact = _compact_entity_ref(row)
-    if compact:
-        return compact
-    keys = (
-        "name",
-        "package",
-        "import_root",
-        "distribution_name",
-        "importer_count",
-        "state",
-        "predicate",
-        "reason",
-        "scope_ref",
-    )
-    return {key: row[key] for key in keys if key in row and row[key] is not None}
-
-
 def _overflow_inspection_area(
     rows: list[JsonObject],
     *,
@@ -809,6 +2031,37 @@ def _inspection_refs_from_budget_row(row: JsonObject) -> list[JsonObject]:
             if nested_ref:
                 refs.append(nested_ref)
     return [ref for ref in refs if ref]
+
+
+def _call_row_compactor(row_compactor: object, row: JsonObject) -> JsonObject:
+    if callable(row_compactor):
+        compacted = row_compactor(row)
+        return compacted if isinstance(compacted, dict) else {}
+    return {}
+
+
+def _compact_headstart_or_relation_row(row: JsonObject) -> JsonObject:
+    compact = _minimal_runtime_row(row)
+    if compact:
+        return compact
+    compact = _compact_headstart_row(row)
+    if compact:
+        return compact
+    compact = _compact_entity_ref(row)
+    if compact:
+        return compact
+    keys = (
+        "name",
+        "package",
+        "import_root",
+        "distribution_name",
+        "importer_count",
+        "state",
+        "predicate",
+        "reason",
+        "scope_ref",
+    )
+    return {key: row[key] for key in keys if key in row and row[key] is not None}
 
 
 def _search_terms_from_budget_row(row: JsonObject) -> list[str]:
@@ -873,7 +2126,7 @@ def _compact_reverse_impact(value: object) -> JsonObject:
     if terminal_import_leads:
         summary["terminal_import_lead_returned_count"] = len(terminal_import_leads)
         summary["terminal_import_lead_total_in_returned_rows"] = sum(
-            _safe_non_bool_int(row.get("import_consumer_leads", {}).get("lead_count"))
+            _non_bool_int(row.get("import_consumer_leads", {}).get("lead_count"))
             for row in terminal_import_leads
         )
     if truncated_terminal_symbols:
@@ -1112,12 +2365,6 @@ def _compact_disambiguation(value: object) -> JsonObject:
         ],
         "retry_arguments": compact_retry_arguments,
     }
-
-
-def _safe_non_bool_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    return value if isinstance(value, int) else 0
 
 
 def _compact_relation_rows(value: object, *, limit: int) -> list[JsonObject]:
@@ -1497,13 +2744,38 @@ def _compact_headstart_row(row: JsonObject) -> JsonObject:
 
 
 def _compact_source_check(row: JsonObject) -> JsonObject:
-    keys = ("reason", "anchor", "repo", "path", "line_start", "line_end")
-    return {key: row[key] for key in keys if key in row}
+    keys = ("reason", "anchor", "repo", "path", "line", "line_start", "line_end", "module", "qualname", "name")
+    compact = {key: row[key] for key in keys if key in row}
+    if "line_start" not in compact and isinstance(row.get("line"), int) and not isinstance(row.get("line"), bool):
+        compact["line_start"] = row["line"]
+    return compact
 
 
 def _compact_coordinate(row: JsonObject) -> JsonObject:
-    keys = ("repo", "path", "line_start", "line_end")
-    return {key: row[key] for key in keys if key in row}
+    keys = (
+        "repo",
+        "path",
+        "line",
+        "line_start",
+        "line_end",
+        "end_line",
+        "module",
+        "qualname",
+        "qualified_name",
+        "name",
+        "symbol_kind",
+        "kind",
+        "predicate",
+        "endpoint",
+        "domain",
+        "event_channel",
+    )
+    compact = {key: row[key] for key in keys if key in row and row[key] is not None}
+    if "line_start" not in compact and isinstance(row.get("line"), int) and not isinstance(row.get("line"), bool):
+        compact["line_start"] = row["line"]
+    if "line_end" not in compact and isinstance(row.get("end_line"), int) and not isinstance(row.get("end_line"), bool):
+        compact["line_end"] = row["end_line"]
+    return compact
 
 
 def _investigation_brief_anchor_count(value: object) -> int:
@@ -1573,3 +2845,279 @@ def _list_value(value: object) -> list[object]:
 def _answer_list_len(answer_packet: JsonObject, key: str) -> int:
     value = answer_packet.get(key)
     return len(value) if isinstance(value, list) else 0
+
+
+def _inline_row(row: JsonObject) -> JsonObject:
+    keys = (
+        "status",
+        "area",
+        "trigger",
+        "reason",
+        "section",
+        "surface",
+        "kind",
+        "name",
+        "display_name",
+        "repo",
+        "module",
+        "qualname",
+        "qualified_name",
+        "symbol_kind",
+        "path",
+        "line",
+        "line_start",
+        "line_end",
+        "method",
+        "predicate",
+        "state",
+        "expression",
+        "depth",
+        "authz_status",
+        "public_policy_present",
+        "methods",
+        "domain",
+        "target",
+        "deploy_details",
+        "deploy_kind",
+        "deploy_kinds",
+        "runtime_categories",
+        "counts",
+        "route_source_kind",
+        "match_basis",
+        "recommendation",
+        "basis",
+        "omitted_row_count",
+        "missing_fact_families",
+    )
+    compact: JsonObject = {key: row[key] for key in keys if key in row and row[key] is not None}
+    for key in (
+        "service",
+        "source",
+        "subject",
+        "object",
+        "caller_symbol",
+        "callee_symbol",
+        "symbol",
+        "handler",
+        "endpoint",
+        "provider",
+        "provider_endpoint",
+        "matched_provider_endpoint",
+        "consumer",
+        "deploy_target",
+    ):
+        nested = row.get(key)
+        if isinstance(nested, dict):
+            identity = _inline_entity_identity(nested)
+            if identity:
+                compact[key] = identity
+        elif isinstance(nested, (str, int, float, bool)) and nested is not None:
+            compact[key] = nested
+    for key in ("services", "domains", "consumers", "policies", "checks"):
+        values = row.get(key)
+        if isinstance(values, list):
+            compact[key] = [
+                _inline_entity_identity(item) if isinstance(item, dict) else item
+                for item in values[:2]
+            ]
+    refs = _first_inspection_refs(row, limit=COMPACT_AUTHZ_INSPECTION_REF_LIMIT)
+    if refs:
+        compact["evidence_refs"] = refs
+    terms = _first_search_terms(row, limit=4)
+    if terms:
+        compact["search_terms"] = terms
+    return _drop_empty(compact)
+
+
+def _inline_entity_identity(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    identity = value.get("identity")
+    if isinstance(identity, dict):
+        merged = {**identity, **value}
+    else:
+        merged = value
+    keys = (
+        "entity_id",
+        "kind",
+        "name",
+        "display_name",
+        "slug",
+        "repo",
+        "module",
+        "qualname",
+        "qualified_name",
+        "symbol_kind",
+        "path",
+        "line",
+        "line_start",
+        "line_end",
+        "method",
+        "methods",
+        "protocol",
+        "host",
+        "target",
+        "type",
+        "access_level",
+        "policy",
+    )
+    compact = {key: merged[key] for key in keys if key in merged and merged[key] is not None}
+    properties = value.get("properties")
+    if isinstance(properties, dict):
+        for key in ("repo", "path", "line", "end_line"):
+            if key in properties and key not in compact and properties[key] is not None:
+                compact[key] = properties[key]
+    return compact
+
+
+def _first_inspection_refs(value: object, *, limit: int) -> list[JsonObject]:
+    refs: list[JsonObject] = []
+    for row in _iter_json_rows(value):
+        for ref_key in ("source_coordinates", "evidence_coordinates", "inspection_refs"):
+            ref_value = row.get(ref_key)
+            if isinstance(ref_value, list):
+                refs.extend(_compact_coordinate(item) for item in ref_value if isinstance(item, dict))
+        refs.extend(_source_coordinates(row))
+        direct = _compact_coordinate(row)
+        if direct:
+            refs.append(direct)
+        if len(refs) >= limit:
+            break
+    return _dedupe_budget_rows([ref for ref in refs if ref])[:limit]
+
+
+def _first_search_terms(value: object, *, limit: int) -> list[str]:
+    terms: list[str] = []
+    for row in _iter_json_rows(value):
+        terms.extend(_search_terms_from_budget_row(row))
+        if len(terms) >= limit:
+            break
+    return _dedupe_strings([term for term in terms if term])[:limit]
+
+
+def _iter_json_rows(value: object) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    if isinstance(value, dict):
+        rows.append(value)
+        for nested in value.values():
+            if isinstance(nested, dict):
+                rows.extend(_iter_json_rows(nested))
+            elif isinstance(nested, list):
+                rows.extend(item for item in nested if isinstance(item, dict))
+    elif isinstance(value, list):
+        rows.extend(item for item in value if isinstance(item, dict))
+    return rows
+
+
+def _inline_next_mcp_calls(result: JsonObject, *, limit: int) -> list[JsonObject]:
+    calls: list[JsonObject] = []
+    current_tool = result.get("tool")
+    symbol_tools = {"find_callers", "find_callees", "blast_radius", "reverse_impact"}
+    if current_tool == "planning_context":
+        for row in _list_value(result.get("services")):
+            if not isinstance(row, dict):
+                continue
+            service = row.get("slug") or row.get("name") or row.get("display_name")
+            if isinstance(service, str) and service:
+                calls.append(
+                    {
+                        "tool": "planning_context",
+                        "arguments": {"service": service, "limit": 25},
+                        "reason": "Narrow broad planning result to this service.",
+                    }
+                )
+        for row in _list_value(result.get("domains")):
+            if not isinstance(row, dict):
+                continue
+            domain = row.get("name") or row.get("domain")
+            if isinstance(domain, str) and domain:
+                calls.append(
+                    {
+                        "tool": "planning_context",
+                        "arguments": {"domain": domain, "limit": 25},
+                        "reason": "Narrow runtime/domain evidence to this domain.",
+                    }
+                )
+    symbol_anchor = _symbol_anchor_from_result(result)
+    for ref in _first_inspection_refs(result.get("inspection_areas"), limit=limit * 2):
+        repo = ref.get("repo")
+        path = ref.get("path")
+        line = ref.get("line_start")
+        if current_tool in symbol_tools and symbol_anchor and isinstance(path, str) and path:
+            args: JsonObject = {"symbol": symbol_anchor, "path": path, "limit": 25}
+            if isinstance(line, int) and not isinstance(line, bool):
+                args["line"] = line
+            calls.append(
+                {
+                    "tool": current_tool,
+                    "arguments": args,
+                    "reason": "Retry this symbol tool with source coordinates to retrieve omitted or disambiguated detail.",
+                }
+            )
+        elif current_tool == "planning_context" and isinstance(path, str) and path:
+            args = {"path": path, "limit": 25}
+            if isinstance(repo, str) and repo:
+                args["repo"] = repo
+            if isinstance(line, int) and not isinstance(line, bool):
+                args["line"] = line
+            calls.append(
+                {
+                    "tool": "planning_context",
+                    "arguments": args,
+                    "reason": "Retrieve omitted planning detail around this source ref.",
+                }
+            )
+    return _dedupe_budget_rows(calls)[:limit]
+
+
+def _symbol_anchor_from_result(result: JsonObject) -> str | None:
+    symbol = result.get("symbol")
+    if isinstance(symbol, str) and symbol.strip():
+        return symbol.strip()
+    if isinstance(symbol, dict):
+        for key in ("qualified_name", "name", "display_name"):
+            value = symbol.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    target = result.get("target")
+    if isinstance(target, dict):
+        resolved = target.get("resolved_symbol")
+        if isinstance(resolved, dict):
+            for key in ("qualified_name", "qualname", "name", "display_name"):
+                value = resolved.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        value = target.get("query")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    query = result.get("query")
+    if isinstance(query, str) and query.strip():
+        return query.strip()
+    return None
+
+
+def _nested_value(payload: JsonObject, path: tuple[str, ...]) -> object:
+    current: object = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _string_list(value: object, *, limit: int) -> list[str]:
+    rows = _list_value(value)
+    if not rows and isinstance(value, str):
+        rows = [value]
+    return [_short_text(row) for row in rows[:limit] if _short_text(row)]
+
+
+def _short_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _drop_empty(value: JsonObject) -> JsonObject:
+    return {key: item for key, item in value.items() if item not in (None, [], {})}

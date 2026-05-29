@@ -1,7 +1,7 @@
 # SuperContext Backlog
 
 Status: living index of deferred work and open follow-ups across the project.
-Last updated: 2026-05-21.
+Last updated: 2026-05-29.
 
 This file is the single place to scan "what's deferred and why." Per-ADR open-follow-up sections are the authoritative source; this is the index. Refresh when ADRs change.
 
@@ -47,6 +47,7 @@ Format: `Item | Source | Trigger to revisit`.
 | MCP tool coverage/refusal metadata — `coverage_warnings` and `unsupported_scopes` are present but sparse, so agents cannot always distinguish "no risk found" from "not instrumented" | ADR-0002 post-merge review notes; PR #108 MCP workflow integration | Tool Query Contract ADR or before safety-sensitive `blast_radius` / review claims |
 | Expand `review_context` impact safely — add endpoint, event, package, deploy, and runtime impact only where the KG has supported facts and refusal metadata; avoid invented review findings | ADR-0002 post-merge review notes; historical MCP workflow seed removed during docs cleanup | Before treating `review_context` as a complete PR-review product surface |
 | Production-compatible MCP host setup — local server still lacks auth, streamable HTTP, resource auto-attach, host compatibility tests, and hosted/self-hosted registration flows | ADR-0002 post-merge review notes; Deployment/Auth/Tenancy ADR backlog | Before exposing SuperContext MCP outside local loopback development |
+| Retire legacy planning-context budget compactor — production MCP transport now uses grep-shaped `render_grep_response`; keep `enforce_planning_context_budget` only until grep transport has held through A/B runs and no callers depend on legacy nested backfill behavior | Pre-PR review 2026-05-29 for `debate10-quality-floor-hardening` | After one stable A/B cycle on grep transport and before adding new packet-budget features |
 
 ## Per-ADR open follow-ups
 
