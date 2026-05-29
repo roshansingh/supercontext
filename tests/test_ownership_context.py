@@ -128,6 +128,24 @@ authors = [{name = "Package Author"}]
             ["services/checkout/service.py"],
         )
 
+    def test_codeowners_last_matching_rule_wins_for_service_path(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": """
+* @platform/default-team
+/services/checkout @platform/checkout-team
+""".lstrip(),
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "answerable")
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owners"], ["@platform/checkout-team"])
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owner_scope"], "service_path_match")
+        self.assertEqual(ownership["proven_owners"][0]["scope_pattern"], "/services/checkout")
+
     def test_manifest_relative_repo_path_is_resolved_from_snapshot_root(self) -> None:
         with _ownership_snapshot(
             {

@@ -48,6 +48,7 @@ from source.scripts.mcp_server import (
     _handle_json_rpc_payload,
     _is_loopback_host,
     _read_request_body,
+    _render_tool_result_for_transport,
     _RequestBodyTimeout,
     _server_address_for_host,
     _server_class_for_host,
@@ -748,6 +749,21 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("SuperContext MCP renderer failed", stderr.getvalue())
         self.assertIn("Traceback", stderr.getvalue())
 
+    def test_transport_renderer_fallback_bounds_user_supplied_query(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch(
+            "source.scripts.mcp_server.render_grep_response",
+            side_effect=RuntimeError("boom"),
+        ), mock.patch("sys.stderr", stderr):
+            structured = _render_tool_result_for_transport(
+                {"tool": "planning_context", "query": "x" * (MCP_INLINE_HARD_MAX_CHARS * 2)}
+            )
+
+        _assert_grep_transport_shape(self, structured)
+        self.assertLessEqual(len(canonical_json(structured)), MCP_INLINE_HARD_MAX_CHARS)
+        self.assertLessEqual(len(structured["query"]), 260)
+        self.assertTrue(str(structured["query"]).endswith("..."))
+
     def test_mcp_transport_budget_compacts_real_non_planning_tool_with_omitted_refs(self) -> None:
         with _fixture_snapshot(extra_charge_card_callers=80) as kg:
             rpc = _transport_rpc(kg, "find_callers", {"symbol": "charge_card", "limit": 100})
@@ -957,12 +973,13 @@ class McpToolsTest(unittest.TestCase):
             ],
         }
 
-        rendered = render_grep_response(payload, max_chars=1_200, target_chars=900)
+        rendered = render_grep_response(payload, max_chars=1_600, target_chars=1_300)
 
         _assert_grep_transport_shape(self, rendered)
-        self.assertLessEqual(len(canonical_json(rendered)), 1_200)
+        self.assertLessEqual(len(canonical_json(rendered)), 1_600)
         self.assertLess(rendered["shown"], 40)
         self.assertGreater(rendered["more"], 0)
+        self.assertIn(f"callers: shown {rendered['shown']}/40", rendered["covered"])
         self.assertIn("additional rows omitted", rendered["gaps"])
         self.assertIn(f"{rendered['more']} additional rows omitted", rendered["gaps"])
         self.assertTrue(rendered["next"])
@@ -1072,7 +1089,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("service='acme-api'", rendered["next"])
         self.assertIn("explicit repo/service/domain/path", rendered["next"])
 
-    def test_render_grep_response_service_brief_does_not_surface_unrequested_authz_groups(self) -> None:
+    def test_render_grep_response_service_brief_surfaces_authz_groups_from_packet_content(self) -> None:
         payload = {
             "tool": "get_service_brief",
             "status": "found",
@@ -1094,7 +1111,7 @@ class McpToolsTest(unittest.TestCase):
         rendered = render_grep_response(payload)
 
         _assert_grep_transport_shape(self, rendered)
-        self.assertFalse(any("authz_surface" in row for row in rendered["rows"]))
+        self.assertTrue(any("authz_surface.review_leads" in row for row in rendered["rows"]))
 
     def test_render_grep_response_surfaces_ownership_candidates_as_non_owner_guidance(self) -> None:
         payload = {

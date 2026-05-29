@@ -297,8 +297,8 @@ def _render_tool_result_for_transport(result: JsonObject) -> JsonObject:
         traceback.print_exc(file=sys.stderr)
         query = result.get("query") or result.get("symbol") or result.get("service") or ""
         return {
-            "tool": tool,
-            "query": str(query),
+            "tool": _transport_fallback_text(tool, limit=80),
+            "query": _transport_fallback_text(query, limit=260),
             "status": "partial",
             "answerability": "partial: MCP renderer failed; use this as an inspection-only result.",
             "boundary": "render_error: do not treat missing rows as absence; inspect source or retry with a narrower anchor.",
@@ -310,6 +310,13 @@ def _render_tool_result_for_transport(result: JsonObject) -> JsonObject:
             "gaps": f"render_error:{type(exc).__name__}",
             "next": "inspect source; retry the same MCP tool with narrower arguments if useful",
         }
+
+
+def _transport_fallback_text(value: object, *, limit: int) -> str:
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
 
 
 def _json_rpc_result(request_id: object, result: JsonObject) -> JsonObject:

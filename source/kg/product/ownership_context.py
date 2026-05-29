@@ -201,11 +201,11 @@ def _codeowners_rows(repo_root: Path, *, service_paths: list[str], limit: int) -
                     "source": _source_ref(relative, line_number),
                 }
             )
-            if len(rows) >= limit:
-                return rows
         if rows or parsed_any:
             break
-    return rows
+    # CODEOWNERS uses the last matching pattern in the file. Return the newest
+    # matching rows first so answer_packet.proven_owner follows GitHub semantics.
+    return list(reversed(rows))[:limit]
 
 
 def _service_source_paths(services: list[JsonObject]) -> list[str]:

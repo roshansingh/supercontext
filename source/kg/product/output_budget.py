@@ -261,6 +261,9 @@ def render_grep_response(
             _refresh_grep_omission_gap(packet)
             if _non_bool_int(packet.get("more")) == previous_more and _current_chars(packet) <= max_chars:
                 break
+    _refresh_grep_covered_from_rows(packet)
+    if _current_chars(packet) > max_chars:
+        _shrink_grep_response_to_budget(packet, max_chars=max_chars, target_chars=target_chars)
     return packet
 
 
@@ -473,7 +476,11 @@ def _grep_supplemental_path_groups(
 def _should_include_authz_transport_group(result: JsonObject) -> bool:
     if result.get("tool") == "review_context":
         return True
-    return _grep_has_intent_token(result, {"auth", "authz", "authorization", "permission", "policy", "security"})
+    for prefix in (("authz_surface",), ("related_facts", "authz_surface")):
+        for key in AUTHZ_COMPACT_LIST_KEYS:
+            if _nested_list(result, (*prefix, key)):
+                return True
+    return False
 
 
 def _grep_group(
@@ -1278,6 +1285,49 @@ def _shrink_grep_response_to_budget(result: JsonObject, *, max_chars: int, targe
         result["shown"] = 0
         result["gaps"] = _short_text(result.get("gaps"), limit=80)
         result["next"] = _short_text(result.get("next"), limit=120) or "inspect source for uncovered areas"
+
+
+def _refresh_grep_covered_from_rows(result: JsonObject) -> None:
+    rows = result.get("rows")
+    if not isinstance(rows, list):
+        result["covered"] = []
+        return
+    shown_by_category: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, str):
+            continue
+        _locator, category = _parse_grep_row_locator_category(row)
+        if category:
+            shown_by_category[category] = shown_by_category.get(category, 0) + 1
+
+    total_by_category = _covered_total_by_category(result.get("covered"))
+    covered = []
+    for category, shown in sorted(shown_by_category.items()):
+        total = max(total_by_category.get(category, shown), shown)
+        covered.append(f"{category}: shown {shown}/{total}")
+    result["covered"] = covered[:GREP_COVERED_SUMMARY_LIMIT]
+
+
+def _covered_total_by_category(value: object) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    if not isinstance(value, list):
+        return totals
+    for row in value:
+        if not isinstance(row, str):
+            continue
+        category, separator, remainder = row.partition(": shown ")
+        if not separator:
+            continue
+        _shown, separator, total = remainder.partition("/")
+        if not separator:
+            continue
+        try:
+            parsed_total = int(total.strip())
+        except ValueError:
+            continue
+        if parsed_total >= 0:
+            totals[category.strip()] = parsed_total
+    return totals
 
 
 def _add_dropped_row_inspection_hint(result: JsonObject, row: object) -> None:
