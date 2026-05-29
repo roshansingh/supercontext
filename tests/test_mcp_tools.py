@@ -2193,6 +2193,34 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("tracking_paths", result["answerability"]["missing_fact_families"])
         self.assertEqual(result["review_answer_packet"]["surface_status"], result["surface_status"])
 
+    def test_review_context_accepts_common_review_category_aliases(self) -> None:
+        with _fixture_snapshot(
+            app_surface=True,
+            operational_deploy_mapping=True,
+            operational_deploy_link=True,
+            kubernetes_operational_deploy=True,
+        ) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "requested_surfaces": ["services", "schemas", "contracts", "deploys", "owners"],
+                    "limit": 10,
+                },
+            )
+
+        statuses = {row["surface"]: row for row in result["surface_status"]}
+        self.assertEqual(list(statuses), ["services", "models", "serializers", "deployables", "owners"])
+        self.assertEqual(statuses["services"]["status"], "known")
+        self.assertEqual(statuses["models"]["status"], "known")
+        self.assertEqual(statuses["serializers"]["status"], "missing")
+        self.assertEqual(statuses["deployables"]["status"], "known")
+        self.assertEqual(statuses["owners"]["status"], "missing")
+        self.assertIn("serializers", result["answerability"]["missing_fact_families"])
+        self.assertIn("owners", result["answerability"]["missing_fact_families"])
+
     def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
             result = call_tool(
@@ -2391,6 +2419,18 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(impact["status"], "missing_anchor")
         self.assertEqual(impact["anchors"], [])
+
+    def test_review_context_does_not_emit_name_leads_for_unindexed_repo(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "missing_api", "changed_files": ["api/auth/routes.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["application_impact"]["status"], "missing_repo")
+        self.assertEqual(result["application_impact"]["cross_repo_name_leads"], [])
 
     def test_review_context_changed_ranges_fail_closed_for_non_overlapping_file(self) -> None:
         with _fixture_snapshot() as kg:

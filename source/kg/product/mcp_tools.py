@@ -42,7 +42,7 @@ _PLANNING_CONTEXT_ANCHOR_FIELDS = (
     "domain",
 )
 REVIEW_CONTEXT_DETAIL_LIMIT = 25
-REVIEW_CONTEXT_SURFACES = (
+REVIEW_CONTEXT_DEFAULT_SURFACES = (
     "ui_screens",
     "scheduled_jobs",
     "sqs_consumers",
@@ -52,7 +52,17 @@ REVIEW_CONTEXT_SURFACES = (
     "models",
     "serializers",
 )
+REVIEW_CONTEXT_SURFACES = (
+    "services",
+    *REVIEW_CONTEXT_DEFAULT_SURFACES,
+    "deployables",
+    "owners",
+)
 REVIEW_CONTEXT_SURFACE_ALIASES = {
+    "service": "services",
+    "services": "services",
+    "affected_service": "services",
+    "affected_services": "services",
     "ui": "ui_screens",
     "screen": "ui_screens",
     "screens": "ui_screens",
@@ -82,6 +92,23 @@ REVIEW_CONTEXT_SURFACE_ALIASES = {
     "models": "models",
     "serializer": "serializers",
     "serializers": "serializers",
+    "schema": ("models", "serializers"),
+    "schemas": ("models", "serializers"),
+    "contract": ("models", "serializers"),
+    "contracts": ("models", "serializers"),
+    "api_contract": ("api_surfaces", "serializers"),
+    "api_contracts": ("api_surfaces", "serializers"),
+    "deploy": "deployables",
+    "deploys": "deployables",
+    "deployable": "deployables",
+    "deployables": "deployables",
+    "deployment": "deployables",
+    "deployments": "deployables",
+    "owner": "owners",
+    "owners": "owners",
+    "ownership": "owners",
+    "codeowner": "owners",
+    "codeowners": "owners",
 }
 PLANNING_CONTEXT_NO_OVERLAP_ACTION = (
     "No deterministic planning anchor combination overlapped after applying the supplied filters. "
@@ -1912,12 +1939,15 @@ def _optional_review_surfaces(arguments: JsonObject, field: str) -> list[str]:
     surfaces: list[str] = []
     unsupported: list[str] = []
     for value in _optional_string_list(arguments, field):
-        canonical = REVIEW_CONTEXT_SURFACE_ALIASES.get(value.strip().lower().replace("-", "_").replace(" ", "_"))
-        if canonical is None:
+        canonical_values = REVIEW_CONTEXT_SURFACE_ALIASES.get(value.strip().lower().replace("-", "_").replace(" ", "_"))
+        if canonical_values is None:
             unsupported.append(value)
             continue
-        if canonical not in surfaces:
-            surfaces.append(canonical)
+        if isinstance(canonical_values, str):
+            canonical_values = (canonical_values,)
+        for canonical in canonical_values:
+            if canonical not in surfaces:
+                surfaces.append(canonical)
     if unsupported:
         allowed = ", ".join(REVIEW_CONTEXT_SURFACES)
         raise ValueError(f"MCP tool argument {field!r} has unsupported surface(s): {', '.join(unsupported)}; allowed: {allowed}")
@@ -2052,7 +2082,7 @@ def _review_context_properties() -> JsonObject:
             "items": {"type": "string"},
             "description": (
                 "Optional impact surfaces named by the review prompt. Supported canonical values include "
-                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, and tracking are accepted."
+                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, schemas/contracts, deploys, and owners are accepted."
             ),
         },
         "include_deploy_blockers": {"type": "boolean", "default": False},
@@ -2294,6 +2324,17 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     runtime_surfaces = _review_context_runtime_surfaces(
         kg, repo=repo, changed_symbols=changed_symbols, limit=detail_limit
     )
+    service_rows = _planning_context_repo_services(kg, repo, limit=detail_limit)
+    ownership_context = (
+        ownership_context_packet(
+            kg,
+            repo=repo,
+            services=_planning_context_public_rows(service_rows),
+            limit=detail_limit,
+        )
+        if "owners" in requested_surfaces
+        else {}
+    )
     framework_impact = framework_impact_packet(
         kg,
         repo=repo,
@@ -2343,6 +2384,8 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     surface_status = _review_context_surface_status(
         application_impact=application_impact,
         runtime_surfaces=runtime_surfaces,
+        service_rows=service_rows,
+        ownership_context=ownership_context,
         requested_surfaces=requested_surfaces,
     )
     answerability = _review_context_answerability(
@@ -3287,14 +3330,18 @@ def _review_context_surface_status(
     *,
     application_impact: JsonObject,
     runtime_surfaces: dict[str, list[JsonObject]],
+    service_rows: list[JsonObject],
+    ownership_context: JsonObject,
     requested_surfaces: list[str],
 ) -> list[JsonObject]:
-    surfaces = requested_surfaces or list(REVIEW_CONTEXT_SURFACES)
+    surfaces = requested_surfaces or list(REVIEW_CONTEXT_DEFAULT_SURFACES)
     return [
         _review_context_surface_status_row(
             surface,
             application_impact=application_impact,
             runtime_surfaces=runtime_surfaces,
+            service_rows=service_rows,
+            ownership_context=ownership_context,
         )
         for surface in surfaces
     ]
@@ -3305,11 +3352,15 @@ def _review_context_surface_status_row(
     *,
     application_impact: JsonObject,
     runtime_surfaces: dict[str, list[JsonObject]],
+    service_rows: list[JsonObject],
+    ownership_context: JsonObject,
 ) -> JsonObject:
     known_rows, unlinked_rows, evidence_path = _review_context_surface_rows(
         surface,
         application_impact=application_impact,
         runtime_surfaces=runtime_surfaces,
+        service_rows=service_rows,
+        ownership_context=ownership_context,
     )
     if known_rows:
         status = "known"
@@ -3336,6 +3387,8 @@ def _review_context_surface_rows(
     *,
     application_impact: JsonObject,
     runtime_surfaces: dict[str, list[JsonObject]],
+    service_rows: list[JsonObject],
+    ownership_context: JsonObject,
 ) -> tuple[list[JsonObject], list[JsonObject], str]:
     same_repo_surfaces = application_impact.get("same_repo_surfaces", {})
     if not isinstance(same_repo_surfaces, dict):
@@ -3345,6 +3398,9 @@ def _review_context_surface_rows(
     ]
     runtime_facts = [row for row in application_impact.get("runtime_facts", []) if isinstance(row, dict)]
     event_rows = [row for row in runtime_surfaces.get("event_channels", []) if isinstance(row, dict)]
+    deploy_rows = [row for row in runtime_surfaces.get("deploy_mappings", []) if isinstance(row, dict)]
+    if surface == "services":
+        return service_rows, [], "services"
     if surface == "scheduled_jobs":
         return _surface_list(same_repo_surfaces, "scheduled_jobs"), [], "application_impact.same_repo_surfaces.scheduled_jobs"
     if surface == "delivery_workers":
@@ -3381,6 +3437,14 @@ def _review_context_surface_rows(
             if _review_context_row_mentions_any(row, {"tracking", "track"})
         ]
         return known_rows, unlinked_rows, "application_impact.runtime_facts|cross_repo_name_leads"
+    if surface == "deployables":
+        return deploy_rows, [], "runtime_surfaces.deploy_mappings"
+    if surface == "owners":
+        owners = ownership_context.get("proven_owners", [])
+        candidates = ownership_context.get("candidate_maintainers", [])
+        known_rows = [row for row in owners if isinstance(row, dict)]
+        unlinked_rows = [row for row in candidates if isinstance(row, dict)]
+        return known_rows, unlinked_rows, "ownership_context.proven_owners|candidate_maintainers"
     raise ValueError(f"Unsupported review surface: {surface}")
 
 
@@ -3396,14 +3460,22 @@ def _review_context_surface_sample(row: JsonObject) -> JsonObject:
         key: row[key]
         for key in (
             "repo",
+            "name",
+            "slug",
             "module",
             "qualname",
             "path",
+            "line",
             "predicate",
             "subject",
             "object",
             "surface_role",
             "match_basis",
+            "owner",
+            "scope_pattern",
+            "candidate",
+            "candidate_kind",
+            "source_kind",
         )
         if key in row
     }

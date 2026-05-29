@@ -38,6 +38,8 @@ def application_impact_packet(
     repo_key = _normalize_repo(repo)
     if not anchors or repo_key is None:
         return _empty_packet(status="missing_anchor" if repo_key else "missing_repo", limit=section_limit)
+    if not any(_normalize_repo(_entity_repo(entity)) == repo_key for entity in kg.entities):
+        return _empty_packet(status="missing_repo", limit=section_limit)
 
     same_repo_entities = [
         entity
