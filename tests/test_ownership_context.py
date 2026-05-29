@@ -200,6 +200,40 @@ authors = [{name = "Package Author"}]
         self.assertEqual(ownership["answer_packet"]["proven_owner"]["owner_scope"], "service_path_match")
         self.assertEqual(ownership["proven_owners"][0]["scope_pattern"], "/services/checkout")
 
+    def test_codeowners_overridden_matching_rules_are_not_exposed_as_proven_owners(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": """
+/services/checkout @platform/old-team
+/services/checkout @platform/new-team
+""".lstrip(),
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "answerable")
+        self.assertEqual(len(ownership["proven_owners"]), 1)
+        self.assertEqual(ownership["proven_owners"][0]["owners"], ["@platform/new-team"])
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owners"], ["@platform/new-team"])
+
+    def test_review_context_owner_surface_samples_include_owner_names(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "* @platform/checkout-team\n",
+            },
+        ) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "checkout-api", "changed_files": ["README.md"], "requested_surfaces": ["owners"], "limit": 5},
+            )
+
+        owners = next(row for row in result["surface_status"] if row["surface"] == "owners")
+        self.assertEqual(owners["status"], "known")
+        self.assertEqual(owners["sample_rows"][0]["owners"], ["@platform/checkout-team"])
+
     def test_manifest_relative_repo_path_is_resolved_from_snapshot_root(self) -> None:
         with _ownership_snapshot(
             {

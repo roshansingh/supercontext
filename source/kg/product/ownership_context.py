@@ -202,9 +202,9 @@ def _codeowners_rows(repo_root: Path, *, service_paths: list[str], limit: int) -
             )
         if rows or parsed_any:
             break
-    # CODEOWNERS uses the last matching pattern in the file. Return the newest
-    # matching rows first so answer_packet.proven_owner follows GitHub semantics.
-    return list(reversed(rows))[:limit]
+    # CODEOWNERS uses only the last matching pattern in the file. Earlier
+    # matching rows are overridden and must not be exposed as proven owners.
+    return rows[-1:] if rows else []
 
 
 def _service_source_paths(services: list[JsonObject]) -> list[str]:

@@ -3472,6 +3472,7 @@ def _review_context_surface_sample(row: JsonObject) -> JsonObject:
             "surface_role",
             "match_basis",
             "owner",
+            "owners",
             "scope_pattern",
             "candidate",
             "candidate_kind",
