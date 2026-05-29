@@ -7,6 +7,14 @@ from pathlib import Path
 from typing import Any
 
 
+MCP_PACKET_NAVIGATION_COUNTER_KEYS = (
+    "mcp_packet_file_reference_count",
+    "mcp_packet_jq_attempt_count",
+    "mcp_packet_saved_file_count",
+    "mcp_packet_saved_file_bytes_best_effort",
+)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compute paired SuperContext A/B deltas.")
     parser.add_argument("--traces", required=True, help="Input traces JSONL from pull_ab_traces.")
@@ -104,6 +112,22 @@ def compute_deltas(
                         _int_field(off, "mcp_tool_error_count"),
                         _int_field(on, "mcp_tool_error_count"),
                     ),
+                    "mcp_packet_file_references": _int_delta(
+                        _int_field(off, "mcp_packet_file_reference_count"),
+                        _int_field(on, "mcp_packet_file_reference_count"),
+                    ),
+                    "mcp_packet_jq_attempts": _int_delta(
+                        _int_field(off, "mcp_packet_jq_attempt_count"),
+                        _int_field(on, "mcp_packet_jq_attempt_count"),
+                    ),
+                    "mcp_packet_saved_files": _int_delta(
+                        _int_field(off, "mcp_packet_saved_file_count"),
+                        _int_field(on, "mcp_packet_saved_file_count"),
+                    ),
+                    "mcp_packet_saved_file_bytes_best_effort": _int_delta(
+                        _int_field(off, "mcp_packet_saved_file_bytes_best_effort"),
+                        _int_field(on, "mcp_packet_saved_file_bytes_best_effort"),
+                    ),
                     "non_mcp_calls": _list_len(off, "non_mcp_tools_called") - _list_len(on, "non_mcp_tools_called"),
                     "non_mcp_tool_attempts": _int_delta(
                         _int_field(
@@ -146,7 +170,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _arm_summary(trace: dict[str, Any]) -> dict[str, Any]:
-    return {
+    summary = {
         "answer": trace.get("final_answer"),
         "mcp_tools_called": _list(trace, "mcp_tools_called"),
         "mcp_tool_attempt_count": _int_field(
@@ -170,6 +194,9 @@ def _arm_summary(trace: dict[str, Any]) -> dict[str, Any]:
         "wall_time_seconds": trace.get("wall_time_seconds"),
         "incomplete_background_task_ids": _string_list(trace, "incomplete_background_task_ids"),
     }
+    for key in MCP_PACKET_NAVIGATION_COUNTER_KEYS:
+        summary[key] = _int_field(trace, key)
+    return summary
 
 
 def _paired_cost_status(on: dict[str, Any], off: dict[str, Any]) -> str:

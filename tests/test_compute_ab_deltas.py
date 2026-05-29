@@ -17,6 +17,12 @@ class ComputeAbDeltasTest(unittest.TestCase):
                     mcp_success_count=1,
                     non_mcp_tools=["Read"],
                     cost=0.03,
+                    packet_counts={
+                        "mcp_packet_file_reference_count": 3,
+                        "mcp_packet_jq_attempt_count": 1,
+                        "mcp_packet_saved_file_count": 2,
+                        "mcp_packet_saved_file_bytes_best_effort": 4096,
+                    },
                 ),
                 _trace("mcp_off", mcp_tools=[], non_mcp_tools=["Read", "Grep", "Read"], cost=0.05),
             ]
@@ -33,6 +39,14 @@ class ComputeAbDeltasTest(unittest.TestCase):
         self.assertEqual(row["deltas"]["mcp_tool_attempts"], -1)
         self.assertEqual(row["deltas"]["mcp_tool_successes"], -1)
         self.assertEqual(row["on"]["mcp_tool_success_count"], 1)
+        self.assertEqual(row["on"]["mcp_packet_file_reference_count"], 3)
+        self.assertEqual(row["on"]["mcp_packet_jq_attempt_count"], 1)
+        self.assertEqual(row["on"]["mcp_packet_saved_file_count"], 2)
+        self.assertEqual(row["on"]["mcp_packet_saved_file_bytes_best_effort"], 4096)
+        self.assertEqual(row["deltas"]["mcp_packet_file_references"], -3)
+        self.assertEqual(row["deltas"]["mcp_packet_jq_attempts"], -1)
+        self.assertEqual(row["deltas"]["mcp_packet_saved_files"], -2)
+        self.assertEqual(row["deltas"]["mcp_packet_saved_file_bytes_best_effort"], -4096)
         self.assertEqual(row["deltas"]["non_mcp_calls"], 2)
         self.assertEqual(row["deltas"]["non_mcp_tool_attempts"], 2)
         self.assertEqual(row["deltas"]["tokens_in"], 20)
@@ -128,6 +142,15 @@ class ComputeAbDeltasTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["on"]["incomplete_background_task_ids"], ["bg-1"])
 
+    def test_packet_navigation_counters_must_be_non_negative_ints(self) -> None:
+        with self.assertRaisesRegex(ValueError, "mcp_packet_saved_file_count.*integer"):
+            compute_deltas(
+                [
+                    _trace("mcp_on", packet_counts={"mcp_packet_saved_file_count": True}),
+                    _trace("mcp_off"),
+                ]
+            )
+
     def test_load_jsonl_reports_file_and_line_for_malformed_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "traces.jsonl"
@@ -148,8 +171,9 @@ def _trace(
     non_mcp_tools: list[str] | None = None,
     cost: float | None = 0.01,
     incomplete_background_task_ids: list[str] | None = None,
+    packet_counts: dict[str, int] | None = None,
 ) -> dict:
-    return {
+    row = {
         "run_group_id": "group-1",
         "task_id": "Q003",
         "arm": arm,
@@ -175,6 +199,8 @@ def _trace(
         "cost_status": "available" if cost is not None else "unavailable",
         "incomplete_background_task_ids": incomplete_background_task_ids or [],
     }
+    row.update(packet_counts or {})
+    return row
 
 
 if __name__ == "__main__":

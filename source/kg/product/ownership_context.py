@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from pathlib import PurePosixPath
 import tomllib
-from fnmatch import fnmatchcase
 
 import yaml
 
@@ -242,26 +241,81 @@ def _codeowners_owner_scope(pattern: str, service_paths: list[str]) -> JsonObjec
 
 def _codeowners_pattern_is_repo_wide(pattern: str) -> bool:
     normalized = pattern.strip()
-    return normalized in {"*", "**", "/", "/*", "/**"}
+    return normalized in {"*", "**", "/", "/**"}
 
 
 def _codeowners_pattern_matches_path(pattern: str, path: str) -> bool:
-    normalized_pattern = pattern.strip().lstrip("/")
+    stripped_pattern = pattern.strip()
+    root_anchored = stripped_pattern.startswith("/")
+    normalized_pattern = stripped_pattern.lstrip("/")
     normalized_path = path.strip().lstrip("/")
     if not normalized_pattern or not normalized_path:
         return False
     if normalized_pattern.endswith("/"):
         prefix = normalized_pattern.rstrip("/") + "/"
         return normalized_path.startswith(prefix)
-    if fnmatchcase(normalized_path, normalized_pattern):
+    path_segments = _posix_path_segments(normalized_path)
+    if (
+        not root_anchored
+        and "/" not in normalized_pattern
+        and any(_codeowners_segment_matches(normalized_pattern, segment) for segment in path_segments)
+    ):
         return True
-    if "/" not in normalized_pattern and fnmatchcase(PurePosixPath(normalized_path).name, normalized_pattern):
-        return True
-    if normalized_pattern.endswith("/*"):
-        prefix = normalized_pattern[:-2].rstrip("/") + "/"
-        return normalized_path.startswith(prefix)
+    if _codeowners_pattern_has_glob(normalized_pattern):
+        return _codeowners_segment_glob_matches(normalized_pattern.split("/"), path_segments)
     literal_prefix = normalized_pattern.rstrip("/") + "/"
     return normalized_path == normalized_pattern or normalized_path.startswith(literal_prefix)
+
+
+def _posix_path_segments(path: str) -> list[str]:
+    return [segment for segment in PurePosixPath(path).parts if segment not in {"", "."}]
+
+
+def _codeowners_pattern_has_glob(pattern: str) -> bool:
+    return any(marker in pattern for marker in ("*", "?"))
+
+
+def _codeowners_segment_glob_matches(pattern_segments: list[str], path_segments: list[str]) -> bool:
+    if not pattern_segments:
+        return not path_segments
+    head = pattern_segments[0]
+    if head == "**":
+        if len(pattern_segments) == 1:
+            return True
+        return any(
+            _codeowners_segment_glob_matches(pattern_segments[1:], path_segments[index:])
+            for index in range(len(path_segments) + 1)
+        )
+    if not path_segments:
+        return False
+    if not _codeowners_segment_matches(head, path_segments[0]):
+        return False
+    return _codeowners_segment_glob_matches(pattern_segments[1:], path_segments[1:])
+
+
+def _codeowners_segment_matches(pattern: str, segment: str) -> bool:
+    memo: dict[tuple[int, int], bool] = {}
+
+    def matches(pattern_index: int, segment_index: int) -> bool:
+        key = (pattern_index, segment_index)
+        if key in memo:
+            return memo[key]
+        if pattern_index == len(pattern):
+            result = segment_index == len(segment)
+        elif pattern[pattern_index] == "*":
+            result = any(matches(pattern_index + 1, index) for index in range(segment_index, len(segment) + 1))
+        elif pattern[pattern_index] == "?":
+            result = segment_index < len(segment) and matches(pattern_index + 1, segment_index + 1)
+        else:
+            result = (
+                segment_index < len(segment)
+                and pattern[pattern_index] == segment[segment_index]
+                and matches(pattern_index + 1, segment_index + 1)
+            )
+        memo[key] = result
+        return result
+
+    return matches(0, 0)
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:

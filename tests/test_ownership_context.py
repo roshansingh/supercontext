@@ -128,6 +128,60 @@ authors = [{name = "Package Author"}]
             ["services/checkout/service.py"],
         )
 
+    def test_codeowners_segment_glob_does_not_match_nested_service_path(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "/services/* @platform/wildcard-team\n",
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "partial")
+        self.assertFalse(ownership["answer_packet"]["can_answer_owner"])
+        self.assertEqual(ownership["proven_owners"], [])
+
+    def test_codeowners_root_wildcard_is_not_recursive_service_owner(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "/* @platform/root-team\n",
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "partial")
+        self.assertEqual(ownership["proven_owners"], [])
+
+    def test_codeowners_character_ranges_are_not_treated_as_globs(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "/services/[cs]heckout/*.py @platform/range-team\n",
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "partial")
+        self.assertEqual(ownership["proven_owners"], [])
+
+    def test_codeowners_segment_glob_matches_same_depth_service_path(self) -> None:
+        with _ownership_snapshot(
+            {
+                ".github/CODEOWNERS": "/services/*/service.py @platform/checkout-team\n",
+            },
+            service_evidence_path="services/checkout/service.py",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "checkout-api"})
+
+        ownership = result["ownership_context"]
+        self.assertEqual(ownership["status"], "answerable")
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["owners"], ["@platform/checkout-team"])
+        self.assertEqual(ownership["answer_packet"]["proven_owner"]["scope_pattern"], "/services/*/service.py")
+
     def test_codeowners_last_matching_rule_wins_for_service_path(self) -> None:
         with _ownership_snapshot(
             {
