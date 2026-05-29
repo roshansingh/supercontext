@@ -907,6 +907,8 @@ def _event_coverage_gap_leads(
     repos: set[str],
     limit: int,
 ) -> list[JsonObject]:
+    if not repos:
+        return []
     rows: list[JsonObject] = []
     for coverage in kg.coverage:
         if coverage.get("predicate") != predicate or coverage.get("state") == "instrumented":

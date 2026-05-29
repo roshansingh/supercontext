@@ -780,10 +780,11 @@ def _grep_must_inspect_summary(result: JsonObject, group_summaries: list[JsonObj
         area_name = _short_text(area.get("area") or area.get("reason") or "inspection_area", limit=80)
         refs = [_grep_locator(ref) for ref in _first_inspection_refs(area, limit=GREP_MUST_INSPECT_REF_LIMIT)]
         refs = [ref for ref in refs if ref]
+        terms = _first_search_terms(area, limit=4)
         if refs:
-            rows.append(f"{area_name}: inspect {', '.join(refs)}")
+            suffix = f"; search {' '.join(terms)}" if terms else ""
+            rows.append(f"{area_name}: inspect {', '.join(refs)}{suffix}")
             continue
-        terms = _first_search_terms(area, limit=2)
         if terms:
             rows.append(f"{area_name}: search {' '.join(terms)}")
     if not rows and _grep_answerability_status(result) in {"partial", "not_answerable"}:
@@ -1173,9 +1174,10 @@ def _grep_next(result: JsonObject) -> str:
         if not isinstance(area, dict):
             continue
         refs = _first_inspection_refs(area, limit=1)
+        terms = _first_search_terms(area, limit=4)
         if refs:
-            return f"inspect {_grep_locator(refs[0]) or canonical_json(refs[0])}"
-        terms = _first_search_terms(area, limit=2)
+            suffix = f"; source search: {' '.join(terms)}" if terms else ""
+            return f"inspect {_grep_locator(refs[0]) or canonical_json(refs[0])}{suffix}"
         if terms:
             return f"source search: {' '.join(terms)}"
     terms = _first_search_terms(result, limit=2)
@@ -2116,6 +2118,7 @@ def _compact_headstart_or_relation_row(row: JsonObject) -> JsonObject:
 
 def _search_terms_from_budget_row(row: JsonObject) -> list[str]:
     terms: list[str] = []
+    terms.extend(_string_list(row.get("search_terms"), limit=8))
     for key in ("name", "display_name", "qualified_name", "qualname", "package", "path", "domain", "target"):
         value = row.get(key)
         if isinstance(value, str) and value.strip():

@@ -2837,6 +2837,7 @@ class McpToolsTest(unittest.TestCase):
     def test_event_tools_not_found_include_near_matches_and_search_terms(self) -> None:
         with _fixture_snapshot() as kg:
             consumers = call_tool(kg, "get_event_consumers", {"channel": "orders-creatd"})
+            rendered = render_grep_response(consumers)
 
         self.assertEqual(consumers["status"], "not_found")
         self.assertEqual(consumers["indexed_channel_count"], 1)
@@ -2845,6 +2846,11 @@ class McpToolsTest(unittest.TestCase):
         search_terms = consumers["inspection_areas"][0]["search_terms"]
         self.assertIn("orders-creatd", search_terms)
         self.assertIn("orders-created", search_terms)
+        must_inspect = " ".join(rendered["must_inspect"])
+        self.assertIn("orders-creatd", must_inspect)
+        self.assertIn("orders-created", must_inspect)
+        self.assertIn("orders-creatd", rendered["next"])
+        self.assertIn("orders-created", rendered["next"])
 
     def test_event_tools_surface_same_repo_uninstrumented_coverage_leads(self) -> None:
         with _fixture_snapshot(event_coverage_gap=True) as kg:
@@ -2872,6 +2878,16 @@ class McpToolsTest(unittest.TestCase):
                 for row in rendered["rows"]
             )
         )
+
+    def test_event_tools_do_not_surface_coverage_gap_leads_without_repo_scope(self) -> None:
+        with _fixture_snapshot(event_coverage_gap=True, event_fact_without_repo_scope=True) as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "orders"})
+
+        self.assertEqual(consumers["status"], "found")
+        self.assertEqual(consumers["answerability"]["status"], "answerable")
+        self.assertNotIn("uninstrumented_event_scopes", consumers["answerability"]["missing_fact_families"])
+        self.assertEqual(consumers["coverage_gap_lead_count"], 0)
+        self.assertEqual(consumers["coverage_gap_leads"], [])
 
     def test_event_near_matches_ignore_empty_query_and_no_alnum_candidates(self) -> None:
         self.assertEqual(_event_near_matches("!!!", indexed_channels=[], limit=5), [])
@@ -3407,6 +3423,7 @@ class _fixture_snapshot:
         runtime_pressure_same_repo: bool = False,
         env_domain_reference_lead: bool = False,
         event_coverage_gap: bool = False,
+        event_fact_without_repo_scope: bool = False,
         symbol_repo: str = "payments",
     ) -> None:
         self.extra_consumers = extra_consumers
@@ -3436,6 +3453,7 @@ class _fixture_snapshot:
         self.runtime_pressure_same_repo = runtime_pressure_same_repo
         self.env_domain_reference_lead = env_domain_reference_lead
         self.event_coverage_gap = event_coverage_gap
+        self.event_fact_without_repo_scope = event_fact_without_repo_scope
         self.symbol_repo = symbol_repo
 
     def __enter__(self) -> KgSnapshot:
@@ -3562,6 +3580,19 @@ class _fixture_snapshot:
             identity={
                 "tenant_id": "default",
                 "repo": "payments",
+                "broker_kind": "sqs",
+                "channel_address": "orders-created",
+                "name": "orders-created",
+            },
+        )
+        unscoped_event_service = Entity(
+            kind="Service",
+            identity={"tenant_id": "default", "namespace": "default", "slug": "event-orphan"},
+        )
+        unscoped_channel = Entity(
+            kind="EventChannel",
+            identity={
+                "tenant_id": "default",
                 "broker_kind": "sqs",
                 "channel_address": "orders-created",
                 "name": "orders-created",
@@ -3714,7 +3745,9 @@ class _fixture_snapshot:
                 "source_kind": "http_client",
             },
         )
-        consume_fact = Fact("CONSUMES_EVENT", service.entity_id, channel.entity_id)
+        consume_subject = unscoped_event_service if self.event_fact_without_repo_scope else service
+        consume_channel = unscoped_channel if self.event_fact_without_repo_scope else channel
+        consume_fact = Fact("CONSUMES_EVENT", consume_subject.entity_id, consume_channel.entity_id)
         produce_fact = Fact("PRODUCES_EVENT", caller.entity_id, channel.entity_id)
         domain_fact = Fact(
             "REFERENCES_DOMAIN",
@@ -4066,6 +4099,7 @@ class _fixture_snapshot:
             *([consumer_service] if self.endpoint_consumer and not self.same_repo_endpoint_consumer else []),
             *([consumer_endpoint] if self.endpoint_consumer else []),
             channel,
+            *([unscoped_event_service, unscoped_channel] if self.event_fact_without_repo_scope else []),
             domain,
             *([route_domain, deploy_target] if self.operational_deploy_mapping else []),
             env_var,
