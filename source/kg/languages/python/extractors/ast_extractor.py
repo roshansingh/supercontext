@@ -930,8 +930,8 @@ class PythonAstExtractor:
         current_table = ""
         for line_number, raw_line in enumerate(lines, start=1):
             stripped = raw_line.strip()
-            if stripped.startswith("[") and stripped.endswith("]"):
-                current_table = stripped.strip("[]").strip()
+            if stripped.startswith("["):
+                current_table = self._toml_table_header_name(stripped) or ""
                 continue
             key, separator, raw_value = stripped.partition("=")
             if separator != "=" or key.strip() != "name":
@@ -944,6 +944,21 @@ class PythonAstExtractor:
                 continue
             if parsed.get("name") == package_name:
                 return line_number
+        return None
+
+    def _toml_table_header_name(self, line: str) -> str | None:
+        try:
+            parsed = tomllib.loads(f"{line}\n")
+        except tomllib.TOMLDecodeError:
+            return None
+        current: object = parsed
+        parts = []
+        while isinstance(current, dict) and len(current) == 1:
+            key, value = next(iter(current.items()))
+            parts.append(str(key))
+            current = value
+        if current == {} and parts:
+            return ".".join(parts)
         return None
 
     def _module_name(self, repo: RepoSnapshot, file_path: Path) -> str:

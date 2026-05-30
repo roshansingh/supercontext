@@ -81,6 +81,28 @@ class PythonTransportExtractorTest(unittest.TestCase):
         )
         self.assertEqual(fact_evidence.bytes_ref["line_start"], 5)
 
+    def test_service_evidence_accepts_commented_pep621_table_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\n"
+                'requires = ["setuptools"]\n'
+                "\n"
+                "[project]  # PEP 621 metadata\n"
+                'name = "billing-service"\n'
+                'version = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, ())
+
+            build = PythonAstExtractor().extract(repo)
+
+        service = next(entity for entity in build.entities if entity.kind == "Service")
+        service_evidence = next(
+            row for row in build.evidence if row.target_type == "entity" and row.target_id == service.entity_id
+        )
+        self.assertEqual(service_evidence.bytes_ref["line_start"], 5)
+
     def test_service_evidence_falls_back_to_pyproject_line_one_without_package_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
