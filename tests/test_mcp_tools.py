@@ -2230,7 +2230,14 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "unsupported_by_current_kg")
         self.assertEqual(result["missing_contract"], "deploy_blockers_for")
+        self.assertEqual(result["answerability"]["missing_fact_families"], ["canonical_service_deploy_blocker"])
+        self.assertIn("must-deploy-before services", result["answerability"]["cannot_prove"])
+        self.assertEqual(
+            [row["trigger"] for row in result["coverage_gaps"]],
+            ["cannot_prove", "unsupported_by_current_kg"],
+        )
         self.assertTrue(result["unsupported_scopes"])
+        self.assertTrue(any("must-deploy-before services as unknown" in action for action in result["next_actions"]))
         self.assertTrue(any("deployment manifests" in action for action in result["next_actions"]))
         _assert_additive_fields(self, result)
 
