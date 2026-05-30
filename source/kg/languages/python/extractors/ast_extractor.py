@@ -89,7 +89,7 @@ class PythonAstExtractor:
         build.evidence.extend(
             [
                 self._repo_evidence(repo, repo_entity),
-                self._service_evidence(repo, service_entity),
+                self._service_evidence(repo, service_entity, service_line=service_line),
             ]
         )
         self._add_fact(
@@ -851,16 +851,15 @@ class PythonAstExtractor:
             confidence=1.0,
         )
 
-    def _service_evidence(self, repo: RepoSnapshot, entity: Entity) -> Evidence:
+    def _service_evidence(self, repo: RepoSnapshot, entity: Entity, *, service_line: int) -> Evidence:
         pyproject = repo.root / "pyproject.toml"
-        line = self._service_definition_line(repo)
         return Evidence(
             target_type="entity",
             target_id=entity.entity_id,
             derivation_class="authoritative_declared",
             source_system="pyproject",
             source_ref={"package_name": self._package_name(repo)},
-            bytes_ref=self._bytes_ref(repo, pyproject, line, line) if pyproject.exists() else None,
+            bytes_ref=self._bytes_ref(repo, pyproject, service_line, service_line) if pyproject.exists() else None,
             confidence=1.0,
         )
 

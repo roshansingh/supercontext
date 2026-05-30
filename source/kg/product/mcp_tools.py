@@ -784,17 +784,8 @@ def _deploy_blockers_for(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         ],
         "recommended_followups": _unsupported_contract_next_actions("deploy_blockers_for"),
     }
-    result["coverage_gaps"] = [
-        {
-            "trigger": "cannot_prove",
-            "detail": (
-                "Endpoint consumers and deploy_order_guidance are compatibility leads, not a must-deploy-before list."
-            ),
-        },
-        {
-            "trigger": "unsupported_by_current_kg",
-            "detail": "No canonical deploy-blocker relation is implemented.",
-        },
+    result["coverage_warnings"] = [
+        "Endpoint consumers and deploy_order_guidance are compatibility leads, not a must-deploy-before list.",
     ]
     return result
 
