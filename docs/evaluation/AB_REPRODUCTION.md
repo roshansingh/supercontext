@@ -92,6 +92,7 @@ The baseline file must be a fully judged `judged-deltas.jsonl`: every selected r
 ```
 
 This gate is a regression screen, not a replacement for the full 18-question A/B when a branch is close to merge.
+It inherits `compute_ab_deltas` fail-closed checks: incomplete background-task markers abort the gate rather than producing a promoted judgement.
 Because the gate materializes local `record.json` rows into local traces, cost deltas may be unavailable in its generated report. Treat the report as a quality-floor screen; use the full LangSmith-backed A/B flow above for promoted cost/token/latency reporting.
 
 ## What Git Can Recreate
