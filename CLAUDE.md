@@ -96,6 +96,21 @@ Read ADRs in order; each builds on the prior. Key shape:
 
 When extending `source/`, prefer closing one of these gaps over adding new capability.
 
+## MCP head-start and budgeting
+
+SuperContext MCP tools are a head start for the agent, not a replacement for source inspection and not a mandate to return everything. A good packet should tell the agent what is already covered by KG-backed evidence and where to inspect next.
+
+Use **Head-Start Budgeting** when a composed MCP packet would exceed useful output size:
+
+- Return complete relevant evidence when it fits comfortably.
+- When it does not fit, keep the highest-signal evidence rows with concrete coordinates.
+- Preserve total and omitted counts, but never rely on counts alone.
+- Convert omitted but relevant rows into `inspection_areas` with `repo`, `path`, `line`, `symbol`/`qualname`, endpoint/domain/event-channel context, and search terms when available.
+- Use remaining budget to backfill useful rows or details instead of returning an unnecessarily tiny compact packet.
+- Keep `known_linked`, `candidate_or_unlinked`, and `missing_or_unknown` evidence separate. Do not let truncation imply absence.
+
+When fixing eval failures, avoid packet churn that only helps one question. Ask whether the change makes SuperContext stronger for similar OSS repositories and adjacent workflows. Prefer extraction/linking or deterministic retrieval fixes over adding more prompt prose.
+
 ## Repo conventions
 
 - **Research notes pattern.** Each major topic gets two parallel notes (`claude-<topic>-research.md` + `codex-<topic>-research.md`) under its own folder in `docs/`. They feed a debate (under `debates/`, gitignored), which converges into a single `<TOPIC>-RECOMMENDATION.md` and a binding ADR. Don't write a single research note when prior topics had two.

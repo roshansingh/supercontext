@@ -50,7 +50,7 @@ Pull traces, compute deltas, judge, and render:
   --out data/ab_runs/<run-id>/deltas.jsonl
 
 .venv/bin/python -m source.scripts.judge_ab_quality \
-  --judge-model gpt-4.1-mini \
+  --judge-model gpt-5.4-mini \
   --deltas data/ab_runs/<run-id>/deltas.jsonl \
   --out data/ab_runs/<run-id>/judged-deltas.jsonl \
   --seed <seed>
@@ -65,9 +65,35 @@ Pull traces, compute deltas, judge, and render:
   --out docs/evaluation/ab-runs/<run-id> \
   --run-id <run-id> \
   --date <YYYY-MM-DD> \
-  --judge-model gpt-4.1-mini \
+  --judge-model gpt-5.4-mini \
   --seed <seed>
 ```
+
+`compute_ab_deltas` is the standard fail-closed gate between trace capture and judging. Do not run the judge or aggregate reports directly from pulled traces. By default it rejects `mcp_on` SuperContext tool denials/errors and any trace with `incomplete_background_task_ids`; use `--allow-mcp-tool-failures` or `--allow-incomplete-background-tasks` only for explicit forensic analysis, not for promoted A/B reports.
+
+## Prior-Loss Quality Floor
+
+For iterative packet or prompt-contract work, use the quality-floor gate to reuse known-good `mcp_off` rows and recompute only `mcp_on`. It protects baseline `mcp_on` wins and ties from becoming `mcp_off` wins before a branch is treated as improved.
+
+The baseline file must be a fully judged `judged-deltas.jsonl`: every selected row needs `judge_winner` set to `mcp_on`, `mcp_off`, or `tie`, and its `judge_model` / `judge_prompt_seed` must match this gate run. Do not point this gate at raw `deltas.jsonl`, an ungraded forensic run, an auto-verdict run without `judge_winner`, or a baseline judged with a different model/seed.
+`--protected-baseline-winners` intentionally accepts only `mcp_on` and `tie`; baseline `mcp_off` rows are not protected because the gate is meant to catch regressions from acceptable rows into `mcp_off` wins.
+
+```bash
+.venv/bin/python -m source.scripts.mcp_quality_floor_gate \
+  --snapshot <snapshot-dir> \
+  --baseline-judged-deltas data/ab_runs/<baseline-run-id>/judged-deltas.jsonl \
+  --reuse-mcp-off-from data/ab_runs/<baseline-run-id> \
+  --out data/ab_runs/<gate-run-id> \
+  --query-set docs/evaluation/PRODUCT-QUERY-SET.md \
+  --fixture-overrides docs/evaluation/default-v1-fixture-overrides.yaml \
+  --tasks <comma-separated-task-ids-or-omit-for-baseline-tasks> \
+  --judge-model gpt-5.4-mini \
+  --seed <seed>
+```
+
+This gate is a regression screen, not a replacement for the full 18-question A/B when a branch is close to merge.
+It inherits `compute_ab_deltas` fail-closed checks: incomplete background-task markers abort the gate rather than producing a promoted judgement.
+Because the gate materializes local `record.json` rows into local traces, cost deltas may be unavailable in its generated report. Treat the report as a quality-floor screen; use the full LangSmith-backed A/B flow above for promoted cost/token/latency reporting.
 
 ## What Git Can Recreate
 
@@ -94,5 +120,6 @@ Older raw and sanitized A/B reports may be deleted after a newer run is explicit
 ## Expected Checks
 
 - `compute_ab_deltas` should fail closed if any `mcp_on` row has SuperContext MCP denials or tool errors.
+- `compute_ab_deltas` should fail closed if any row has `incomplete_background_task_ids`; the runner records these for forensics, but promoted judged reports must exclude them unless explicitly labelled forensic.
 - The final sanitized report should show `MCP Denied = 0`.
 - Interpret token, cost, and latency only after checking the quality rubric.

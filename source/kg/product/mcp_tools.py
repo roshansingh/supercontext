@@ -770,10 +770,24 @@ def _get_event_producers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
 
 def _deploy_blockers_for(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     service = _required_string(arguments, "service")
-    return _unsupported_by_current_kg(
+    result = _unsupported_by_current_kg(
         "deploy_blockers_for",
         f"No canonical deploy-blocker relation is implemented yet for service {service!r}.",
     )
+    result["answerability"] = {
+        "status": "not_answerable",
+        "missing_fact_families": ["canonical_service_deploy_blocker"],
+        "cannot_prove": [
+            "canonical deploy blockers",
+            "must-deploy-before services",
+            "safe deploy order from endpoint consumers or deploy_order_guidance alone",
+        ],
+        "recommended_followups": _unsupported_contract_next_actions("deploy_blockers_for"),
+    }
+    result["coverage_warnings"] = [
+        "Endpoint consumers and deploy_order_guidance are compatibility leads, not a must-deploy-before list.",
+    ]
+    return result
 
 
 def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, result_key: str) -> JsonObject:
@@ -856,6 +870,8 @@ def _unsupported_by_current_kg(tool: str, reason: str) -> JsonObject:
 def _unsupported_contract_next_actions(tool: str) -> list[str]:
     if tool == "deploy_blockers_for":
         return [
+            "In the final answer, report canonical deploy blockers and must-deploy-before services as unknown unless explicit deploy orchestration, rollout, runbook, or deploy-blocker evidence is found.",
+            "Do not turn static endpoint consumers or deploy_order_guidance into a recommended deploy order unless the user asks for a speculative rollout plan.",
             "Inspect deployment manifests, CI/CD config, service ownership docs, and source-level runtime dependencies before making deploy-blocker claims.",
             "Use `get_service_brief` or `planning_context` only as static context; absence of explicit deploy-blocker facts is not proof that deployment is safe.",
         ]

@@ -107,7 +107,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _tags(record: RunRecord) -> list[str]:
-    return [
+    tags = [
         f"arm:{record.arm}",
         f"task_id:{record.task_id}",
         f"phase:{record.phase}",
@@ -116,6 +116,9 @@ def _tags(record: RunRecord) -> list[str]:
         f"difficulty:{record.difficulty}",
         f"harness_version:{record.harness_version}",
     ]
+    if record.incomplete_background_task_ids:
+        tags.append("incomplete_background_tasks:true")
+    return tags
 
 
 def _record_metadata(record: RunRecord, *, messages_path: Path) -> dict[str, Any]:

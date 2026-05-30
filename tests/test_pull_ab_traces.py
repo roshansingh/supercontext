@@ -4,6 +4,7 @@ import unittest
 from decimal import Decimal
 from types import SimpleNamespace
 
+from source.scripts.compute_ab_deltas import compute_deltas
 from source.scripts.pull_ab_traces import trace_from_langsmith_run
 
 
@@ -32,6 +33,7 @@ class PullAbTracesTest(unittest.TestCase):
                     "mcp_tool_successes": ["mcp__supercontext__find_callers"],
                     "mcp_tool_denials": [],
                     "mcp_tool_errors": [],
+                    "incomplete_background_task_ids": ["bg-1"],
                     "non_mcp_tools_called": ["Read"],
                     "non_mcp_tool_attempt_count": 2,
                     "non_mcp_tool_attempts": ["Read", "Read"],
@@ -65,6 +67,7 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["mcp_tool_success_count"], 1)
         self.assertEqual(trace["mcp_tool_denial_count"], 0)
         self.assertEqual(trace["mcp_tool_successes"], ["mcp__supercontext__find_callers"])
+        self.assertEqual(trace["incomplete_background_task_ids"], ["bg-1"])
         self.assertEqual(trace["non_mcp_tool_attempt_count"], 2)
         self.assertEqual(trace["non_mcp_tool_attempts"], ["Read", "Read"])
         self.assertEqual(trace["cost_status"], "available")
@@ -82,6 +85,35 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["arm"], "mcp_off")
         self.assertEqual(trace["cost_status"], "unavailable")
         self.assertIsNone(trace["total_cost"])
+
+    def test_pulled_incomplete_background_tasks_still_fail_closed_for_deltas(self) -> None:
+        run = SimpleNamespace(
+            id="run-on",
+            tags=[],
+            extra={
+                "metadata": {
+                    "run_group_id": "group-1",
+                    "arm": "mcp_on",
+                    "task_id": "Q003",
+                    "phase": "coding",
+                    "difficulty": "Low",
+                    "mcp_tools_called": [],
+                    "mcp_tool_success_count": 0,
+                    "mcp_tool_denial_count": 0,
+                    "mcp_tool_error_count": 0,
+                    "incomplete_background_task_ids": ["bg-1"],
+                    "non_mcp_tools_called": ["Read"],
+                    "non_mcp_tool_attempt_count": 1,
+                }
+            },
+            total_cost=Decimal("0.01"),
+        )
+        on_trace = trace_from_langsmith_run(run)
+        off_trace = dict(on_trace)
+        off_trace.update({"id": "run-off", "arm": "mcp_off", "incomplete_background_task_ids": []})
+
+        with self.assertRaisesRegex(ValueError, "incomplete background tasks=bg-1"):
+            compute_deltas([on_trace, off_trace])
 
 
 if __name__ == "__main__":

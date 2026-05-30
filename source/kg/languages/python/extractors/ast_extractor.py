@@ -85,13 +85,23 @@ class PythonAstExtractor:
         repo_entity = self._repo_entity(repo, tenant_id)
         service_entity = self._service_entity(repo, tenant_id)
         build.entities.extend([repo_entity, service_entity])
+        service_line = self._service_definition_line(repo)
         build.evidence.extend(
             [
                 self._repo_evidence(repo, repo_entity),
-                self._service_evidence(repo, service_entity),
+                self._service_evidence(repo, service_entity, service_line=service_line),
             ]
         )
-        self._add_fact(build, "DEFINED_IN", service_entity, repo_entity, repo, repo.root / "pyproject.toml", 1, 1)
+        self._add_fact(
+            build,
+            "DEFINED_IN",
+            service_entity,
+            repo_entity,
+            repo,
+            repo.root / "pyproject.toml",
+            service_line,
+            service_line,
+        )
         import_normalizer = PythonImportNormalizer(repo)
         parsed_files = self._parsed_files(repo, ctx)
         literal_index = self._literal_index_for_context(repo, parsed_files, ctx)
@@ -841,7 +851,7 @@ class PythonAstExtractor:
             confidence=1.0,
         )
 
-    def _service_evidence(self, repo: RepoSnapshot, entity: Entity) -> Evidence:
+    def _service_evidence(self, repo: RepoSnapshot, entity: Entity, *, service_line: int) -> Evidence:
         pyproject = repo.root / "pyproject.toml"
         return Evidence(
             target_type="entity",
@@ -849,7 +859,7 @@ class PythonAstExtractor:
             derivation_class="authoritative_declared",
             source_system="pyproject",
             source_ref={"package_name": self._package_name(repo)},
-            bytes_ref=self._bytes_ref(repo, pyproject, 1, 1) if pyproject.exists() else None,
+            bytes_ref=self._bytes_ref(repo, pyproject, service_line, service_line) if pyproject.exists() else None,
             confidence=1.0,
         )
 
@@ -888,15 +898,67 @@ class PythonAstExtractor:
     def _service_slug(self, repo: RepoSnapshot) -> str:
         return re.sub(r"[^a-z0-9]+", "-", self._package_name(repo).lower()).strip("-") or repo.name
 
+    def _service_definition_line(self, repo: RepoSnapshot) -> int:
+        pyproject = repo.root / "pyproject.toml"
+        if not pyproject.exists():
+            return 1
+        return self._pyproject_package_name_line(pyproject, self._package_name(repo)) or 1
+
     def _package_name(self, repo: RepoSnapshot) -> str:
         pyproject = repo.root / "pyproject.toml"
         if not pyproject.exists():
             return repo.name
         try:
             data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError:
+        except (OSError, tomllib.TOMLDecodeError):
             return repo.name
-        return str(data.get("tool", {}).get("poetry", {}).get("name") or repo.name)
+        project = data.get("project")
+        if isinstance(project, dict) and project.get("name"):
+            return str(project["name"])
+        tool = data.get("tool")
+        poetry = tool.get("poetry") if isinstance(tool, dict) else None
+        if isinstance(poetry, dict) and poetry.get("name"):
+            return str(poetry["name"])
+        return repo.name
+
+    def _pyproject_package_name_line(self, pyproject: Path, package_name: str) -> int | None:
+        try:
+            lines = pyproject.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        current_table = ""
+        for line_number, raw_line in enumerate(lines, start=1):
+            stripped = raw_line.strip()
+            if stripped.startswith("["):
+                current_table = self._toml_table_header_name(stripped) or ""
+                continue
+            key, separator, raw_value = stripped.partition("=")
+            if separator != "=" or key.strip() != "name":
+                continue
+            if current_table not in {"project", "tool.poetry"}:
+                continue
+            try:
+                parsed = tomllib.loads(f"name = {raw_value.strip()}\n")
+            except tomllib.TOMLDecodeError:
+                continue
+            if parsed.get("name") == package_name:
+                return line_number
+        return None
+
+    def _toml_table_header_name(self, line: str) -> str | None:
+        try:
+            parsed = tomllib.loads(f"{line}\n")
+        except tomllib.TOMLDecodeError:
+            return None
+        current: object = parsed
+        parts = []
+        while isinstance(current, dict) and len(current) == 1:
+            key, value = next(iter(current.items()))
+            parts.append(str(key))
+            current = value
+        if current == {} and parts:
+            return ".".join(parts)
+        return None
 
     def _module_name(self, repo: RepoSnapshot, file_path: Path) -> str:
         relative = file_path.relative_to(repo.root).with_suffix("")

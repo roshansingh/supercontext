@@ -108,6 +108,26 @@ class ComputeAbDeltasTest(unittest.TestCase):
                 ]
             )
 
+    def test_incomplete_background_tasks_fail_closed_before_scoring(self) -> None:
+        with self.assertRaisesRegex(ValueError, "incomplete background tasks=bg-1"):
+            compute_deltas(
+                [
+                    _trace("mcp_on", incomplete_background_task_ids=["bg-1"]),
+                    _trace("mcp_off"),
+                ]
+            )
+
+    def test_incomplete_background_tasks_can_be_explicitly_allowed_for_forensics(self) -> None:
+        rows = compute_deltas(
+            [
+                _trace("mcp_on", incomplete_background_task_ids=["bg-1"]),
+                _trace("mcp_off"),
+            ],
+            allow_incomplete_background_tasks=True,
+        )
+
+        self.assertEqual(rows[0]["on"]["incomplete_background_task_ids"], ["bg-1"])
+
     def test_load_jsonl_reports_file_and_line_for_malformed_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "traces.jsonl"
@@ -127,6 +147,7 @@ def _trace(
     mcp_error_count: int = 0,
     non_mcp_tools: list[str] | None = None,
     cost: float | None = 0.01,
+    incomplete_background_task_ids: list[str] | None = None,
 ) -> dict:
     return {
         "run_group_id": "group-1",
@@ -152,6 +173,7 @@ def _trace(
         "final_answer": f"{arm} answer",
         "total_cost": cost,
         "cost_status": "available" if cost is not None else "unavailable",
+        "incomplete_background_task_ids": incomplete_background_task_ids or [],
     }
 
 

@@ -12,6 +12,115 @@ from source.kg.languages.python.extractors.transport_extractor import module_tra
 
 
 class PythonTransportExtractorTest(unittest.TestCase):
+    def test_service_evidence_points_to_pyproject_name_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[tool.poetry]\n"
+                'name = "billing-service"\n'
+                'version = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, ())
+
+            build = PythonAstExtractor().extract(repo)
+
+        service = next(entity for entity in build.entities if entity.kind == "Service")
+        repo_entity = next(entity for entity in build.entities if entity.kind == "Repo")
+        service_evidence = next(
+            row for row in build.evidence if row.target_type == "entity" and row.target_id == service.entity_id
+        )
+        self.assertEqual(service_evidence.bytes_ref["line_start"], 2)
+        service_repo_fact = next(
+            fact
+            for fact in build.facts
+            if (
+                fact.predicate == "DEFINED_IN"
+                and fact.subject_id == service.entity_id
+                and fact.object_id == repo_entity.entity_id
+            )
+        )
+        fact_evidence = next(
+            row for row in build.evidence if row.target_type == "fact" and row.target_id == service_repo_fact.fact_id
+        )
+        self.assertEqual(fact_evidence.bytes_ref["line_start"], 2)
+
+    def test_service_evidence_points_to_pep621_project_name_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\n"
+                'requires = ["setuptools"]\n'
+                "\n"
+                "[project]\n"
+                'name = "billing-service"\n'
+                'version = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, ())
+
+            build = PythonAstExtractor().extract(repo)
+
+        service = next(entity for entity in build.entities if entity.kind == "Service")
+        repo_entity = next(entity for entity in build.entities if entity.kind == "Repo")
+        service_evidence = next(
+            row for row in build.evidence if row.target_type == "entity" and row.target_id == service.entity_id
+        )
+        self.assertEqual(service_evidence.bytes_ref["line_start"], 5)
+        service_repo_fact = next(
+            fact
+            for fact in build.facts
+            if (
+                fact.predicate == "DEFINED_IN"
+                and fact.subject_id == service.entity_id
+                and fact.object_id == repo_entity.entity_id
+            )
+        )
+        fact_evidence = next(
+            row for row in build.evidence if row.target_type == "fact" and row.target_id == service_repo_fact.fact_id
+        )
+        self.assertEqual(fact_evidence.bytes_ref["line_start"], 5)
+
+    def test_service_evidence_accepts_commented_pep621_table_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\n"
+                'requires = ["setuptools"]\n'
+                "\n"
+                "[project]  # PEP 621 metadata\n"
+                'name = "billing-service"\n'
+                'version = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, ())
+
+            build = PythonAstExtractor().extract(repo)
+
+        service = next(entity for entity in build.entities if entity.kind == "Service")
+        service_evidence = next(
+            row for row in build.evidence if row.target_type == "entity" and row.target_id == service.entity_id
+        )
+        self.assertEqual(service_evidence.bytes_ref["line_start"], 5)
+
+    def test_service_evidence_falls_back_to_pyproject_line_one_without_package_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\n"
+                'requires = ["setuptools"]\n',
+                encoding="utf-8",
+            )
+            repo = _repo_snapshot(root, ())
+
+            build = PythonAstExtractor().extract(repo)
+
+        service = next(entity for entity in build.entities if entity.kind == "Service")
+        service_evidence = next(
+            row for row in build.evidence if row.target_type == "entity" and row.target_id == service.entity_id
+        )
+        self.assertEqual(service_evidence.bytes_ref["line_start"], 1)
+
     def test_boto3_sqs_client_send_message_emits_produces_event(self) -> None:
         source = (
             "import boto3 as aws\n\n"

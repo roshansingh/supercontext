@@ -81,6 +81,7 @@ def trace_from_langsmith_run(run: Any) -> dict[str, Any]:
         "mcp_tool_successes",
         "mcp_tool_denials",
         "mcp_tool_errors",
+        "incomplete_background_task_ids",
         "non_mcp_tools_called",
         "non_mcp_tool_attempt_count",
         "non_mcp_tool_attempts",
