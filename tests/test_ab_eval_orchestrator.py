@@ -1192,6 +1192,10 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
         self.assertIn("SuperContext MCP skill routing guidance for this mcp_on arm:", prompt)
         self.assertIn("Call `planning_context` before broad search", prompt)
+        self.assertIn("Evidence Gates", prompt)
+        self.assertIn("named answer categories", prompt)
+        self.assertIn("normal search/read tools once", prompt)
+        self.assertIn("count/list/impact answers", prompt)
         self.assertIn("Before reviewing a diff, call `review_context`", prompt)
         self.assertIn("If the result is `ambiguous`, use `next_actions`", prompt)
         self.assertLess(prompt.index("SuperContext MCP skill routing guidance"), prompt.index("User question:"))
