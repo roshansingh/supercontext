@@ -91,6 +91,10 @@ _PLANNING_BUDGET_ADVICE = (
     "Use runtime_architecture.answer_packet.investigation_brief as the source-inspection head start, then use narrower "
     "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
 )
+_TRUNCATED_DETAIL_ACTION = (
+    "When truncated detail matters, call a narrower planning_context anchor or inspect returned refs/search terms instead "
+    "of relying on saved-packet exploration."
+)
 
 
 def enforce_planning_context_budget(
@@ -261,6 +265,7 @@ def _attach_budget_metadata(
     original_counts: dict[str, int],
     fallback: bool = False,
     minimized: bool = False,
+    finalize: bool = True,
 ) -> None:
     shown_counts = _runtime_answer_shown_counts(result)
     omitted_counts = {
@@ -302,6 +307,8 @@ def _attach_budget_metadata(
         "fallback": fallback,
         "minimized": minimized,
     }
+    if finalize:
+        _append_budget_next_action(result, max_chars=max_chars)
 
 
 def _backfill_planning_context(
@@ -393,12 +400,13 @@ def _with_budget_metadata(
         max_chars=max_chars,
         original_counts=original_counts,
         fallback=fallback,
+        finalize=False,
     )
     if backfilled_counts:
         payload["output_budget"]["backfilled_counts"] = {
             key: value for key, value in sorted(backfilled_counts.items()) if value > 0
         }
-    payload["output_budget"]["remaining_chars"] = max(0, max_chars - _current_chars(payload))
+    _append_budget_next_action(payload, max_chars=max_chars)
     return payload
 
 
@@ -510,6 +518,13 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         "authz_surface": _compact_authz_surface(result.get("authz_surface", {})),
         "related_facts": _compact_related_facts(result.get("related_facts", {})),
         "anchors": result.get("anchors", {}),
+        "packet_contract": result.get("packet_contract", {}),
+        "proven_facts": _compact_common_fact_index(result.get("proven_facts"), omitted_field="omitted_proven_fact_sources"),
+        "candidate_leads": _compact_common_fact_index(
+            result.get("candidate_leads"), omitted_field="omitted_candidate_lead_sources"
+        ),
+        "coverage_gaps": _compact_common_coverage_gaps(result.get("coverage_gaps")),
+        "inspection_areas": _compact_common_inspection_areas(result.get("inspection_areas")),
         "answerability": result.get("answerability", {}),
         "coverage_warnings": result.get("coverage_warnings", []),
         "unsupported_scopes": result.get("unsupported_scopes", []),
@@ -1557,6 +1572,12 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
             result.get("service_operational_surfaces", {})
         ),
         "anchors": result.get("anchors", {}),
+        "proven_facts": _compact_common_fact_index(result.get("proven_facts"), omitted_field="omitted_proven_fact_sources"),
+        "candidate_leads": _compact_common_fact_index(
+            result.get("candidate_leads"), omitted_field="omitted_candidate_lead_sources"
+        ),
+        "coverage_gaps": _compact_common_coverage_gaps(result.get("coverage_gaps")),
+        "inspection_areas": _compact_common_inspection_areas(result.get("inspection_areas")),
         "answerability": result.get("answerability", {}),
         "coverage_warnings": [],
         "unsupported_scopes": [],
@@ -1568,6 +1589,148 @@ def _list_value(value: object) -> list[object]:
     if not isinstance(value, list):
         return []
     return value
+
+
+def _append_budget_next_action(result: JsonObject, *, max_chars: int) -> None:
+    original_actions = result.get("next_actions")
+    actions = [str(action).strip() for action in _list_value(result.get("next_actions")) if str(action).strip()]
+    actions.append(_TRUNCATED_DETAIL_ACTION)
+    result["next_actions"] = _dedupe_strings(actions)
+    _refresh_remaining_chars(result, max_chars=max_chars)
+    if _current_chars(result) <= max_chars:
+        return
+    if original_actions is None:
+        result.pop("next_actions", None)
+    else:
+        result["next_actions"] = original_actions
+    _refresh_remaining_chars(result, max_chars=max_chars)
+
+
+def _refresh_remaining_chars(result: JsonObject, *, max_chars: int) -> None:
+    output_budget = result.get("output_budget")
+    if not isinstance(output_budget, dict):
+        return
+    for _ in range(3):
+        remaining_chars = max(0, max_chars - _current_chars(result))
+        if output_budget.get("remaining_chars") == remaining_chars:
+            break
+        output_budget["remaining_chars"] = remaining_chars
+
+
+def _compact_common_fact_index(value: object, *, omitted_field: str) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    compact: JsonObject = {}
+    status = value.get("status")
+    if isinstance(status, str) and status:
+        compact["status"] = status
+    claim_boundary = value.get("claim_boundary")
+    if isinstance(claim_boundary, str) and claim_boundary:
+        compact["claim_boundary"] = claim_boundary
+    sources = _dedupe_budget_rows([dict(row) for row in _list_value(value.get("sources")) if isinstance(row, dict)])
+    if not sources:
+        return compact
+    if len(sources) <= COMPACT_RUNTIME_HEADSTART_LIMIT:
+        compact["sources"] = sources
+        return compact
+    visible_count = max(0, COMPACT_RUNTIME_HEADSTART_LIMIT - 1)
+    compact["sources"] = [
+        *sources[:visible_count],
+        {
+            "field": omitted_field,
+            "omitted_source_count": len(sources) - visible_count,
+            "reason": "Additional common fact source summaries were omitted by the planning_context budget fallback.",
+        },
+    ]
+    return compact
+
+
+def _compact_common_coverage_gaps(value: object) -> list[JsonObject]:
+    rows = _dedupe_budget_rows([dict(row) for row in _list_value(value) if isinstance(row, dict)])
+    if len(rows) <= COMPACT_RUNTIME_HEADSTART_LIMIT:
+        return rows
+    visible_count = max(0, COMPACT_RUNTIME_HEADSTART_LIMIT - 1)
+    omitted_count = len(rows) - visible_count
+    return [
+        *rows[:visible_count],
+        {
+            "trigger": "common_coverage_gaps_truncated",
+            "detail": {
+                "omitted_row_count": omitted_count,
+                "reason": "Additional coverage gaps were omitted by the planning_context budget fallback; retry with narrower anchors when relevant.",
+            },
+        },
+    ]
+
+
+def _compact_common_inspection_areas(value: object) -> list[JsonObject]:
+    rows = _dedupe_budget_rows([dict(row) for row in _list_value(value) if isinstance(row, dict)])
+    if len(rows) <= COMPACT_RUNTIME_SOURCE_CHECK_LIMIT:
+        return [_compact_common_inspection_area(row) for row in rows]
+    visible_count = max(0, COMPACT_RUNTIME_SOURCE_CHECK_LIMIT - 1)
+    omitted_rows = rows[visible_count:]
+    return [
+        *(_compact_common_inspection_area(row) for row in rows[:visible_count]),
+        _omitted_common_inspection_area(omitted_rows),
+    ]
+
+
+def _compact_common_inspection_area(row: JsonObject) -> JsonObject:
+    compact = dict(row)
+    refs = _list_value(compact.get("inspection_refs"))
+    if refs:
+        compact_refs = [
+            compact_ref
+            for ref in refs
+            if isinstance(ref, dict)
+            for compact_ref in [_compact_coordinate(ref)]
+            if compact_ref
+        ]
+        compact["inspection_refs"] = compact_refs[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+        omitted_count = len(compact_refs) - len(compact["inspection_refs"])
+        if omitted_count > 0:
+            compact["inspection_refs_truncated"] = True
+            compact["omitted_inspection_ref_count"] = (
+                _int_count(compact.get("omitted_inspection_ref_count"), fallback=0) + omitted_count
+            )
+    search_terms = [term for term in _list_value(compact.get("search_terms")) if isinstance(term, str)]
+    if search_terms:
+        deduped_terms = _dedupe_strings(search_terms)
+        compact["search_terms"] = deduped_terms[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+        omitted_count = len(deduped_terms) - len(compact["search_terms"])
+        if omitted_count > 0:
+            compact["search_terms_truncated"] = True
+            compact["omitted_search_term_count"] = (
+                _int_count(compact.get("omitted_search_term_count"), fallback=0) + omitted_count
+            )
+    return compact
+
+
+def _omitted_common_inspection_area(rows: list[JsonObject]) -> JsonObject:
+    refs: list[JsonObject] = []
+    search_terms: list[str] = []
+    for row in rows:
+        for ref in _list_value(row.get("inspection_refs")):
+            if isinstance(ref, dict):
+                refs.append(_compact_coordinate(ref))
+        for term in _list_value(row.get("search_terms")):
+            if isinstance(term, str) and term.strip():
+                search_terms.append(term.strip())
+        if len(refs) >= COMPACT_RUNTIME_SOURCE_CHECK_LIMIT and len(search_terms) >= COMPACT_RUNTIME_SOURCE_CHECK_LIMIT:
+            break
+    compact: JsonObject = {
+        "area": "omitted_common_inspection_areas",
+        "reason": "Additional inspection areas were omitted by the planning_context budget fallback; retry with narrower anchors when relevant.",
+        "trigger": "budget_truncated",
+        "omitted_row_count": len(rows),
+    }
+    compact_refs = _dedupe_budget_rows([ref for ref in refs if ref])[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+    if compact_refs:
+        compact["inspection_refs"] = compact_refs
+    compact_terms = _dedupe_strings(search_terms)[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+    if compact_terms:
+        compact["search_terms"] = compact_terms
+    return compact
 
 
 def _answer_list_len(answer_packet: JsonObject, key: str) -> int:

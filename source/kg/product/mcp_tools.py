@@ -147,8 +147,8 @@ def tool_definitions() -> list[JsonObject]:
 def _with_common_output_contract(description: str) -> str:
     return (
         f"{description} "
-        "Returns common packet contract fields: `packet_contract`, `answerability`, `proven_facts`, "
-        "`candidate_leads`, `coverage_gaps`, and `inspection_areas`."
+        "Returns common packet contract fields: `packet_contract` when present, `answerability`, "
+        "`proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`."
     )
 
 
@@ -174,8 +174,11 @@ def _with_default_tool_metadata(payload: JsonObject, *, tool_name: str) -> JsonO
     if "coverage_gaps" not in normalized:
         normalized["coverage_gaps"] = _normalized_coverage_gaps(normalized)
     # Inspection areas are normalized and augmented instead of preserved verbatim
-    # so every tool exposes the same follow-up shape.
+    # so every tool exposes the same follow-up shape. Handler-authored
+    # next_actions are mirrored here; default guidance remains in next_actions
+    # to avoid duplicating prose in budget-bound packets.
     normalized["inspection_areas"] = _normalized_inspection_areas(normalized, candidate_leads=candidate_leads)
+    normalized["next_actions"] = _normalized_next_actions(normalized, candidate_leads=candidate_leads)
     normalized.setdefault("packet_contract", _packet_contract(tool_name))
     return normalized
 
@@ -266,6 +269,31 @@ def _default_answerability(
         "missing_fact_families": missing,
         "recommended_source_checks": [],
     }
+
+
+def _normalized_next_actions(payload: JsonObject, *, candidate_leads: JsonObject) -> list[str]:
+    actions = [str(action) for action in _as_list(payload.get("next_actions")) if str(action).strip()]
+    answerability = payload.get("answerability") if isinstance(payload.get("answerability"), dict) else {}
+    answerability_status = str(answerability.get("status") or "")
+    missing_families = {str(family) for family in _as_list(answerability.get("missing_fact_families"))}
+    if answerability_status == "ambiguous" or missing_families.intersection(
+        {"ambiguous_anchor", "unambiguous_primary_anchor"}
+    ):
+        actions.append(
+            "Retry one exact disambiguation.retry_arguments candidate or returned path/qualified name before interpreting empty result rows."
+        )
+    elif (
+        answerability_status.startswith("partial")
+        or answerability_status in {"not_answerable", "not_found", "unsupported_by_current_kg"}
+    ):
+        actions.append(
+            "Treat this packet as a head start plus coverage boundary, not a final answer; use your normal search/read tools once before refusing or saying unknown."
+        )
+    if candidate_leads.get("status") == "found":
+        actions.append(
+            "Verify candidate_leads with source or config evidence before promoting them to final facts; otherwise report them as candidates."
+        )
+    return _dedupe_strings(actions)
 
 
 def _normalized_proven_facts(payload: JsonObject) -> JsonObject:
@@ -536,6 +564,18 @@ def _dedupe_json_rows(rows: list[JsonObject]) -> list[JsonObject]:
             continue
         seen.add(key)
         deduped.append(row)
+    return deduped
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped = []
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
     return deduped
 
 

@@ -24,6 +24,7 @@ from source.kg.product.output_budget import (
     AUTHZ_COMPACT_LIST_KEYS,
     COMPACT_AUTHZ_INSPECTION_REF_LIMIT,
     COMPACT_RUNTIME_HEADSTART_LIMIT,
+    COMPACT_RUNTIME_SOURCE_CHECK_LIMIT,
     PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
     PLANNING_CONTEXT_MAX_CHARS,
     RELATED_FACT_SECTION_KEYS,
@@ -74,6 +75,19 @@ def _assert_additive_fields(testcase: unittest.TestCase, payload: dict[str, obje
     testcase.assertIsInstance(payload["coverage_gaps"], list)
     testcase.assertIsInstance(payload["inspection_areas"], list)
     testcase.assertIsInstance(payload["packet_contract"], dict)
+
+
+def _assert_common_evidence_fields(testcase: unittest.TestCase, payload: dict[str, object]) -> None:
+    testcase.assertIn("answerability", payload)
+    testcase.assertIn("proven_facts", payload)
+    testcase.assertIn("candidate_leads", payload)
+    testcase.assertIn("coverage_gaps", payload)
+    testcase.assertIn("inspection_areas", payload)
+    testcase.assertIsInstance(payload["answerability"], dict)
+    testcase.assertIsInstance(payload["proven_facts"], dict)
+    testcase.assertIsInstance(payload["candidate_leads"], dict)
+    testcase.assertIsInstance(payload["coverage_gaps"], list)
+    testcase.assertIsInstance(payload["inspection_areas"], list)
 
 
 class McpToolsTest(unittest.TestCase):
@@ -129,6 +143,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(payload["answerability"]["status"], "answerable")
         self.assertEqual(payload["proven_facts"]["status"], "found")
         self.assertEqual(payload["candidate_leads"]["status"], "empty")
+        self.assertNotIn("query_plan", payload)
 
     def test_default_tool_metadata_treats_empty_missing_status_as_not_answerable(self) -> None:
         payload = _with_default_tool_metadata({"query": "api"}, tool_name="search_services")
@@ -136,6 +151,19 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(payload["answerability"]["status"], "not_answerable")
         self.assertEqual(payload["proven_facts"]["status"], "empty")
         self.assertEqual(payload["candidate_leads"]["status"], "empty")
+        self.assertTrue(any("coverage boundary" in action for action in payload["next_actions"]))
+        self.assertTrue(any("normal search/read tools once" in action for action in payload["next_actions"]))
+        self.assertFalse(any(row["trigger"] == "next_action" for row in payload["inspection_areas"]))
+
+    def test_default_tool_metadata_adds_exact_retry_for_ambiguous_anchor(self) -> None:
+        payload = _with_default_tool_metadata(
+            {"status": "ambiguous", "candidates": [{"qualified_name": "pkg.Symbol"}]},
+            tool_name="find_callers",
+        )
+
+        self.assertEqual(payload["answerability"]["status"], "not_answerable")
+        self.assertEqual(payload["answerability"]["missing_fact_families"], ["ambiguous_anchor"])
+        self.assertTrue(any("disambiguation.retry_arguments" in action for action in payload["next_actions"]))
 
     def test_default_tool_metadata_does_not_downgrade_found_candidate_matches(self) -> None:
         payload = _with_default_tool_metadata(
@@ -608,6 +636,8 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
         self.assertEqual(result["tool"], "planning_context")
+        _assert_common_evidence_fields(self, result)
+        self.assertNotIn("query_plan", result)
         budget = result["output_budget"]
         self.assertTrue(budget["truncated"])
         self.assertLessEqual(len(canonical_json(result)), budget["max_chars"])
@@ -618,6 +648,7 @@ class McpToolsTest(unittest.TestCase):
         architecture = result["runtime_architecture"]
         answer_packet = architecture["answer_packet"]
         self.assertIn("Runtime architecture is assembled only from typed KG facts", architecture["assembly_contract"])
+        self.assertTrue(any("saved-packet exploration" in action for action in result["next_actions"]))
         self.assertIn("investigation_brief", answer_packet)
         self.assertGreater(len(answer_packet["investigation_brief"]["runtime_anchors"]), 1)
         self.assertTrue(answer_packet["investigation_brief"]["recommended_source_checks"])
@@ -1282,6 +1313,63 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(budgeted["output_budget"]["truncated"])
         self.assertTrue(budgeted["output_budget"]["minimized"])
         self.assertTrue(budgeted["output_budget"]["exceeded_after_minimization"])
+
+    def test_output_budget_bounds_common_evidence_lists_in_minimal_packet(self) -> None:
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "summary": {"note": "x" * 500},
+            "runtime_architecture": {
+                "scope": {},
+                "summary": {},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "typed facts only",
+                },
+            },
+            "proven_facts": {
+                "status": "found",
+                "sources": [{"field": f"fact-{index}", "count": index + 1} for index in range(20)],
+                "claim_boundary": "KG-backed evidence.",
+            },
+            "candidate_leads": {
+                "status": "found",
+                "sources": [
+                    {"field": f"lead-{index}", "count": index + 1, "lead_kind": "unlinked_source_lead"}
+                    for index in range(18)
+                ],
+                "claim_boundary": "Verify before promoting.",
+            },
+            "coverage_gaps": [{"trigger": f"gap-{index}"} for index in range(20)],
+            "inspection_areas": [
+                {
+                    "area": f"area-{index}",
+                    "reason": "inspect source",
+                    "inspection_refs": [{"path": f"service/{index}.py", "line": index + 1}],
+                    "search_terms": [f"term-{index}"],
+                }
+                for index in range(30)
+            ],
+        }
+
+        budgeted = enforce_planning_context_budget(result, max_chars=1)
+
+        self.assertLessEqual(len(budgeted["proven_facts"]["sources"]), COMPACT_RUNTIME_HEADSTART_LIMIT)
+        self.assertLessEqual(len(budgeted["candidate_leads"]["sources"]), COMPACT_RUNTIME_HEADSTART_LIMIT)
+        self.assertEqual(budgeted["proven_facts"]["sources"][-1]["field"], "omitted_proven_fact_sources")
+        self.assertEqual(budgeted["candidate_leads"]["sources"][-1]["field"], "omitted_candidate_lead_sources")
+        self.assertLessEqual(len(budgeted["coverage_gaps"]), COMPACT_RUNTIME_HEADSTART_LIMIT)
+        self.assertLessEqual(len(budgeted["inspection_areas"]), COMPACT_RUNTIME_SOURCE_CHECK_LIMIT)
+        self.assertEqual(budgeted["coverage_gaps"][-1]["trigger"], "common_coverage_gaps_truncated")
+        omitted_gap_detail = budgeted["coverage_gaps"][-1]["detail"]
+        self.assertEqual(omitted_gap_detail["omitted_row_count"], 13)
+        omitted_area = budgeted["inspection_areas"][-1]
+        self.assertEqual(omitted_area["area"], "omitted_common_inspection_areas")
+        self.assertEqual(omitted_area["omitted_row_count"], 16)
+        self.assertTrue(omitted_area["inspection_refs"])
+        self.assertTrue(omitted_area["search_terms"])
 
     def test_planning_context_symbol_anchor_returns_impact_and_coordinates(self) -> None:
         with _fixture_snapshot() as kg:
@@ -2323,7 +2411,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("planning_context first", instructions)
         self.assertIn("review_context first", instructions)
         self.assertIn("review_context.application_impact", instructions)
-        self.assertIn("inspect the relevant workspace source files", instructions)
+        self.assertIn("normal search/read tools once", instructions)
         self.assertIn("service_operational_surfaces.evidence_partition", instructions)
         self.assertIn("deploy_link_facts", instructions)
         self.assertIn("DEPLOYS_VIA_CONFIG", instructions)
@@ -2335,6 +2423,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("first source-search hit", instructions)
         self.assertIn("do not aggregate all candidates", instructions)
         self.assertIn("Common packet contract", instructions)
+        self.assertIn("Evidence gates", instructions)
+        self.assertIn("named answer categories", instructions)
+        self.assertIn("normal search/read tools once", instructions)
+        self.assertIn("count/list/impact answers", instructions)
         self.assertIn("proven_facts", instructions)
         self.assertIn("candidate_leads", instructions)
         self.assertIn("coverage_gaps", instructions)
