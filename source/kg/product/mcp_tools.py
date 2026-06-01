@@ -85,6 +85,19 @@ REVIEW_CONTEXT_SURFACE_ALIASES = {
     "serializer": "serializers",
     "serializers": "serializers",
 }
+REVIEW_CONTEXT_BUILTIN_SECTION_ALIASES = frozenset(
+    {
+        "caller",
+        "callers",
+        "callee",
+        "callees",
+        "call_graph",
+        "reverse_impact",
+        "reverse_callers",
+        "symbol_impact",
+        "transitive_callers",
+    }
+)
 PLANNING_CONTEXT_NO_OVERLAP_ACTION = (
     "No deterministic planning anchor combination overlapped after applying the supplied filters. "
     "Try a broader primary anchor or remove one narrowing field."
@@ -1666,7 +1679,10 @@ def _optional_review_surfaces(arguments: JsonObject, field: str) -> list[str]:
     surfaces: list[str] = []
     unsupported: list[str] = []
     for value in _optional_string_list(arguments, field):
-        canonical = REVIEW_CONTEXT_SURFACE_ALIASES.get(value.strip().lower().replace("-", "_").replace(" ", "_"))
+        normalized_value = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized_value in REVIEW_CONTEXT_BUILTIN_SECTION_ALIASES:
+            continue
+        canonical = REVIEW_CONTEXT_SURFACE_ALIASES.get(normalized_value)
         if canonical is None:
             unsupported.append(value)
             continue
@@ -1806,7 +1822,9 @@ def _review_context_properties() -> JsonObject:
             "items": {"type": "string"},
             "description": (
                 "Optional impact surfaces named by the review prompt. Supported canonical values include "
-                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, and tracking are accepted."
+                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, and tracking are "
+                "accepted. Built-in review sections such as callers and reverse_impact are "
+                "always returned and may be requested as no-op aliases."
             ),
         },
         "include_deploy_blockers": {"type": "boolean", "default": False},

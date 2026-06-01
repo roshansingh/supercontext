@@ -1590,6 +1590,24 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("tracking_paths", result["answerability"]["missing_fact_families"])
         self.assertEqual(result["review_answer_packet"]["surface_status"], result["surface_status"])
 
+    def test_review_context_accepts_builtin_call_graph_section_aliases(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "requested_surfaces": ["callers", "reverse_impact"],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["status"], "found")
+        self.assertIn("direct_callers", result)
+        self.assertIn("transitive_callers", result)
+        self.assertEqual({row["predicate"] for row in result["impact"]["direct_callees"]}, {"CALLS"})
+
     def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
             result = call_tool(
