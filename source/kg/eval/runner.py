@@ -29,6 +29,15 @@ SUPERCONTEXT_MCP_TOOL_PREFIXES = (
     SUPERCONTEXT_MCP_TOOL_PREFIX,
     LEGACY_BETTERCONTEXT_MCP_TOOL_PREFIX,
 )
+# Coupled to Claude Code's observed sidecar-file message format. A zero count
+# means "no matching saved-result path observed," not proof the host never
+# changed its spill wording or path convention.
+MCP_SAVED_RESULT_MARKERS = (
+    "/tool-results/mcp-supercontext-",
+    "/tool-results/mcp-bettercontext-",
+)
+MCP_SAVED_RESULT_SUFFIX = ".txt"
+MCP_SAVED_RESULT_DELIMITERS = set(" \t\r\n\"'`()<>);,")
 # A/B eval needs the same ordinary inspection surface agents used in the baseline arm.
 # The prompt forbids edits and explicit edit/write tools are denied below; Bash remains
 # available because prior baseline runs relied on jq/grep-style snapshot inspection.
@@ -77,6 +86,10 @@ class RunRecord:
     mcp_tool_successes: list[str] = field(default_factory=list)
     mcp_tool_denials: list[str] = field(default_factory=list)
     mcp_tool_errors: list[str] = field(default_factory=list)
+    mcp_packet_file_reference_count: int = 0
+    mcp_packet_jq_attempt_count: int = 0
+    mcp_packet_saved_file_count: int = 0
+    mcp_packet_saved_file_bytes_best_effort: int = 0
     incomplete_background_task_ids: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
@@ -193,6 +206,7 @@ async def async_run_single_task(
     tool_attempts = _tool_attempts(serialized_messages)
     non_mcp_tool_attempts = [name for name in tool_attempts if not _is_supercontext_mcp_tool(name)]
     mcp_observations = _mcp_tool_observations(serialized_messages)
+    mcp_packet_stats = _mcp_packet_navigation_stats(serialized_messages)
     if arm == "mcp_on":
         _raise_for_mcp_tool_failures(mcp_observations)
     record = RunRecord(
@@ -227,6 +241,10 @@ async def async_run_single_task(
         mcp_tool_successes=mcp_observations["successes"],
         mcp_tool_denials=mcp_observations["denials"],
         mcp_tool_errors=mcp_observations["errors"],
+        mcp_packet_file_reference_count=mcp_packet_stats["file_reference_count"],
+        mcp_packet_jq_attempt_count=mcp_packet_stats["jq_attempt_count"],
+        mcp_packet_saved_file_count=mcp_packet_stats["saved_file_count"],
+        mcp_packet_saved_file_bytes_best_effort=mcp_packet_stats["saved_file_bytes_best_effort"],
         incomplete_background_task_ids=incomplete_background_task_ids,
     )
     (arm_dir / "record.json").write_text(json.dumps(record.to_json(), indent=2, sort_keys=True), encoding="utf-8")
@@ -565,6 +583,98 @@ def _mcp_tool_observations(messages: list[dict[str, Any]]) -> dict[str, list[str
         "denials": denials,
         "errors": errors,
     }
+
+
+def _mcp_packet_navigation_stats(messages: list[dict[str, Any]]) -> dict[str, int]:
+    path_reference_count = 0
+    saved_paths: set[str] = set()
+    jq_attempt_count = 0
+    for message in messages:
+        for text in _strings_in_json(message):
+            matches = _mcp_saved_result_paths(text)
+            if matches:
+                path_reference_count += len(matches)
+                saved_paths.update(matches)
+        for block in _content_blocks(message):
+            if block.get("name") != "Bash":
+                continue
+            tool_input = block.get("input")
+            if not isinstance(tool_input, dict):
+                continue
+            command = tool_input.get("command")
+            if isinstance(command, str) and "jq" in command and _mcp_saved_result_paths(command):
+                jq_attempt_count += 1
+
+    saved_file_bytes_best_effort = 0
+    for path in saved_paths:
+        try:
+            saved_file_bytes_best_effort += Path(path).stat().st_size
+        except OSError:
+            continue
+    return {
+        "file_reference_count": path_reference_count,
+        "jq_attempt_count": jq_attempt_count,
+        "saved_file_count": len(saved_paths),
+        "saved_file_bytes_best_effort": saved_file_bytes_best_effort,
+    }
+
+
+def _mcp_saved_result_paths(text: str) -> list[str]:
+    paths: list[str] = []
+    start = 0
+    while True:
+        marker_match = _next_mcp_saved_result_marker(text, start)
+        if marker_match is None:
+            break
+        marker_index, marker = marker_match
+        suffix_index = text.find(MCP_SAVED_RESULT_SUFFIX, marker_index)
+        next_delimiter_index = _next_mcp_saved_result_delimiter_index(text, marker_index)
+        if suffix_index == -1 or (next_delimiter_index is not None and next_delimiter_index < suffix_index):
+            start = marker_index + len(marker)
+            continue
+        path_start = marker_index
+        while path_start > 0 and text[path_start - 1] not in MCP_SAVED_RESULT_DELIMITERS:
+            path_start -= 1
+        path_end = suffix_index + len(MCP_SAVED_RESULT_SUFFIX)
+        path = text[path_start:path_end]
+        if path.startswith("/") and any(marker in path for marker in MCP_SAVED_RESULT_MARKERS):
+            paths.append(path)
+        start = path_end
+    return paths
+
+
+def _next_mcp_saved_result_marker(text: str, start: int) -> tuple[int, str] | None:
+    matches = [
+        (index, marker)
+        for marker in MCP_SAVED_RESULT_MARKERS
+        if (index := text.find(marker, start)) != -1
+    ]
+    return min(matches, key=lambda item: item[0]) if matches else None
+
+
+def _next_mcp_saved_result_delimiter_index(text: str, marker_index: int) -> int | None:
+    indexes = [
+        index
+        for delimiter in MCP_SAVED_RESULT_DELIMITERS
+        if (index := text.find(delimiter, marker_index)) != -1
+    ]
+    return min(indexes) if indexes else None
+
+
+def _strings_in_json(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for item in value.values():
+            strings.extend(_strings_in_json(item))
+        return strings
+    if isinstance(value, list | tuple):
+        strings = []
+        for item in value:
+            strings.extend(_strings_in_json(item))
+        return strings
+    return []
 
 
 def _is_supercontext_mcp_tool(name: str) -> bool:

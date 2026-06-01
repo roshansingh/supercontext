@@ -21,6 +21,8 @@ from source.kg.eval.runner import (
     _allowed_tools,
     _claude_extra_args,
     _incomplete_background_task_ids,
+    _mcp_packet_navigation_stats,
+    _mcp_saved_result_paths,
     _mcp_tool_observations,
     _raise_for_host_error_messages,
     _raise_for_mcp_tool_failures,
@@ -1089,6 +1091,73 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertEqual(
             observations["successes"],
             ["mcp__supercontext__find_callees", "mcp__supercontext__find_callees"],
+        )
+
+    def test_mcp_packet_navigation_stats_count_saved_files_and_jq_attempts(self) -> None:
+        messages = [
+            {
+                "type": "UserMessage",
+                "data": {
+                    "content": [
+                        {
+                            "tool_use_id": "toolu_1",
+                            "content": (
+                                "Error: result exceeds maximum allowed tokens. Output has been saved to "
+                                "/tmp/session/tool-results/mcp-supercontext-planning_context-123.txt. "
+                                "Probe with jq 'keys' /tmp/session/tool-results/mcp-supercontext-planning_context-123.txt"
+                            ),
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "AssistantMessage",
+                "data": {
+                    "content": [
+                        {
+                            "id": "toolu_2",
+                            "name": "Bash",
+                            "input": {
+                                "command": (
+                                    "jq '.summary' "
+                                    "/tmp/session/tool-results/mcp-supercontext-planning_context-123.txt"
+                                )
+                            },
+                        },
+                        {
+                            "id": "toolu_3",
+                            "name": "Bash",
+                            "input": {"command": "jq '.predicate' data/kg_runs/snapshot/facts.jsonl"},
+                        },
+                    ]
+                },
+            },
+        ]
+
+        stats = _mcp_packet_navigation_stats(messages)
+
+        self.assertEqual(stats["file_reference_count"], 3)
+        self.assertEqual(stats["jq_attempt_count"], 1)
+        self.assertEqual(stats["saved_file_count"], 1)
+        self.assertEqual(stats["saved_file_bytes_best_effort"], 0)
+
+    def test_mcp_saved_result_path_scanner_handles_host_error_text_without_regex(self) -> None:
+        text = (
+            "saved to /Users/me/project/tool-results/mcp-supercontext-review_context-123.txt. "
+            "Malformed /tmp/session/tool-results/mcp-supercontext-missing-suffix "
+            "Then jq /tmp/session/tool-results/mcp-supercontext-planning_context-456.txt) "
+            "Also see (/tmp/session/tool-results/mcp-supercontext-find_callers-789.txt) "
+            "Legacy /tmp/session/tool-results/mcp-bettercontext-review_context-000.txt"
+        )
+
+        self.assertEqual(
+            _mcp_saved_result_paths(text),
+            [
+                "/Users/me/project/tool-results/mcp-supercontext-review_context-123.txt",
+                "/tmp/session/tool-results/mcp-supercontext-planning_context-456.txt",
+                "/tmp/session/tool-results/mcp-supercontext-find_callers-789.txt",
+                "/tmp/session/tool-results/mcp-bettercontext-review_context-000.txt",
+            ],
         )
 
     def test_eval_runner_does_not_force_bare_claude_mode(self) -> None:

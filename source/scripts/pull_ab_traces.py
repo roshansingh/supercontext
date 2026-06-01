@@ -7,6 +7,43 @@ from pathlib import Path
 from typing import Any
 
 
+TRACE_METADATA_KEYS = (
+    "run_group_id",
+    "arm",
+    "task_id",
+    "phase",
+    "host",
+    "repo_fixture",
+    "difficulty",
+    "harness_version",
+    "task_prompt",
+    "snapshot_path",
+    "mcp_tools_called",
+    "mcp_tool_attempt_count",
+    "mcp_tool_success_count",
+    "mcp_tool_denial_count",
+    "mcp_tool_error_count",
+    "mcp_tool_successes",
+    "mcp_tool_denials",
+    "mcp_tool_errors",
+    "mcp_packet_file_reference_count",
+    "mcp_packet_jq_attempt_count",
+    "mcp_packet_saved_file_count",
+    "mcp_packet_saved_file_bytes_best_effort",
+    "incomplete_background_task_ids",
+    "non_mcp_tools_called",
+    "non_mcp_tool_attempt_count",
+    "non_mcp_tool_attempts",
+    "tokens_in",
+    "tokens_out",
+    "wall_time_seconds",
+    "final_answer",
+    "final_answer_citations",
+    "model",
+    "random_seed",
+)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pull SuperContext A/B LangSmith traces into local JSONL.")
     parser.add_argument("--project", required=True, help="LangSmith project name.")
@@ -62,37 +99,7 @@ def trace_from_langsmith_run(run: Any) -> dict[str, Any]:
     }
     if record_cost_status is not None:
         trace["record_cost_status"] = record_cost_status
-    for key in (
-        "run_group_id",
-        "arm",
-        "task_id",
-        "phase",
-        "host",
-        "repo_fixture",
-        "difficulty",
-        "harness_version",
-        "task_prompt",
-        "snapshot_path",
-        "mcp_tools_called",
-        "mcp_tool_attempt_count",
-        "mcp_tool_success_count",
-        "mcp_tool_denial_count",
-        "mcp_tool_error_count",
-        "mcp_tool_successes",
-        "mcp_tool_denials",
-        "mcp_tool_errors",
-        "incomplete_background_task_ids",
-        "non_mcp_tools_called",
-        "non_mcp_tool_attempt_count",
-        "non_mcp_tool_attempts",
-        "tokens_in",
-        "tokens_out",
-        "wall_time_seconds",
-        "final_answer",
-        "final_answer_citations",
-        "model",
-        "random_seed",
-    ):
+    for key in TRACE_METADATA_KEYS:
         trace[key] = metadata.get(key)
     return trace
 

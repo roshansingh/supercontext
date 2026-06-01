@@ -33,6 +33,10 @@ class PullAbTracesTest(unittest.TestCase):
                     "mcp_tool_successes": ["mcp__supercontext__find_callers"],
                     "mcp_tool_denials": [],
                     "mcp_tool_errors": [],
+                    "mcp_packet_file_reference_count": 3,
+                    "mcp_packet_jq_attempt_count": 1,
+                    "mcp_packet_saved_file_count": 2,
+                    "mcp_packet_saved_file_bytes_best_effort": 4096,
                     "incomplete_background_task_ids": ["bg-1"],
                     "non_mcp_tools_called": ["Read"],
                     "non_mcp_tool_attempt_count": 2,
@@ -67,6 +71,10 @@ class PullAbTracesTest(unittest.TestCase):
         self.assertEqual(trace["mcp_tool_success_count"], 1)
         self.assertEqual(trace["mcp_tool_denial_count"], 0)
         self.assertEqual(trace["mcp_tool_successes"], ["mcp__supercontext__find_callers"])
+        self.assertEqual(trace["mcp_packet_file_reference_count"], 3)
+        self.assertEqual(trace["mcp_packet_jq_attempt_count"], 1)
+        self.assertEqual(trace["mcp_packet_saved_file_count"], 2)
+        self.assertEqual(trace["mcp_packet_saved_file_bytes_best_effort"], 4096)
         self.assertEqual(trace["incomplete_background_task_ids"], ["bg-1"])
         self.assertEqual(trace["non_mcp_tool_attempt_count"], 2)
         self.assertEqual(trace["non_mcp_tool_attempts"], ["Read", "Read"])
