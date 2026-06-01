@@ -7,8 +7,8 @@
 #   ./install.sh --agent claude
 #
 # Via curl:
-#   curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash -s -- --agent codex
+#   curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash -s -- --agent codex
 
 set -euo pipefail
 
@@ -23,12 +23,12 @@ Usage:
   ./install.sh --agent both --python python3
 
 Via curl:
-  curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash -s -- --agent codex
+  curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash -s -- --agent codex
 EOF
 }
 
-REPO_URL="git+https://github.com/roshansingh/bettercontext.git"
+REPO_URL="git+https://github.com/roshansingh/supercontext.git"
 SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=""
 if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then

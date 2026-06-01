@@ -17,10 +17,10 @@ License: TBD before public OSS release.
 Install the CLI, register the default local MCP endpoint with available host agents, and install global Codex/Claude Code MCP skills:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash
 ```
 
-The install URL intentionally points at `roshansingh/bettercontext` until the GitHub repository itself is renamed. If you previously installed BetterContext, the installer warns about legacy `~/.bettercontext` state; remove old `bettercontext` MCP registrations and stale scripts after verifying `supercontext-init` works.
+If you previously installed BetterContext, the installer warns about legacy `~/.bettercontext` state; remove old `bettercontext` MCP registrations and stale scripts after verifying `supercontext-init` works.
 
 Then, inside each repo you want SuperContext to index:
 

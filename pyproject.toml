@@ -21,8 +21,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/roshansingh/bettercontext"
-Issues = "https://github.com/roshansingh/bettercontext/issues"
+Repository = "https://github.com/roshansingh/supercontext"
+Issues = "https://github.com/roshansingh/supercontext/issues"
 
 [project.optional-dependencies]
 ui = ["streamlit>=1.30"]
