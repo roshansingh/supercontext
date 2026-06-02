@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from source.kg.core.repo_source import RepoSnapshot
+from source.kg.core.repo_source import IGNORED_DIRS, RepoSnapshot
 from source.kg.languages.types import ConsumerDependency, ConsumerManifestIssue, ConsumerManifestResult
 
 
@@ -21,24 +21,34 @@ class TypeScriptConsumerManifestExtractor:
     language = "typescript"
 
     def extract(self, repo: RepoSnapshot) -> ConsumerManifestResult:
-        manifest_path = repo.root / "package.json"
-        if not manifest_path.exists():
+        manifest_paths = _iter_package_json_manifests(repo.root)
+        if not manifest_paths:
             return ConsumerManifestResult()
+        dependencies: list[ConsumerDependency] = []
+        issues: list[ConsumerManifestIssue] = []
+        for manifest_path in manifest_paths:
+            manifest_dependencies, manifest_issues = self._extract_manifest(manifest_path)
+            dependencies.extend(manifest_dependencies)
+            issues.extend(manifest_issues)
+        return ConsumerManifestResult(dependencies=tuple(dependencies), issues=tuple(issues))
+
+    def _extract_manifest(
+        self,
+        manifest_path: Path,
+    ) -> tuple[list[ConsumerDependency], list[ConsumerManifestIssue]]:
         try:
             data = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            return ConsumerManifestResult(
-                issues=(
-                    ConsumerManifestIssue(
-                        reason="cross_repo_dependency_manifest_unreadable",
-                        manifest_path=manifest_path,
-                        message=str(exc),
-                        language=self.language,
-                    ),
-                )
-            )
+            return [], [
+                ConsumerManifestIssue(
+                    reason="cross_repo_dependency_manifest_unreadable",
+                    manifest_path=manifest_path,
+                    message=str(exc),
+                    language=self.language,
+                ),
+            ]
         if not isinstance(data, dict):
-            return ConsumerManifestResult()
+            return [], []
 
         dependencies: list[ConsumerDependency] = []
         for section in DEPENDENCY_SECTIONS:
@@ -61,7 +71,18 @@ class TypeScriptConsumerManifestExtractor:
                         target_url=target_url,
                     )
                 )
-        return ConsumerManifestResult(dependencies=tuple(dependencies))
+        return dependencies, []
+
+
+def _iter_package_json_manifests(root: Path) -> tuple[Path, ...]:
+    manifests: list[Path] = []
+    for path in root.rglob("package.json"):
+        if not path.is_file():
+            continue
+        if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
+            continue
+        manifests.append(path)
+    return tuple(sorted(manifests))
 
 
 def _classify_spec(spec: str | None) -> tuple[str, str | None]:
