@@ -941,6 +941,7 @@ def _classify_external_packages(
             candidate_names,
             dependencies_by_consumer.get(consumer_identity, ()),
         )
+        matching_dependencies = _dedupe_matching_consumer_dependencies(matching_dependencies, consumer_identity, inputs)
         dependency = matching_dependencies[0] if len(matching_dependencies) == 1 else None
         bucket = "unknown"
         reason = "code import has no matching consumer manifest dependency"
@@ -1179,6 +1180,42 @@ def _matching_consumer_dependencies(
     )
 
 
+def _dedupe_matching_consumer_dependencies(
+    dependencies: tuple[ConsumerDependency, ...],
+    consumer_identity: RepoIdentity | None,
+    inputs: list[LinkerInput] | tuple[LinkerInput, ...],
+) -> tuple[ConsumerDependency, ...]:
+    deduped: dict[tuple[object, ...], ConsumerDependency] = {}
+    for dependency in dependencies:
+        deduped.setdefault(_consumer_dependency_match_key(dependency, consumer_identity, inputs), dependency)
+    return tuple(deduped.values())
+
+
+def _consumer_dependency_match_key(
+    dependency: ConsumerDependency,
+    consumer_identity: RepoIdentity | None,
+    inputs: list[LinkerInput] | tuple[LinkerInput, ...],
+) -> tuple[object, ...]:
+    target_identity = _manifest_target_repo_identity(dependency, consumer_identity, inputs)
+    if target_identity is not None:
+        target_key: tuple[object, ...] = (
+            "repo",
+            target_identity.tenant_id,
+            target_identity.host,
+            target_identity.owner,
+            target_identity.name,
+        )
+    else:
+        target_key = ("target_url", _normalized_dependency_target_url(dependency))
+    return (_normalize_package_name(dependency.declared_name), dependency.spec_form, target_key)
+
+
+def _normalized_dependency_target_url(dependency: ConsumerDependency) -> str | None:
+    if not isinstance(dependency.target_url, str):
+        return None
+    return dependency.target_url.strip() or None
+
+
 def _providers_by_identity(providers: list[PackageProvider]) -> dict[RepoIdentity, tuple[PackageProvider, ...]]:
     grouped: dict[RepoIdentity, list[PackageProvider]] = {}
     for provider in providers:
@@ -1194,7 +1231,9 @@ def _manifest_target_provider_match(
     providers_by_identity: dict[RepoIdentity, tuple[PackageProvider, ...]],
 ) -> tuple[ConsumerDependency | None, PackageProvider | None]:
     matches: list[tuple[ConsumerDependency, PackageProvider]] = []
-    for dependency in _matching_consumer_dependencies(candidate_names, dependencies):
+    matching_dependencies = _matching_consumer_dependencies(candidate_names, dependencies)
+    matching_dependencies = _dedupe_matching_consumer_dependencies(matching_dependencies, consumer_identity, inputs)
+    for dependency in matching_dependencies:
         target_identity = _manifest_target_repo_identity(dependency, consumer_identity, inputs)
         if target_identity is None or target_identity == consumer_identity:
             continue

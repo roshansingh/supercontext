@@ -43,6 +43,45 @@ Use `source/kg/languages/_template/` as the starting point. The current
 - `adapters()`
 - `known_stacks()`
 
+## Coverage And Metrics Contract
+
+Coverage metrics are language-neutral. They must keep consuming canonical
+snapshot rows rather than adding language-specific branches in metric formulas.
+A language makes those metrics meaningful by emitting the shared inputs the
+metrics already understand.
+
+For a first-class language, wire these pieces deliberately:
+
+- `files.py` identifies real source files and excludes generated output. This
+  feeds `manifest.counts.files_by_language` and the
+  `M_dimension_classification` denominator.
+- `dimension_rules.yaml` maps source files into product dimensions using
+  imports, packages, manifest files, or file extensions. Package rules are fed
+  by the language's `consumer_manifest_extractor()`, not by metric-specific
+  parsing code.
+- `known_stacks.yaml` plus `source_roots(repo, ctx)` tells the build which
+  recognized frameworks/transports should produce explicit coverage rows when
+  support is partial or missing.
+- `adapters()` should emit canonical facts with valid evidence coordinates.
+  Unsupported, ambiguous, or dynamic shapes should emit `Coverage` rows with a
+  precise `state`, `predicate`, `scope_ref`, and reason instead of returning
+  empty results silently.
+- `package_resolver()` and `consumer_manifest_extractor()` should be added
+  together for package ecosystems. This keeps cross-repo linkage and
+  package-based dimension classification aligned.
+- `opportunity_detectors()` should be added for high-value predicates where we
+  want `M_extractor_opportunity` and `M_silent_gap` to measure missed value. If
+  no detector exists, those metrics should be interpreted as `n_a`, not as a
+  sign that coverage is complete.
+- `useful_edges()` can stay empty until the language has language-owned useful
+  edge metadata. Product-dimension useful edges remain in
+  `source/kg/metrics/useful_edges.yaml`.
+
+When improving coverage for an existing language, improve the language-owned
+extractor, manifest, resolver, known-stack, or opportunity detector first.
+Only change metric formulas when the canonical metric contract itself is
+wrong for every language.
+
 ## Steps
 
 1. Copy `source/kg/languages/_template/` to
@@ -71,6 +110,9 @@ Use `source/kg/languages/_template/` as the starting point. The current
    needed for default installs.
 6. Add focused tests under `tests/languages/`, `tests/adapters/`, or a
    language-specific test file.
+7. Add or update coverage metric tests when the language changes dimension
+   assignment, opportunity detection, package manifests, or explicit coverage
+   rows.
 
 Do not add a central adapter registry edit for a language-owned adapter unless
 it is still part of the legacy compatibility path. New languages should be
@@ -178,13 +220,17 @@ Add focused tests for:
 - Packaging metadata for YAML/assets in `pyproject.toml`.
 - YAML shape validation for `known_stacks.yaml`, `dimension_rules.yaml`, and
   useful-edge metadata.
+- Coverage metric contract tests proving dimension classification, opportunity
+  coverage, silent-gap behavior, or `n_a` states are honest for the language.
+- Consumer-manifest tests proving package dependencies feed package-based
+  dimension rules without adding language-specific parsing to metrics.
 
 Useful existing tests to mirror or extend:
 
 ```bash
 python -m unittest discover -s tests/languages
 python -m unittest tests.framework.test_adapter_contract tests.test_adapter_framework
-python -m unittest tests.test_packaging_metadata tests.metrics.test_yaml_shapes
+python -m unittest tests.test_packaging_metadata tests.metrics.test_yaml_shapes tests.metrics.test_dimension_classifier
 ```
 
 For behavior changes, add an extractor-specific regression test for the exact
@@ -198,7 +244,13 @@ Run focused checks:
 ```bash
 python -m compileall -q source
 python -m unittest discover -s tests/languages
-python -m unittest tests.framework.test_adapter_contract tests.test_adapter_framework tests.test_multi_repo_identity tests.test_packaging_metadata tests.metrics.test_yaml_shapes
+python -m unittest \
+  tests.framework.test_adapter_contract \
+  tests.test_adapter_framework \
+  tests.test_multi_repo_identity \
+  tests.test_packaging_metadata \
+  tests.metrics.test_yaml_shapes \
+  tests.metrics.test_dimension_classifier
 ```
 
 Run adapter-specific tests for the new language or file-format adapter. Run

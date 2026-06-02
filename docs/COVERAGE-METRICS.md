@@ -2,6 +2,13 @@
 
 SuperContext coverage metrics score how complete, useful, and trustworthy a KG snapshot is. Most metrics are `0.0` to `1.0`, where higher is better. `M_silent_gap` is the exception: lower is better because it measures missed opportunities.
 
+The metric formulas are intentionally language-neutral. They consume canonical
+snapshot inputs: manifest language counts, entities, facts, evidence, coverage
+rows, package classifications, dimension assignments, and opportunity rows. A
+language improves metric quality by emitting those inputs through its language
+plugin. If a language has no opportunity detector for a predicate, opportunity
+metrics should be read as `n_a` rather than evidence that no gap exists.
+
 ## Metrics
 
 ### `M_inventory`

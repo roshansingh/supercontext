@@ -150,6 +150,55 @@ class RelinkRegistryTest(unittest.TestCase):
         self.assertEqual(buckets["fs"], "builtin_or_stdlib")
         self.assertEqual(buckets["code-only"], "unknown")
 
+    def test_linker_dedupes_repeated_nested_manifest_dependencies_for_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer_repo = root / "owner-a" / "consumer"
+            provider_repo = root / "owner-b" / "provider"
+            (consumer_repo / "apps" / "web").mkdir(parents=True)
+            (consumer_repo / "apps" / "admin").mkdir(parents=True)
+            provider_repo.mkdir(parents=True)
+            for package_dir in (consumer_repo / "apps" / "web", consumer_repo / "apps" / "admin"):
+                (package_dir / "package.json").write_text(
+                    json.dumps({"dependencies": {"shared-pkg": "workspace:*"}}),
+                    encoding="utf-8",
+                )
+            (provider_repo / "package.json").write_text(json.dumps({"name": "shared-pkg"}), encoding="utf-8")
+
+            result = link_external_packages(
+                (
+                    LinkerInput(
+                        repo=_repo_snapshot(consumer_repo),
+                        repo_identity=_repo_identity(consumer_repo),
+                        entities=(
+                            _repo_entity(consumer_repo),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "shared-pkg"},
+                                properties={"category": "third_party", "import_root": "shared-pkg"},
+                            ),
+                        ),
+                    ),
+                    LinkerInput(
+                        repo=_repo_snapshot(provider_repo),
+                        repo_identity=_repo_identity(provider_repo),
+                        entities=(_repo_entity(provider_repo),),
+                    ),
+                )
+            )
+
+        self.assertEqual(
+            [dependency.declared_name for dependency in result.consumer_dependencies],
+            ["shared-pkg", "shared-pkg"],
+        )
+        [classification] = result.package_classifications
+        self.assertEqual(classification["package_name"], "shared-pkg")
+        self.assertEqual(classification["bucket"], "candidate_internal")
+        self.assertEqual(
+            classification["reason"],
+            "consumer manifest dependency matches exactly one fleet provider",
+        )
+
     def test_linker_dedupes_collapsed_package_classifications_with_different_import_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

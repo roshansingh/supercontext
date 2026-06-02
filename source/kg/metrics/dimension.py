@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import ast
-import json
-import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +30,7 @@ class _RepoFeatures:
 
 def classify_repo(repo: RepoSnapshot, registered_languages: Iterable[Any] | None = None) -> tuple[DimensionAssignment, ...]:
     languages = tuple(registered_languages) if registered_languages is not None else _registered_languages()
-    features = _collect_features(repo)
+    features = _collect_features(repo, languages)
     files_by_dimension: dict[str, set[str]] = {}
     rule_ids_by_dimension: dict[str, list[str]] = {}
     versions_by_dimension: dict[str, str] = {}
@@ -78,26 +76,19 @@ def classify_repo(repo: RepoSnapshot, registered_languages: Iterable[Any] | None
     )
 
 
-def _collect_features(repo: RepoSnapshot) -> _RepoFeatures:
+def _collect_features(repo: RepoSnapshot, languages: tuple[Any, ...]) -> _RepoFeatures:
     files_by_language: dict[str, set[str]] = {
         language: {str(path.relative_to(repo.root)) for path in paths}
         for language, paths in repo.files_by_language.items()
     }
     imports_by_language = {
         "python": _python_import_roots(repo.files_by_language.get("python", ())),
-        "javascript": set(),
-        "typescript": set(),
-    }
-    packages_by_language = {
-        "python": _python_packages(repo.root),
-        "javascript": _package_json_packages(repo.root),
-        "typescript": _package_json_packages(repo.root),
     }
     source_paths = _all_source_paths(repo)
     return _RepoFeatures(
         files_by_language=files_by_language,
         imports_by_language=imports_by_language,
-        packages_by_language=packages_by_language,
+        packages_by_language=_packages_by_language(repo, languages),
         manifest_names={path.name for path in _iter_repo_files(repo.root)},
         file_extensions={Path(path).suffix for path in source_paths},
     )
@@ -144,56 +135,34 @@ def _python_import_roots(paths: Iterable[Path]) -> set[str]:
     return roots
 
 
-def _python_packages(root: Path) -> set[str]:
-    packages: set[str] = set()
-    pyproject = root / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            data = {}
-        project = data.get("project", {}) if isinstance(data.get("project"), dict) else {}
-        for dependency in project.get("dependencies", []):
-            if isinstance(dependency, str):
-                packages.add(_normalize_requirement_name(dependency))
-        tool = data.get("tool", {})
-        poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
-        poetry_deps = poetry.get("dependencies", {}) if isinstance(poetry, dict) else {}
-        if isinstance(poetry_deps, dict):
-            packages.update(_normalize_package(name) for name in poetry_deps if name.lower() != "python")
-    requirements = root / "requirements.txt"
-    if requirements.exists():
-        try:
-            for line in requirements.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    packages.add(_normalize_requirement_name(stripped))
-        except OSError:
-            pass
-    return packages - {""}
-
-
-def _package_json_packages(root: Path) -> set[str]:
-    packages: set[str] = set()
-    for package_json in _iter_repo_files(root, "package.json"):
-        try:
-            data = json.loads(package_json.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+def _packages_by_language(repo: RepoSnapshot, languages: tuple[Any, ...]) -> dict[str, set[str]]:
+    packages_by_language: dict[str, set[str]] = {}
+    for language in languages:
+        language_names = (language.name, *getattr(language, "aliases", ()))
+        if not any(repo.files_by_language.get(language_name) for language_name in language_names):
             continue
-        if not isinstance(data, dict):
+        package_names = _language_manifest_packages(repo, language)
+        if not package_names:
             continue
-        for field in ("dependencies", "devDependencies", "peerDependencies"):
-            values = data.get(field, {})
-            if isinstance(values, dict):
-                packages.update(_normalize_package(name) for name in values)
+        for language_name in language_names:
+            packages_by_language.setdefault(language_name, set()).update(package_names)
+    return packages_by_language
+
+
+def _language_manifest_packages(repo: RepoSnapshot, language: Any) -> set[str]:
+    extractor_factory = getattr(language, "consumer_manifest_extractor", None)
+    if not callable(extractor_factory):
+        return set()
+    extractor = extractor_factory()
+    if extractor is None:
+        return set()
+    result = extractor.extract(repo)
+    packages = {
+        _normalize_package(dependency.declared_name)
+        for dependency in result.dependencies
+        if isinstance(dependency.declared_name, str) and dependency.declared_name.strip()
+    }
     return packages - {""}
-
-
-def _normalize_requirement_name(value: str) -> str:
-    name = value.split(";", 1)[0].strip()
-    for separator in ("==", ">=", "<=", "~=", "!=", ">", "<", "["):
-        name = name.split(separator, 1)[0]
-    return _normalize_package(name)
 
 
 def normalize_package_name(value: str) -> str:

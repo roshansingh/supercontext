@@ -43,6 +43,37 @@ class ConsumerManifestExtractorTest(unittest.TestCase):
         self.assertEqual(by_name["vite"].dependency_kind, "devDependencies")
         self.assertEqual(result.issues, ())
 
+    def test_typescript_nested_package_json_dependency_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "apps" / "web"
+            app.mkdir(parents=True)
+            (app / "package.json").write_text(
+                json.dumps({"dependencies": {"react": "^18.2.0"}}),
+                encoding="utf-8",
+            )
+
+            result = TypeScriptConsumerManifestExtractor().extract(_repo(root))
+
+        self.assertEqual([dependency.declared_name for dependency in result.dependencies], ["react"])
+        self.assertEqual(result.dependencies[0].manifest_path, app / "package.json")
+        self.assertEqual(result.issues, ())
+
+    def test_typescript_ignores_package_json_under_ignored_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            ignored = root / "node_modules" / "react"
+            ignored.mkdir(parents=True)
+            (ignored / "package.json").write_text(
+                json.dumps({"dependencies": {"ignored": "^1.0.0"}}),
+                encoding="utf-8",
+            )
+
+            result = TypeScriptConsumerManifestExtractor().extract(_repo(root))
+
+        self.assertEqual(result.dependencies, ())
+        self.assertEqual(result.issues, ())
+
     def test_typescript_malformed_package_json_reports_issue(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
