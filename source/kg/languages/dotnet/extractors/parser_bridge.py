@@ -419,8 +419,16 @@ def _invocation_receiver(node: Any, source: bytes) -> str:
     if function is None or function.type != "member_access_expression":
         return ""
     expression = function.child_by_field_name("expression")
-    if expression is not None and expression.type == "identifier":
+    if expression is None:
+        return ""
+    if expression.type == "identifier":
         return _node_text(expression, source)
+    # `this.field.Method(...)` -> the field name is the receiver binding to resolve.
+    if expression.type == "member_access_expression":
+        inner = expression.child_by_field_name("expression")
+        name = expression.child_by_field_name("name")
+        if inner is not None and inner.type in {"this_expression", "this"} and name is not None and name.type == "identifier":
+            return _node_text(name, source)
     return ""
 
 

@@ -65,7 +65,7 @@ heuristics):
   `EventChannel` + `framework_tags=("masstransit",)`). Validated on `run-aspnetcore`:
   `BasketCheckoutEventHandler → CONSUMES_EVENT → BasketCheckoutEvent`. Tests:
   `tests/test_dotnet_event_extractor.py` (positive + import-gate negative + MediatR
-  no-false-positive). Full suite 1159 OK.
+  no-false-positive). Full suite passes.
 - [x] **Slice 1b — .NET MassTransit producers.** Done. Parser now captures parameter/field
   receiver-type bindings, local var→type bindings (from `new T()` / generic initializers like
   `Adapt<T>()`), and invocation receiver/first-arg. `dotnet_events._extract_producers` resolves

@@ -8,14 +8,14 @@ gap close run over run. Methodology, fixtures, and the backlog are stable; only 
 log grows.
 
 > Fixtures and their KG snapshots are intentionally **uncommitted**. Source checkouts live
-> outside this repo under `/Users/maruti/work/orgs/`; snapshots land in gitignored
+> outside this repo under the org root `$ORG` (e.g. `../orgs/`); snapshots land in gitignored
 > `data/kg_runs/fx_*`.
 
 ---
 
 ## Fixtures
 
-Linked OSS microservice repos, cloned shallow under `/Users/maruti/work/orgs/` (mirrors the
+Linked OSS microservice repos, cloned shallow under the org root `$ORG` (e.g. `../orgs/`, mirrors the
 latticeai/mercury org layout). Commit SHAs pin each Run for reproducibility (see per-run
 notes if a fixture is re-pulled).
 

@@ -170,6 +170,28 @@ public class Sender
         self.assertEqual(len(produces), 1)
         self.assertEqual(produces[0].qualifier["broker_kind"], "masstransit")
 
+    def test_this_qualified_publish_receiver_is_recognized(self) -> None:
+        # `this._publish.Publish(...)` must resolve the same as `_publish.Publish(...)`.
+        source = """using MassTransit;
+namespace App;
+public class Sender
+{
+    private readonly IPublishEndpoint _publish;
+    public async Task Go()
+    {
+        var msg = new OrderSubmitted();
+        await this._publish.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        self.assertEqual(len(produces), 1)
+        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
+
     def test_calls_inside_field_initializers_are_still_collected(self) -> None:
         # Collecting field bindings must not stop the parser walk from seeing field-initializer
         # calls (CALLS facts only materialize when the callee resolves, so assert at parse level).
