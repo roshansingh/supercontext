@@ -59,6 +59,8 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
     imports: list[JsonObject] = []
     symbols: list[JsonObject] = []
     calls: list[JsonObject] = []
+    bindings: list[JsonObject] = []
+    local_assignments: list[JsonObject] = []
     diagnostics: list[JsonObject] = []
 
     if root.has_error:
@@ -71,6 +73,8 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
         imports,
         symbols,
         calls,
+        bindings,
+        local_assignments,
         qualname_prefix=file_scoped_namespace,
         symbol_key_prefix=file_scoped_namespace,
     )
@@ -96,6 +100,8 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
         "imports": imports,
         "symbols": symbols,
         "calls": calls,
+        "bindings": bindings,
+        "local_assignments": local_assignments,
         "parse_diagnostics": diagnostics,
     }
 
@@ -106,6 +112,8 @@ def _collect(
     imports: list[JsonObject],
     symbols: list[JsonObject],
     calls: list[JsonObject],
+    bindings: list[JsonObject],
+    local_assignments: list[JsonObject],
     qualname_prefix: str,
     symbol_key_prefix: str,
 ) -> None:
@@ -132,7 +140,7 @@ def _collect(
             namespace_prefix = qualname_prefix
             namespace_key_prefix = symbol_key_prefix
         for child in node.children:
-            _collect(child, source, imports, symbols, calls, namespace_prefix, namespace_key_prefix)
+            _collect(child, source, imports, symbols, calls, bindings, local_assignments, namespace_prefix, namespace_key_prefix)
         return
 
     if node_type in {"class_declaration", "struct_declaration", "interface_declaration", "record_declaration"}:
@@ -145,13 +153,22 @@ def _collect(
                     "name": qualname,
                     "kind": node_type.replace("_declaration", ""),
                     "key": symbol_key,
+                    "bases": _base_types(node, source),
                     "line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
             )
+            # Primary-constructor parameters are class-scoped receiver bindings.
+            for binding in _parameter_bindings(node, source, symbol_key):
+                bindings.append(binding)
             for child in node.children:
-                _collect(child, source, imports, symbols, calls, qualname, symbol_key)
+                _collect(child, source, imports, symbols, calls, bindings, local_assignments, qualname, symbol_key)
             return
+
+    if node_type == "field_declaration":
+        for binding in _field_bindings(node, source, symbol_key_prefix):
+            bindings.append(binding)
+        # fall through: keep descending so calls inside field initializers are still collected
 
     if node_type in {"method_declaration", "constructor_declaration", "property_declaration"}:
         name = _declared_name(node, source)
@@ -170,9 +187,15 @@ def _collect(
                     "end_line": node.end_point[0] + 1,
                 }
             )
+            for binding in _parameter_bindings(node, source, symbol_key):
+                bindings.append(binding)
             for child in node.children:
-                _collect(child, source, imports, symbols, calls, qualname, symbol_key)
+                _collect(child, source, imports, symbols, calls, bindings, local_assignments, qualname, symbol_key)
             return
+
+    if node_type == "local_declaration_statement":
+        for assignment in _local_assignments(node, source, symbol_key_prefix):
+            local_assignments.append(assignment)
 
     if node_type == "invocation_expression":
         callee = _invocation_name(node, source)
@@ -182,13 +205,17 @@ def _collect(
                     "caller": qualname_prefix,
                     "caller_key": symbol_key_prefix,
                     "name": callee,
+                    "method": _invocation_method(node, source),
+                    "type_args": _invocation_type_args(node, source),
+                    "receiver": _invocation_receiver(node, source),
+                    "first_arg": _invocation_first_arg(node, source),
                     "arity": _argument_count(node),
                     "line": node.start_point[0] + 1,
                 }
             )
 
     for child in node.children:
-        _collect(child, source, imports, symbols, calls, qualname_prefix, symbol_key_prefix)
+        _collect(child, source, imports, symbols, calls, bindings, local_assignments, qualname_prefix, symbol_key_prefix)
 
 
 def _using_target(node: Any, source: bytes) -> str:
@@ -238,6 +265,233 @@ def _invocation_name(node: Any, source: bytes) -> str:
     for child in node.children:
         if child.type in {"identifier", "member_access_expression", "generic_name", "qualified_name"}:
             return _node_text(child, source)
+    return ""
+
+
+def _base_types(node: Any, source: bytes) -> list[JsonObject]:
+    base_list = next((child for child in node.children if child.type == "base_list"), None)
+    if base_list is None:
+        return []
+    return [
+        _type_ref(child, source)
+        for child in base_list.children
+        if child.type in {"identifier", "generic_name", "qualified_name", "alias_qualified_name"}
+    ]
+
+
+def _type_ref(node: Any, source: bytes) -> JsonObject:
+    # A generic type may be the node itself or nested inside a (alias-)qualified name,
+    # e.g. `MassTransit.IConsumer<T>` / `global::MassTransit.IConsumer<T>`.
+    generic = _generic_name_deep(node)
+    if generic is not None:
+        identifier = next((child for child in generic.children if child.type == "identifier"), None)
+        name = _node_text(identifier, source) if identifier is not None else _node_text(generic, source)
+        return {"name": name, "type_args": _type_args(generic, source)}
+    return {"name": _node_text(node, source), "type_args": []}
+
+
+def _generic_name_deep(node: Any) -> Any | None:
+    if node.type == "generic_name":
+        return node
+    for child in node.children:
+        found = _generic_name_deep(child)
+        if found is not None:
+            return found
+    return None
+
+
+def _type_args(generic_name: Any, source: bytes) -> list[str]:
+    argument_list = next((child for child in generic_name.children if child.type == "type_argument_list"), None)
+    if argument_list is None:
+        return []
+    return [
+        _node_text(child, source)
+        for child in argument_list.children
+        if child.type not in {"<", ">", ","}
+    ]
+
+
+def _generic_name_in(function: Any) -> Any | None:
+    if function.type == "generic_name":
+        return function
+    if function.type == "member_access_expression":
+        name = function.child_by_field_name("name")
+        if name is not None and name.type == "generic_name":
+            return name
+    return None
+
+
+def _invocation_type_args(node: Any, source: bytes) -> list[str]:
+    function = node.child_by_field_name("function")
+    if function is None:
+        return []
+    generic_name = _generic_name_in(function)
+    return _type_args(generic_name, source) if generic_name is not None else []
+
+
+def _parameter_bindings(node: Any, source: bytes, scope: str) -> list[JsonObject]:
+    parameter_list = next((child for child in node.children if child.type == "parameter_list"), None)
+    if parameter_list is None:
+        return []
+    bindings: list[JsonObject] = []
+    for child in parameter_list.children:
+        if child.type != "parameter":
+            continue
+        type_node = child.child_by_field_name("type")
+        name_node = child.child_by_field_name("name")
+        if type_node is None or name_node is None:
+            continue
+        bindings.append(
+            {
+                "scope": scope,
+                "name": _node_text(name_node, source),
+                "type": _type_ref(type_node, source)["name"],
+                "line": child.start_point[0] + 1,
+            }
+        )
+    return bindings
+
+
+def _field_bindings(node: Any, source: bytes, scope: str) -> list[JsonObject]:
+    declaration = next((child for child in node.children if child.type == "variable_declaration"), None)
+    if declaration is None:
+        return []
+    type_node = declaration.child_by_field_name("type")
+    if type_node is None:
+        return []
+    type_name = _type_ref(type_node, source)["name"]
+    bindings: list[JsonObject] = []
+    for child in declaration.children:
+        if child.type != "variable_declarator":
+            continue
+        name_node = child.child_by_field_name("name")
+        if name_node is None:
+            continue
+        bindings.append(
+            {
+                "scope": scope,
+                "name": _node_text(name_node, source),
+                "type": type_name,
+                "line": child.start_point[0] + 1,
+            }
+        )
+    return bindings
+
+
+def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]:
+    declaration = next((child for child in node.children if child.type == "variable_declaration"), None)
+    if declaration is None:
+        return []
+    # An explicit declared type (`OrderSubmitted msg = ...`) is the most reliable signal;
+    # only fall back to inferring from the initializer when the type is `var`/implicit.
+    declared_type = _explicit_declared_type(declaration, source)
+    assignments: list[JsonObject] = []
+    for child in declaration.children:
+        if child.type != "variable_declarator":
+            continue
+        name_node = child.child_by_field_name("name")
+        if name_node is None:
+            continue
+        resolved = declared_type or _initializer_type(child, source)
+        if resolved is None:
+            continue
+        assignments.append(
+            {
+                "scope": scope,
+                "name": _node_text(name_node, source),
+                "type": resolved,
+                "line": child.start_point[0] + 1,
+            }
+        )
+    return assignments
+
+
+# Declared types too vague to be a useful event channel; defer to the initializer instead.
+_NON_SPECIFIC_DECLARED_TYPES = {"var", "object", "dynamic", "Object", "System.Object", "global::System.Object"}
+
+
+def _explicit_declared_type(declaration: Any, source: bytes) -> str | None:
+    type_node = declaration.child_by_field_name("type")
+    if type_node is None or type_node.type == "implicit_type":
+        return None
+    text = _node_text(type_node, source).strip()
+    return text if text and text not in _NON_SPECIFIC_DECLARED_TYPES else None
+
+
+def _initializer_type(declarator: Any, source: bytes) -> str | None:
+    """Resolve the static type produced by a variable initializer, structurally.
+
+    Handles ``new T(...)`` (object creation type) and generic-method initializers such as
+    ``x.Adapt<T>()`` / ``Map<T>(...)`` (the generic type argument). Returns None for
+    initializers whose type is not statically visible (e.g. ``x.ToDto()``).
+    """
+    value = declarator.child_by_field_name("value")
+    if value is None:
+        for child in declarator.children:
+            if child.type not in {"=", "identifier"}:
+                value = child
+                break
+    if value is None:
+        return None
+    if value.type == "object_creation_expression":
+        type_node = value.child_by_field_name("type")
+        return _node_text(type_node, source).strip() if type_node is not None else None
+    if value.type == "invocation_expression":
+        type_args = _invocation_type_args(value, source)
+        return type_args[0] if type_args else None
+    return None
+
+
+def _invocation_receiver(node: Any, source: bytes) -> str:
+    function = node.child_by_field_name("function")
+    if function is None or function.type != "member_access_expression":
+        return ""
+    expression = function.child_by_field_name("expression")
+    if expression is None:
+        return ""
+    if expression.type == "identifier":
+        return _node_text(expression, source)
+    # `this.field.Method(...)` -> the field name is the receiver binding to resolve.
+    if expression.type == "member_access_expression":
+        inner = expression.child_by_field_name("expression")
+        name = expression.child_by_field_name("name")
+        if inner is not None and inner.type in {"this_expression", "this"} and name is not None and name.type == "identifier":
+            return _node_text(name, source)
+    return ""
+
+
+def _invocation_first_arg(node: Any, source: bytes) -> JsonObject:
+    arguments = node.child_by_field_name("arguments")
+    if arguments is None:
+        return {"kind": "none"}
+    argument = next((child for child in arguments.children if child.type == "argument"), None)
+    if argument is None:
+        return {"kind": "none"}
+    expression = next((child for child in argument.children if child.is_named), None)
+    if expression is None:
+        return {"kind": "none"}
+    if expression.type == "object_creation_expression":
+        type_node = expression.child_by_field_name("type")
+        return {"kind": "object_creation", "type": _node_text(type_node, source).strip() if type_node is not None else None}
+    if expression.type == "identifier":
+        return {"kind": "identifier", "name": _node_text(expression, source)}
+    return {"kind": "other"}
+
+
+def _invocation_method(node: Any, source: bytes) -> str:
+    function = node.child_by_field_name("function")
+    if function is None:
+        return ""
+    target = function
+    if function.type == "member_access_expression":
+        name = function.child_by_field_name("name")
+        if name is not None:
+            target = name
+    if target.type == "generic_name":
+        identifier = next((child for child in target.children if child.type == "identifier"), None)
+        return _node_text(identifier, source) if identifier is not None else ""
+    if target.type == "identifier":
+        return _node_text(target, source)
     return ""
 
 

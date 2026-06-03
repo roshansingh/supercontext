@@ -8,6 +8,7 @@ from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.extraction.framework.adapter import ExtractionContext
+from source.kg.languages.dotnet.extractors.dotnet_events import extract_dotnet_events
 from source.kg.languages.dotnet.extractors.parser_bridge import parse_dotnet_repo
 
 
@@ -229,6 +230,19 @@ class CSharpExtractor:
                 line,
                 qualifier={"call": callee_name},
             )
+
+        extract_dotnet_events(
+            repo=repo,
+            file_path=file_path,
+            parsed_file=parsed_file,
+            symbols_by_qualname=symbols_by_qualname,
+            symbols_by_key=symbols_by_key,
+            build=build,
+            tenant_id=tenant_id,
+            source_system=self.source_system,
+            add_fact=self._add_fact,
+            entity_evidence=self._entity_evidence,
+        )
 
     def _scope_candidate_callees(
         self,
