@@ -85,6 +85,11 @@ def _walk_tree(root: Any, source: bytes) -> JsonObject:
             call["caller"] = module_symbol
             call["caller_key"] = module_symbol
             has_module_calls = True
+    # Keep module-level binding/local scopes aligned with the rewritten call caller_key so
+    # top-level `var api = app.MapGroup(...)` resolves for top-level `api.MapGet(...)` calls.
+    for row in (*bindings, *local_assignments):
+        if row.get("scope") in {"", file_scoped_namespace}:
+            row["scope"] = module_symbol
     if has_module_calls:
         symbols.insert(
             0,

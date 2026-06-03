@@ -149,6 +149,18 @@ public class Endpoints
             endpoints = _endpoints(tmp, {"Endpoints.cs": source})
         self.assertEqual(endpoints, {("GET", "/health")})
 
+    def test_module_level_mapgroup_local_prefix_is_applied(self) -> None:
+        # Top-level statements: `var api = app.MapGroup("/api"); api.MapGet(...)` — module-scope
+        # call caller_key and the local's scope must align.
+        source = """using Microsoft.AspNetCore.Builder;
+var app = WebApplication.Create();
+var api = app.MapGroup("/api");
+api.MapGet("/ping", () => "ok");
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            endpoints = _endpoints(tmp, {"Program.cs": source})
+        self.assertEqual(endpoints, {("GET", "/api/ping")})
+
     def test_chained_inline_mapgroup_prefix_is_applied(self) -> None:
         # `app.MapGroup("/api").MapGet("/x")` (no local var) must still get the group prefix.
         source = """using Microsoft.AspNetCore.Builder;

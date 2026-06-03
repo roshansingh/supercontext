@@ -939,6 +939,13 @@ def extract_dotnet_endpoints(
         _dotnet_minimal_api_endpoints(repo, scanned, parsed_file, service_entity, build, tenant_id)
 
 
+def _nearest_at_or_before(declarations: list[tuple[int, str]] | None, line: int) -> str:
+    if not declarations:
+        return ""
+    preceding = [(decl_line, value) for decl_line, value in declarations if decl_line <= line]
+    return max(preceding)[1] if preceding else ""
+
+
 def _normalize_attribute_name(name: str) -> str:
     # C# attributes may be namespace-qualified and the `Attribute` suffix is optional, so
     # `[Microsoft.AspNetCore.Mvc.HttpGetAttribute]` and `[HttpGet]` must match the same key.
@@ -992,13 +999,16 @@ def _dotnet_minimal_api_endpoints(
     build: ConfigKgBuild,
     tenant_id: str,
 ) -> None:
-    # Scope MapGroup prefixes by (method symbol key, local name) so a local `api` in one method
-    # cannot prefix routes registered through a different method's `api`.
-    group_prefixes: dict[tuple[str, str], str] = {}
+    # MapGroup prefixes keyed by (method symbol key, local name) -> [(line, prefix)] so a local
+    # `api` cannot prefix routes in another scope, and a later reassignment only affects calls
+    # after it (nearest declaration at/before the call site wins).
+    group_prefixes: dict[tuple[str, str], list[tuple[int, str]]] = {}
     for assignment in parsed_file.get("local_assignments", []):
         if isinstance(assignment, dict) and assignment.get("map_group_prefix"):
             key = (str(assignment.get("scope", "")), str(assignment.get("name", "")))
-            group_prefixes[key] = str(assignment.get("map_group_prefix"))
+            group_prefixes.setdefault(key, []).append(
+                (int(assignment.get("line") or 0), str(assignment.get("map_group_prefix")))
+            )
     for call in parsed_file.get("calls", []):
         if not isinstance(call, dict):
             continue
@@ -1008,8 +1018,9 @@ def _dotnet_minimal_api_endpoints(
         first_arg = call.get("first_arg") or {}
         if first_arg.get("kind") != "string":
             continue
+        line = int(call.get("line") or 1)
         prefix = (
-            group_prefixes.get((str(call.get("caller_key", "")), str(call.get("receiver", ""))), "")
+            _nearest_at_or_before(group_prefixes.get((str(call.get("caller_key", "")), str(call.get("receiver", "")))), line)
             or str(call.get("inline_group_prefix") or "")  # chained app.MapGroup("p").MapGet(...)
         )
         path = _join_route(prefix, str(first_arg.get("value", "")))
