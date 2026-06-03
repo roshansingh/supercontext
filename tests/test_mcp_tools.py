@@ -2743,6 +2743,29 @@ class McpToolsTest(unittest.TestCase):
             wrong_line["target"]["coordinate_mismatch"]["retry_arguments"],
             [{"symbol": "payments.gateway.charge_card", "path": "payments/gateway.py", "line": 5}],
         )
+        # Distinct marker: top-level coordinate_mismatch + answerability missing
+        # ["correct_coordinate"], so a wrong path/line is not read as a missing symbol.
+        self.assertEqual(callers["coordinate_mismatch"]["status"], "symbol_found_at_different_coordinate")
+        self.assertTrue(callers["coordinate_mismatch"]["retry_arguments"])
+        self.assertEqual(callers["answerability"]["missing_fact_families"], ["correct_coordinate"])
+        # Control: a genuinely missing symbol has no marker and keeps ["requested_fact"].
+        with _fixture_snapshot() as kg:
+            missing = call_tool(kg, "find_callers", {"symbol": "no_such_symbol_zzz"})
+        self.assertEqual(missing["status"], "not_found")
+        self.assertNotIn("coordinate_mismatch", missing)
+        self.assertEqual(missing["answerability"]["missing_fact_families"], ["requested_fact"])
+
+    def test_symbol_coordinate_mismatch_marker_across_symbol_tools(self) -> None:
+        # All four symbol tools surface the same top-level marker + answerability distinction.
+        for tool in ("find_callers", "find_callees", "blast_radius", "reverse_impact"):
+            with _fixture_snapshot() as kg:
+                result = call_tool(kg, tool, {"symbol": "charge_card", "path": "payments/checkout.py", "line": 14})
+            self.assertEqual(result["status"], "not_found", tool)
+            self.assertEqual(
+                result["coordinate_mismatch"]["status"], "symbol_found_at_different_coordinate", tool
+            )
+            self.assertTrue(result["coordinate_mismatch"]["retry_arguments"], tool)
+            self.assertEqual(result["answerability"]["missing_fact_families"], ["correct_coordinate"], tool)
 
     def test_symbol_coordinate_mismatch_is_surfaced_for_source_side_tools(self) -> None:
         with _fixture_snapshot() as kg:
