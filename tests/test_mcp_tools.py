@@ -182,6 +182,22 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(payload["candidate_leads"]["status"], "found")
         self.assertEqual(payload["candidate_leads"]["sources"][0]["lead_kind"], "candidate_match")
 
+    def test_candidate_lead_kind_classifies_every_registered_field(self) -> None:
+        from source.kg.product.mcp_tools import (
+            _CANDIDATE_LEAD_FIELDS,
+            _NESTED_CANDIDATE_LEAD_FIELDS,
+            _candidate_lead_kind,
+        )
+
+        # call_site_leads must classify as a real lead kind, not the generic fallback.
+        self.assertEqual(_candidate_lead_kind("call_site_leads"), "non_callable_call_site_lead")
+        # Every registered candidate-lead field/label resolves deterministically.
+        for field in _CANDIDATE_LEAD_FIELDS:
+            self.assertIsInstance(_candidate_lead_kind(field), str)
+        for field, _path in _NESTED_CANDIDATE_LEAD_FIELDS:
+            self.assertIsInstance(_candidate_lead_kind(field), str)
+        self.assertEqual(_candidate_lead_kind("unknown_field"), "candidate_lead")
+
     def test_default_tool_metadata_ignores_found_status_without_rows(self) -> None:
         payload = _with_default_tool_metadata(
             {"status": "found", "import_consumer_leads": {"status": "found"}},

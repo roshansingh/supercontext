@@ -695,7 +695,9 @@ def _compact_service_brief_surfaces(
                 compact_surfaces[field] = kept.get(field, [])
         compact["operational_surfaces"] = compact_surfaces
         overflow = demoted
-        truncated_sections = {name.split(".")[0] for name in truncated}
+        # Keep the precise section paths (e.g. evidence_partition.known_linked) rather than
+        # collapsing to the parent key, which would name a dict that isn't itself a list.
+        truncated_sections = set(truncated)
     endpoints = result.get("endpoints")
     if isinstance(endpoints, list):
         kept_endpoints = _compact_relation_rows(endpoints, limit=COMPACT_RUNTIME_HEADSTART_LIMIT)

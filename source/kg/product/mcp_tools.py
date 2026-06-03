@@ -620,18 +620,27 @@ def _dedupe_strings(values: list[str]) -> list[str]:
     return deduped
 
 
+# Exact field -> lead-kind mapping for every registered candidate-lead field/nested label.
+# Explicit (not substring heuristics) so a new field — e.g. call_site_leads — is classified
+# deliberately rather than falling through, and so a field name containing an unrelated
+# keyword can't be misclassified.
+_CANDIDATE_LEAD_KIND: dict[str, str] = {
+    "candidates": "candidate_match",
+    "candidate_impact_previews": "candidate_match",
+    "call_site_leads": "non_callable_call_site_lead",
+    "import_consumer_leads": "import_only_source_lead",
+    "terminal_import_consumer_leads": "import_only_source_lead",
+    "truncated_terminal_symbols": "truncated_source_inspection_lead",
+    "deploy_order_guidance": "inference_or_guidance",
+    "unlinked_domain_route_samples": "unlinked_source_lead",
+    "operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "service_operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "runtime_architecture.answer_packet.unlinked_runtime_leads": "unlinked_source_lead",
+}
+
+
 def _candidate_lead_kind(field: str) -> str:
-    if "truncated" in field:
-        return "truncated_source_inspection_lead"
-    if "import" in field:
-        return "import_only_source_lead"
-    if "unlinked" in field:
-        return "unlinked_source_lead"
-    if "candidate" in field:
-        return "candidate_match"
-    if "guidance" in field:
-        return "inference_or_guidance"
-    return "candidate_lead"
+    return _CANDIDATE_LEAD_KIND.get(field, "candidate_lead")
 
 
 _PROVEN_FACT_FIELDS = (
