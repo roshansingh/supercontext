@@ -236,6 +236,7 @@ class CSharpExtractor:
             file_path=file_path,
             parsed_file=parsed_file,
             symbols_by_qualname=symbols_by_qualname,
+            symbols_by_key=symbols_by_key,
             build=build,
             tenant_id=tenant_id,
             add_fact=self._add_fact,

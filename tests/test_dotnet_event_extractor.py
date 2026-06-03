@@ -125,6 +125,28 @@ public class Svc(IEventBus eventBus)
         channel = next(e for e in build.entities if e.kind == "EventChannel")
         self.assertEqual(channel.identity["channel_address"], "PaymentCaptured")
 
+    def test_producer_resolves_explicit_declared_local_type(self) -> None:
+        # `OrderSubmitted msg = Build();` -> the declared type resolves even when the
+        # initializer's return type isn't statically visible.
+        source = """using MassTransit;
+namespace App;
+public class Sender(IPublishEndpoint publishEndpoint)
+{
+    public async Task Go()
+    {
+        OrderSubmitted msg = Build();
+        await publishEndpoint.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        self.assertEqual(len(produces), 1)
+        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
+
     def test_unresolvable_producer_message_emits_coverage_not_a_guess(self) -> None:
         # Publishing a parameter whose concrete type is not statically visible -> loud refusal.
         source = """using MassTransit;

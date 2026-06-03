@@ -382,6 +382,9 @@ def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]
     declaration = next((child for child in node.children if child.type == "variable_declaration"), None)
     if declaration is None:
         return []
+    # An explicit declared type (`OrderSubmitted msg = ...`) is the most reliable signal;
+    # only fall back to inferring from the initializer when the type is `var`/implicit.
+    declared_type = _explicit_declared_type(declaration, source)
     assignments: list[JsonObject] = []
     for child in declaration.children:
         if child.type != "variable_declarator":
@@ -389,7 +392,7 @@ def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]
         name_node = child.child_by_field_name("name")
         if name_node is None:
             continue
-        resolved = _initializer_type(child, source)
+        resolved = declared_type or _initializer_type(child, source)
         if resolved is None:
             continue
         assignments.append(
@@ -401,6 +404,14 @@ def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]
             }
         )
     return assignments
+
+
+def _explicit_declared_type(declaration: Any, source: bytes) -> str | None:
+    type_node = declaration.child_by_field_name("type")
+    if type_node is None or type_node.type == "implicit_type":
+        return None
+    text = _node_text(type_node, source).strip()
+    return text if text and text != "var" else None
 
 
 def _initializer_type(declarator: Any, source: bytes) -> str | None:
@@ -420,7 +431,7 @@ def _initializer_type(declarator: Any, source: bytes) -> str | None:
         return None
     if value.type == "object_creation_expression":
         type_node = value.child_by_field_name("type")
-        return _type_ref(type_node, source)["name"] if type_node is not None else None
+        return _node_text(type_node, source).strip() if type_node is not None else None
     if value.type == "invocation_expression":
         type_args = _invocation_type_args(value, source)
         return type_args[0] if type_args else None
@@ -457,7 +468,7 @@ def _invocation_first_arg(node: Any, source: bytes) -> JsonObject:
         return {"kind": "none"}
     if expression.type == "object_creation_expression":
         type_node = expression.child_by_field_name("type")
-        return {"kind": "object_creation", "type": _type_ref(type_node, source)["name"] if type_node is not None else None}
+        return {"kind": "object_creation", "type": _node_text(type_node, source).strip() if type_node is not None else None}
     if expression.type == "identifier":
         return {"kind": "identifier", "name": _node_text(expression, source)}
     return {"kind": "other"}

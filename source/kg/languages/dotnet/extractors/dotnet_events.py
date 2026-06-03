@@ -53,6 +53,7 @@ def extract_dotnet_events(
     file_path: Path,
     parsed_file: JsonObject,
     symbols_by_qualname: dict[str, list[Entity]],
+    symbols_by_key: dict[str, Entity],
     build: object,
     tenant_id: str,
     add_fact: Callable[..., None],
@@ -79,6 +80,7 @@ def extract_dotnet_events(
         file_path=file_path,
         parsed_file=parsed_file,
         symbols_by_qualname=symbols_by_qualname,
+        symbols_by_key=symbols_by_key,
         build=build,
         tenant_id=tenant_id,
         add_fact=add_fact,
@@ -144,6 +146,7 @@ def _extract_producers(
     file_path: Path,
     parsed_file: JsonObject,
     symbols_by_qualname: dict[str, list[Entity]],
+    symbols_by_key: dict[str, Entity],
     build: object,
     tenant_id: str,
     add_fact: Callable[..., None],
@@ -153,10 +156,12 @@ def _extract_producers(
         (str(b.get("scope", "")), str(b.get("name", ""))): str(b.get("type", ""))
         for b in parsed_file.get("bindings", [])
     }
-    locals_index = {
-        (str(a.get("scope", "")), str(a.get("name", ""))): str(a.get("type", ""))
-        for a in parsed_file.get("local_assignments", [])
-    }
+    # (scope, name) -> [(line, type)] so a redeclared local resolves to the nearest
+    # declaration preceding the publish call rather than a last-wins single value.
+    locals_index: dict[tuple[str, str], list[tuple[int, str]]] = {}
+    for assignment in parsed_file.get("local_assignments", []):
+        key = (str(assignment.get("scope", "")), str(assignment.get("name", "")))
+        locals_index.setdefault(key, []).append((int(assignment.get("line") or 0), str(assignment.get("type", ""))))
     for call in parsed_file.get("calls", []):
         method = str(call.get("method", "")).strip()
         receiver = str(call.get("receiver", "")).strip()
@@ -170,11 +175,13 @@ def _extract_producers(
         broker_kind, methods = spec
         if method not in methods:
             continue
-        subject = _first(symbols_by_qualname.get(caller))
+        line = int(call.get("line") or 1)
+        # Prefer the signature-specific symbol key so an overloaded method attaches the fact
+        # to the exact overload the call sits in, not just the first same-named symbol.
+        subject = symbols_by_key.get(str(call.get("caller_key", ""))) or _first(symbols_by_qualname.get(caller))
         if subject is None:
             continue
-        line = int(call.get("line") or 1)
-        channel_address = _resolve_message_type(call, caller, locals_index)
+        channel_address = _resolve_message_type(call, caller, locals_index, line)
         if not channel_address:
             build.coverage.append(  # type: ignore[attr-defined]
                 Coverage(
@@ -224,7 +231,12 @@ def _resolve_binding_type(bindings: dict[tuple[str, str], str], caller: str, rec
     return None
 
 
-def _resolve_message_type(call: JsonObject, caller: str, locals_index: dict[tuple[str, str], str]) -> str | None:
+def _resolve_message_type(
+    call: JsonObject,
+    caller: str,
+    locals_index: dict[tuple[str, str], list[tuple[int, str]]],
+    call_line: int,
+) -> str | None:
     type_args = call.get("type_args") or []
     if type_args:
         return str(type_args[0]).strip() or None
@@ -234,9 +246,17 @@ def _resolve_message_type(call: JsonObject, caller: str, locals_index: dict[tupl
         created = first_arg.get("type")
         return str(created).strip() if created else None
     if kind == "identifier":
-        resolved = locals_index.get((caller, str(first_arg.get("name", ""))))
-        return resolved or None
+        return _nearest_local_type(locals_index.get((caller, str(first_arg.get("name", "")))), call_line)
     return None
+
+
+def _nearest_local_type(declarations: list[tuple[int, str]] | None, call_line: int) -> str | None:
+    if not declarations:
+        return None
+    # the declaration on or before the call line wins; fall back to the earliest if none precede.
+    preceding = [(line, type_name) for line, type_name in declarations if line <= call_line]
+    chosen = max(preceding) if preceding else min(declarations)
+    return chosen[1] or None
 
 
 def _emit_event(
