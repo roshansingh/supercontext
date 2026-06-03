@@ -19,7 +19,11 @@ from source.kg.file_formats._shared.common import (
 )
 from source.kg.core.tenant import resolve_tenant_id
 from source.kg.file_formats.openapi_yaml import extract_openapi_endpoints
-from source.kg.languages.python.extractors.frameworks import extract_django_routes, extract_flask_routes
+from source.kg.languages.python.extractors.frameworks import (
+    extract_django_routes,
+    extract_fastapi_routes,
+    extract_flask_routes,
+)
 from source.kg.languages.python.extractors.frameworks.routes import EndpointRoute
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
@@ -133,8 +137,10 @@ def _extract_python_backend_routes(
     routes: list[EndpointRoute] = []
     flask_routes, flask_recognized = extract_flask_routes(tree)
     django_routes, django_recognized = extract_django_routes(tree, scanned.path)
+    fastapi_routes, fastapi_recognized = extract_fastapi_routes(tree)
     routes.extend(flask_routes)
     routes.extend(django_routes)
+    routes.extend(fastapi_routes)
     for route in routes:
         _add_endpoint_fact(
             repo,
@@ -149,7 +155,7 @@ def _extract_python_backend_routes(
             tenant_id,
             validate_path=False,
         )
-    return flask_recognized or django_recognized
+    return flask_recognized or django_recognized or fastapi_recognized
 
 
 def extract_openapi_document(
