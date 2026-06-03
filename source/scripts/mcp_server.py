@@ -9,7 +9,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from source.kg.core.models import JsonObject
+from source.kg.core.models import JsonObject, canonical_json
 from source.kg.product.mcp_tools import call_tool, tool_definitions
 from source.kg.query.snapshot import KgSnapshot
 from source.scripts.mcp_host import format_host_for_url, is_loopback_host
@@ -283,7 +283,10 @@ def _tools_call_result(kg: KgSnapshot, params: JsonObject) -> JsonObject:
         raise ValueError("tools/call arguments must be an object")
     result = call_tool(kg, name.strip(), arguments)
     return {
-        "content": [{"type": "text", "text": json.dumps(result, indent=2, sort_keys=True)}],
+        # Serialize the text block with canonical_json — the exact form the output budgeter
+        # measures against — so the on-the-wire size matches the enforced cap (and drops the
+        # ~2.5x pretty-print bloat). structuredContent carries the same parsed object.
+        "content": [{"type": "text", "text": canonical_json(result)}],
         "structuredContent": result,
         "isError": False,
     }

@@ -919,6 +919,11 @@ def _is_callable_symbol(symbol: JsonObject) -> bool:
     Parser-derived ``symbol_kind`` is authoritative when present. When a snapshot
     records no kind, a present ``qualname`` is treated as callable and an absent one
     (a module/notebook/script call site rendering as ``module.None``) as a lead.
+
+    Invariant: this fallback relies on extractors leaving ``qualname`` empty for
+    non-callable module/notebook/script entities. If a future ingestion path populates
+    ``qualname`` on a module-level entity without also setting ``symbol_kind``, it would be
+    miscounted as a callable affected symbol — prefer always emitting ``symbol_kind``.
     """
     if not isinstance(symbol, dict):
         return False

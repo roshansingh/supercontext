@@ -393,18 +393,19 @@ def _compact_review_detail(result: JsonObject, *, limit: int) -> tuple[JsonObjec
             kept = [_compact_symbol(row) for row in rows[:limit] if isinstance(row, dict)]
             _record_truncated(truncated_sections, field, original=len(rows), kept=len(kept))
             compact[field] = kept
-    impact = result.get("impact")
-    if isinstance(impact, dict):
-        compact["impact"] = {
-            key: _compact_relation_rows(value, limit=limit) if isinstance(value, list) else value
-            for key, value in impact.items()
-        }
-    runtime_surfaces = result.get("runtime_surfaces")
-    if isinstance(runtime_surfaces, dict):
-        compact["runtime_surfaces"] = {
-            key: _compact_relation_rows(value, limit=limit) if isinstance(value, list) else value
-            for key, value in runtime_surfaces.items()
-        }
+    for dict_field in ("impact", "runtime_surfaces"):
+        nested = result.get(dict_field)
+        if not isinstance(nested, dict):
+            continue
+        compacted: JsonObject = {}
+        for key, value in nested.items():
+            if isinstance(value, list):
+                kept_rows = _compact_relation_rows(value, limit=limit)
+                _record_truncated(truncated_sections, f"{dict_field}.{key}", original=len(value), kept=len(kept_rows))
+                compacted[key] = kept_rows
+            else:
+                compacted[key] = value
+        compact[dict_field] = compacted
     for nested_field in ("framework_impact", "application_impact"):
         nested = result.get(nested_field)
         if isinstance(nested, dict):
@@ -1628,10 +1629,10 @@ def _compact_import_consumer_lead(row: JsonObject) -> JsonObject:
         "importer": _compact_entity_ref(row.get("importer")),
         "imported_module": _compact_entity_ref(row.get("imported_module")),
         "imported_symbol": _compact_symbol(row.get("imported_symbol")),
-        # Keep a couple of sample names plus a count and the importing module's
-        # coordinates; the full module symbol inventory is the dominant source of
-        # packet bloat and is recoverable by inspecting the cited module.
-        "importer_module_symbol_samples": importer_module_symbols[:2],
+        # Keep the existing importer_module_symbols field name (truncated to a sample) for
+        # schema compatibility, plus a count; the full inventory is the dominant source of
+        # packet bloat and is recoverable by inspecting the cited module coordinates.
+        "importer_module_symbols": importer_module_symbols[:2],
         "importer_module_symbol_count": len(importer_module_symbols),
         "source_coordinates": _source_coordinates(row.get("fact")),
         "interpretation": row.get("interpretation"),
