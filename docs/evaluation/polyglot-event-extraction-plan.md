@@ -62,7 +62,7 @@ heuristics):
   Logic in `dotnet_events.py`, called from `csharp_extractor._extract_file` so events attach to
   the existing CodeSymbol entities (deviation from "separate adapter" — justified by the single
   .NET extractor architecture; capability `dotnet-csharp-bridge` gained `CONSUMES_EVENT` +
-  `EventChannel` + `framework_tags=("masstransit",)`). Validated on `run-aspnetcore`:
+  `EventChannel` + `framework_tags=("MassTransit",)`). Validated on `run-aspnetcore`:
   `BasketCheckoutEventHandler → CONSUMES_EVENT → BasketCheckoutEvent`. Tests:
   `tests/test_dotnet_event_extractor.py` (positive + import-gate negative + MediatR
   no-false-positive). Full suite passes.
@@ -78,7 +78,7 @@ heuristics):
   `: IIntegrationEventHandler<T>` (ungated — distinctive name; eShop uses implicit usings) →
   CONSUMES_EVENT, broker `integration_event`. Producers: `IEventBus.Publish/PublishAsync`. Validated
   on `eShop`: 18 consumers, 1 resolved producer (+3 honest coverage rows), cross-service link on
-  `GracePeriodConfirmedIntegrationEvent`. Tests in `tests/test_dotnet_event_extractor.py` (7).
+  `GracePeriodConfirmedIntegrationEvent`. Tests in `tests/test_dotnet_event_extractor.py`.
 - [ ] **(deferred) .NET Azure Service Bus** (`ServiceBusSender.SendMessageAsync`, `ServiceBusProcessor`).
   Neither fixture uses it, so it cannot be validated yet — deferred until a fixture exists rather
   than shipping an unvalidated/guessed extractor.
