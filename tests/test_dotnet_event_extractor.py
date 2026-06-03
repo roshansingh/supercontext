@@ -160,6 +160,27 @@ public class Sender(IPublishEndpoint publishEndpoint)
         channel = next(e for e in build.entities if e.kind == "EventChannel")
         self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
 
+    def test_ambiguous_shadowed_local_refuses_instead_of_guessing(self) -> None:
+        # Same local name redeclared with different types (block scoping not modeled) -> coverage, no fact.
+        source = """using MassTransit;
+namespace App;
+public class Sender(IPublishEndpoint publishEndpoint)
+{
+    public async Task Go()
+    {
+        { OrderA msg = new OrderA(); }
+        OrderB msg = new OrderB();
+        await publishEndpoint.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        self.assertEqual([f for f in build.facts if f.predicate == "PRODUCES_EVENT"], [])
+        unresolved = [c for c in build.coverage if c.scope_ref.get("reason") == "unresolved_event_message_type"]
+        self.assertEqual(len(unresolved), 1)
+
     def test_object_declared_local_defers_to_initializer_not_object_channel(self) -> None:
         # `object msg = new OrderSubmitted()` must resolve OrderSubmitted, never a channel named "object".
         source = """using MassTransit;

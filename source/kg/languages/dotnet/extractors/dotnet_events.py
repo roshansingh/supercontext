@@ -253,10 +253,14 @@ def _resolve_message_type(
 def _nearest_local_type(declarations: list[tuple[int, str]] | None, call_line: int) -> str | None:
     if not declarations:
         return None
-    # the declaration on or before the call line wins; fall back to the earliest if none precede.
     preceding = [(line, type_name) for line, type_name in declarations if line <= call_line]
-    chosen = max(preceding) if preceding else min(declarations)
-    return chosen[1] or None
+    if not preceding:
+        return None
+    # Block scoping isn't modeled, so a local name redeclared with *different* types before the
+    # call is ambiguous — refuse (caller emits a coverage row) rather than emit a wrong channel.
+    if len({type_name for _, type_name in preceding}) > 1:
+        return None
+    return max(preceding)[1] or None
 
 
 def _emit_event(
