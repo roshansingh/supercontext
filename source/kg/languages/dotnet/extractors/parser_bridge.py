@@ -501,8 +501,6 @@ def _invocation_first_arg(node: Any, source: bytes) -> JsonObject:
     expression = named_children[-1] if named_children else None
     if expression is None:
         return {"kind": "none"}
-    if expression is None:
-        return {"kind": "none"}
     if expression.type == "object_creation_expression":
         type_node = expression.child_by_field_name("type")
         return {"kind": "object_creation", "type": _node_text(type_node, source).strip() if type_node is not None else None}
