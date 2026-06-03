@@ -575,7 +575,9 @@ def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObje
 
 
 def _compact_reverse_impact_source(value: JsonObject) -> JsonObject:
-    keys = ("status", "reason", "message", "candidate_count")
+    # Preserve recovery fields (confidence, query, and the coordinate_mismatch retry hint)
+    # so an over-budget packet for a wrong path/line still tells the agent how to retry.
+    keys = ("status", "query", "reason", "message", "candidate_count", "confidence", "coordinate_mismatch")
     compact = {key: value[key] for key in keys if key in value}
     resolved = value.get("resolved_symbol")
     if isinstance(resolved, dict):
@@ -695,9 +697,9 @@ def _compact_service_brief_surfaces(
                 compact_surfaces[field] = kept.get(field, [])
         compact["operational_surfaces"] = compact_surfaces
         overflow = demoted
-        # Keep the precise section paths (e.g. evidence_partition.known_linked) rather than
-        # collapsing to the parent key, which would name a dict that isn't itself a list.
-        truncated_sections = set(truncated)
+        # Full packet paths (e.g. operational_surfaces.evidence_partition.known_linked), so
+        # truncated_sections entries are addressable and consistent with the other budgeters.
+        truncated_sections = {f"operational_surfaces.{name}" for name in truncated}
     endpoints = result.get("endpoints")
     if isinstance(endpoints, list):
         kept_endpoints = _compact_relation_rows(endpoints, limit=COMPACT_RUNTIME_HEADSTART_LIMIT)

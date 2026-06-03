@@ -3786,6 +3786,7 @@ def _planning_context_output(
         status=status,
         query=query,
         anchors=anchors,
+        line=line,
     )
     authz_surface = authz_surface_packet(
         kg,
@@ -3904,8 +3905,11 @@ def _planning_context_runtime_architecture_for_anchor_status(
     status: str,
     query: str | None,
     anchors: dict[str, str | None],
+    line: int | None = None,
 ) -> JsonObject:
-    if not _planning_context_should_gate_runtime_architecture(status=status, query=query, anchors=anchors):
+    if not _planning_context_should_gate_runtime_architecture(
+        status=status, query=query, anchors=anchors, line=line
+    ):
         return runtime_architecture
     answer_packet = runtime_architecture.get("answer_packet")
     if not isinstance(answer_packet, dict):
@@ -3951,8 +3955,9 @@ def _planning_context_should_gate_runtime_architecture(
     status: str,
     query: str | None,
     anchors: dict[str, str | None],
+    line: int | None,
 ) -> bool:
-    if _is_planning_context_fleet_request(query=query, line=None, anchors=anchors):
+    if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
         return False
     return status in {"ambiguous", "not_found"}
 
