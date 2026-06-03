@@ -17,6 +17,18 @@ public class OrderConsumer : IConsumer<OrderSubmitted>
 """
 
 
+def _dotnet_dependencies_available() -> bool:
+    try:
+        import tree_sitter  # noqa: F401
+        import tree_sitter_c_sharp  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+DOTNET_AVAILABLE = _dotnet_dependencies_available()
+
+
 def _extract(tmp: str, files: dict[str, str]) -> object:
     root = Path(tmp)
     for name, text in files.items():
@@ -24,6 +36,7 @@ def _extract(tmp: str, files: dict[str, str]) -> object:
     return CSharpExtractor().extract(discover_repo(root))
 
 
+@unittest.skipIf(not DOTNET_AVAILABLE, "tree-sitter and tree-sitter-c-sharp not installed; install with pip install -e '.[dotnet]'")
 class DotnetEventExtractorTest(unittest.TestCase):
     def test_masstransit_consumer_emits_consumes_event_on_message_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,6 +159,26 @@ public class Sender(IPublishEndpoint publishEndpoint)
         self.assertEqual(len(produces), 1)
         channel = next(e for e in build.entities if e.kind == "EventChannel")
         self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
+
+    def test_object_declared_local_defers_to_initializer_not_object_channel(self) -> None:
+        # `object msg = new OrderSubmitted()` must resolve OrderSubmitted, never a channel named "object".
+        source = """using MassTransit;
+namespace App;
+public class Sender(IPublishEndpoint publishEndpoint)
+{
+    public async Task Go()
+    {
+        object msg = new OrderSubmitted();
+        await publishEndpoint.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        channels = [e.identity["channel_address"] for e in build.entities if e.kind == "EventChannel"]
+        self.assertEqual(channels, ["OrderSubmitted"])
+        self.assertNotIn("object", channels)
 
     def test_unresolvable_producer_message_emits_coverage_not_a_guess(self) -> None:
         # Publishing a parameter whose concrete type is not statically visible -> loud refusal.

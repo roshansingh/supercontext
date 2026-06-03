@@ -406,12 +406,16 @@ def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]
     return assignments
 
 
+# Declared types too vague to be a useful event channel; defer to the initializer instead.
+_NON_SPECIFIC_DECLARED_TYPES = {"var", "object", "dynamic"}
+
+
 def _explicit_declared_type(declaration: Any, source: bytes) -> str | None:
     type_node = declaration.child_by_field_name("type")
     if type_node is None or type_node.type == "implicit_type":
         return None
     text = _node_text(type_node, source).strip()
-    return text if text and text != "var" else None
+    return text if text and text not in _NON_SPECIFIC_DECLARED_TYPES else None
 
 
 def _initializer_type(declarator: Any, source: bytes) -> str | None:
