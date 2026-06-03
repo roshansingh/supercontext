@@ -149,5 +149,48 @@ public class Svc(IPublishEndpoint publishEndpoint)
         self.assertEqual(unresolved[0].state, "partially_instrumented")
 
 
+    def test_namespace_qualified_publish_receiver_is_recognized(self) -> None:
+        # A fully-qualified receiver type (e.g. MassTransit.IPublishEndpoint) must still match.
+        source = """using MassTransit;
+namespace App;
+public class Sender
+{
+    private readonly MassTransit.IPublishEndpoint _publish;
+    public async Task Go()
+    {
+        var msg = new OrderSubmitted();
+        await _publish.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        self.assertEqual(len(produces), 1)
+        self.assertEqual(produces[0].qualifier["broker_kind"], "masstransit")
+
+    def test_calls_inside_field_initializers_are_still_collected(self) -> None:
+        # Collecting field bindings must not stop the parser walk from seeing field-initializer
+        # calls (CALLS facts only materialize when the callee resolves, so assert at parse level).
+        import tree_sitter
+        import tree_sitter_c_sharp as tscs
+
+        from source.kg.languages.dotnet.extractors.parser_bridge import _walk_tree
+
+        source = b"""namespace App;
+public class Widget
+{
+    private readonly Thing _thing = Factory.Create();
+    public void M() { Helper.Run(); }
+}
+"""
+        parser = tree_sitter.Parser(tree_sitter.Language(tscs.language()))
+        parsed = _walk_tree(parser.parse(source).root_node, source)
+        call_names = {c.get("name") for c in parsed["calls"]}
+        self.assertIn("Factory.Create", call_names)
+        self.assertIn("Helper.Run", call_names)
+
+
 if __name__ == "__main__":
     unittest.main()

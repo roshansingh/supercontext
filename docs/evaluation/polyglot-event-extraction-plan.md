@@ -82,9 +82,6 @@ heuristics):
 - [ ] **(deferred) .NET Azure Service Bus** (`ServiceBusSender.SendMessageAsync`, `ServiceBusProcessor`).
   Neither fixture uses it, so it cannot be validated yet — deferred until a fixture exists rather
   than shipping an unvalidated/guessed extractor.
-- [ ] **Slice 2 — .NET eShop IEventBus.** `IEventBus.Publish(new XIntegrationEvent(...))` →
-  PRODUCES; `class : IIntegrationEventHandler<T>` → CONSUMES. Reuses Slice 1 parser ext +
-  argument-type resolution. Fixture: `eShop`.
 - [ ] **Slice 3 — TS NestJS.** `@EventPattern('x')`/`@MessagePattern('x')` → CONSUMES;
   `ClientProxy.emit('x')`/`.send('x')` → PRODUCES. Parser ext: emit decorators + their string
   args in `ts_parser.mjs`; emit message-call arg literals. Semantics from codegraph
@@ -118,4 +115,3 @@ heuristics):
   Validated on `run-aspnetcore` (1 producer / 1 consumer, Basket→Ordering link) and `eShop`
   (1 producer / 18 consumers, GracePeriodConfirmed link). Azure Service Bus deferred (no fixture).
   Next: TS slices 3 (NestJS) / 4 (KafkaJS) / 5 (amqplib). To be raised as one .NET PR.
-</content>

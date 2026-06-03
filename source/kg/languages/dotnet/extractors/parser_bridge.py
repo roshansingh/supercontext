@@ -168,7 +168,7 @@ def _collect(
     if node_type == "field_declaration":
         for binding in _field_bindings(node, source, qualname_prefix):
             bindings.append(binding)
-        return
+        # fall through: keep descending so calls inside field initializers are still collected
 
     if node_type in {"method_declaration", "constructor_declaration", "property_declaration"}:
         name = _declared_name(node, source)

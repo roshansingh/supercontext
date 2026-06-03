@@ -105,7 +105,7 @@ def _extract_consumers(
         if not qualname:
             continue
         for base in symbol.get("bases", []):
-            spec = _CONSUMER_INTERFACES.get(str(base.get("name", "")))
+            spec = _CONSUMER_INTERFACES.get(_simple_name(str(base.get("name", ""))))
             if spec is None:
                 continue
             broker_kind, required_import = spec
@@ -164,7 +164,7 @@ def _extract_producers(
         if not method or not receiver or not caller:
             continue
         receiver_type = _resolve_binding_type(bindings, caller, receiver)
-        spec = _PUBLISH_RECEIVERS.get(receiver_type) if receiver_type else None
+        spec = _PUBLISH_RECEIVERS.get(_simple_name(receiver_type)) if receiver_type else None
         if spec is None:
             continue
         broker_kind, methods = spec
@@ -289,6 +289,16 @@ def _relative(repo: RepoSnapshot, file_path: Path) -> str:
         return str(file_path.relative_to(repo.root))
     except ValueError:
         return str(file_path)
+
+
+def _simple_name(type_name: str) -> str:
+    """Reduce a type reference to its bare interface name for matching.
+
+    Strips any generic suffix and namespace qualifier so ``MassTransit.IConsumer<T>`` and
+    ``global::MassTransit.IPublishEndpoint`` resolve to ``IConsumer`` / ``IPublishEndpoint``.
+    """
+    without_generics = type_name.split("<", 1)[0]
+    return without_generics.rsplit(".", 1)[-1].strip()
 
 
 def _first(entities: list[Entity] | None) -> Entity | None:
