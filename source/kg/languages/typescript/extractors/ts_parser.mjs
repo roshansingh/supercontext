@@ -1897,6 +1897,154 @@ function collectCallsForSymbol(sourceFile, symbol) {
   return calls;
 }
 
+const NEST_CLIENT_TYPES = new Set([
+  "ClientProxy",
+  "ClientKafka",
+  "ClientRMQ",
+  "ClientTCP",
+  "ClientRedis",
+  "ClientMqtt",
+  "ClientNats",
+  "ClientGrpcProxy",
+]);
+const NEST_CONSUMER_DECORATORS = new Set(["EventPattern", "MessagePattern"]);
+const NEST_PRODUCER_METHODS = new Set(["emit", "send"]);
+
+function nodeDecorators(node) {
+  if (typeof ts.canHaveDecorators === "function" && typeof ts.getDecorators === "function") {
+    if (!ts.canHaveDecorators(node)) return [];
+    return ts.getDecorators(node) || [];
+  }
+  return node.decorators || [];
+}
+
+function decoratorCall(decorator) {
+  const expr = decorator.expression;
+  if (expr && ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
+    return { name: expr.expression.text, args: expr.arguments };
+  }
+  return null;
+}
+
+function simpleTypeName(typeNode) {
+  if (typeNode && ts.isTypeReferenceNode(typeNode)) {
+    let name = typeNode.typeName;
+    while (name && name.right) name = name.right;
+    if (name && name.text) return name.text;
+  }
+  return null;
+}
+
+function classClientMembers(classNode) {
+  const members = new Map();
+  const accessibility = new Set([
+    ts.SyntaxKind.PrivateKeyword,
+    ts.SyntaxKind.PublicKeyword,
+    ts.SyntaxKind.ProtectedKeyword,
+    ts.SyntaxKind.ReadonlyKeyword,
+  ]);
+  for (const member of classNode.members) {
+    if (ts.isConstructorDeclaration(member)) {
+      for (const param of member.parameters) {
+        const isParamProperty = param.modifiers && param.modifiers.some((m) => accessibility.has(m.kind));
+        if (isParamProperty && ts.isIdentifier(param.name)) {
+          const typeName = simpleTypeName(param.type);
+          if (typeName) members.set(param.name.text, typeName);
+        }
+      }
+    } else if (ts.isPropertyDeclaration(member) && ts.isIdentifier(member.name)) {
+      const typeName = simpleTypeName(member.type);
+      if (typeName) members.set(member.name.text, typeName);
+    }
+  }
+  return members;
+}
+
+function receiverMemberName(expression) {
+  if (ts.isPropertyAccessExpression(expression) && expression.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    return expression.name.text;
+  }
+  if (ts.isIdentifier(expression)) {
+    return expression.text;
+  }
+  return null;
+}
+
+function channelFromArg(argNode, sourceFile) {
+  if (argNode == null) {
+    return { channel: null, channel_raw: null, reason: "missing_channel_arg" };
+  }
+  const literal = stringLiteralValue(argNode);
+  if (literal != null) {
+    return { channel: literal, channel_raw: literal, reason: null };
+  }
+  return { channel: null, channel_raw: rawNodeText(argNode, sourceFile), reason: "non_literal_channel" };
+}
+
+// NestJS microservice events: `@EventPattern`/`@MessagePattern` consumers and
+// ClientProxy/ClientKafka `.emit`/`.send` producers. Gated on a `@nestjs/microservices`
+// import; producers require the receiver member to be typed as a Nest client (so the very
+// generic `.emit`/`.send` method names aren't matched on unrelated objects).
+function collectMessageEvents(sourceFile) {
+  const importsNest = sourceFile.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "@nestjs/microservices"
+  );
+  if (!importsNest) return [];
+  const events = [];
+
+  function visitClass(classNode, className) {
+    const clientMembers = classClientMembers(classNode);
+    function visit(node) {
+      if (ts.isMethodDeclaration(node)) {
+        for (const decorator of nodeDecorators(node)) {
+          const info = decoratorCall(decorator);
+          if (info && NEST_CONSUMER_DECORATORS.has(info.name)) {
+            const channel = channelFromArg(info.args[0], sourceFile);
+            events.push({
+              predicate: "CONSUMES_EVENT",
+              broker: "nestjs",
+              subject_class: className,
+              api: `@${info.name}`,
+              line: lineOf(sourceFile, node.getStart(sourceFile)),
+              ...channel,
+            });
+          }
+        }
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        NEST_PRODUCER_METHODS.has(node.expression.name.text)
+      ) {
+        const member = receiverMemberName(node.expression.expression);
+        if (member && NEST_CLIENT_TYPES.has(clientMembers.get(member))) {
+          const channel = channelFromArg(node.arguments[0], sourceFile);
+          events.push({
+            predicate: "PRODUCES_EVENT",
+            broker: "nestjs",
+            subject_class: className,
+            api: `ClientProxy.${node.expression.name.text}`,
+            line: lineOf(sourceFile, node.expression.name.getStart(sourceFile)),
+            ...channel,
+          });
+        }
+      }
+      node.forEachChild(visit);
+    }
+    visit(classNode);
+  }
+
+  function topVisit(node) {
+    if (ts.isClassDeclaration(node) && node.name) visitClass(node, node.name.text);
+    node.forEachChild(topVisit);
+  }
+  topVisit(sourceFile);
+  return events;
+}
+
 const output = {};
 for (const relativePath of files) {
   const absolutePath = path.join(repoRoot, relativePath);
@@ -1915,6 +2063,7 @@ for (const relativePath of files) {
     server_routes: serverRoutes,
     express_routes: serverRoutes,
     client_endpoint_calls: collectClientEndpointCalls(sourceFile),
+    message_events: collectMessageEvents(sourceFile),
     module_clients: collectModuleClients(sourceFile, axiosLocals, literalBindings),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
     calls: symbols.flatMap((symbol) =>
