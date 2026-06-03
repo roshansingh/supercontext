@@ -161,8 +161,12 @@ def _extract_producers(
     # declaration preceding the publish call rather than a last-wins single value.
     locals_index: dict[tuple[str, str], list[tuple[int, str]]] = {}
     for assignment in parsed_file.get("local_assignments", []):
+        type_name = assignment.get("type")
+        if not type_name:
+            # e.g. MapGroup-only entries carry a prefix but no message type; not relevant here.
+            continue
         key = (str(assignment.get("scope", "")), str(assignment.get("name", "")))
-        locals_index.setdefault(key, []).append((int(assignment.get("line") or 0), str(assignment.get("type", ""))))
+        locals_index.setdefault(key, []).append((int(assignment.get("line") or 0), str(type_name)))
     for call in parsed_file.get("calls", []):
         method = str(call.get("method", "")).strip()
         receiver = str(call.get("receiver", "")).strip()

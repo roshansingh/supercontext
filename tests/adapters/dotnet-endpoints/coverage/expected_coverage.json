@@ -1,0 +1,4 @@
+{
+  "unsupported": true,
+  "reason": "endpoint extraction emits no coverage rows; non-literal routes are simply not surfaced"
+}

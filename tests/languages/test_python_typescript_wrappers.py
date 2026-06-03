@@ -74,7 +74,7 @@ class PythonTypeScriptWrapperTest(unittest.TestCase):
 
         self.assertEqual(
             [adapter.capability.name for adapter in DOTNET_SUPPORT.adapters()],
-            ["dotnet-csharp-bridge"],
+            ["dotnet-csharp-bridge", "dotnet-endpoints"],
         )
         self.assertEqual(DOTNET_SUPPORT.source_roots(_repo_snapshot(), ctx), {"dotnet": {"Microsoft.AspNetCore.Mvc"}})
         self.assertEqual(DOTNET_SUPPORT.parse_repo(_repo_snapshot(), ctx), {})

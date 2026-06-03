@@ -11,6 +11,7 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.extraction.framework.adapter import Adapter, ExtractionContext
 from source.kg.languages._shared.dimension_rules_loader import load_dimension_rules
 from source.kg.languages.dotnet.consumer_manifest import DotnetConsumerManifestExtractor
+from source.kg.languages.dotnet.extractors.dotnet_endpoints import DOTNET_ENDPOINTS_ADAPTER
 from source.kg.languages.dotnet.extractors.extractor_adapter import DOTNET_CSHARP_BRIDGE_ADAPTER
 from source.kg.languages.dotnet.files import LANGUAGE_FILES, DotnetLanguageFiles
 from source.kg.languages.dotnet.package_resolver import DotnetPackageResolver
@@ -63,7 +64,7 @@ class DotnetLanguageSupport:
         return {}
 
     def adapters(self) -> tuple[Adapter, ...]:
-        return (DOTNET_CSHARP_BRIDGE_ADAPTER,)
+        return (DOTNET_CSHARP_BRIDGE_ADAPTER, DOTNET_ENDPOINTS_ADAPTER)
 
     def known_stacks(self) -> dict[str, dict[str, str]]:
         return {"dotnet": dict(_known_stack_imports())}
