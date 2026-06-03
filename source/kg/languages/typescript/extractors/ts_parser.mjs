@@ -2044,6 +2044,80 @@ function collectMessageEvents(sourceFile) {
   return events;
 }
 
+const NEST_HTTP_DECORATORS = {
+  Get: "get",
+  Post: "post",
+  Put: "put",
+  Patch: "patch",
+  Delete: "delete",
+  Options: "options",
+  Head: "head",
+  All: "all",
+};
+
+function importsModule(sourceFile, moduleName) {
+  return sourceFile.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === moduleName
+  );
+}
+
+function joinNestRoute(prefix, path) {
+  const segments = (value) => (value || "").split("/").filter(Boolean);
+  const parts = [...segments(prefix), ...segments(path)];
+  return "/" + parts.join("/");
+}
+
+// NestJS HTTP controllers: `@Controller('prefix')` class + `@Get/@Post/...('path')` methods.
+// Gated on a `@nestjs/common` import. Emitted in the express-route shape so the existing route
+// adapter turns them into EXPOSES_ENDPOINT. Non-literal route templates are skipped.
+function collectNestRoutes(sourceFile) {
+  if (!importsModule(sourceFile, "@nestjs/common")) return [];
+  const routes = [];
+
+  function visitClass(classNode) {
+    let prefix;
+    for (const decorator of nodeDecorators(classNode)) {
+      const info = decoratorCall(decorator);
+      if (info && info.name === "Controller") {
+        const literal = info.args.length ? stringLiteralValue(info.args[0]) : "";
+        prefix = literal == null ? "" : literal;
+      }
+    }
+    if (prefix === undefined) return; // class is not an HTTP controller
+    for (const member of classNode.members) {
+      if (!ts.isMethodDeclaration(member)) continue;
+      for (const decorator of nodeDecorators(member)) {
+        const info = decoratorCall(decorator);
+        if (!info) continue;
+        const verb = NEST_HTTP_DECORATORS[info.name];
+        if (!verb) continue;
+        let methodPath = "";
+        if (info.args.length) {
+          const literal = stringLiteralValue(info.args[0]);
+          if (literal == null) break; // non-literal route template -> skip this route
+          methodPath = literal;
+        }
+        routes.push({
+          method: verb === "all" ? "ANY" : verb,
+          path: joinNestRoute(prefix, methodPath),
+          line: lineOf(sourceFile, member.getStart(sourceFile)),
+          source_kind: "nestjs_controller",
+        });
+      }
+    }
+  }
+
+  function topVisit(node) {
+    if (ts.isClassDeclaration(node)) visitClass(node);
+    node.forEachChild(topVisit);
+  }
+  topVisit(sourceFile);
+  return routes;
+}
+
 const output = {};
 for (const relativePath of files) {
   const absolutePath = path.join(repoRoot, relativePath);
@@ -2052,7 +2126,7 @@ for (const relativePath of files) {
   const symbols = collectSymbols(sourceFile);
   const axiosLocals = collectAxiosLocals(sourceFile);
   const literalBindings = collectTopLevelLiteralBindings(sourceFile);
-  const serverRoutes = collectServerRoutes(sourceFile);
+  const serverRoutes = [...collectServerRoutes(sourceFile), ...collectNestRoutes(sourceFile)];
   output[relativePath] = {
     parse_diagnostics: sourceFile.parseDiagnostics.map((diagnostic) => ({
       message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),

@@ -257,4 +257,28 @@ moved eShop producers 1→2 / channels 13→14 after the Run 2 note was first wr
 `@Controller` / superagent client pending — that slice unlocks the RealWorld frontend→backend
 cross-repo links). `CALLS`/`IMPORTS`/events unchanged → no regression.
 
-### Run 5 — TS endpoints (pending)
+### Run 5 — TS NestJS endpoints (2026-06-03)
+
+- Changed since Run 4: NestJS HTTP controller extraction (`@Controller('prefix')` + `@Get/@Post/...`
+  → EXPOSES_ENDPOINT) via `ts_parser.mjs` `collectNestRoutes`, flowing through the existing
+  express-routes adapter. Verified full re-measurement:
+
+| Snapshot | EXPOSES_ENDPOINT | PROD | CONS | note |
+|---|---:|---:|---:|---|
+| realworld (x-repo) | 38 | 0 | 0 | ✅ 19 .NET + 19 NestJS controllers — same Conduit contract in two languages |
+| eShop (.NET) | 29 | 2 | 18 | unchanged |
+| run-aspnetcore (.NET) | 17 | 1 | 1 | unchanged |
+| booking-nestjs (TS) | 19 | 0 | 0 | ✅ NestJS controllers (was 0) |
+| ts-ecommerce (TS) | 5 | 11 | 11 | ✅ gateway NestJS controllers (was 0) |
+| otel (poly) | 3 | 0 | 0 | unchanged |
+
+**Scorecard:** TS endpoints (server) ❌→✅ (NestJS controllers). `CALLS`/`IMPORTS`/events unchanged.
+
+**Deferred — TS client `CALLS_ENDPOINT`:** the RealWorld frontend (`react-realworld`) uses
+`superagent` through a custom `requests.get('/x')` wrapper whose actual superagent call is a
+template URL (`` `${API_ROOT}${url}` ``), so the literal path isn't statically resolvable without
+bespoke wrapper resolution. No validatable fixture → deferred. Consequence: realworld now exposes
+the Conduit contract in both backends, but the frontend→backend cross-repo *link* doesn't form
+(no resolvable client CALLS). Honest limitation, not a silent gap.
+
+### Run 6 — (pending: TS client endpoints / gRPC / deferred brokers)
