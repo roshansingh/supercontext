@@ -82,15 +82,23 @@ heuristics):
 - [ ] **(deferred) .NET Azure Service Bus** (`ServiceBusSender.SendMessageAsync`, `ServiceBusProcessor`).
   Neither fixture uses it, so it cannot be validated yet — deferred until a fixture exists rather
   than shipping an unvalidated/guessed extractor.
-- [ ] **Slice 3 — TS NestJS.** `@EventPattern('x')`/`@MessagePattern('x')` → CONSUMES;
-  `ClientProxy.emit('x')`/`.send('x')` → PRODUCES. Parser ext: emit decorators + their string
-  args in `ts_parser.mjs`; emit message-call arg literals. Semantics from codegraph
-  `nestjs.ts`. Fixture: `booking-nestjs`.
-- [ ] **Slice 4 — TS KafkaJS.** `producer.send({topic})`/`producer.sendBatch` → PRODUCES;
-  `consumer.subscribe({topic})` → CONSUMES. Parser ext: capture object-literal `topic` arg.
-  Fixture: `ts-ecommerce`.
-- [ ] **Slice 5 — TS amqplib (+ .NET Azure Service Bus if present).** `sendToQueue`/`publish`
-  → PRODUCES; `consume` → CONSUMES; channel = first string arg.
+- [x] **Slice 3 — TS NestJS microservices.** Done. `@EventPattern('x')`/`@MessagePattern('x')`
+  method decorators → CONSUMES; `ClientProxy/ClientKafka.emit('x')`/`.send('x')` → PRODUCES,
+  channel = the string-literal arg, broker `nestjs`. Parser ext landed in `ts_parser.mjs`
+  (`collectMessageEvents`): gated on a `@nestjs/microservices` import; producers require the
+  receiver member to be typed as a Nest client (constructor parameter-property / property type),
+  so the generic `.emit`/`.send` names aren't matched on unrelated objects; non-literal channels
+  → coverage. Adapter `typescript_message_transport.py` + shared `_shared/message_events.py`
+  build EventChannel + facts on the Service entity. Validated on `ts-ecommerce`: 11 producers /
+  11 consumers, full channel graph (order↔inventory↔payment↔product). Tests:
+  `tests/test_typescript_event_extractor.py` + adapter golden/false_positive/coverage fixtures.
+- [ ] **(deferred) Slice 4 — raw KafkaJS** (`producer.send({topic})`/`consumer.subscribe`).
+  `ts-ecommerce` uses the NestJS `ClientKafka` abstraction (covered by Slice 3), not the raw
+  kafkajs API — no fixture to validate against, so deferred until one exists.
+- [ ] **(deferred) Slice 5 — amqplib / .NET Azure Service Bus.** `booking-nestjs` has an amqplib
+  wrapper, but its exchange/queue names are dynamic (parameters, `assertQueue('')`), so they
+  resolve to coverage rows only — no literal-channel fixture to validate a positive case.
+  Deferred until a fixture with literal queue/exchange names exists.
 
 ## Build order per slice (mirror these files)
 
@@ -110,8 +118,9 @@ heuristics):
 ## Status
 
 - Run 1 baseline captured (events = 0 both languages).
-- **.NET event extraction complete** (slices 1a/1b/2): MassTransit + integration-event bus,
-  producers + consumers, with receiver-type disambiguation and loud-refusal coverage.
-  Validated on `run-aspnetcore` (1 producer / 1 consumer, Basket→Ordering link) and `eShop`
-  (1 producer / 18 consumers, GracePeriodConfirmed link). Azure Service Bus deferred (no fixture).
-  Next: TS slices 3 (NestJS) / 4 (KafkaJS) / 5 (amqplib). To be raised as one .NET PR.
+- **.NET event extraction complete** (slices 1a/1b/2, merged in #140): MassTransit +
+  integration-event bus, producers + consumers, receiver-type disambiguation, loud-refusal
+  coverage. Validated on `run-aspnetcore` and `eShop`.
+- **TS NestJS event extraction complete** (slice 3): `@EventPattern`/`@MessagePattern` consumers
+  + ClientProxy/ClientKafka producers. Validated on `ts-ecommerce` (11/11, full graph).
+- Deferred (no validatable fixture): raw KafkaJS, amqplib, .NET Azure Service Bus.

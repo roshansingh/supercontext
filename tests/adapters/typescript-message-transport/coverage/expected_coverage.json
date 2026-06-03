@@ -1,0 +1,10 @@
+[
+  {
+    "predicate": "PRODUCES_EVENT",
+    "state": "partially_instrumented",
+    "scope_ref": {
+      "reason": "unresolved_event_channel",
+      "broker_kind": "nestjs"
+    }
+  }
+]

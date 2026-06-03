@@ -192,4 +192,26 @@ base-typed parameter) correctly emit `partially_instrumented` coverage rows
 (`reason=unresolved_event_message_type`) instead of guessing. No MediatR false positives
 (`ISender.Send`/`IMediator.Publish` gated out by receiver type).
 
-### Run 3 — TS events (pending)
+### Run 3 — TS NestJS events (2026-06-03)
+
+- Changed since Run 2: TS NestJS microservice event extraction (`@EventPattern`/`@MessagePattern`
+  consumers + ClientProxy/ClientKafka `.emit`/`.send` producers) via `ts_parser.mjs`
+  `collectMessageEvents` + `typescript_message_transport` adapter.
+- Scope note: targeted measure of `ts-ecommerce` (other fixtures unchanged from prior runs).
+
+**TS event facts (was 0 / 0 at Run 1):**
+
+| Snapshot | EventChannel | PRODUCES_EVENT | CONSUMES_EVENT | Notes |
+|---|---|---|---|---|
+| ts-ecommerce | 11 | 11 | 11 | every channel produced ↔ consumed (order↔inventory↔payment↔product) |
+
+**Scorecard movement:**
+
+| Capability | .NET | TS/JS | Note |
+|---|---|---|---|
+| Events (PRODUCES/CONSUMES) | ⚠️ partial (MassTransit + integration-event bus) | ⚠️ partial (was ❌) | TS: NestJS microservices covered; raw KafkaJS + amqplib deferred (no validatable fixture). |
+
+Producers gated on receiver typed as a Nest client (no false positives on generic `.emit`/`.send`);
+non-literal channels → `unresolved_event_channel` coverage rows rather than guesses.
+
+### Run 4 — TS endpoints / .NET endpoints (pending)
