@@ -44,8 +44,6 @@ _PUBLISH_RECEIVERS: dict[str, tuple[str, frozenset[str]]] = {
     "IEventBus": ("integration_event", frozenset({"Publish", "PublishAsync"})),
 }
 
-_PROMOTION_SOURCE_SYSTEM = "dotnet_event_transport"
-
 
 def extract_dotnet_events(
     *,
@@ -56,6 +54,7 @@ def extract_dotnet_events(
     symbols_by_key: dict[str, Entity],
     build: object,
     tenant_id: str,
+    source_system: str,
     add_fact: Callable[..., None],
     entity_evidence: Callable[..., object],
 ) -> None:
@@ -83,6 +82,7 @@ def extract_dotnet_events(
         symbols_by_key=symbols_by_key,
         build=build,
         tenant_id=tenant_id,
+        source_system=source_system,
         add_fact=add_fact,
         entity_evidence=entity_evidence,
     )
@@ -149,6 +149,7 @@ def _extract_producers(
     symbols_by_key: dict[str, Entity],
     build: object,
     tenant_id: str,
+    source_system: str,
     add_fact: Callable[..., None],
     entity_evidence: Callable[..., object],
 ) -> None:
@@ -197,7 +198,7 @@ def _extract_producers(
                         "line": line,
                     },
                     state="partially_instrumented",
-                    source_system=_PROMOTION_SOURCE_SYSTEM,
+                    source_system=source_system,
                 )
             )
             continue

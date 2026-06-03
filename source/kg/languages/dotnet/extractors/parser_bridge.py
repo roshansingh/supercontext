@@ -407,7 +407,7 @@ def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]
 
 
 # Declared types too vague to be a useful event channel; defer to the initializer instead.
-_NON_SPECIFIC_DECLARED_TYPES = {"var", "object", "dynamic"}
+_NON_SPECIFIC_DECLARED_TYPES = {"var", "object", "dynamic", "Object", "System.Object", "global::System.Object"}
 
 
 def _explicit_declared_type(declaration: Any, source: bytes) -> str | None:

@@ -239,6 +239,7 @@ class CSharpExtractor:
             symbols_by_key=symbols_by_key,
             build=build,
             tenant_id=tenant_id,
+            source_system=self.source_system,
             add_fact=self._add_fact,
             entity_evidence=self._entity_evidence,
         )
