@@ -1072,13 +1072,13 @@ def _event_coverage_asymmetry_warnings(
     opposite_role = _EVENT_PREDICATE_ROLE[opposite_predicate]
     if queried_count > 0 and opposite_count == 0:
         return [
-            f"Event channel {channel!r} has {queried_count} indexed {result_key} but 0 {opposite_role}; "
+            f"Event channel query {channel!r} matched {queried_count} indexed {result_key} but 0 {opposite_role}; "
             f"the {opposite_role} side may be external or in an uninstrumented language/service. "
             f"Treat {opposite_role} coverage as thin, not absent."
         ]
     if queried_count == 0 and opposite_count > 0:
         return [
-            f"Event channel {channel!r} has 0 indexed {result_key} but {opposite_count} {opposite_role}; "
+            f"Event channel query {channel!r} matched 0 indexed {result_key} but {opposite_count} {opposite_role}; "
             f"the {result_key} side may be external or in an uninstrumented language/service. "
             f"Treat this empty {result_key} result as thin coverage, not proof of absence."
         ]
