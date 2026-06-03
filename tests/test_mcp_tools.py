@@ -29,9 +29,14 @@ from source.kg.product.output_budget import (
     PLANNING_CONTEXT_MAX_CHARS,
     RELATED_FACT_SECTION_KEYS,
     _BUDGET_BACKFILL_LIST_PATHS,
+    REVERSE_IMPACT_MAX_CHARS,
+    REVIEW_CONTEXT_MAX_CHARS,
     _compact_authz_surface,
     _compact_disambiguation,
+    _minimal_valid_packet,
     enforce_planning_context_budget,
+    enforce_review_context_budget,
+    enforce_reverse_impact_budget,
 )
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.snapshot import KgSnapshot
@@ -115,9 +120,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
         self.assertIn("runtime_architecture", descriptions["planning_context"])
+        self.assertIn("investigation_brief_only", descriptions["planning_context"])
         self.assertIn("related_facts.symbol_impact.reverse_impact", descriptions["planning_context"])
         self.assertIn("ownership_context", descriptions["planning_context"])
         self.assertIn("review_answer_packet", descriptions["review_context"])
+        self.assertIn("review_answer_packet.changed_file_symbol_inventory", descriptions["review_context"])
         self.assertIn("requested_surfaces", descriptions["review_context"])
         self.assertIn("framework_impact", descriptions["review_context"])
         self.assertIn("application_impact", descriptions["review_context"])
@@ -152,7 +159,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(payload["proven_facts"]["status"], "empty")
         self.assertEqual(payload["candidate_leads"]["status"], "empty")
         self.assertTrue(any("coverage boundary" in action for action in payload["next_actions"]))
-        self.assertTrue(any("normal search/read tools once" in action for action in payload["next_actions"]))
+        self.assertTrue(any("normal search/read tools at least once" in action for action in payload["next_actions"]))
         self.assertFalse(any(row["trigger"] == "next_action" for row in payload["inspection_areas"]))
 
     def test_default_tool_metadata_adds_exact_retry_for_ambiguous_anchor(self) -> None:
@@ -221,9 +228,20 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(ambiguous["status"], "ambiguous")
         self.assertTrue(ambiguous["next_actions"])
         self.assertTrue(any(row["predicate"] == "RESOLVES_TO_REPO" for row in ambiguous["dependencies"]))
+        ambiguous_runtime = ambiguous["runtime_architecture"]
+        self.assertEqual(ambiguous_runtime["summary"]["answer_packet_mode"], "investigation_brief_only")
+        self.assertEqual(ambiguous_runtime["anchor_resolution_contract"]["status"], "inventory_context")
+        self.assertIn("investigation_brief", ambiguous_runtime["answer_packet"])
+        self.assertNotIn("runtime_building_blocks", ambiguous_runtime["answer_packet"])
+        self.assertNotIn("domain_routing_map", ambiguous_runtime["answer_packet"])
+        self.assertEqual(
+            ambiguous["related_facts"]["runtime_architecture"]["anchor_resolution_contract"]["status"],
+            "inventory_context",
+        )
         self.assertEqual(fleet["status"], "found")
         self.assertEqual(fleet["snapshot_summary"]["scope"], {"kind": "fleet"})
         self.assertEqual(fleet["runtime_architecture"]["scope"], {"kind": "fleet"})
+        self.assertNotIn("anchor_resolution_contract", fleet["runtime_architecture"])
         self.assertEqual(
             fleet["related_facts"]["runtime_architecture"]["deploy_kind_counts"],
             {"component_deploy_kind_counts": {}, "unlinked_route_deploy_kind_counts": {}},
@@ -300,15 +318,26 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(len(result["services"]), 1)
         self.assertEqual(result["services"][0]["slug"], "payments")
 
-    def test_planning_context_repo_scope_hint_does_not_promote_missing_rows(self) -> None:
+    def test_planning_context_repo_anchor_surfaces_service_identity(self) -> None:
         with _fixture_snapshot(extra_consumers=1) as kg:
             result = call_tool(kg, "planning_context", {"repo": "consumer-0"})
 
-        self.assertEqual(result["status"], "not_found")
-        self.assertEqual(result["answerability"]["status"], "not_answerable")
+        # A repo anchor surfaces its Service entity as the primary identity answer so the
+        # agent does not fall back to weaker packaging-metadata evidence for "what service
+        # is this repo".
+        self.assertEqual(result["status"], "found")
+        self.assertTrue(
+            any(
+                row.get("slug") == "consumer-0" and row.get("repo") == "consumer-0"
+                for row in result["services"]
+            )
+        )
         self.assertEqual(result["snapshot_scope"]["repo"], "consumer-0")
         self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
-        self.assertTrue(any("snapshot_summary" in action for action in result["next_actions"]))
+        # Repo-scoped summary counts are complete: evidence and module counts are present
+        # so a compact KG-summary answer need not fall back to fleet-wide totals.
+        self.assertIsInstance(result["snapshot_scope"]["evidence_count"], int)
+        self.assertIsInstance(result["snapshot_scope"]["module_count"], int)
 
     def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
         with _fixture_snapshot() as kg:
@@ -683,6 +712,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["answerability"]["status"], "not_answerable")
         self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_MAX_CHARS)
         self.assertEqual(result["output_budget"]["max_chars"], PLANNING_CONTEXT_MAX_CHARS)
+        answer_packet = result["runtime_architecture"]["answer_packet"]
+        self.assertIn("investigation_brief", answer_packet)
+        self.assertNotIn("runtime_building_blocks", answer_packet)
+        self.assertNotIn("domain_routing_map", answer_packet)
+        self.assertEqual(result["runtime_architecture"]["anchor_resolution_contract"]["status"], "inventory_context")
 
     def test_planning_context_anchor_resolution_gate_compacts_only_explicit_failures(self) -> None:
         self.assertFalse(_planning_context_has_resolved_anchor({"answerability": {"status": "not_answerable"}}))
@@ -696,7 +730,8 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertLessEqual(len(canonical_json(result)), PLANNING_CONTEXT_ANCHORED_MAX_CHARS)
         self.assertEqual(result["tool"], "planning_context")
-        self.assertNotIn("output_budget", result)
+        # Runtime is scoped to the anchor's repo before budgeting, so the packet reflects the
+        # single repo rather than the whole fleet (the key invariant this test guards).
         self.assertEqual(result["runtime_architecture"]["scope"], {"kind": "repo", "repo": "runtime-repo-0"})
         self.assertIn("service_operational_surfaces", result)
 
@@ -788,6 +823,280 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("unlinked_domain_reference", statuses)
         self.assertTrue(budgeted["output_budget"]["truncated"])
         self.assertGreater(budgeted["output_budget"]["omitted_counts"]["domain_routing_map"], 0)
+
+    def test_planning_budget_hard_cap_guarantees_fit_on_large_content_sections(self) -> None:
+        from source.kg.product.output_budget import _planning_signal_hard_cap
+
+        # A packet whose big content sections (authz/service surfaces) blow past the cap, as on
+        # real multi-repo snapshots, must still be forced under the cap by the scorer hard-cap,
+        # while the top-level common evidence index is left intact.
+        def lead(idx, *, linked):
+            return {
+                "id": idx,
+                "status": "known_linked" if linked else "unlinked",
+                "derivation_class": "deterministic_static" if linked else "inferred_llm",
+                "evidence": [{"bytes_ref": {"repo": "r", "path": f"a/{idx}.py", "line_start": idx}}],
+                "blob": "z" * 600,
+            }
+
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "summary": {},
+            "authz_surface": {"review_leads": [lead(i, linked=i % 2 == 0) for i in range(120)]},
+            "service_operational_surfaces": {"deploy_target_candidates": [lead(i, linked=False) for i in range(120)]},
+            "proven_facts": {"status": "found", "sources": [{"field": "x", "count": 1}]},
+            "inspection_areas": [],
+            "output_budget": {"truncated": True, "minimized": True, "max_chars": 20_000},
+            "next_actions": [],
+        }
+
+        budgeted = _planning_signal_hard_cap(result, max_chars=20_000)
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 20_000)
+        self.assertTrue(budgeted["output_budget"]["hard_capped"])
+        # Overflow is demoted to a coordinate-bearing inspection area, not dropped silently.
+        self.assertTrue(
+            any(a.get("area") == "planning_budget_overflow" for a in budgeted.get("inspection_areas", []))
+        )
+        # The top-level common evidence index is protected (not shredded by the hard-cap).
+        self.assertEqual(budgeted["proven_facts"]["sources"], [{"field": "x", "count": 1}])
+        # Higher-signal known_linked rows are kept preferentially over unlinked ones.
+        kept = budgeted["authz_surface"]["review_leads"]
+        if kept:
+            self.assertGreaterEqual(
+                sum(1 for r in kept if r["status"] == "known_linked"),
+                sum(1 for r in kept if r["status"] == "unlinked"),
+            )
+
+    def test_review_context_budget_compacts_oversized_detail_under_cap(self) -> None:
+        caller_rows = [
+            {
+                "predicate": "CALLS",
+                "depth": 1,
+                "caller_symbol": {
+                    "symbol_id": f"ent_caller_{index}",
+                    "qualified_name": f"pkg.module_{index}.caller_{index}",
+                    "qualname": f"caller_{index}",
+                    "symbol_kind": "function",
+                    "repo": "repo",
+                    "path": f"pkg/module_{index}.py",
+                    "line": index,
+                },
+                "object": {"qualified_name": "pkg.target.changed"},
+                "evidence": [{"bytes_ref": {"repo": "repo", "path": f"pkg/module_{index}.py", "line_start": index, "line_end": index}}],
+                "payload": "x" * 800,
+            }
+            for index in range(60)
+        ]
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "repo": "repo",
+            "summary": {"changed_symbol_count": 0, "changed_file_symbol_count": 60, "direct_caller_count": 60},
+            "review_answer_packet": {"status": "found", "summary": {"changed_symbol_count": 0}},
+            "answerability": {"status": "answerable"},
+            "scope_contract": {"changed_symbol_count": 0},
+            "claim_contract": {"scope": "bounded static review context for changed files and optional ranges"},
+            "surface_status": [],
+            "direct_callers": caller_rows,
+            "direct_callees": caller_rows,
+            "direct_callers_of_changed_symbols": caller_rows,
+            "direct_callees_from_changed_symbols": caller_rows,
+            "changed_file_symbols": [row["caller_symbol"] for row in caller_rows],
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+        original = deepcopy(result)
+
+        budgeted = enforce_review_context_budget(result)
+
+        self.assertEqual(result, original)
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertLessEqual(len(json.dumps(budgeted)), REVIEW_CONTEXT_MAX_CHARS)
+        # Curated head start and contracts survive; verbose detail is bounded.
+        self.assertIn("review_answer_packet", budgeted)
+        self.assertEqual(budgeted["summary"], original["summary"])
+        self.assertLessEqual(len(budgeted["direct_callers"]), 8)
+        self.assertIn("direct_callers", budgeted["output_budget"]["truncated_sections"])
+        self.assertNotIn("omitted_counts", budgeted["output_budget"])
+
+    def test_review_context_budget_leaves_small_packet_untouched(self) -> None:
+        result = {"tool": "review_context", "status": "found", "summary": {}, "direct_callers": [], "next_actions": []}
+        self.assertIs(enforce_review_context_budget(result), result)
+        self.assertNotIn("output_budget", result)
+
+    def test_reverse_impact_callable_partition_rule(self) -> None:
+        from source.kg.query.reverse_impact import _is_callable_symbol
+
+        # Parser-derived symbol_kind is authoritative for callables.
+        for kind in ("function", "method", "class"):
+            self.assertTrue(_is_callable_symbol({"symbol_kind": kind, "qualname": "x"}))
+        # Module/notebook/script call sites are not callable affected symbols.
+        self.assertFalse(_is_callable_symbol({"symbol_kind": "module", "qualname": None}))
+        self.assertFalse(_is_callable_symbol({"symbol_kind": "notebook"}))
+        # No recorded kind: a present qualname is callable; a missing one (renders as
+        # "module.None") is a call-site lead.
+        self.assertTrue(_is_callable_symbol({"qualname": "pkg.mod.fn"}))
+        self.assertFalse(_is_callable_symbol({"qualname": None}))
+        self.assertFalse(_is_callable_symbol({}))
+
+    def test_reverse_impact_budget_compacts_oversized_detail_under_cap(self) -> None:
+        edge_rows = [
+            {
+                "predicate": "CALLS",
+                "depth": 1,
+                "caller_symbol": {"qualified_name": f"pkg.m_{i}.caller_{i}", "path": f"pkg/m_{i}.py", "line": i},
+                "callee_symbol": {"qualified_name": "pkg.target.root"},
+                "evidence": [{"bytes_ref": {"repo": "repo", "path": f"pkg/m_{i}.py", "line_start": i, "line_end": i}}],
+                "payload": "y" * 900,
+            }
+            for i in range(60)
+        ]
+        result = {
+            "tool": "reverse_impact",
+            "status": "found",
+            "summary": {"affected_symbol_count": 60, "edge_count": 60, "terminal_import_lead_count": 0},
+            "answerability": {"status": "answerable"},
+            "claim_contract": {"scope": "bounded static reverse CALLS head start"},
+            "edges": edge_rows,
+            "affected_symbols": [{"depth": 1, "symbol": r["caller_symbol"]} for r in edge_rows],
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+        original = deepcopy(result)
+
+        budgeted = enforce_reverse_impact_budget(result)
+
+        self.assertEqual(result, original)
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertLessEqual(len(json.dumps(budgeted)), REVERSE_IMPACT_MAX_CHARS)
+        # Authoritative total is preserved; returned-count is synced to shown rows so
+        # totals never contradict the sample, and no additive "omitted" number is emitted.
+        self.assertEqual(budgeted["summary"]["affected_symbol_count"], 60)
+        self.assertEqual(
+            budgeted["summary"]["affected_symbol_returned_count"], len(budgeted["affected_symbols"])
+        )
+        self.assertIn("edges", budgeted["output_budget"]["truncated_sections"])
+        self.assertNotIn("omitted_counts", budgeted["output_budget"])
+
+    def test_service_brief_budget_signal_ranks_and_bounds(self) -> None:
+        from source.kg.product.output_budget import SERVICE_BRIEF_MAX_CHARS, enforce_service_brief_budget
+
+        def row(idx, *, linked):
+            return {
+                "id": f"{'known' if linked else 'unlinked'}-{idx}",
+                "path": f"svc/file_{idx}.py",
+                "derivation_class": "deterministic_static" if linked else "inferred_llm",
+                "evidence": [{"bytes_ref": {"repo": "svc", "path": f"svc/file_{idx}.py", "line_start": idx}}],
+                "blob": "z" * 900,
+            }
+
+        result = {
+            "tool": "get_service_brief",
+            "status": "found",
+            "service": {"slug": "svc"},
+            "summary": {},
+            "operational_surfaces": {
+                "evidence_partition": {
+                    "known_linked": [row(i, linked=True) for i in range(20)],
+                    "unlinked_evidence": [row(i, linked=False) for i in range(60)],
+                    "missing_contracts": [],
+                },
+                "direct_domain_references": [row(i, linked=False) for i in range(40)],
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+        original = deepcopy(result)
+
+        budgeted = enforce_service_brief_budget(result)
+
+        self.assertEqual(result, original)  # input not mutated
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertLessEqual(len(json.dumps(budgeted)), SERVICE_BRIEF_MAX_CHARS)
+        kept_known = budgeted["operational_surfaces"]["evidence_partition"]["known_linked"]
+        kept_unlinked = budgeted["operational_surfaces"]["evidence_partition"]["unlinked_evidence"]
+        # Signal ranking keeps the stronger known_linked rows over weak unlinked rows.
+        self.assertGreater(len(kept_known), len(kept_unlinked))
+        # Overflow is demoted to a coordinate-bearing inspection area, not dropped.
+        areas = budgeted.get("inspection_areas", [])
+        self.assertTrue(any(a.get("area") == "service_operational_surface_overflow" for a in areas))
+
+    def test_service_brief_budget_leaves_small_packet_untouched(self) -> None:
+        from source.kg.product.output_budget import enforce_service_brief_budget
+
+        result = {"tool": "get_service_brief", "status": "found", "operational_surfaces": {"summary": {}}, "next_actions": []}
+        self.assertIs(enforce_service_brief_budget(result), result)
+        self.assertNotIn("output_budget", result)
+
+    def test_minimal_valid_packet_keeps_caution_contract_over_answer_counts(self) -> None:
+        gated = {
+            "tool": "planning_context",
+            "status": "ambiguous",
+            "runtime_architecture": {
+                "scope": {"kind": "ambiguous_anchor"},
+                "summary": {"answer_packet_mode": "investigation_brief_only"},
+                "answer_packet": {
+                    "investigation_brief": {"runtime_anchors": [], "recommended_source_checks": []},
+                    "deploy_kind_counts": {"component_deploy_kind_counts": {"kubernetes": 3}},
+                    "missing_fact_families": ["runtime_map"],
+                    "evidence_contract": "investigation brief only",
+                    "omitted_answer_sections": ["domain_routing_map", "deploy_runtime_map"],
+                },
+                "anchor_resolution_contract": {
+                    "status": "inventory_context",
+                    "reason": "anchor did not resolve",
+                    "omitted_answer_sections": ["domain_routing_map", "deploy_runtime_map"],
+                },
+                "assembly_contract": "typed facts only",
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        minimal = _minimal_valid_packet(gated)
+
+        runtime = minimal["runtime_architecture"]
+        # The anchor-resolution caution contract must outlive the extreme fallback.
+        self.assertIn("anchor_resolution_contract", runtime)
+        self.assertEqual(
+            runtime["answer_packet"]["omitted_answer_sections"],
+            ["domain_routing_map", "deploy_runtime_map"],
+        )
+        # Answer-shaped counts must not survive when the answer path is gated.
+        self.assertNotIn("deploy_kind_counts", runtime["answer_packet"])
+
+    def test_minimal_valid_packet_keeps_deploy_counts_for_resolved_anchor(self) -> None:
+        resolved = {
+            "tool": "planning_context",
+            "status": "found",
+            "runtime_architecture": {
+                "scope": {"kind": "service"},
+                "summary": {"runtime_building_block_count": 4},
+                "answer_packet": {
+                    "investigation_brief": {},
+                    "deploy_kind_counts": {"component_deploy_kind_counts": {"kubernetes": 2}},
+                    "missing_fact_families": [],
+                    "evidence_contract": "typed",
+                },
+                "assembly_contract": "typed facts only",
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        minimal = _minimal_valid_packet(resolved)
+
+        answer = minimal["runtime_architecture"]["answer_packet"]
+        # A resolved anchor keeps its deploy counts; no anchor-resolution gate applies.
+        self.assertEqual(answer["deploy_kind_counts"], {"component_deploy_kind_counts": {"kubernetes": 2}})
+        self.assertNotIn("anchor_resolution_contract", minimal["runtime_architecture"])
 
     def test_output_budget_backfills_omitted_rows_when_compact_packet_has_headroom(self) -> None:
         result = {
@@ -1606,15 +1915,33 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("direct_callers", result)
         self.assertIn("direct_callees", result)
         self.assertIn("repo_dependencies", result)
-        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        # No changed_ranges supplied: top-level changed_symbols is empty; the inventory lives in changed_file_symbols.
+        self.assertEqual(result["changed_symbols"], [])
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
         self.assertEqual({row["predicate"] for row in result["direct_callees"]}, {"CALLS"})
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
         self.assertEqual(result["answerability"]["status"], "answerable")
         self.assertEqual(result["summary"]["changed_file_count"], 1)
-        self.assertEqual(result["summary"]["changed_symbol_count"], 2)
+        self.assertEqual(result["summary"]["changed_symbol_count"], 0)
+        self.assertEqual(result["summary"]["changed_file_symbol_count"], 2)
         self.assertEqual(result["summary"]["detail_limit"], 10)
-        self.assertEqual(result["review_answer_packet"]["summary"]["changed_symbol_count"], 2)
-        self.assertIn("changed-file symbol set", result["review_answer_packet"]["scope_contract"]["changed_symbols"])
+        self.assertEqual(result["review_answer_packet"]["summary"]["changed_symbol_count"], 0)
+        self.assertEqual(result["review_answer_packet"]["summary"]["changed_file_symbol_count"], 2)
+        self.assertEqual(result["review_answer_packet"]["summary"]["direct_caller_count"], 0)
+        self.assertEqual(result["review_answer_packet"]["top_changed_symbols"], [])
+        self.assertEqual(
+            {row["qualname"] for row in result["review_answer_packet"]["changed_file_symbol_inventory"]},
+            {"bootstrap_checkout", "handle_checkout"},
+        )
+        self.assertIn("top-level changed_symbols is empty", result["review_answer_packet"]["scope_contract"]["changed_symbols"])
+        self.assertIn(
+            "Range-overlap changed symbols only",
+            result["review_answer_packet"]["scope_contract"]["review_answer_packet.top_changed_symbols"],
+        )
+        self.assertEqual(result["claim_contract"]["scope"], "bounded static review context for changed files and optional ranges")
+        self.assertIn("do not prove deploy safety", result["claim_contract"]["safety_rule"])
+        self.assertIn("changed-file symbol inventory", result["claim_contract"]["changed_symbol_rule"])
+        self.assertEqual(result["review_answer_packet"]["claim_contract"], result["claim_contract"])
         self.assertEqual(result["changed_surface"]["files"][0]["symbol_count"], 2)
         self.assertEqual(result["changed_surface"]["symbols"][0]["qualname"], "bootstrap_checkout")
         self.assertEqual({row["predicate"] for row in result["impact"]["direct_callees"]}, {"CALLS"})
@@ -1653,7 +1980,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(lead["match_basis"], "name_derived_unlinked_lead")
         self.assertIn("not as impact proof", lead["interpretation"])
 
-    def test_review_context_marks_requested_surfaces_known_unlinked_or_missing(self) -> None:
+    def test_review_context_marks_requested_surfaces_context_unlinked_or_missing(self) -> None:
         with _fixture_snapshot(app_surface=True) as kg:
             result = call_tool(
                 kg,
@@ -1668,14 +1995,24 @@ class McpToolsTest(unittest.TestCase):
 
         statuses = {row["surface"]: row for row in result["surface_status"]}
         self.assertEqual(result["answerability"]["status"], "partial")
-        self.assertEqual(statuses["scheduled_jobs"]["status"], "known")
-        self.assertEqual(statuses["delivery_workers"]["status"], "known")
-        self.assertEqual(statuses["ui_screens"]["status"], "unlinked")
-        self.assertEqual(statuses["sqs_consumers"]["status"], "known")
+        self.assertEqual(statuses["scheduled_jobs"]["status"], "inventory_context")
+        self.assertEqual(statuses["scheduled_jobs"]["known_count"], 0)
+        self.assertGreater(statuses["scheduled_jobs"]["context_count"], 0)
+        self.assertNotIn("evidence_count", statuses["scheduled_jobs"])
+        self.assertIn("do not prove this surface is affected", statuses["scheduled_jobs"]["interpretation"])
+        self.assertEqual(statuses["delivery_workers"]["status"], "inventory_context")
+        self.assertEqual(statuses["ui_screens"]["status"], "unlinked_lead")
+        self.assertEqual(statuses["sqs_consumers"]["status"], "inventory_context")
         self.assertEqual(statuses["tracking_paths"]["status"], "missing")
         self.assertIn("ui_screens", result["answerability"]["unlinked_fact_families"])
+        self.assertIn("scheduled_jobs", result["answerability"]["inventory_context_fact_families"])
+        self.assertIn("delivery_workers", result["answerability"]["inventory_context_fact_families"])
+        self.assertIn("sqs_consumers", result["answerability"]["inventory_context_fact_families"])
         self.assertNotIn("sqs_consumers", result["answerability"]["missing_fact_families"])
         self.assertIn("tracking_paths", result["answerability"]["missing_fact_families"])
+        self.assertTrue(
+            any("inventory/context leads" in action for action in result["answerability"]["recommended_followups"])
+        )
         self.assertEqual(result["review_answer_packet"]["surface_status"], result["surface_status"])
 
     def test_review_context_accepts_builtin_call_graph_section_aliases(self) -> None:
@@ -1695,6 +2032,38 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("direct_callers", result)
         self.assertIn("transitive_callers", result)
         self.assertEqual({row["predicate"] for row in result["impact"]["direct_callees"]}, {"CALLS"})
+
+    def test_review_context_accepts_generic_review_category_aliases(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "requested_surfaces": ["services", "schemas", "contracts", "deployables", "owners"],
+                    "limit": 10,
+                },
+            )
+
+        statuses = {row["surface"]: row for row in result["surface_status"]}
+        self.assertEqual(set(statuses), {"api_surfaces", "serializers"})
+        self.assertEqual(statuses["api_surfaces"]["status"], "inventory_context")
+        self.assertEqual(statuses["serializers"]["status"], "missing")
+        self.assertIn("api_surfaces", result["answerability"]["inventory_context_fact_families"])
+        self.assertIn("serializers", result["answerability"]["missing_fact_families"])
+        self.assertIn("ownership_context", result["answerability"]["missing_fact_families"])
+        self.assertTrue(any(row["kind"] == "ownership_context" for row in result["unsupported_scopes"]))
+        self.assertTrue(
+            any(
+                row.get("trigger") == "unsupported_scope"
+                and isinstance(row.get("detail"), dict)
+                and row["detail"].get("kind") == "ownership_context"
+                for row in result["coverage_gaps"]
+            )
+        )
+        self.assertIn("repo_dependencies", result["impact"])
+        self.assertIn("runtime_surfaces", result)
 
     def test_review_context_surfaces_path_matched_endpoint_consumers(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True) as kg:
@@ -1719,7 +2088,7 @@ class McpToolsTest(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "found")
-        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
 
     def test_review_context_repo_filter_accepts_owner_repo_query(self) -> None:
@@ -1731,7 +2100,7 @@ class McpToolsTest(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "found")
-        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
 
     def test_review_context_repo_filter_accepts_bare_repo_for_owner_repo_rows(self) -> None:
         with _fixture_snapshot(symbol_repo="latticeai/payments") as kg:
@@ -1742,7 +2111,7 @@ class McpToolsTest(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "found")
-        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_symbols"]))
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
 
     def test_review_context_changed_ranges_filter_symbols(self) -> None:
         with _fixture_snapshot() as kg:
@@ -1764,6 +2133,12 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["summary"]["changed_file_symbol_count"], 2)
         self.assertIn("scope_contract", result)
         self.assertEqual(result["scope_contract"]["changed_symbol_count"], 1)
+        self.assertEqual([row["qualname"] for row in result["review_answer_packet"]["top_changed_symbols"]], ["handle_checkout"])
+        self.assertEqual(result["review_answer_packet"]["summary"]["changed_symbol_count"], 1)
+        self.assertEqual(result["review_answer_packet"]["summary"]["changed_file_symbol_count"], 2)
+        self.assertTrue(
+            any(row["qualname"] == "bootstrap_checkout" for row in result["review_answer_packet"]["changed_file_symbol_inventory"])
+        )
 
     def test_review_context_changed_ranges_use_symbol_evidence_span(self) -> None:
         with _fixture_snapshot(
@@ -1820,6 +2195,26 @@ class McpToolsTest(unittest.TestCase):
             ],
         )
         self.assertEqual(result["impact"]["transitive_callers"][0]["subject"], "payments.api.submit_checkout")
+
+    def test_review_context_transitive_callers_preserve_changed_symbol_order(self) -> None:
+        with _fixture_snapshot(upstream_bootstrap_caller=True, upstream_checkout_caller=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(
+            [(row["subject"], row["object"], row["depth"]) for row in result["transitive_callers"]],
+            [
+                ("payments.startup.warm_checkout", "payments.checkout.bootstrap_checkout", 1),
+                ("payments.api.submit_checkout", "payments.checkout.handle_checkout", 1),
+            ],
+        )
 
     def test_review_context_transitive_callers_handles_cycles(self) -> None:
         with _fixture_snapshot(upstream_checkout_caller=True, upstream_checkout_cycle=True) as kg:
@@ -1997,6 +2392,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(brief["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(brief["answerability"]["status"], "partial")
         self.assertEqual(brief["answerability"]["missing_fact_families"], ["deploy_mapping"])
+        self.assertEqual(brief["claim_contract"]["scope"], "indexed static service, endpoint, event, deploy, and operational facts")
+        self.assertIn("do not prove deploy safety", brief["claim_contract"]["safety_rule"])
+        self.assertIn("inspect source/config/operational evidence", brief["claim_contract"]["required_caveat"])
         self.assertTrue(brief["next_actions"])
         self.assertEqual(limited_brief["summary"]["endpoint_fact_count"], 1)
         self.assertEqual(limited_brief["summary"]["event_fact_count"], 1)
@@ -2022,6 +2420,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(callers["caller_count"], 1)
         self.assertEqual(callers["candidate_leads"]["status"], "empty")
         self.assertEqual(callers["answerability"]["status"], "answerable")
+        self.assertEqual(callers["claim_contract"]["scope"], "immediate static upstream CALLS edges")
+        self.assertEqual(callers["claim_contract"]["known_rows"], ["callers"])
         self.assertFalse(any(row["trigger"] == "candidate_leads_present" for row in callers["inspection_areas"]))
         self.assertEqual(impact["status"], "found")
         self.assertEqual(impact["summary"]["edge_count"], 3)
@@ -2037,6 +2437,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(callees["callee_count"], 1)
         self.assertEqual(radius["status"], "found")
         self.assertEqual(radius["edge_count"], 1)
+        self.assertEqual(radius["claim_contract"]["scope"], "bounded static downstream CALLS closure")
+        self.assertIn("absence-of-impact claims", radius["claim_contract"]["claim_boundary"])
         _assert_additive_fields(self, callers)
         _assert_additive_fields(self, impact)
         _assert_additive_fields(self, callees)
@@ -2077,6 +2479,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(impact["summary"]["affected_symbol_count"], 3)
         self.assertEqual(impact["summary"]["affected_symbol_returned_count"], 3)
         self.assertEqual(impact["summary"]["affected_symbol_multiplicity"], "unique_global")
+        self.assertEqual(impact["claim_contract"]["scope"], "bounded static reverse CALLS head start")
+        self.assertIn("terminal_import_consumer_leads", impact["claim_contract"]["candidate_source_leads"]["fields"])
+        self.assertIn(
+            "do not add these to affected symbol totals",
+            impact["claim_contract"]["candidate_source_leads"]["claim_boundary"],
+        )
+        self.assertIn("Report static CALLS affected symbols separately", impact["claim_contract"]["counting_rule"])
         self.assertEqual(
             [tier["symbols"][0]["symbol"]["qualname"] for tier in impact["tiers"]],
             ["Builder.build_features", "Builder.__init__", "train_company"],
@@ -2152,6 +2561,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(reverse_impact["summary"]["edge_count"], 0)
         self.assertEqual(reverse_impact["summary"]["terminal_import_lead_count"], 1)
         self.assertEqual(reverse_impact["answerability"]["missing_fact_families"], ["reverse_callers"])
+        self.assertIn(
+            "terminal import leads",
+            reverse_impact["claim_contract"]["counting_rule"],
+        )
         self.assertEqual(reverse_impact["proven_facts"]["status"], "found")
         self.assertIn("roots", {row["field"] for row in reverse_impact["proven_facts"]["sources"]})
         self.assertEqual(reverse_impact["candidate_leads"]["status"], "found")
@@ -2262,6 +2675,100 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(disambiguated["status"], "found")
         self.assertEqual(disambiguated["caller_count"], 1)
 
+    def test_symbol_tools_distinguish_wrong_coordinate_from_missing_symbol(self) -> None:
+        with _fixture_snapshot() as kg:
+            correct_coordinate = call_tool(
+                kg,
+                "find_callers",
+                {"symbol": "charge_card", "path": "payments/gateway.py", "line": 5},
+            )
+            callers = call_tool(
+                kg,
+                "find_callers",
+                {"symbol": "charge_card", "path": "payments/checkout.py", "line": 14},
+            )
+            wrong_line = call_tool(
+                kg,
+                "find_callers",
+                {"symbol": "charge_card", "path": "payments/gateway.py", "line": 99},
+            )
+
+        self.assertEqual(correct_coordinate["status"], "found")
+        self.assertEqual(correct_coordinate["target"]["confidence"], "exact_unique")
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(callers["target"]["status"], "not_found")
+        self.assertEqual(callers["target"]["confidence"], "coordinate_mismatch")
+        self.assertEqual(callers["target"]["candidate_count"], 1)
+        mismatch = callers["target"]["coordinate_mismatch"]
+        self.assertEqual(mismatch["status"], "symbol_found_at_different_coordinate")
+        self.assertEqual(mismatch["requested"], {"path": "payments/checkout.py", "line": 14})
+        self.assertEqual(
+            mismatch["retry_arguments"],
+            [{"symbol": "payments.gateway.charge_card", "path": "payments/gateway.py", "line": 5}],
+        )
+        self.assertEqual(mismatch["candidates"][0]["path"], "payments/gateway.py")
+        self.assertTrue(any("coordinate_mismatch.retry_arguments" in action for action in callers["next_actions"]))
+        self.assertFalse(any("external package" in action for action in callers["next_actions"]))
+        self.assertEqual(callers["callers"], [])
+        self.assertEqual(wrong_line["target"]["confidence"], "coordinate_mismatch")
+        self.assertEqual(
+            wrong_line["target"]["coordinate_mismatch"]["requested"],
+            {"path": "payments/gateway.py", "line": 99},
+        )
+        self.assertEqual(
+            wrong_line["target"]["coordinate_mismatch"]["retry_arguments"],
+            [{"symbol": "payments.gateway.charge_card", "path": "payments/gateway.py", "line": 5}],
+        )
+
+    def test_symbol_coordinate_mismatch_is_surfaced_for_source_side_tools(self) -> None:
+        with _fixture_snapshot() as kg:
+            callees = call_tool(
+                kg,
+                "find_callees",
+                {"symbol": "handle_checkout", "path": "payments/gateway.py", "line": 5},
+            )
+
+        self.assertEqual(callees["status"], "not_found")
+        self.assertEqual(callees["source"]["confidence"], "coordinate_mismatch")
+        self.assertEqual(
+            callees["source"]["coordinate_mismatch"]["retry_arguments"],
+            [{"symbol": "payments.checkout.handle_checkout", "path": "payments/checkout.py", "line": 10}],
+        )
+        self.assertTrue(any("coordinate_mismatch.retry_arguments" in action for action in callees["next_actions"]))
+
+    def test_symbol_coordinate_mismatch_uses_language_agnostic_code_symbol_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            symbol = Entity(
+                kind="CodeSymbol",
+                identity={
+                    "tenant_id": "default",
+                    "repo": "web",
+                    "module": "src.client",
+                    "qualname": "sendEvent",
+                    "symbol_kind": "function",
+                },
+                properties={"path": "src/client.ts", "line": 12, "end_line": 15, "language": "typescript"},
+            )
+            JsonlKgStore(root).write(
+                entities=[symbol],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"counts": {"entities": 1, "facts": 0}},
+            )
+            kg = KgSnapshot(root)
+
+            result = kg.find_callers("sendEvent", path="src/server.py", line=4)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["target"]["confidence"], "coordinate_mismatch")
+        self.assertEqual(result["target"]["coordinate_mismatch"]["candidates"][0]["path"], "src/client.ts")
+        self.assertEqual(
+            result["target"]["coordinate_mismatch"]["retry_arguments"],
+            [{"symbol": "src.client.sendEvent", "path": "src/client.ts", "line": 12}],
+        )
+
     def test_discovery_keeps_fuzzy_but_graph_tools_require_exact_symbols(self) -> None:
         with _fixture_snapshot() as kg:
             lookup = kg.lookup_symbol("card")
@@ -2306,6 +2813,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(limited_producers["status"], "found")
         self.assertEqual(consumers["answerability"]["status"], "answerable")
         self.assertEqual(consumers["answerability"]["missing_fact_families"], [])
+        self.assertEqual(consumers["claim_contract"]["known_rows_field"], "consumers")
+        self.assertIn("do not prove deploy safety", consumers["claim_contract"]["safety_rule"])
+        self.assertIn("Report known static rows separately", consumers["claim_contract"]["counting_rule"])
         self.assertTrue(any("time-window usage" in action for action in consumers["next_actions"]))
         _assert_additive_fields(self, consumers)
         _assert_additive_fields(self, producers)
@@ -2411,7 +2921,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("planning_context first", instructions)
         self.assertIn("review_context first", instructions)
         self.assertIn("review_context.application_impact", instructions)
-        self.assertIn("normal search/read tools once", instructions)
+        self.assertIn("normal search/read tools at least once", instructions)
         self.assertIn("service_operational_surfaces.evidence_partition", instructions)
         self.assertIn("deploy_link_facts", instructions)
         self.assertIn("DEPLOYS_VIA_CONFIG", instructions)
@@ -2425,7 +2935,13 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("Common packet contract", instructions)
         self.assertIn("Evidence gates", instructions)
         self.assertIn("named answer categories", instructions)
-        self.assertIn("normal search/read tools once", instructions)
+        self.assertIn("never a replacement for source inspection", instructions)
+        self.assertIn("Never assert that SuperContext alone fully resolved", instructions)
+        self.assertIn("internal progress commentary", instructions)
+        self.assertIn("changed-file symbol inventory", instructions)
+        self.assertIn("terminal_import_consumer_leads", instructions)
+        self.assertIn("do not prove deploy or safety readiness", instructions)
+        self.assertIn("normal search/read tools at least once", instructions)
         self.assertIn("count/list/impact answers", instructions)
         self.assertIn("proven_facts", instructions)
         self.assertIn("candidate_leads", instructions)
@@ -2835,6 +3351,7 @@ class _fixture_snapshot:
         symbol_entity_evidence_duplicate_coordinates: bool = False,
         symbol_without_end_line: bool = False,
         upstream_checkout_caller: bool = False,
+        upstream_bootstrap_caller: bool = False,
         upstream_checkout_grandcaller: bool = False,
         upstream_checkout_cycle: bool = False,
         containing_checkout_class: bool = False,
@@ -2862,6 +3379,7 @@ class _fixture_snapshot:
         self.symbol_entity_evidence_duplicate_coordinates = symbol_entity_evidence_duplicate_coordinates
         self.symbol_without_end_line = symbol_without_end_line
         self.upstream_checkout_caller = upstream_checkout_caller
+        self.upstream_bootstrap_caller = upstream_bootstrap_caller
         self.upstream_checkout_grandcaller = upstream_checkout_grandcaller
         self.upstream_checkout_cycle = upstream_checkout_cycle
         self.containing_checkout_class = containing_checkout_class
@@ -2944,6 +3462,17 @@ class _fixture_snapshot:
                 "symbol_kind": "function",
             },
             properties={"path": "payments/api.py", "line": 30, "end_line": 35},
+        )
+        upstream_bootstrap_caller = Entity(
+            kind="CodeSymbol",
+            identity={
+                "tenant_id": "default",
+                "repo": "payments",
+                "module": "payments.startup",
+                "qualname": "warm_checkout",
+                "symbol_kind": "function",
+            },
+            properties={"path": "payments/startup.py", "line": 22, "end_line": 27},
         )
         upstream_grandcaller = Entity(
             kind="CodeSymbol",
@@ -3109,6 +3638,7 @@ class _fixture_snapshot:
         )
         call_fact = Fact("CALLS", caller.entity_id, callee.entity_id)
         upstream_call_fact = Fact("CALLS", upstream_caller.entity_id, caller.entity_id)
+        upstream_bootstrap_call_fact = Fact("CALLS", upstream_bootstrap_caller.entity_id, earlier_symbol.entity_id)
         upstream_grandcall_fact = Fact("CALLS", upstream_grandcaller.entity_id, upstream_caller.entity_id)
         upstream_cycle_fact = Fact("CALLS", caller.entity_id, upstream_caller.entity_id)
         import_fact = Fact(
@@ -3463,6 +3993,7 @@ class _fixture_snapshot:
             endpoint,
             *([extra_endpoint] if self.extra_service_endpoint else []),
             *([upstream_caller] if self.upstream_checkout_caller else []),
+            *([upstream_bootstrap_caller] if self.upstream_bootstrap_caller else []),
             *([upstream_grandcaller] if self.upstream_checkout_grandcaller else []),
             *([consumer_service] if self.endpoint_consumer and not self.same_repo_endpoint_consumer else []),
             *([consumer_endpoint] if self.endpoint_consumer else []),
@@ -3488,6 +4019,7 @@ class _fixture_snapshot:
         facts = [
             call_fact,
             *([upstream_call_fact] if self.upstream_checkout_caller else []),
+            *([upstream_bootstrap_call_fact] if self.upstream_bootstrap_caller else []),
             *([upstream_grandcall_fact] if self.upstream_checkout_grandcaller else []),
             *([upstream_cycle_fact] if self.upstream_checkout_cycle else []),
             import_fact,

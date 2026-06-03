@@ -41,6 +41,7 @@ from source.scripts.run_ab_eval import (
     _run_host_config_command,
     _run_paired_tasks,
 )
+from source.scripts.mcp_server import SUPERCONTEXT_MCP_INSTRUCTIONS
 
 
 class AbEvalOrchestratorTest(unittest.TestCase):
@@ -1194,7 +1195,16 @@ class AbEvalOrchestratorTest(unittest.TestCase):
         self.assertIn("Call `planning_context` before broad search", prompt)
         self.assertIn("Evidence Gates", prompt)
         self.assertIn("named answer categories", prompt)
-        self.assertIn("normal search/read tools once", prompt)
+        self.assertIn("Head-Start Boundary", prompt)
+        self.assertIn("evidence router, not an answer oracle", prompt)
+        self.assertIn("head start, not a replacement", prompt)
+        self.assertIn("Never assert that SuperContext alone fully resolved", prompt)
+        self.assertIn("Answer the user's question first", prompt)
+        self.assertIn("coverage obligations to answer or mark unknown", prompt)
+        self.assertIn("review_answer_packet.changed_file_symbol_inventory", prompt)
+        self.assertIn("internal progress commentary", prompt)
+        self.assertNotIn("verify and complete with ordinary source inspection", prompt)
+        self.assertIn("normal search/read tools at least once", prompt)
         self.assertIn("count/list/impact answers", prompt)
         self.assertIn("Before reviewing a diff, call `review_context`", prompt)
         self.assertIn("If the result is `ambiguous`, use `next_actions`", prompt)
@@ -1206,6 +1216,54 @@ class AbEvalOrchestratorTest(unittest.TestCase):
 
         self.assertNotIn("SuperContext MCP skill routing guidance", prompt)
         self.assertNotIn("Call `planning_context` before broad search", prompt)
+
+    def test_task_prompt_shared_answer_shape_rules_apply_to_both_arms(self) -> None:
+        mcp_on_prompt = render_task_prompt(_task(), snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+        mcp_off_prompt = render_task_prompt(_task(), snapshot_path=Path("snapshot-dir"), arm="mcp_off")
+
+        shared_rules = [
+            "SuperContext is an evidence router, not an answer oracle.",
+            "not permission to expand into a broader report",
+            "answer every named category",
+            "explicitly mark it unknown, unsupported, or out-of-scope",
+            "Answer the user's question first",
+            "The final answer is not a progress log",
+        ]
+        for rule in shared_rules:
+            with self.subTest(rule=rule):
+                self.assertIn(rule, mcp_on_prompt)
+                self.assertIn(rule, mcp_off_prompt)
+        self.assertNotIn("coverage checklist", mcp_on_prompt)
+        self.assertNotIn("coverage checklist", mcp_off_prompt)
+
+    def test_head_start_answer_contract_is_synchronized_across_prompt_surfaces(self) -> None:
+        codex_skill = (
+            Path("source/kg/product/mcp_skill_templates/codex/supercontext-mcp/SKILL.md").read_text(encoding="utf-8")
+        )
+        claude_skill = (
+            Path("source/kg/product/mcp_skill_templates/claude/supercontext-mcp/SKILL.md").read_text(encoding="utf-8")
+        )
+        mcp_on_prompt = render_task_prompt(_task(), snapshot_path=Path("snapshot-dir"), arm="mcp_on")
+        contract_phrases = [
+            "SuperContext is an evidence router, not an answer oracle",
+            "For non-trivial planning, review, impact, runtime, deploy, ownership, or safety questions",
+            "Answer the user's question first",
+            "candidate or unlinked leads",
+            "coverage gaps or unknowns",
+            "inventory_context",
+            "investigation_brief_only",
+        ]
+        for phrase in contract_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, codex_skill)
+                self.assertIn(phrase, claude_skill)
+                self.assertIn(phrase, SUPERCONTEXT_MCP_INSTRUCTIONS)
+                self.assertIn(phrase, mcp_on_prompt)
+        stale_surface_status_phrase = "distinguish proven, `inventory_context`"
+        self.assertNotIn(stale_surface_status_phrase, codex_skill)
+        self.assertNotIn(stale_surface_status_phrase, claude_skill)
+        self.assertNotIn(stale_surface_status_phrase, SUPERCONTEXT_MCP_INSTRUCTIONS)
+        self.assertNotIn(stale_surface_status_phrase, mcp_on_prompt)
 
     def test_mcp_on_task_prompt_fails_loudly_when_skill_template_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

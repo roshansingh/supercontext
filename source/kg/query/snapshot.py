@@ -1155,8 +1155,6 @@ class KgSnapshot:
         needle = query.lower()
         query_is_qualified = "." in query
         for entity in self._symbol_entities():
-            if (path or line is not None) and not self._symbol_matches_coordinate(entity, path=path, line=line):
-                continue
             qualified = self._display(entity)
             qualname = str(entity["identity"].get("qualname", ""))
             short_name = qualname.rsplit(".", 1)[-1]
@@ -1170,11 +1168,13 @@ class KgSnapshot:
                 fuzzy.append(entity)
 
         if exact_qualified:
-            return self._resolution_result(query, "exact_qualified", exact_qualified, limit)
+            return self._resolution_result_for_coordinate(
+                query, "exact_qualified", exact_qualified, limit, path=path, line=line
+            )
         if exact_name:
-            return self._resolution_result(query, "exact_name", exact_name, limit)
+            return self._resolution_result_for_coordinate(query, "exact_name", exact_name, limit, path=path, line=line)
         if allow_fuzzy and fuzzy:
-            return self._resolution_result(query, "fuzzy", fuzzy, limit)
+            return self._resolution_result_for_coordinate(query, "fuzzy", fuzzy, limit, path=path, line=line)
         return {
             "status": "not_found",
             "query": query,
@@ -1182,6 +1182,28 @@ class KgSnapshot:
             "resolved_symbol": None,
             "candidates": [],
         }
+
+    def _resolution_result_for_coordinate(
+        self,
+        query: str,
+        match_type: str,
+        entities: list[JsonObject],
+        limit: int,
+        *,
+        path: str | None,
+        line: int | None,
+    ) -> JsonObject:
+        if not path and line is None:
+            return self._resolution_result(query, match_type, entities, limit)
+
+        # Coordinate constraints are part of anchor resolution. A bad coordinate
+        # should not be overridden by include_all-style aggregation upstream.
+        coordinate_matches = [
+            entity for entity in entities if self._symbol_matches_coordinate(entity, path=path, line=line)
+        ]
+        if coordinate_matches:
+            return self._resolution_result(query, match_type, coordinate_matches, limit)
+        return self._coordinate_mismatch_result(query, match_type, entities, limit, path=path, line=line)
 
     def _resolution_result(self, query: str, match_type: str, entities: list[JsonObject], limit: int) -> JsonObject:
         candidates = sorted((self._symbol_result(entity) for entity in entities), key=self._symbol_sort_key)
@@ -1198,6 +1220,49 @@ class KgSnapshot:
             "resolved_symbol": candidates[0] if is_unique else None,
             "candidates": candidates[:limit],
             "candidate_count": len(candidates),
+        }
+
+    def _coordinate_mismatch_result(
+        self,
+        query: str,
+        match_type: str,
+        entities: list[JsonObject],
+        limit: int,
+        *,
+        path: str | None,
+        line: int | None,
+    ) -> JsonObject:
+        candidates = sorted((self._symbol_result(entity) for entity in entities), key=self._symbol_sort_key)
+        retry_arguments = [self._symbol_retry_arguments(candidate, query) for candidate in candidates[:limit]]
+        requested_coordinate: JsonObject = {}
+        if path:
+            requested_coordinate["path"] = self._normalize_path(path)
+        if line is not None:
+            requested_coordinate["line"] = line
+        return {
+            "status": "not_found",
+            "query": query,
+            "confidence": "coordinate_mismatch",
+            "resolved_symbol": None,
+            "candidates": candidates[:limit],
+            "candidate_count": len(candidates),
+            "coordinate_mismatch": {
+                "status": "symbol_found_at_different_coordinate",
+                "message": (
+                    f"Symbol {query!r} matched by {match_type}, but no matching symbol exists at the requested "
+                    "path/line. Retry with one of these candidate retry arguments before interpreting this as "
+                    "no callers or no callees."
+                ),
+                "requested": requested_coordinate,
+                "match_type": match_type,
+                "candidate_count": len(candidates),
+                "candidates": [self._symbol_disambiguation_candidate(candidate) for candidate in candidates[:limit]],
+                "retry_arguments": retry_arguments,
+            },
+            "next_actions": [
+                "The symbol exists in the graph, but no candidate matched the requested path/line.",
+                "Retry with one coordinate_mismatch.retry_arguments entry before treating this as a missing symbol or no-callers result.",
+            ],
         }
 
     def _symbol_disambiguation_payload(self, resolution: JsonObject, *, result_kind: str) -> JsonObject:

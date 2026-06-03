@@ -255,7 +255,9 @@ def _system_prompt() -> str:
     return (
         "You are evaluating a SuperContext MCP-enabled coding agent workflow. "
         "Answer the task using ordinary safe source-inspection tools when needed. "
-        "Do not edit files. Cite file paths, symbols, or evidence when available."
+        "SuperContext is an evidence router, not an answer oracle. "
+        "Do not edit files. Cite file paths, symbols, or evidence when available. "
+        "Start the final answer with the answer or verdict, not internal workflow narration."
     )
 
 
@@ -309,9 +311,13 @@ Arm: {arm}""",
             """Rules:
 - Do not modify files.
 - Use the same ordinary source-inspection behavior you would use for a real coding task.
-- If SuperContext MCP tools are available, use them as a starting point when they are relevant: read the MCP context first to choose targeted source files/anchors, then verify and complete with ordinary source inspection as needed.
-- Treat the expected answer shape as a coverage checklist. Before finalizing, make sure every named category in the user question and expected shape is answered, or explicitly marked unknown with the source/MCP evidence checked.
-- For runtime architecture tasks, verified `unlinked_runtime_leads` such as API Gateway hostnames, private IPs, and static-site CNAME domains should be reported as referenced runtime targets with a caveat that they are not proven route mappings.
+- SuperContext is an evidence router, not an answer oracle.
+- If SuperContext MCP tools are available, use them as a starting point when they are relevant: read the MCP context first to choose targeted source files/anchors, then continue with ordinary source inspection for claims the packet cannot prove or whose risk requires verification.
+- Never assert that SuperContext alone fully resolved the user's question; SuperContext is a head start, not a replacement for source inspection or semantic search. Preserve scoped labels such as KG-backed, source-verified, candidate, coverage gap, and unknown.
+- Treat the expected answer shape as requested answer categories, not permission to expand into a broader report. Before finalizing, answer every named category in the user question and expected shape, or explicitly mark it unknown, unsupported, or out-of-scope with the source/MCP evidence checked.
+- Answer the user's question first. Keep extra MCP rows or source hits as inspection leads unless the user asks for exploratory coverage.
+- The final answer is not a progress log. Start with the answer or verdict, and summarize only evidence, verification, caveats, and next inspection.
+- For runtime architecture tasks, verified `unlinked_runtime_leads` such as API Gateway hostnames, private IPs, static-site CNAME domains, or other infrastructure references should be reported as referenced runtime targets with a caveat that they are not proven route mappings; this list is non-exhaustive.
 - If SuperContext cannot prove a fact, say what is unknown rather than guessing.""",
         ]
     )
