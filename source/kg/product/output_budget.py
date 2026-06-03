@@ -374,8 +374,9 @@ def enforce_review_context_budget(
     arrays (callers/callees/transitive/changed-file inventory/runtime/application
     surfaces) are compacted to bounded coordinate-bearing rows, with the sampled arrays
     listed in output_budget.truncated_sections, so
-    the agent inspects source rather than doing saved-file archaeology. Row limits
-    tighten across passes until the packet fits the cap.
+    the agent inspects source rather than doing saved-file archaeology. Row limits tighten
+    across passes until the packet fits; if non-row content alone still exceeds the cap, the
+    packet is returned with output_budget.exceeded_after_minimization set.
     """
     measured = len(canonical_json(result))
     if measured <= max_chars:
@@ -472,7 +473,8 @@ def enforce_reverse_impact_budget(
     are preserved. Edges, tiers, affected symbols, and terminal/truncated leads are
     compacted to bounded coordinate-bearing rows; sampled arrays are listed in
     output_budget.truncated_sections and summary.*_returned_count is synced to the rows
-    shown. Row limits tighten across passes until the packet fits the cap.
+    shown. Row limits tighten across passes until the packet fits; if non-row content alone
+    still exceeds the cap, the packet is returned with output_budget.exceeded_after_minimization set.
     """
     measured = len(canonical_json(result))
     if measured <= max_chars:
