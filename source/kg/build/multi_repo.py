@@ -5,6 +5,7 @@ from pathlib import Path
 
 from source.kg.build import relink
 from source.kg.build import runtime_link
+from source.kg.build.event_channel_promotion import prune_uncorroborated_event_channels
 from source.kg.build.pipeline import extract_repo
 from source.kg.core.models import Entity, Evidence, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
@@ -144,6 +145,10 @@ def build_multi(
     evidence.extend(runtime_result.evidence)
     coverage.extend(link_result.coverage)
     coverage.extend(runtime_result.coverage)
+    promotion = prune_uncorroborated_event_channels(entities, facts)
+    entities = promotion.entities
+    facts = promotion.facts
+    coverage.extend(promotion.coverage)
     return MultiRepoBuild(
         entities=entities,
         facts=facts,
