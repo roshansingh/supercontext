@@ -170,6 +170,21 @@ public class Sender
         self.assertEqual(len(produces), 1)
         self.assertEqual(produces[0].qualifier["broker_kind"], "masstransit")
 
+    def test_masstransit_subnamespace_import_satisfies_the_gate(self) -> None:
+        # `using MassTransit.Saga;` (sub-namespace) still marks the file as MassTransit.
+        source = """using MassTransit.Saga;
+namespace App;
+public class OrderConsumer : MassTransit.IConsumer<OrderSubmitted>
+{
+    public Task Consume(MassTransit.ConsumeContext<OrderSubmitted> context) => Task.CompletedTask;
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"OrderConsumer.cs": source})
+
+        consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
+        self.assertEqual(len(consumes), 1)
+
     def test_namespace_qualified_generic_consumer_base_is_recognized(self) -> None:
         # `: MassTransit.IConsumer<T>` (qualified generic base) must still yield the message type.
         source = """using MassTransit;

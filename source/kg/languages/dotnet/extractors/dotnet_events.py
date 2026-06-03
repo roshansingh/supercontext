@@ -109,7 +109,7 @@ def _extract_consumers(
             if spec is None:
                 continue
             broker_kind, required_import = spec
-            if required_import is not None and required_import not in import_roots:
+            if required_import is not None and not _imports_namespace(import_roots, required_import):
                 continue
             type_args = base.get("type_args") or []
             if not type_args:
@@ -289,6 +289,15 @@ def _relative(repo: RepoSnapshot, file_path: Path) -> str:
         return str(file_path.relative_to(repo.root))
     except ValueError:
         return str(file_path)
+
+
+def _imports_namespace(import_roots: set[str], required: str) -> bool:
+    """True if the file imports the required namespace or any of its sub-namespaces.
+
+    A file that imports e.g. ``MassTransit.Saga`` is still a MassTransit file, so the gate
+    matches the namespace prefix rather than requiring the exact root ``using``.
+    """
+    return any(root == required or root.startswith(required + ".") for root in import_roots)
 
 
 def _simple_name(type_name: str) -> str:
