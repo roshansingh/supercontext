@@ -899,6 +899,151 @@ def _add_endpoint_coverage(
     )
 
 
+_DOTNET_HTTP_ATTR_VERBS = {
+    "HttpGet": "GET",
+    "HttpPost": "POST",
+    "HttpPut": "PUT",
+    "HttpDelete": "DELETE",
+    "HttpPatch": "PATCH",
+    "HttpHead": "HEAD",
+    "HttpOptions": "OPTIONS",
+}
+_DOTNET_MAP_METHOD_VERBS = {
+    "MapGet": "GET",
+    "MapPost": "POST",
+    "MapPut": "PUT",
+    "MapDelete": "DELETE",
+    "MapPatch": "PATCH",
+}
+
+
+def extract_dotnet_endpoints(
+    repo: RepoSnapshot,
+    parsed_files: dict[str, object],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
+    """ASP.NET Core EXPOSES_ENDPOINT extraction from the .NET parser output.
+
+    Covers controllers (``[HttpGet("path")]`` methods under a ``[Route("prefix")]`` class) and
+    minimal APIs (``app.MapGet("/path", ...)``, including ``MapGroup`` prefixes). Paths come from
+    attribute / call string literals — non-literal routes are simply not emitted.
+    """
+    for relative_path, parsed_file in parsed_files.items():
+        if not isinstance(parsed_file, dict):
+            continue
+        scanned = ScannedFile(path=repo.root / str(relative_path), relative_path=str(relative_path), text="", lines=())
+        symbols = [s for s in parsed_file.get("symbols", []) if isinstance(s, dict)]
+        _dotnet_controller_endpoints(repo, scanned, symbols, service_entity, build, tenant_id)
+        _dotnet_minimal_api_endpoints(repo, scanned, parsed_file, service_entity, build, tenant_id)
+
+
+def _normalize_attribute_name(name: str) -> str:
+    # C# attributes may be namespace-qualified and the `Attribute` suffix is optional, so
+    # `[Microsoft.AspNetCore.Mvc.HttpGetAttribute]` and `[HttpGet]` must match the same key.
+    simple = name.rsplit(".", 1)[-1].strip()
+    suffix = "Attribute"
+    if simple.endswith(suffix) and len(simple) > len(suffix):
+        simple = simple[: -len(suffix)]
+    return simple
+
+
+def _dotnet_controller_endpoints(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    symbols: list[dict],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
+    class_prefixes = {
+        str(sym.get("name")): _dotnet_class_route_prefix(sym)
+        for sym in symbols
+        if sym.get("kind") in {"class", "record"}
+    }
+    for sym in symbols:
+        if sym.get("kind") != "method":
+            continue
+        qualname = str(sym.get("name", ""))
+        for attribute in sym.get("attributes", []):
+            verb = _DOTNET_HTTP_ATTR_VERBS.get(_normalize_attribute_name(str(attribute.get("name"))))
+            if verb is None:
+                continue
+            args = attribute.get("args") or []
+            method_path = str(args[0]) if args else ""
+            prefix = _dotnet_owning_class_prefix(qualname, class_prefixes)
+            path = _join_route(prefix, method_path)
+            _add_endpoint_fact(
+                repo, scanned, int(sym.get("line") or 1), service_entity, build,
+                "EXPOSES_ENDPOINT", verb, path, "dotnet_controller_route", tenant_id, validate_path=False,
+            )
+
+
+def _dotnet_minimal_api_endpoints(
+    repo: RepoSnapshot,
+    scanned: ScannedFile,
+    parsed_file: dict,
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
+    # Scope MapGroup prefixes by (method symbol key, local name) so a local `api` in one method
+    # cannot prefix routes registered through a different method's `api`.
+    group_prefixes: dict[tuple[str, str], str] = {}
+    for assignment in parsed_file.get("local_assignments", []):
+        if isinstance(assignment, dict) and assignment.get("map_group_prefix"):
+            key = (str(assignment.get("scope", "")), str(assignment.get("name", "")))
+            group_prefixes[key] = str(assignment.get("map_group_prefix"))
+    for call in parsed_file.get("calls", []):
+        if not isinstance(call, dict):
+            continue
+        verb = _DOTNET_MAP_METHOD_VERBS.get(str(call.get("method", "")))
+        if verb is None:
+            continue
+        first_arg = call.get("first_arg") or {}
+        if first_arg.get("kind") != "string":
+            continue
+        prefix = group_prefixes.get((str(call.get("caller_key", "")), str(call.get("receiver", ""))), "")
+        path = _join_route(prefix, str(first_arg.get("value", "")))
+        _add_endpoint_fact(
+            repo, scanned, int(call.get("line") or 1), service_entity, build,
+            "EXPOSES_ENDPOINT", verb, path, "dotnet_minimal_api_route", tenant_id, validate_path=False,
+        )
+
+
+def _dotnet_class_route_prefix(class_symbol: dict) -> str:
+    for attribute in class_symbol.get("attributes", []):
+        if _normalize_attribute_name(str(attribute.get("name"))) == "Route":
+            args = attribute.get("args") or []
+            if args:
+                return _resolve_route_token(str(args[0]), class_symbol)
+    return ""
+
+
+def _resolve_route_token(prefix: str, class_symbol: dict) -> str:
+    if "[controller]" in prefix:
+        name = str(class_symbol.get("name", "")).rsplit(".", 1)[-1]
+        controller = name[: -len("Controller")] if name.endswith("Controller") else name
+        return prefix.replace("[controller]", controller.lower())
+    return prefix
+
+
+def _dotnet_owning_class_prefix(method_qualname: str, class_prefixes: dict[str, str]) -> str:
+    best = ""
+    best_len = -1
+    for class_qualname, prefix in class_prefixes.items():
+        if method_qualname.startswith(class_qualname + ".") and len(class_qualname) > best_len:
+            best = prefix
+            best_len = len(class_qualname)
+    return best
+
+
+def _join_route(prefix: str, path: str) -> str:
+    parts = [segment.strip("/") for segment in (prefix, path) if segment and segment.strip("/")]
+    return "/" + "/".join(parts) if parts else "/"
+
+
 def _add_endpoint_fact(
     repo: RepoSnapshot,
     scanned: ScannedFile,

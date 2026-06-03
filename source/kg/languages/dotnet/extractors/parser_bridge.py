@@ -154,6 +154,7 @@ def _collect(
                     "kind": node_type.replace("_declaration", ""),
                     "key": symbol_key,
                     "bases": _base_types(node, source),
+                    "attributes": _attributes(node, source),
                     "line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
@@ -183,6 +184,7 @@ def _collect(
                     "key": symbol_key,
                     "signature": signature,
                     "arity": _parameter_count(node),
+                    "attributes": _attributes(node, source),
                     "line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
@@ -393,17 +395,43 @@ def _local_assignments(node: Any, source: bytes, scope: str) -> list[JsonObject]
         if name_node is None:
             continue
         resolved = declared_type or _initializer_type(child, source)
-        if resolved is None:
+        group_prefix = _map_group_prefix(child, source)
+        if resolved is None and group_prefix is None:
             continue
-        assignments.append(
-            {
-                "scope": scope,
-                "name": _node_text(name_node, source),
-                "type": resolved,
-                "line": child.start_point[0] + 1,
-            }
-        )
+        entry: JsonObject = {
+            "scope": scope,
+            "name": _node_text(name_node, source),
+            "line": child.start_point[0] + 1,
+        }
+        if resolved is not None:
+            entry["type"] = resolved
+        if group_prefix is not None:
+            entry["map_group_prefix"] = group_prefix
+        assignments.append(entry)
     return assignments
+
+
+def _declarator_value(declarator: Any) -> Any | None:
+    value = declarator.child_by_field_name("value")
+    if value is not None:
+        return value
+    for child in declarator.children:
+        if child.type not in {"=", "identifier"}:
+            return child
+    return None
+
+
+def _map_group_prefix(declarator: Any, source: bytes) -> str | None:
+    # Resolve `var api = app.MapGroup("prefix")[.HasApiVersion(...)]` so grouped minimal-API
+    # routes can be prefixed. Walks the invocation chain to the MapGroup call's literal arg.
+    node = _declarator_value(declarator)
+    while node is not None and node.type == "invocation_expression":
+        if _invocation_method(node, source) == "MapGroup":
+            first_arg = _invocation_first_arg(node, source)
+            return first_arg.get("value") if first_arg.get("kind") == "string" else None
+        function = node.child_by_field_name("function")
+        node = function.child_by_field_name("expression") if function is not None and function.type == "member_access_expression" else None
+    return None
 
 
 # Declared types too vague to be a useful event channel; defer to the initializer instead.
@@ -475,7 +503,54 @@ def _invocation_first_arg(node: Any, source: bytes) -> JsonObject:
         return {"kind": "object_creation", "type": _node_text(type_node, source).strip() if type_node is not None else None}
     if expression.type == "identifier":
         return {"kind": "identifier", "name": _node_text(expression, source)}
+    literal = _string_literal_value(expression, source)
+    if literal is not None:
+        return {"kind": "string", "value": literal}
     return {"kind": "other"}
+
+
+def _attributes(node: Any, source: bytes) -> list[JsonObject]:
+    attributes: list[JsonObject] = []
+    for child in node.children:
+        if child.type != "attribute_list":
+            continue
+        for attribute in child.children:
+            if attribute.type != "attribute":
+                continue
+            name_node = attribute.child_by_field_name("name")
+            name = _type_ref(name_node, source)["name"] if name_node is not None else ""
+            if not name:
+                continue
+            attributes.append({"name": name, "args": _attribute_string_args(attribute, source)})
+    return attributes
+
+
+def _attribute_string_args(attribute: Any, source: bytes) -> list[str]:
+    arg_list = next((child for child in attribute.children if child.type == "attribute_argument_list"), None)
+    if arg_list is None:
+        return []
+    args: list[str] = []
+    for child in arg_list.children:
+        if child.type != "attribute_argument":
+            continue
+        for value in child.children:
+            literal = _string_literal_value(value, source)
+            if literal is not None:
+                args.append(literal)
+    return args
+
+
+def _string_literal_value(node: Any, source: bytes) -> str | None:
+    # Regular and verbatim string literals only. Interpolated ($"...") and raw ("""...""")
+    # strings are treated as non-literal (routes/channels from those aren't statically known).
+    if node.type not in {"string_literal", "verbatim_string_literal"}:
+        return None
+    text = _node_text(node, source)
+    if node.type == "verbatim_string_literal" and text.startswith('@"') and text.endswith('"'):
+        return text[2:-1]
+    if text.startswith('"') and not text.startswith('"""') and text.endswith('"') and len(text) >= 2:
+        return text[1:-1]
+    return None
 
 
 def _invocation_method(node: Any, source: bytes) -> str:

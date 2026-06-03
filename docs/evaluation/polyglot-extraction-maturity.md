@@ -179,7 +179,7 @@ biggest, highest-value gaps.
 | Snapshot | EventChannel | PRODUCES_EVENT | CONSUMES_EVENT | Cross-service link | Honest coverage rows |
 |---|---|---|---|---|---|
 | run-aspnetcore | 1 | 1 | 1 | `BasketCheckoutEvent` (Basket→Ordering) | 1 unresolved producer |
-| eShop | 13 | 1 | 18 | `GracePeriodConfirmedIntegrationEvent` (produced↔consumed) | 3 unresolved producers |
+| eShop | 14 | 2 | 18 | `GracePeriodConfirmedIntegrationEvent` (produced↔consumed) | unresolved producers → coverage |
 
 **Scorecard movement:**
 
@@ -214,4 +214,47 @@ base-typed parameter) correctly emit `partially_instrumented` coverage rows
 Producers gated on receiver typed as a Nest client (no false positives on generic `.emit`/`.send`);
 non-literal channels → `unresolved_event_channel` coverage rows rather than guesses.
 
-### Run 4 — TS endpoints / .NET endpoints (pending)
+### Verified full re-measurement (2026-06-03, main after #140 + #141)
+
+Ran the full measurement block across all six fixtures (not targeted numbers) to confirm event
+coverage rose where the covered patterns exist and the zeros are honest. Events were 0/0/0
+everywhere at Run 1.
+
+| Snapshot | EventChannel | PRODUCES | CONSUMES | verdict |
+|---|---:|---:|---:|---|
+| eShop (.NET) | 14 | 2 | 18 | ✅ up — MassTransit / integration-event bus |
+| run-aspnetcore (.NET) | 1 | 1 | 1 | ✅ up — MassTransit Basket→Ordering |
+| ts-ecommerce (TS) | 11 | 11 | 11 | ✅ up — NestJS microservices, full graph |
+| realworld (x-repo) | 0 | 0 | 0 | — HTTP-only Conduit API; no event code (endpoints pending) |
+| booking-nestjs (TS) | 0 | 0 | 0 | — amqplib wrapper with dynamic exchange/queue names (deferred) |
+| otel-demo (poly) | 0 | 0 | 0 | — raw Confluent.Kafka consumer + gRPC; neither covered yet |
+
+`CALLS`/`IMPORTS` unchanged from Run 1 on every fixture → no regression. The three zeros are
+genuine "no covered pattern in this repo," not silent failures.
+
+**Discipline (caught in review):** record numbers by re-running the measurement block each pass,
+not by citing observed-during-development deltas — the latter drifts (the wave-5 declared-type fix
+moved eShop producers 1→2 / channels 13→14 after the Run 2 note was first written).
+
+### Run 4 — .NET endpoints (2026-06-03)
+
+- Changed since Run 3: ASP.NET Core EXPOSES_ENDPOINT extraction (controllers `[HttpVerb("path")]`
+  under `[Route("prefix")]`, and minimal APIs `app.MapGet(...)` incl. `MapGroup` prefixes) via
+  parser attribute/string-literal/MapGroup capture + `dotnet_endpoints` adapter.
+- Verified full re-measurement across all six fixtures (EXPOSES_ENDPOINT was 0 everywhere except
+  otel's 2 express rows at Run 1):
+
+| Snapshot | EXPOSES_ENDPOINT | PROD | CONS | note |
+|---|---:|---:|---:|---|
+| realworld (x-repo) | 19 | 0 | 0 | ✅ from the .NET Conduit controllers (lights up the cross-repo fixture; TS backend + client pending) |
+| eShop (.NET) | 38 | 2 | 18 | ✅ minimal APIs incl. MapGroup prefixes (`/api/orders/...`) |
+| run-aspnetcore (.NET) | 17 | 1 | 1 | ✅ minimal APIs (`/basket/...`, `/products/...`) |
+| otel (poly) | 3 | 0 | 0 | small (+1 .NET) alongside existing express rows |
+| booking-nestjs (TS) | 0 | 0 | 0 | — routes are NestJS `@Controller` (TS endpoints, pending) |
+| ts-ecommerce (TS) | 0 | 11 | 11 | — same; HTTP routes are NestJS `@Controller` (TS endpoints, pending) |
+
+**Scorecard:** .NET endpoints ❌→✅ (controllers + minimal APIs). TS endpoints still ❌ (NestJS
+`@Controller` / superagent client pending — that slice unlocks the RealWorld frontend→backend
+cross-repo links). `CALLS`/`IMPORTS`/events unchanged → no regression.
+
+### Run 5 — TS endpoints (pending)
