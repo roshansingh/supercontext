@@ -759,6 +759,10 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         next_actions.append(
             "endpoint_consumers are static path-matched CALLS_ENDPOINT facts; verify host/env resolution before treating them as runtime dependencies."
         )
+    coverage_warnings = _uninstrumented_language_coverage_warnings(
+        _uninstrumented_language_entries(kg, repo=service_repo),
+        repo=service_repo,
+    )
     return {
         "status": "found",
         "service": service_row,
@@ -780,6 +784,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "operational_surfaces": operational_surfaces,
         "authz_surface": authz_surface,
         "claim_contract": _service_brief_claim_contract(),
+        "coverage_warnings": coverage_warnings,
         "answerability": {
             "status": "partial" if missing_fact_families else "answerable",
             "missing_fact_families": missing_fact_families,
@@ -825,6 +830,7 @@ def _find_callers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 include_all=_optional_bool(arguments, "include_all", default=False),
             ),
             direction="callers",
+            kg=kg,
         ),
         tool_name="find_callers",
     )
@@ -841,10 +847,11 @@ def _reverse_impact(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             include_all=_optional_bool(arguments, "include_all", default=False),
         ),
         direction="reverse impact",
+        kg=kg,
     )
 
 
-def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> JsonObject:
+def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str, kg: KgSnapshot) -> JsonObject:
     if payload.get("status") != "not_found":
         return payload
     next_actions = list(payload.get("next_actions", []))
@@ -884,10 +891,18 @@ def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> Js
             "If the symbol is locally defined under a different qualified name, retry with `path` or `line` disambiguation.",
         ]
     )
-    return {
+    result = {
         **payload,
         "next_actions": next_actions,
     }
+    repo = _symbol_payload_repo(payload)
+    coverage_warnings = _uninstrumented_language_coverage_warnings(
+        _uninstrumented_language_entries(kg, repo=repo),
+        repo=repo,
+    )
+    if coverage_warnings:
+        result["coverage_warnings"] = list(payload.get("coverage_warnings", [])) + coverage_warnings
+    return result
 
 
 def _symbol_coordinate_mismatch_resolution(payload: JsonObject) -> JsonObject | None:
@@ -909,6 +924,7 @@ def _find_callees(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 include_all=_optional_bool(arguments, "include_all", default=False),
             ),
             direction="callees",
+            kg=kg,
         ),
         tool_name="find_callees",
     )
@@ -926,6 +942,7 @@ def _blast_radius(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 include_all=_optional_bool(arguments, "include_all", default=False),
             ),
             direction="static downstream impact",
+            kg=kg,
         ),
         tool_name="blast_radius",
     )
@@ -1083,6 +1100,66 @@ def _event_coverage_asymmetry_warnings(
             f"Treat this empty {result_key} result as thin coverage, not proof of absence."
         ]
     return []
+
+
+def _uninstrumented_language_entries(kg: KgSnapshot, *, repo: str | None = None) -> list[JsonObject]:
+    """Aggregate ingestion-time loud-refusal coverage by language.
+
+    Reads the ``LANGUAGE_SUPPORT`` / ``reason='unsupported_language'`` coverage
+    rows the build emits when a file's language has no allowlisted extractor, and
+    returns ``[{repo, language, file_count}]`` sorted by language. Optionally
+    scoped to one repo. This is language-agnostic by construction: it reports
+    whatever the snapshot could not extract, so an agent never reads an empty
+    symbol/event/endpoint result as proof of absence when the relevant code is in
+    an unindexed language.
+    """
+    repo_key = _normalize_repo_text(repo) if repo is not None else None
+    by_language: dict[str, JsonObject] = {}
+    for row in kg.coverage:
+        if not isinstance(row, dict) or row.get("state") != "uninstrumented":
+            continue
+        scope_ref = row.get("scope_ref")
+        if not isinstance(scope_ref, dict) or scope_ref.get("reason") != "unsupported_language":
+            continue
+        if repo_key is not None and _normalize_repo_text(scope_ref.get("repo")) != repo_key:
+            continue
+        language = scope_ref.get("language")
+        if not isinstance(language, str) or not language:
+            continue
+        file_count = scope_ref.get("file_count")
+        if isinstance(file_count, bool) or not isinstance(file_count, int):
+            file_count = 0
+        entry = by_language.setdefault(language, {"repo": scope_ref.get("repo"), "language": language, "file_count": 0})
+        entry["file_count"] += file_count
+    return [by_language[language] for language in sorted(by_language)]
+
+
+def _uninstrumented_language_coverage_warnings(entries: list[JsonObject], *, repo: str | None = None) -> list[str]:
+    if not entries:
+        return []
+    parts = ", ".join(
+        f"{entry['language']} ({entry['file_count']} files)" if entry["file_count"] else entry["language"]
+        for entry in entries
+    )
+    location = f"Repo {repo!r}" if repo else "Snapshot"
+    return [
+        f"{location} has uninstrumented source in languages with no allowlisted extractor: {parts}. "
+        "Symbols, calls, endpoints, and events defined in those languages are not indexed, so an empty or "
+        "partial result here is a coverage gap, not proof of absence."
+    ]
+
+
+def _symbol_payload_repo(payload: JsonObject) -> str | None:
+    for key in ("target", "source"):
+        resolution = payload.get(key)
+        if not isinstance(resolution, dict):
+            continue
+        resolved_symbol = resolution.get("resolved_symbol")
+        if isinstance(resolved_symbol, dict):
+            repo = resolved_symbol.get("repo")
+            if isinstance(repo, str) and repo:
+                return repo
+    return None
 
 
 def _event_claim_contract(result_key: str) -> JsonObject:
