@@ -210,6 +210,7 @@ def _collect(
                     "method": _invocation_method(node, source),
                     "type_args": _invocation_type_args(node, source),
                     "receiver": _invocation_receiver(node, source),
+                    "inline_group_prefix": _inline_map_group_prefix(node, source),
                     "first_arg": _invocation_first_arg(node, source),
                     "arity": _argument_count(node),
                     "line": node.start_point[0] + 1,
@@ -421,10 +422,9 @@ def _declarator_value(declarator: Any) -> Any | None:
     return None
 
 
-def _map_group_prefix(declarator: Any, source: bytes) -> str | None:
-    # Resolve `var api = app.MapGroup("prefix")[.HasApiVersion(...)]` so grouped minimal-API
-    # routes can be prefixed. Walks the invocation chain to the MapGroup call's literal arg.
-    node = _declarator_value(declarator)
+def _map_group_prefix_in_chain(node: Any, source: bytes) -> str | None:
+    # Walk an invocation chain (e.g. `app.MapGroup("p").HasApiVersion(1)`) to the MapGroup
+    # call's literal prefix arg.
     while node is not None and node.type == "invocation_expression":
         if _invocation_method(node, source) == "MapGroup":
             first_arg = _invocation_first_arg(node, source)
@@ -432,6 +432,21 @@ def _map_group_prefix(declarator: Any, source: bytes) -> str | None:
         function = node.child_by_field_name("function")
         node = function.child_by_field_name("expression") if function is not None and function.type == "member_access_expression" else None
     return None
+
+
+def _map_group_prefix(declarator: Any, source: bytes) -> str | None:
+    # `var api = app.MapGroup("prefix")[.HasApiVersion(...)]` so grouped minimal-API routes
+    # registered via the local `api` can be prefixed.
+    return _map_group_prefix_in_chain(_declarator_value(declarator), source)
+
+
+def _inline_map_group_prefix(invocation: Any, source: bytes) -> str | None:
+    # Chained form `app.MapGroup("prefix").MapGet("/x", ...)`: the Map* receiver is itself the
+    # MapGroup invocation, so resolve the prefix from the receiver chain.
+    function = invocation.child_by_field_name("function")
+    if function is None or function.type != "member_access_expression":
+        return None
+    return _map_group_prefix_in_chain(function.child_by_field_name("expression"), source)
 
 
 # Declared types too vague to be a useful event channel; defer to the initializer instead.

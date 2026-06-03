@@ -149,6 +149,21 @@ public class Endpoints
             endpoints = _endpoints(tmp, {"Endpoints.cs": source})
         self.assertEqual(endpoints, {("GET", "/health")})
 
+    def test_chained_inline_mapgroup_prefix_is_applied(self) -> None:
+        # `app.MapGroup("/api").MapGet("/x")` (no local var) must still get the group prefix.
+        source = """using Microsoft.AspNetCore.Builder;
+public class Endpoints
+{
+    public void Map(WebApplication app)
+    {
+        app.MapGroup("/api").MapGet("/widgets", () => "ok");
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            endpoints = _endpoints(tmp, {"Endpoints.cs": source})
+        self.assertEqual(endpoints, {("GET", "/api/widgets")})
+
     def test_non_literal_route_is_not_emitted(self) -> None:
         source = """using Microsoft.AspNetCore.Builder;
 public class Endpoints

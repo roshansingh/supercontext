@@ -1008,7 +1008,10 @@ def _dotnet_minimal_api_endpoints(
         first_arg = call.get("first_arg") or {}
         if first_arg.get("kind") != "string":
             continue
-        prefix = group_prefixes.get((str(call.get("caller_key", "")), str(call.get("receiver", ""))), "")
+        prefix = (
+            group_prefixes.get((str(call.get("caller_key", "")), str(call.get("receiver", ""))), "")
+            or str(call.get("inline_group_prefix") or "")  # chained app.MapGroup("p").MapGet(...)
+        )
         path = _join_route(prefix, str(first_arg.get("value", "")))
         _add_endpoint_fact(
             repo, scanned, int(call.get("line") or 1), service_entity, build,
