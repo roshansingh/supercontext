@@ -170,6 +170,23 @@ public class Sender
         self.assertEqual(len(produces), 1)
         self.assertEqual(produces[0].qualifier["broker_kind"], "masstransit")
 
+    def test_namespace_qualified_generic_consumer_base_is_recognized(self) -> None:
+        # `: MassTransit.IConsumer<T>` (qualified generic base) must still yield the message type.
+        source = """using MassTransit;
+namespace App;
+public class OrderConsumer : MassTransit.IConsumer<OrderSubmitted>
+{
+    public Task Consume(ConsumeContext<OrderSubmitted> context) => Task.CompletedTask;
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"OrderConsumer.cs": source})
+
+        consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
+        self.assertEqual(len(consumes), 1)
+        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
+
     def test_this_qualified_publish_receiver_is_recognized(self) -> None:
         # `this._publish.Publish(...)` must resolve the same as `_publish.Publish(...)`.
         source = """using MassTransit;

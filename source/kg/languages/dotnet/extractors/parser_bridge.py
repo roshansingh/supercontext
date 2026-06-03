@@ -275,16 +275,29 @@ def _base_types(node: Any, source: bytes) -> list[JsonObject]:
     return [
         _type_ref(child, source)
         for child in base_list.children
-        if child.type in {"identifier", "generic_name", "qualified_name"}
+        if child.type in {"identifier", "generic_name", "qualified_name", "alias_qualified_name"}
     ]
 
 
 def _type_ref(node: Any, source: bytes) -> JsonObject:
-    if node.type == "generic_name":
-        identifier = next((child for child in node.children if child.type == "identifier"), None)
-        name = _node_text(identifier, source) if identifier is not None else _node_text(node, source)
-        return {"name": name, "type_args": _type_args(node, source)}
+    # A generic type may be the node itself or nested inside a (alias-)qualified name,
+    # e.g. `MassTransit.IConsumer<T>` / `global::MassTransit.IConsumer<T>`.
+    generic = _generic_name_deep(node)
+    if generic is not None:
+        identifier = next((child for child in generic.children if child.type == "identifier"), None)
+        name = _node_text(identifier, source) if identifier is not None else _node_text(generic, source)
+        return {"name": name, "type_args": _type_args(generic, source)}
     return {"name": _node_text(node, source), "type_args": []}
+
+
+def _generic_name_deep(node: Any) -> Any | None:
+    if node.type == "generic_name":
+        return node
+    for child in node.children:
+        found = _generic_name_deep(child)
+        if found is not None:
+            return found
+    return None
 
 
 def _type_args(generic_name: Any, source: bytes) -> list[str]:
