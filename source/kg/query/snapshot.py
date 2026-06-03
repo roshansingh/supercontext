@@ -1250,8 +1250,8 @@ class KgSnapshot:
                 "status": "symbol_found_at_different_coordinate",
                 "message": (
                     f"Symbol {query!r} matched by {match_type}, but no matching symbol exists at the requested "
-                    "path/line. Retry with one of these candidate retry arguments before interpreting this as "
-                    "no callers or no callees."
+                    "path/line. Retry with one of these candidate retry arguments before interpreting this as a "
+                    "missing symbol or an empty result."
                 ),
                 "requested": requested_coordinate,
                 "match_type": match_type,
@@ -1261,7 +1261,7 @@ class KgSnapshot:
             },
             "next_actions": [
                 "The symbol exists in the graph, but no candidate matched the requested path/line.",
-                "Retry with one coordinate_mismatch.retry_arguments entry before treating this as a missing symbol or no-callers result.",
+                "Retry with one coordinate_mismatch.retry_arguments entry before treating this as a missing symbol or an empty result.",
             ],
         }
 
