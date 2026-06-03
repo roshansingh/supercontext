@@ -1617,11 +1617,10 @@ def _compact_import_consumer_lead(row: JsonObject) -> JsonObject:
     # full importer_module_symbols inventory is the single largest contributor to
     # oversized reverse-impact packets, so compact it to a count plus a few sample
     # names and keep the importing module's coordinates for targeted inspection.
-    importer_module_symbols = [
-        _compact_symbol(symbol)
-        for symbol in _list_value(row.get("importer_module_symbols"))
-        if isinstance(symbol, dict)
-    ]
+    # Count from the raw rows and compact only the kept sample, so a large module is not
+    # fully materialized just to drop all but two entries.
+    raw_symbols = [symbol for symbol in _list_value(row.get("importer_module_symbols")) if isinstance(symbol, dict)]
+    sample_symbols = [_compact_symbol(symbol) for symbol in raw_symbols[:2]]
     compact: JsonObject = {
         "lead_kind": row.get("lead_kind"),
         "repo_relation": row.get("repo_relation"),
@@ -1632,8 +1631,8 @@ def _compact_import_consumer_lead(row: JsonObject) -> JsonObject:
         # Keep the existing importer_module_symbols field name (truncated to a sample) for
         # schema compatibility, plus a count; the full inventory is the dominant source of
         # packet bloat and is recoverable by inspecting the cited module coordinates.
-        "importer_module_symbols": importer_module_symbols[:2],
-        "importer_module_symbol_count": len(importer_module_symbols),
+        "importer_module_symbols": sample_symbols,
+        "importer_module_symbol_count": len(raw_symbols),
         "source_coordinates": _source_coordinates(row.get("fact")),
         "interpretation": row.get("interpretation"),
     }
