@@ -1,4 +1,4 @@
-using MassTransit;
+using NServiceBus;
 
 namespace Demo.Messaging
 {

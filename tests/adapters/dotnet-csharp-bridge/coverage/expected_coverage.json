@@ -4,7 +4,7 @@
     "state": "uninstrumented",
     "scope_ref": {
       "language": "dotnet",
-      "import_root": "MassTransit",
+      "import_root": "NServiceBus",
       "category": "transport",
       "reason": "no_adapter_for_known_stack"
     }
