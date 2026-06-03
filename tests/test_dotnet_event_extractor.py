@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from source.kg.core.repo_source import discover_repo
+from source.kg.languages.dotnet.extractors.csharp_extractor import CSharpExtractor
+
+
+_MASSTRANSIT_CONSUMER = """using MassTransit;
+namespace App.Consumers;
+public class OrderConsumer : IConsumer<OrderSubmitted>
+{
+    public async Task Consume(ConsumeContext<OrderSubmitted> context) { }
+}
+"""
+
+
+def _extract(tmp: str, files: dict[str, str]) -> object:
+    root = Path(tmp)
+    for name, text in files.items():
+        (root / name).write_text(text, encoding="utf-8")
+    return CSharpExtractor().extract(discover_repo(root))
+
+
+class DotnetEventExtractorTest(unittest.TestCase):
+    def test_masstransit_consumer_emits_consumes_event_on_message_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"OrderConsumer.cs": _MASSTRANSIT_CONSUMER})
+
+        channels = [e for e in build.entities if e.kind == "EventChannel"]
+        self.assertEqual(len(channels), 1)
+        self.assertEqual(channels[0].identity["broker_kind"], "masstransit")
+        self.assertEqual(channels[0].identity["channel_address"], "OrderSubmitted")
+        consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
+        self.assertEqual(len(consumes), 1)
+        self.assertEqual(consumes[0].object_id, channels[0].entity_id)
+        self.assertEqual(consumes[0].qualifier["broker_kind"], "masstransit")
+
+    def test_iconsumer_without_masstransit_import_is_not_an_event(self) -> None:
+        # An IConsumer<T> from an unrelated library must not enter the event graph.
+        source = _MASSTRANSIT_CONSUMER.replace("using MassTransit;\n", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"OrderConsumer.cs": source})
+
+        self.assertEqual([f for f in build.facts if f.predicate == "CONSUMES_EVENT"], [])
+        self.assertEqual([e for e in build.entities if e.kind == "EventChannel"], [])
+
+    def test_mediatr_publish_and_send_are_not_events(self) -> None:
+        # Publish/Send method names collide with MediatR; the receiver type must gate them out.
+        source = """using MediatR;
+namespace App;
+public class Handler
+{
+    private readonly ISender sender;
+    private readonly IMediator mediator;
+    public async Task Do(object cmd)
+    {
+        await sender.Send(cmd);
+        await mediator.Publish(cmd);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Handler.cs": source})
+
+        events = [f for f in build.facts if f.predicate in {"PRODUCES_EVENT", "CONSUMES_EVENT"}]
+        self.assertEqual(events, [])
+
+    def test_integration_event_handler_consumes_even_without_local_import(self) -> None:
+        # eShop uses implicit/global usings; IIntegrationEventHandler is distinctive, so ungated.
+        source = """namespace App;
+public class StartedHandler(ILogger logger) : IIntegrationEventHandler<OrderStarted>
+{
+    public Task Handle(OrderStarted e) => Task.CompletedTask;
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"StartedHandler.cs": source})
+
+        consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
+        self.assertEqual(len(consumes), 1)
+        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channel.identity["broker_kind"], "integration_event")
+        self.assertEqual(channel.identity["channel_address"], "OrderStarted")
+
+    def test_masstransit_producer_resolves_local_message_type(self) -> None:
+        source = """using MassTransit;
+namespace App;
+public class Sender(IPublishEndpoint publishEndpoint)
+{
+    public async Task Go()
+    {
+        var msg = new OrderSubmitted();
+        await publishEndpoint.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        self.assertEqual(len(produces), 1)
+        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channel.identity["broker_kind"], "masstransit")
+        self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
+
+    def test_eventbus_producer_resolves_inline_new_message(self) -> None:
+        source = """namespace App;
+public class Svc(IEventBus eventBus)
+{
+    public async Task Go()
+    {
+        await eventBus.PublishAsync(new PaymentCaptured());
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Svc.cs": source})
+
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        self.assertEqual(len(produces), 1)
+        self.assertEqual(produces[0].qualifier["broker_kind"], "integration_event")
+        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channel.identity["channel_address"], "PaymentCaptured")
+
+    def test_unresolvable_producer_message_emits_coverage_not_a_guess(self) -> None:
+        # Publishing a parameter whose concrete type is not statically visible -> loud refusal.
+        source = """using MassTransit;
+namespace App;
+public class Svc(IPublishEndpoint publishEndpoint)
+{
+    public async Task Go(object evt)
+    {
+        await publishEndpoint.Publish(evt);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Svc.cs": source})
+
+        self.assertEqual([f for f in build.facts if f.predicate == "PRODUCES_EVENT"], [])
+        unresolved = [
+            c for c in build.coverage
+            if c.scope_ref.get("reason") == "unresolved_event_message_type"
+        ]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(unresolved[0].state, "partially_instrumented")
+
+
+if __name__ == "__main__":
+    unittest.main()
