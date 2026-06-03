@@ -347,7 +347,7 @@ def _authz_review_leads_for_row(row: JsonObject) -> list[JsonObject]:
                 row,
                 lead_type="missing_policy",
                 priority=80,
-                reason="Endpoint has a route-handler binding but no KG-proven policy or guard; inspect framework defaults, middleware, decorators, and handler body before classifying access.",
+                reason="Endpoint has a route-handler binding but no KG-backed policy or guard; inspect framework defaults, middleware, decorators, and handler body before classifying access.",
                 recommended_source_checks=[
                     "Read the handler class/function for permission_classes, decorators, get_permissions overrides, and in-method guards.",
                     "Read framework settings or middleware if the handler does not declare authz locally.",
@@ -440,7 +440,7 @@ def _authz_inspection_areas(
                 rows=missing_authz,
                 ref_builder=lambda row: _endpoint_inspection_ref(row, category="missing_or_unknown_authz"),
                 limit=limit,
-                reason="Some endpoints have handler bindings but no KG-proven policy or guard.",
+                reason="Some endpoints have handler bindings but no KG-backed policy or guard.",
                 recommended_source_checks=[
                     "Inspect handler-local permission declarations, decorators, get_permissions overrides, middleware, and framework defaults.",
                     "Do not treat missing_declared_policy as proof of public access.",

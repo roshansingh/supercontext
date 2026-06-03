@@ -3,15 +3,28 @@ from __future__ import annotations
 from copy import deepcopy
 
 from source.kg.core.models import JsonObject, canonical_json
+from source.kg.product.evidence_score import rank_rows, score_key
 
 
 # Fleet runtime architecture questions need a compact head-start packet that
 # still carries known routes plus high-value unlinked leads. Keep this below the
 # server-side MCP spill threshold while avoiding 20k packet starvation.
 PLANNING_CONTEXT_MAX_CHARS = 40_000
-# Anchored packets serve detailed follow-up questions, so they preserve more
-# evidence while still staying below typical MCP message-size limits.
-PLANNING_CONTEXT_ANCHORED_MAX_CHARS = 150_000
+# Anchored packets serve detailed follow-up questions, so they preserve more evidence than
+# the fleet packet, but stay well below the host spill threshold. The scorer-driven hard-cap
+# pass guarantees this ceiling holds even on real multi-repo snapshots.
+PLANNING_CONTEXT_ANCHORED_MAX_CHARS = 60_000
+# review_context and reverse_impact return detailed static rows that can balloon
+# past the host spill threshold on real repos. When a packet exceeds these caps,
+# the verbose detail rows are compacted to bounded, coordinate-bearing head-start
+# rows so the agent inspects source instead of doing saved-file archaeology.
+REVIEW_CONTEXT_MAX_CHARS = 40_000
+REVERSE_IMPACT_MAX_CHARS = 40_000
+# get_service_brief.operational_surfaces is unbounded today and balloons on real
+# multi-repo snapshots; bound it with the same head-start discipline. Slightly above the
+# 40k detail cap to cover the brief's fixed-overhead floor (service/summary/contracts/authz)
+# while staying far below the host spill threshold.
+SERVICE_BRIEF_MAX_CHARS = 45_000
 COMPACT_RUNTIME_COMPONENT_LIMIT = 4
 COMPACT_RUNTIME_ROUTE_LIMIT = 15
 COMPACT_RUNTIME_HEADSTART_LIMIT = 8
@@ -103,6 +116,133 @@ def enforce_planning_context_budget(
     max_chars: int = PLANNING_CONTEXT_MAX_CHARS,
     preserve_planning_sections: bool = False,
 ) -> JsonObject:
+    """Bound a planning_context packet to ``max_chars``.
+
+    The section-limit pipeline (truncate -> fallback -> minimal -> backfill) handles the
+    common case. On real multi-repo snapshots that pipeline can still overshoot (fat authz
+    rows, many sections), so a deterministic scorer-driven hard-cap pass is applied to
+    whatever it returns: the lowest-signal rows of the largest leaf lists are demoted to a
+    coordinate-bearing inspection area until the packet fits. In the rare case where
+    non-row content alone exceeds the cap, the packet is returned with
+    output_budget.exceeded_after_minimization set rather than dropping required fields.
+    """
+    budgeted = _enforce_planning_context_budget_core(
+        result, max_chars=max_chars, preserve_planning_sections=preserve_planning_sections
+    )
+    if _current_chars(budgeted) > max_chars:
+        budgeted = _planning_signal_hard_cap(budgeted, max_chars=max_chars)
+    return budgeted
+
+
+def _hard_cap_anchor(result: JsonObject) -> str | None:
+    """The packet's most specific structured anchor, for anchor-relative row ranking.
+
+    Uses structured anchor fields (never the free-form NL query, to avoid keyword matching).
+    """
+    anchors = result.get("anchors")
+    if not isinstance(anchors, dict):
+        return None
+    for field in ("symbol", "service", "endpoint", "event_channel", "domain", "package", "path", "repo"):
+        value = anchors.get(field)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _planning_signal_hard_cap(result: JsonObject, *, max_chars: int) -> JsonObject:
+    result = deepcopy(result)
+    overflow: list[JsonObject] = []
+    truncated: set[str] = set()
+    guard = 0
+    # Rank against the packet's structured anchor so rows matching the queried
+    # symbol/service/endpoint are kept preferentially over unrelated rows of equal strength.
+    anchor = _hard_cap_anchor(result)
+    # Reserve room for the overflow inspection area appended after the loop, so adding it
+    # never pushes the packet back over the cap.
+    target_budget = max(1, max_chars - _HARD_CAP_AREA_RESERVE)
+    while _current_chars(result) > target_budget and guard < 5_000:
+        guard += 1
+        target = _largest_row_list(result)
+        if target is None:
+            break
+        label, rows = target
+        ranked = rank_rows([row for row in rows if isinstance(row, dict)], anchor=anchor)
+        keep = len(ranked) // 2 if len(ranked) > 1 else 0
+        overflow.extend(ranked[keep:])
+        rows[:] = ranked[:keep]
+        truncated.add(label)
+    area = _overflow_inspection_area(
+        overflow,
+        area="planning_budget_overflow",
+        reason="Lowest-signal planning rows dropped to fit the packet budget; inspect the cited coordinates.",
+        omitted_count=len(overflow),
+    )
+    if area:
+        existing = [row for row in _list_value(result.get("inspection_areas")) if isinstance(row, dict)]
+        result["inspection_areas"] = existing + [area]
+    budget = result.get("output_budget")
+    if isinstance(budget, dict):
+        budget["truncated"] = True
+        budget["hard_capped"] = True
+        budget["truncated_sections"] = sorted(set(budget.get("truncated_sections") or []) | truncated)
+        # Only non-row content (e.g. a single oversized string field) can keep the packet
+        # over budget once every row list is exhausted.
+        if _current_chars(result) > max_chars:
+            budget["exceeded_after_minimization"] = True
+        else:
+            budget.pop("exceeded_after_minimization", None)
+    return result
+
+
+_HARD_CAP_AREA_RESERVE = 4_000
+# Tree keys whose lists are contracts/metadata, never row payloads to shrink.
+# Contracts/metadata: protected anywhere in the tree (small, never row payloads).
+_HARD_CAP_PROTECTED_KEYS = frozenset(
+    {"output_budget", "packet_contract", "claim_contract", "scope_contract", "answerability", "next_actions"}
+)
+# The common evidence index is already bounded by the minimal packet and carries its own
+# truncation markers; protect it only at the TOP level — same-named nested lists (e.g.
+# authz_surface.inspection_areas) are still shrinkable content.
+_HARD_CAP_PROTECTED_TOPLEVEL = frozenset(
+    {"proven_facts", "candidate_leads", "coverage_gaps", "inspection_areas"}
+)
+
+
+def _largest_row_list(node: object) -> tuple[str, list] | None:
+    """Find the largest list-of-dicts anywhere in the packet (section-agnostic).
+
+    Returns ``(dotted_label, list_ref)`` for the heaviest row list so the hard-cap pass can
+    shrink whatever dominates — authz, related_facts, service_operational_surfaces, runtime —
+    without maintaining a per-section allowlist. The returned list reference is mutable in
+    place. Iterative stack walk to keep the traversal explicit.
+    """
+    best_size = 0
+    best: tuple[str, list] | None = None
+    stack: list[tuple[str, object]] = [("", node)]
+    while stack:
+        label, current = stack.pop()
+        if isinstance(current, dict):
+            for key, value in current.items():
+                if key in _HARD_CAP_PROTECTED_KEYS or (not label and key in _HARD_CAP_PROTECTED_TOPLEVEL):
+                    continue
+                child_label = f"{label}.{key}" if label else key
+                if isinstance(value, list) and value and any(isinstance(x, dict) for x in value):
+                    size = len(canonical_json(value))
+                    if size > best_size:
+                        best_size, best = size, (child_label, value)
+                stack.append((child_label, value))
+        elif isinstance(current, list):
+            for index, item in enumerate(current):
+                stack.append((f"{label}[{index}]", item))
+    return best
+
+
+def _enforce_planning_context_budget_core(
+    result: JsonObject,
+    *,
+    max_chars: int = PLANNING_CONTEXT_MAX_CHARS,
+    preserve_planning_sections: bool = False,
+) -> JsonObject:
     measured_chars = len(canonical_json(result))
     if measured_chars <= max_chars:
         return result
@@ -188,6 +328,483 @@ def enforce_planning_context_budget(
     if _current_chars(final) > max_chars:
         final["output_budget"]["exceeded_after_minimization"] = True
     return final
+
+
+_REVIEW_RELATION_DETAIL_FIELDS = (
+    "direct_callers",
+    "direct_callees",
+    "direct_callers_of_changed_symbols",
+    "direct_callees_from_changed_symbols",
+    "transitive_callers",
+    "repo_dependencies",
+)
+_REVIEW_SYMBOL_DETAIL_FIELDS = ("changed_symbols", "changed_file_symbols")
+_DETAIL_BUDGET_COUNT_RULE = (
+    " summary.*_count fields remain the authoritative totals and output_budget.truncated_sections lists which detail arrays "
+    "were sampled. Inspect source for the rows not shown; never add the sampled-away rows to the summary totals."
+)
+_REVIEW_BUDGET_ADVICE = (
+    "Detail rows were compacted to bounded, coordinate-bearing head-start rows. Inspect the cited source coordinates or "
+    "call review_context again with narrower changed_ranges, or use the exact find_callers/find_callees/reverse_impact "
+    "tools for a specific symbol, to recover the rows not shown." + _DETAIL_BUDGET_COUNT_RULE
+)
+_REVERSE_IMPACT_BUDGET_ADVICE = (
+    "Detail rows were compacted to bounded, coordinate-bearing head-start rows. Inspect the cited source coordinates, use "
+    "source_inspection_areas, or call reverse_impact again with a narrower depth or an exact anchor to recover the rows not shown."
+    " summary.*_returned_count reports how many rows are shown versus the *_count totals."
+    + _DETAIL_BUDGET_COUNT_RULE
+)
+_DETAIL_BUDGET_ACTION = (
+    "When omitted detail matters, inspect the returned source coordinates/inspection_areas or call a narrower MCP anchor "
+    "instead of relying on saved-packet exploration."
+)
+
+
+_REVIEW_DETAIL_ROW_LIMITS = (COMPACT_RUNTIME_HEADSTART_LIMIT, 4, 2, 1)
+_REVERSE_DETAIL_ROW_LIMITS = (COMPACT_RUNTIME_HEADSTART_LIMIT, 4, 2, 1)
+
+
+def enforce_review_context_budget(
+    result: JsonObject, *, max_chars: int = REVIEW_CONTEXT_MAX_CHARS
+) -> JsonObject:
+    """Compact oversized review_context detail rows to a bounded head start.
+
+    The curated review_answer_packet, summary, scope/claim contracts, surface_status,
+    answerability, and common evidence fields are preserved. Verbose static-detail
+    arrays (callers/callees/transitive/changed-file inventory/runtime/application
+    surfaces) are compacted to bounded coordinate-bearing rows, with the sampled arrays
+    listed in output_budget.truncated_sections, so
+    the agent inspects source rather than doing saved-file archaeology. Row limits tighten
+    across passes until the packet fits; if non-row content alone still exceeds the cap, the
+    packet is returned with output_budget.exceeded_after_minimization set.
+    """
+    measured = len(canonical_json(result))
+    if measured <= max_chars:
+        return result
+    for row_limit in _REVIEW_DETAIL_ROW_LIMITS:
+        compact, truncated_sections = _compact_review_detail(result, limit=row_limit)
+        _attach_detail_budget_metadata(
+            compact,
+            measured_chars=measured,
+            max_chars=max_chars,
+            advice=_REVIEW_BUDGET_ADVICE,
+            truncated_sections=truncated_sections,
+        )
+        if len(canonical_json(compact)) <= max_chars:
+            return compact
+    # Even the tightest pass overshot (rare: dominated by non-row content); signal it like
+    # the planning path rather than silently returning an over-budget packet.
+    if isinstance(compact.get("output_budget"), dict):
+        compact["output_budget"]["exceeded_after_minimization"] = True
+    return compact
+
+
+def _compact_review_detail(result: JsonObject, *, limit: int) -> tuple[JsonObject, set[str]]:
+    compact = dict(result)
+    truncated_sections: set[str] = set()
+    for field in _REVIEW_RELATION_DETAIL_FIELDS:
+        rows = result.get(field)
+        if isinstance(rows, list):
+            kept = _compact_relation_rows(rows, limit=limit)
+            _record_truncated(truncated_sections, field, original=len(rows), kept=len(kept))
+            compact[field] = kept
+    for field in _REVIEW_SYMBOL_DETAIL_FIELDS:
+        rows = result.get(field)
+        if isinstance(rows, list):
+            kept = [_compact_symbol(row) for row in rows[:limit] if isinstance(row, dict)]
+            _record_truncated(truncated_sections, field, original=len(rows), kept=len(kept))
+            compact[field] = kept
+    for dict_field in ("impact", "runtime_surfaces"):
+        nested = result.get(dict_field)
+        if not isinstance(nested, dict):
+            continue
+        compacted: JsonObject = {}
+        for key, value in nested.items():
+            if isinstance(value, list):
+                kept_rows = _compact_relation_rows(value, limit=limit)
+                _record_truncated(truncated_sections, f"{dict_field}.{key}", original=len(value), kept=len(kept_rows))
+                compacted[key] = kept_rows
+            else:
+                compacted[key] = value
+        compact[dict_field] = compacted
+    for nested_field in ("framework_impact", "application_impact"):
+        nested = result.get(nested_field)
+        if isinstance(nested, dict):
+            compact[nested_field] = _compact_nested_detail(
+                nested, limit=limit, truncated_sections=truncated_sections, label=nested_field
+            )
+    source_coordinates = result.get("source_coordinates")
+    if isinstance(source_coordinates, list):
+        kept_coords = [
+            _compact_coordinate(row) if isinstance(row, dict) else row
+            for row in source_coordinates[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+        ]
+        _record_truncated(truncated_sections, "source_coordinates", original=len(source_coordinates), kept=len(kept_coords))
+        compact["source_coordinates"] = kept_coords
+    changed_surface = result.get("changed_surface")
+    if isinstance(changed_surface, dict):
+        surface = dict(changed_surface)
+        symbols = changed_surface.get("symbols")
+        if isinstance(symbols, list):
+            kept_symbols = [_compact_symbol(row) for row in symbols[:limit] if isinstance(row, dict)]
+            _record_truncated(truncated_sections, "changed_surface.symbols", original=len(symbols), kept=len(kept_symbols))
+            surface["symbols"] = kept_symbols
+        compact["changed_surface"] = surface
+    evidence = result.get("evidence")
+    if isinstance(evidence, list):
+        kept_evidence = evidence[:limit]
+        _record_truncated(truncated_sections, "evidence", original=len(evidence), kept=len(kept_evidence))
+        compact["evidence"] = kept_evidence
+    answer_packet = result.get("review_answer_packet")
+    if isinstance(answer_packet, dict):
+        compact["review_answer_packet"] = _compact_review_answer_packet(
+            answer_packet, limit=limit, truncated_sections=truncated_sections
+        )
+    return compact, truncated_sections
+
+
+def enforce_reverse_impact_budget(
+    result: JsonObject, *, max_chars: int = REVERSE_IMPACT_MAX_CHARS
+) -> JsonObject:
+    """Compact oversized reverse_impact detail rows to a bounded head start.
+
+    Summary counts (which already separate callable affected symbols from terminal
+    import leads), answerability, claim/packet contracts, and common evidence fields
+    are preserved. Edges, tiers, affected symbols, and terminal/truncated leads are
+    compacted to bounded coordinate-bearing rows; sampled arrays are listed in
+    output_budget.truncated_sections and summary.*_returned_count is synced to the rows
+    shown. Row limits tighten across passes until the packet fits; if non-row content alone
+    still exceeds the cap, the packet is returned with output_budget.exceeded_after_minimization set.
+    """
+    measured = len(canonical_json(result))
+    if measured <= max_chars:
+        return result
+    for row_limit in _REVERSE_DETAIL_ROW_LIMITS:
+        compact, truncated_sections = _compact_reverse_detail(result, limit=row_limit)
+        _attach_detail_budget_metadata(
+            compact,
+            measured_chars=measured,
+            max_chars=max_chars,
+            advice=_REVERSE_IMPACT_BUDGET_ADVICE,
+            truncated_sections=truncated_sections,
+        )
+        if len(canonical_json(compact)) <= max_chars:
+            return compact
+    # Even the tightest pass overshot (rare: dominated by non-row content); signal it like
+    # the planning path rather than silently returning an over-budget packet.
+    if isinstance(compact.get("output_budget"), dict):
+        compact["output_budget"]["exceeded_after_minimization"] = True
+    return compact
+
+
+def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObject, set[str]]:
+    compact = dict(result)
+    truncated_sections: set[str] = set()
+    edges = result.get("edges")
+    if isinstance(edges, list):
+        kept = _compact_relation_rows(edges, limit=limit)
+        _record_truncated(truncated_sections, "edges", original=len(edges), kept=len(kept))
+        compact["edges"] = kept
+    tiers = result.get("tiers")
+    if isinstance(tiers, list):
+        kept_tiers = _compact_reverse_impact_tiers(tiers)[:limit]
+        _record_truncated(truncated_sections, "tiers", original=len(tiers), kept=len(kept_tiers))
+        compact["tiers"] = kept_tiers
+    affected = result.get("affected_symbols")
+    if isinstance(affected, list):
+        kept = _compact_reverse_impact_symbols(affected)[:limit]
+        _record_truncated(truncated_sections, "affected_symbols", original=len(affected), kept=len(kept))
+        compact["affected_symbols"] = kept
+    call_site_leads = result.get("call_site_leads")
+    if isinstance(call_site_leads, list):
+        kept = _compact_reverse_impact_symbols(call_site_leads)[:limit]
+        _record_truncated(truncated_sections, "call_site_leads", original=len(call_site_leads), kept=len(kept))
+        compact["call_site_leads"] = kept
+    roots = result.get("roots")
+    if isinstance(roots, list):
+        kept_roots = [_compact_symbol(row) for row in roots[:limit] if isinstance(row, dict)]
+        _record_truncated(truncated_sections, "roots", original=len(roots), kept=len(kept_roots))
+        compact["roots"] = kept_roots
+    bridges = result.get("constructor_bridges")
+    if isinstance(bridges, list):
+        kept_bridges = _compact_constructor_bridges(bridges)[:limit]
+        _record_truncated(truncated_sections, "constructor_bridges", original=len(bridges), kept=len(kept_bridges))
+        compact["constructor_bridges"] = kept_bridges
+    leads = result.get("terminal_import_consumer_leads")
+    if isinstance(leads, list):
+        kept_leads = _compact_terminal_import_leads(leads)[:limit]
+        _record_truncated(truncated_sections, "terminal_import_consumer_leads", original=len(leads), kept=len(kept_leads))
+        compact["terminal_import_consumer_leads"] = kept_leads
+    truncated_terminals = result.get("truncated_terminal_symbols")
+    if isinstance(truncated_terminals, list):
+        kept_terminals = _compact_truncated_terminal_symbols(truncated_terminals)[:limit]
+        _record_truncated(
+            truncated_sections, "truncated_terminal_symbols", original=len(truncated_terminals), kept=len(kept_terminals)
+        )
+        compact["truncated_terminal_symbols"] = kept_terminals
+    previews = result.get("candidate_impact_previews")
+    if isinstance(previews, list):
+        kept_previews = _compact_candidate_impact_previews(previews)
+        _record_truncated(truncated_sections, "candidate_impact_previews", original=len(previews), kept=len(kept_previews))
+        compact["candidate_impact_previews"] = kept_previews
+    source = result.get("source")
+    if isinstance(source, dict):
+        compact["source"] = _compact_reverse_impact_source(source)
+    # Keep summary returned-counts consistent with the rows actually shown so the
+    # authoritative totals never contradict the displayed sample (e.g. total=8 while
+    # only 2 rows are shown is reported as returned=2, not as 6 "omitted" extras).
+    summary = result.get("summary")
+    if isinstance(summary, dict):
+        synced = dict(summary)
+        for field, key in (
+            ("affected_symbols", "affected_symbol_returned_count"),
+            ("call_site_leads", "call_site_lead_returned_count"),
+            ("constructor_bridges", "constructor_bridge_returned_count"),
+            ("truncated_terminal_symbols", "truncated_terminal_symbol_returned_count"),
+        ):
+            if isinstance(compact.get(field), list):
+                synced[key] = len(compact[field])
+        # terminal_import_lead_returned_count sums the per-row returned counts, so recompute
+        # it from the kept lead rows rather than the pre-budget total.
+        if isinstance(compact.get("terminal_import_consumer_leads"), list):
+            synced["terminal_import_lead_returned_count"] = sum(
+                _safe_non_bool_int(row.get("import_consumer_leads", {}).get("returned_count"))
+                for row in compact["terminal_import_consumer_leads"]
+                if isinstance(row, dict)
+            )
+        compact["summary"] = synced
+    return compact, truncated_sections
+
+
+def _compact_reverse_impact_source(value: JsonObject) -> JsonObject:
+    # Preserve recovery fields (confidence, query, and the coordinate_mismatch retry hint)
+    # so an over-budget packet for a wrong path/line still tells the agent how to retry.
+    keys = ("status", "query", "reason", "message", "candidate_count", "confidence", "coordinate_mismatch")
+    compact = {key: value[key] for key in keys if key in value}
+    resolved = value.get("resolved_symbol")
+    if isinstance(resolved, dict):
+        compact["resolved_symbol"] = _compact_symbol(resolved)
+    candidates = value.get("candidates")
+    if isinstance(candidates, list):
+        compact["candidates"] = [_compact_symbol(row) for row in candidates[:COMPACT_RUNTIME_HEADSTART_LIMIT] if isinstance(row, dict)]
+    return compact
+
+
+def _record_truncated(truncated_sections: set[str], field: str, *, original: int, kept: int) -> None:
+    if original > kept:
+        truncated_sections.add(field)
+
+
+def _signal_ranked_sections(
+    sections: list[tuple[str, list, str | None]],
+    *,
+    char_budget: int,
+    anchor: str | None,
+) -> tuple[dict[str, list[JsonObject]], list[JsonObject], set[str]]:
+    """Allocate one char budget across several named lists by structural score.
+
+    Rows from every section compete in a single best-first ranking (via evidence_score),
+    so the strongest evidence is kept in full regardless of which section it came from and
+    the weakest is demoted — instead of each section truncating uniformly. Returns the kept
+    rows per section, the demoted rows (for a coordinate-bearing inspection area), and the
+    set of section names that lost rows.
+    """
+    candidates: list[tuple[int, str, JsonObject, str | None]] = []
+    order = 0
+    for name, rows, linkage in sections:
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict):
+                candidates.append((order, name, row, linkage))
+                order += 1
+    candidates.sort(
+        key=lambda item: (score_key(item[2], anchor=anchor, linkage=item[3]), -item[0]),
+        reverse=True,
+    )
+    kept: dict[str, list[JsonObject]] = {name: [] for name, _, _ in sections}
+    demoted: list[JsonObject] = []
+    truncated: set[str] = set()
+    used = 0
+    for _, name, row, _linkage in candidates:
+        cost = len(canonical_json(row))
+        if used + cost <= char_budget:
+            kept[name].append(row)
+            used += cost
+        else:
+            demoted.append(row)
+            truncated.add(name)
+    return kept, demoted, truncated
+
+
+def enforce_service_brief_budget(
+    result: JsonObject, *, max_chars: int = SERVICE_BRIEF_MAX_CHARS
+) -> JsonObject:
+    """Bound an oversized get_service_brief by signal-ranking its operational surfaces.
+
+    The service fact sheet, summary, evidence partition labels, and contracts are kept; the
+    bulky operational-surface lists compete in one best-first ranking and overflow is demoted
+    to a coordinate-bearing inspection area, never dropped or reduced to a bare count.
+    """
+    measured = len(canonical_json(result))
+    if measured <= max_chars:
+        return result
+    # The section char budget tightens across passes until the whole packet fits, so the
+    # overhead of non-ranked fields (service, summary, contracts, authz) is accounted for
+    # without fragile pre-estimation.
+    for section_budget in (max_chars * 3 // 4, max_chars // 2, max_chars // 4, max_chars // 8):
+        compact = _compact_service_brief_surfaces(result, section_budget=section_budget, measured=measured, max_chars=max_chars)
+        if len(canonical_json(compact)) <= max_chars:
+            return compact
+    # Even the tightest pass overshot (rare: dominated by non-row content); signal it like
+    # the planning path rather than silently returning an over-budget packet.
+    if isinstance(compact.get("output_budget"), dict):
+        compact["output_budget"]["exceeded_after_minimization"] = True
+    return compact
+
+
+def _compact_service_brief_surfaces(
+    result: JsonObject, *, section_budget: int, measured: int, max_chars: int
+) -> JsonObject:
+    compact = dict(result)
+    surfaces = result.get("operational_surfaces")
+    overflow: list[JsonObject] = []
+    truncated_sections: set[str] = set()
+    if isinstance(surfaces, dict):
+        compact_surfaces = dict(surfaces)
+        partition = surfaces.get("evidence_partition")
+        sections: list[tuple[str, list, str | None]] = []
+        if isinstance(partition, dict):
+            sections.append(("evidence_partition.known_linked", partition.get("known_linked", []), "known_linked"))
+            sections.append(("evidence_partition.unlinked_evidence", partition.get("unlinked_evidence", []), "unlinked"))
+        sections.append(("direct_domain_references", surfaces.get("direct_domain_references", []), "candidate"))
+        sections.append(("unlinked_domain_route_samples", surfaces.get("unlinked_domain_route_samples", []), "unlinked"))
+        sections.append(("endpoint_consumers", surfaces.get("endpoint_consumers", []), "candidate"))
+        sections.append(("deploy_target_candidates", surfaces.get("deploy_target_candidates", []), "candidate"))
+        sections.append(("domain_route_candidates", surfaces.get("domain_route_candidates", []), "candidate"))
+        sections.append(("deploy_link_facts", surfaces.get("deploy_link_facts", []), "known_linked"))
+        sections.append(("deploy_runtime_units", surfaces.get("deploy_runtime_units", []), "known_linked"))
+        kept, demoted, truncated = _signal_ranked_sections(sections, char_budget=section_budget, anchor=None)
+        if isinstance(partition, dict):
+            compact_partition = dict(partition)
+            compact_partition["known_linked"] = kept.get("evidence_partition.known_linked", [])
+            compact_partition["unlinked_evidence"] = kept.get("evidence_partition.unlinked_evidence", [])
+            compact_surfaces["evidence_partition"] = compact_partition
+        for field in (
+            "direct_domain_references",
+            "unlinked_domain_route_samples",
+            "endpoint_consumers",
+            "deploy_target_candidates",
+            "domain_route_candidates",
+            "deploy_link_facts",
+            "deploy_runtime_units",
+        ):
+            if field in compact_surfaces:
+                compact_surfaces[field] = kept.get(field, [])
+        compact["operational_surfaces"] = compact_surfaces
+        overflow = demoted
+        # Full packet paths (e.g. operational_surfaces.evidence_partition.known_linked), so
+        # truncated_sections entries are addressable and consistent with the other budgeters.
+        truncated_sections = {f"operational_surfaces.{name}" for name in truncated}
+    endpoints = result.get("endpoints")
+    if isinstance(endpoints, list):
+        kept_endpoints = _compact_relation_rows(endpoints, limit=COMPACT_RUNTIME_HEADSTART_LIMIT)
+        if len(endpoints) > len(kept_endpoints):
+            truncated_sections.add("endpoints")
+        compact["endpoints"] = kept_endpoints
+    authz = result.get("authz_surface")
+    if isinstance(authz, dict):
+        compact_authz = _compact_authz_surface(authz)
+        if len(canonical_json(compact_authz)) < len(canonical_json(authz)):
+            truncated_sections.add("authz_surface")
+        compact["authz_surface"] = compact_authz
+    inspection_area = _overflow_inspection_area(
+        overflow,
+        area="service_operational_surface_overflow",
+        reason="Operational-surface rows beyond the service-brief budget; inspect the cited coordinates.",
+        omitted_count=len(overflow),
+    )
+    if inspection_area:
+        existing = [row for row in _list_value(result.get("inspection_areas")) if isinstance(row, dict)]
+        compact["inspection_areas"] = existing + [inspection_area]
+    _attach_detail_budget_metadata(
+        compact,
+        measured_chars=measured,
+        max_chars=max_chars,
+        advice=(
+            "Operational-surface rows were signal-ranked: the strongest (known_linked, source-cited) rows are kept and "
+            "weaker rows demoted to inspection_areas with coordinates. Inspect those or call narrower tools for the rest."
+        ),
+        truncated_sections=truncated_sections,
+    )
+    return compact
+
+
+def _compact_nested_detail(
+    value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None, label: str = ""
+) -> JsonObject:
+    """Bound every inner list of a nested detail packet without reshaping rows.
+
+    Records each truncated inner list in ``truncated_sections`` (when supplied) under a
+    dotted ``label.key`` path so the budget metadata reflects every sampled array.
+    """
+    compact: JsonObject = {}
+    for key, item in value.items():
+        if isinstance(item, list):
+            kept = item[:limit]
+            if truncated_sections is not None and len(item) > len(kept):
+                truncated_sections.add(f"{label}.{key}" if label else key)
+            compact[key] = kept
+        elif isinstance(item, dict):
+            inner_compact: JsonObject = {}
+            for inner_key, inner in item.items():
+                if isinstance(inner, list):
+                    inner_kept = inner[:limit]
+                    if truncated_sections is not None and len(inner) > len(inner_kept):
+                        path = f"{label}.{key}.{inner_key}" if label else f"{key}.{inner_key}"
+                        truncated_sections.add(path)
+                    inner_compact[inner_key] = inner_kept
+                else:
+                    inner_compact[inner_key] = inner
+            compact[key] = inner_compact
+        else:
+            compact[key] = item
+    return compact
+
+
+def _compact_review_answer_packet(
+    value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None
+) -> JsonObject:
+    compact = dict(value)
+    for field in ("changed_file_symbol_inventory", "top_changed_symbols"):
+        rows = value.get(field)
+        if isinstance(rows, list):
+            kept = [_compact_symbol(row) for row in rows[:limit] if isinstance(row, dict)]
+            if truncated_sections is not None:
+                _record_truncated(truncated_sections, f"review_answer_packet.{field}", original=len(rows), kept=len(kept))
+            compact[field] = kept
+    return compact
+
+
+def _attach_detail_budget_metadata(
+    result: JsonObject,
+    *,
+    measured_chars: int,
+    max_chars: int,
+    advice: str,
+    truncated_sections: set[str],
+) -> None:
+    result["output_budget"] = {
+        "truncated": True,
+        "minimized": True,
+        "measured_chars": measured_chars,
+        "max_chars": max_chars,
+        "truncated_sections": sorted(truncated_sections),
+        "advice": advice,
+    }
+    actions = [str(action) for action in _list_value(result.get("next_actions")) if str(action).strip()]
+    actions.append(_DETAIL_BUDGET_ACTION)
+    result["next_actions"] = _dedupe_strings(actions)
 
 
 def _runtime_answer_counts(result: JsonObject) -> dict[str, int]:
@@ -491,21 +1108,33 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         if isinstance(answer_packet, dict):
             compact_answer = {
                 "investigation_brief": _compact_investigation_brief(answer_packet.get("investigation_brief")),
-                "runtime_building_blocks": _list_value(answer_packet.get("runtime_building_blocks")),
-                "domain_routing_map": _list_value(answer_packet.get("domain_routing_map")),
-                "deploy_runtime_map": _list_value(answer_packet.get("deploy_runtime_map")),
-                "endpoint_consumer_map": _list_value(answer_packet.get("endpoint_consumer_map")),
-                "deploy_order_guidance": _list_value(answer_packet.get("deploy_order_guidance")),
-                "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
-                "missing_fact_families": answer_packet.get("missing_fact_families", []),
-                "evidence_contract": answer_packet.get("evidence_contract"),
             }
+            for key in (
+                "runtime_building_blocks",
+                "domain_routing_map",
+                "deploy_runtime_map",
+                "endpoint_consumer_map",
+                "deploy_order_guidance",
+            ):
+                if key in answer_packet:
+                    compact_answer[key] = _list_value(answer_packet.get(key))
+            for key, default in (
+                ("deploy_kind_counts", {}),
+                ("missing_fact_families", []),
+                ("evidence_contract", None),
+                ("omitted_answer_sections", []),
+            ):
+                if key in answer_packet:
+                    compact_answer[key] = answer_packet.get(key, default)
         compact_runtime = {
             "scope": runtime.get("scope", {}),
             "summary": runtime.get("summary", {}),
             "answer_packet": compact_answer,
             "assembly_contract": runtime.get("assembly_contract"),
         }
+        anchor_resolution_contract = runtime.get("anchor_resolution_contract")
+        if isinstance(anchor_resolution_contract, dict) and anchor_resolution_contract:
+            compact_runtime["anchor_resolution_contract"] = anchor_resolution_contract
     fallback = {
         "tool": result.get("tool"),
         "status": result.get("status"),
@@ -906,6 +1535,7 @@ def _compact_reverse_impact(value: object) -> JsonObject:
         "truncated_terminal_symbols": truncated_terminal_symbols,
         "source_inspection_areas": source_inspection_areas,
         "affected_symbols": _compact_reverse_impact_symbols(value.get("affected_symbols")),
+        "call_site_leads": _compact_reverse_impact_symbols(value.get("call_site_leads")),
         "candidate_impact_previews": _compact_candidate_impact_previews(value.get("candidate_impact_previews")),
         "ambiguity_guidance": value.get("ambiguity_guidance"),
         "disambiguation": _compact_disambiguation(value.get("disambiguation")),
@@ -923,6 +1553,8 @@ def _compact_reverse_impact_summary(value: object) -> JsonObject:
         "affected_symbol_count",
         "affected_symbol_returned_count",
         "affected_symbols_truncated",
+        "call_site_lead_count",
+        "call_site_lead_returned_count",
         "edge_count",
         "constructor_bridge_count",
         "constructor_bridge_returned_count",
@@ -1069,20 +1701,30 @@ def _compact_import_consumer_leads(value: object) -> JsonObject:
 
 
 def _compact_import_consumer_lead(row: JsonObject) -> JsonObject:
-    return {
+    # Import-consumer leads are source-inspection leads, not affected symbols. The
+    # full importer_module_symbols inventory is the single largest contributor to
+    # oversized reverse-impact packets, so compact it to a count plus a few sample
+    # names and keep the importing module's coordinates for targeted inspection.
+    # Count from the raw rows and compact only the kept sample, so a large module is not
+    # fully materialized just to drop all but two entries.
+    raw_symbols = [symbol for symbol in _list_value(row.get("importer_module_symbols")) if isinstance(symbol, dict)]
+    sample_symbols = [_compact_symbol(symbol) for symbol in raw_symbols[:2]]
+    compact: JsonObject = {
         "lead_kind": row.get("lead_kind"),
         "repo_relation": row.get("repo_relation"),
         "match": row.get("match", {}),
         "importer": _compact_entity_ref(row.get("importer")),
         "imported_module": _compact_entity_ref(row.get("imported_module")),
         "imported_symbol": _compact_symbol(row.get("imported_symbol")),
-        "importer_module_symbols": [
-            _compact_symbol(symbol)
-            for symbol in _list_value(row.get("importer_module_symbols"))[:COMPACT_RUNTIME_HEADSTART_LIMIT]
-        ],
+        # Keep the existing importer_module_symbols field name (truncated to a sample) for
+        # schema compatibility, plus a count; the full inventory is the dominant source of
+        # packet bloat and is recoverable by inspecting the cited module coordinates.
+        "importer_module_symbols": sample_symbols,
+        "importer_module_symbol_count": len(raw_symbols),
         "source_coordinates": _source_coordinates(row.get("fact")),
         "interpretation": row.get("interpretation"),
     }
+    return compact
 
 
 def _compact_candidate_impact_previews(value: object) -> list[JsonObject]:
@@ -1543,20 +2185,35 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
     compact_runtime: JsonObject = {}
     if isinstance(runtime, dict):
         answer_packet = runtime.get("answer_packet")
+        summary = runtime.get("summary", {})
+        anchor_resolution_contract = runtime.get("anchor_resolution_contract")
+        # An investigation-brief-only packet had an ambiguous/unresolved anchor, so its
+        # runtime maps and deploy_kind_counts are gated out of the answer path. The
+        # anchor-resolution caution contract must outlive answer-shaped counts: never
+        # reintroduce deploy_kind_counts when the packet is gated, and always carry the
+        # omitted-section list and anchor_resolution_contract through this fallback.
+        gated = (
+            isinstance(summary, dict) and summary.get("answer_packet_mode") == "investigation_brief_only"
+        ) or isinstance(anchor_resolution_contract, dict)
         compact_answer = {}
         if isinstance(answer_packet, dict):
             compact_answer = {
                 "investigation_brief": _compact_investigation_brief(answer_packet.get("investigation_brief")),
-                "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
                 "missing_fact_families": answer_packet.get("missing_fact_families", []),
                 "evidence_contract": answer_packet.get("evidence_contract"),
             }
+            if "omitted_answer_sections" in answer_packet:
+                compact_answer["omitted_answer_sections"] = answer_packet.get("omitted_answer_sections", [])
+            if not gated:
+                compact_answer["deploy_kind_counts"] = answer_packet.get("deploy_kind_counts", {})
         compact_runtime = {
             "scope": runtime.get("scope", {}),
-            "summary": runtime.get("summary", {}),
+            "summary": summary,
             "answer_packet": compact_answer,
             "assembly_contract": runtime.get("assembly_contract"),
         }
+        if isinstance(anchor_resolution_contract, dict) and anchor_resolution_contract:
+            compact_runtime["anchor_resolution_contract"] = anchor_resolution_contract
     return {
         "tool": result.get("tool"),
         "status": result.get("status"),

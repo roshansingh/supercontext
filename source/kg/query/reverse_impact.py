@@ -39,7 +39,9 @@ def reverse_impact_packet(
             "truncated_terminal_symbols": [],
             "source_inspection_areas": _source_inspection_areas([], query=symbol_query, candidates=[]),
             "affected_symbols": [],
+            "call_site_leads": [],
             "answerability": _answerability("not_found"),
+            "claim_contract": _claim_contract(),
             "contract": _CONTRACT,
         }
     if resolution["status"] == "ambiguous" and not include_all:
@@ -58,10 +60,12 @@ def reverse_impact_packet(
             "terminal_import_consumer_leads": [],
             "truncated_terminal_symbols": [],
             "affected_symbols": [],
+            "call_site_leads": [],
             "candidate_impact_previews": _candidate_impact_previews(kg, resolution, limit=limit),
             "source_inspection_areas": _source_inspection_areas([], query=symbol_query, candidates=candidates),
             "ambiguity_guidance": _AMBIGUITY_GUIDANCE,
             "answerability": _answerability("ambiguous"),
+            "claim_contract": _claim_contract(),
             "contract": _CONTRACT,
         }
 
@@ -89,6 +93,8 @@ def reverse_impact_packet(
             "root_symbol_count": len(root_symbols),
             "affected_symbol_count": result["affected_symbol_total_count"],
             "affected_symbol_returned_count": len(result["affected_symbols"]),
+            "call_site_lead_count": result["call_site_lead_total_count"],
+            "call_site_lead_returned_count": len(result["call_site_leads"]),
             "edge_count": len(result["edges"]),
             "constructor_bridge_count": result["constructor_bridge_total_count"],
             "constructor_bridge_returned_count": len(result["constructor_bridges"]),
@@ -129,8 +135,41 @@ def reverse_impact_packet(
         "truncated_terminal_symbols": result["truncated_terminal_symbols"],
         "source_inspection_areas": _source_inspection_areas(roots, query=symbol_query, candidates=[]),
         "affected_symbols": result["affected_symbols"],
+        "call_site_leads": result["call_site_leads"],
         "answerability": _answerability(answerability_status),
+        "claim_contract": _claim_contract(),
         "contract": _CONTRACT,
+    }
+
+
+def _claim_contract() -> JsonObject:
+    return {
+        "scope": "bounded static reverse CALLS head start",
+        "static_call_graph": {
+            "fields": ["tiers", "edges", "affected_symbols"],
+            "count_fields": ["summary.affected_symbol_count", "summary.edge_count"],
+            "claim_boundary": "Static CALLS facts only; verify source before making runtime, endpoint, deploy, or safety claims.",
+        },
+        "candidate_source_leads": {
+            "fields": [
+                "call_site_leads",
+                "terminal_import_consumer_leads",
+                "truncated_terminal_symbols",
+                "source_inspection_areas",
+            ],
+            "count_fields": [
+                "summary.call_site_lead_count",
+                "summary.terminal_import_lead_count",
+                "summary.truncated_terminal_symbol_count",
+            ],
+            "claim_boundary": "Inspection leads only; do not add these to affected symbol totals or runtime caller counts until source-verified.",
+        },
+        "counting_rule": (
+            "summary.affected_symbol_count counts only callable affected symbols (functions/methods/classes). Module, "
+            "notebook, and script call sites are reported separately in call_site_leads and must not be added to the affected "
+            "symbol total. Report static CALLS affected symbols separately from call-site leads, terminal import leads, and "
+            "omitted/truncated inspection refs; do not present a combined total unless the label says which parts are unverified leads."
+        ),
     }
 
 
@@ -160,6 +199,8 @@ def _empty_summary(*, depth: int, limit: int) -> JsonObject:
         "root_symbol_count": 0,
         "affected_symbol_count": 0,
         "affected_symbol_returned_count": 0,
+        "call_site_lead_count": 0,
+        "call_site_lead_returned_count": 0,
         "edge_count": 0,
         "constructor_bridge_count": 0,
         "constructor_bridge_returned_count": 0,
@@ -252,6 +293,7 @@ def _walk_reverse_impact(kg: KgSnapshot, roots: list[JsonObject], *, depth: int,
     seen_edges: set[tuple[str, str, str, str]] = set()
     seen_bridges: set[tuple[str, str, str]] = set()
     affected_by_id: dict[str, JsonObject] = {}
+    call_site_by_id: dict[str, JsonObject] = {}
     terminal_by_id: dict[tuple[str, str], JsonObject] = {}
     edges: list[JsonObject] = []
     bridges: list[JsonObject] = []
@@ -328,10 +370,15 @@ def _walk_reverse_impact(kg: KgSnapshot, roots: list[JsonObject], *, depth: int,
                     row["via_constructor_bridge"] = active_bridge
                 edges.append(row)
                 affected_key = str(caller["entity_id"])
-                existing = affected_by_id.get(affected_key)
                 root_symbol = root_by_id.get(root_id, {})
+                # A caller that is not itself a callable symbol (a module/notebook/script
+                # call site or other non-callable entity) is a source-inspection lead, not
+                # an affected symbol. Keep it out of affected_symbol counts so the agent
+                # cannot tally call sites as affected functions.
+                target_map = affected_by_id if _is_callable_symbol(caller_ref) else call_site_by_id
+                existing = target_map.get(affected_key)
                 if existing is None:
-                    affected_by_id[affected_key] = {
+                    target_map[affected_key] = {
                         "symbol": caller_ref,
                         "depth": edge_depth,
                         "root_symbol": root_symbol,
@@ -383,8 +430,11 @@ def _walk_reverse_impact(kg: KgSnapshot, roots: list[JsonObject], *, depth: int,
         limit=limit,
     )
     sorted_affected = _sorted_affected_symbols(affected_by_id.values())
+    sorted_call_sites = _sorted_affected_symbols(call_site_by_id.values())
     return {
         "edges": edges,
+        "call_site_leads": sorted_call_sites[:limit],
+        "call_site_lead_total_count": len(call_site_by_id),
         "constructor_bridges": bridges[:limit],
         "terminal_import_consumer_leads": terminal_leads[:limit],
         "truncated_terminal_symbols": truncated_terminals[: max(limit, 2)],
@@ -535,7 +585,6 @@ def _constructor_bridge_for_symbol(
         "from_init": kg._symbol_result(symbol),
         "to_class": kg._symbol_result(candidate),
     }
-
 
 
 def _terminal_import_leads(
@@ -859,6 +908,31 @@ def _impact_tiers(affected_symbols: list[JsonObject], *, limit: int) -> list[Jso
     for depth, rows in sorted(by_depth.items()):
         tiers.append({"depth": depth, "symbols": rows[:limit], "symbol_count": len(rows)})
     return tiers
+
+
+_CALLABLE_SYMBOL_KINDS = frozenset({"function", "method", "class"})
+
+
+def _is_callable_symbol(symbol: JsonObject) -> bool:
+    """Whether a caller is itself a callable symbol versus a non-callable call site.
+
+    Parser-derived ``symbol_kind`` is authoritative when present. When a snapshot
+    records no kind, a present ``qualname`` is treated as callable and an absent one
+    (a module/notebook/script call site rendering as ``module.None``) as a lead.
+
+    Invariant: this fallback relies on extractors leaving ``qualname`` empty for
+    non-callable module/notebook/script entities. If a future ingestion path populates
+    ``qualname`` on a module-level entity without also setting ``symbol_kind``, it would be
+    miscounted as a callable affected symbol — prefer always emitting ``symbol_kind``.
+    """
+    if not isinstance(symbol, dict):
+        return False
+    kind = symbol.get("symbol_kind")
+    if kind in _CALLABLE_SYMBOL_KINDS:
+        return True
+    if kind is not None:
+        return False
+    return bool(symbol.get("qualname"))
 
 
 def _sorted_affected_symbols(rows: object) -> list[JsonObject]:

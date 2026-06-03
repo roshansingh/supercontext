@@ -14,6 +14,9 @@ from source.kg.product.output_budget import (
     COMPACT_AUTHZ_INSPECTION_REF_LIMIT,
     PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
     enforce_planning_context_budget,
+    enforce_review_context_budget,
+    enforce_reverse_impact_budget,
+    enforce_service_brief_budget,
 )
 from source.kg.product.runtime_architecture import runtime_architecture_packet
 from source.kg.query.call_site import call_site_from_qualifier
@@ -80,8 +83,16 @@ REVIEW_CONTEXT_SURFACE_ALIASES = {
     "apis": "api_surfaces",
     "api_surface": "api_surfaces",
     "api_surfaces": "api_surfaces",
+    "api_contract": "api_surfaces",
+    "api_contracts": "api_surfaces",
+    "contract": "api_surfaces",
+    "contracts": "api_surfaces",
     "model": "models",
     "models": "models",
+    "schema": "serializers",
+    "schemas": "serializers",
+    "data_schema": "serializers",
+    "data_schemas": "serializers",
     "serializer": "serializers",
     "serializers": "serializers",
 }
@@ -96,6 +107,28 @@ REVIEW_CONTEXT_BUILTIN_SECTION_ALIASES = frozenset(
         "reverse_callers",
         "symbol_impact",
         "transitive_callers",
+        "service",
+        "services",
+        "deploy",
+        "deploys",
+        "deployable",
+        "deployables",
+        "deployment",
+        "deployments",
+        "owner",
+        "owners",
+        "ownership",
+        "maintainer",
+        "maintainers",
+    }
+)
+REVIEW_CONTEXT_OWNERSHIP_SECTION_ALIASES = frozenset(
+    {
+        "owner",
+        "owners",
+        "ownership",
+        "maintainer",
+        "maintainers",
     }
 )
 PLANNING_CONTEXT_NO_OVERLAP_ACTION = (
@@ -148,7 +181,8 @@ def _with_common_output_contract(description: str) -> str:
     return (
         f"{description} "
         "Returns common packet contract fields: `packet_contract` when present, `answerability`, "
-        "`proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`."
+        "`proven_facts`, `candidate_leads`, `coverage_gaps`, and `inspection_areas`. "
+        "Results are a head start for your own investigation, not a complete or final answer."
     )
 
 
@@ -208,6 +242,12 @@ def call_tool(kg: KgSnapshot, name: str, arguments: JsonObject | None = None) ->
             max_chars=PLANNING_CONTEXT_ANCHORED_MAX_CHARS,
             preserve_planning_sections=True,
         )
+    if name == "review_context":
+        return enforce_review_context_budget(payload)
+    if name == "reverse_impact":
+        return enforce_reverse_impact_budget(payload)
+    if name == "get_service_brief":
+        return enforce_service_brief_budget(payload)
     return payload
 
 
@@ -215,7 +255,8 @@ def _packet_contract(tool_name: str) -> JsonObject:
     return {
         "tool": tool_name,
         "positioning": (
-            "SuperContext returns a source-inspection head start. Use proven_facts as KG-backed evidence, "
+            "SuperContext returns a source-inspection head start, not a complete or final answer: it routes you to "
+            "evidence to verify and finish the answer yourself. Use proven_facts as KG-backed evidence, "
             "candidate_leads as leads to verify, coverage_gaps as limits on what can be claimed, and "
             "inspection_areas as the bounded follow-up plan."
         ),
@@ -287,7 +328,7 @@ def _normalized_next_actions(payload: JsonObject, *, candidate_leads: JsonObject
         or answerability_status in {"not_answerable", "not_found", "unsupported_by_current_kg"}
     ):
         actions.append(
-            "Treat this packet as a head start plus coverage boundary, not a final answer; use your normal search/read tools once before refusing or saying unknown."
+            "Treat this packet as a head start plus coverage boundary, not a final answer; use your normal search/read tools at least once before refusing or saying unknown."
         )
     if candidate_leads.get("status") == "found":
         actions.append(
@@ -579,18 +620,29 @@ def _dedupe_strings(values: list[str]) -> list[str]:
     return deduped
 
 
+# Exact field -> lead-kind mapping for every registered candidate-lead field/nested label.
+# Explicit (not substring heuristics) so a new field — e.g. call_site_leads — is classified
+# deliberately rather than falling through, and so a field name containing an unrelated
+# keyword can't be misclassified.
+_CANDIDATE_LEAD_KIND: dict[str, str] = {
+    "candidates": "candidate_match",
+    "candidate_impact_previews": "candidate_match",
+    "call_site_leads": "non_callable_call_site_lead",
+    "import_consumer_leads": "import_only_source_lead",
+    "terminal_import_consumer_leads": "import_only_source_lead",
+    "truncated_terminal_symbols": "truncated_source_inspection_lead",
+    "deploy_order_guidance": "inference_or_guidance",
+    "unlinked_domain_route_samples": "unlinked_source_lead",
+    "endpoint_consumers": "endpoint_consumer_candidate",
+    "operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "service_operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "application_impact.cross_repo_name_leads": "cross_repo_name_lead",
+    "runtime_architecture.answer_packet.unlinked_runtime_leads": "unlinked_source_lead",
+}
+
+
 def _candidate_lead_kind(field: str) -> str:
-    if "truncated" in field:
-        return "truncated_source_inspection_lead"
-    if "import" in field:
-        return "import_only_source_lead"
-    if "unlinked" in field:
-        return "unlinked_source_lead"
-    if "candidate" in field:
-        return "candidate_match"
-    if "guidance" in field:
-        return "inference_or_guidance"
-    return "candidate_lead"
+    return _CANDIDATE_LEAD_KIND.get(field, "candidate_lead")
 
 
 _PROVEN_FACT_FIELDS = (
@@ -624,6 +676,7 @@ _SINGLETON_PROVEN_FACT_FIELDS = ("service",)
 _CANDIDATE_LEAD_FIELDS = (
     "candidates",
     "candidate_impact_previews",
+    "call_site_leads",
     "import_consumer_leads",
     "terminal_import_consumer_leads",
     "truncated_terminal_symbols",
@@ -726,6 +779,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "endpoint_consumers": endpoint_consumer_packet,
         "operational_surfaces": operational_surfaces,
         "authz_surface": authz_surface,
+        "claim_contract": _service_brief_claim_contract(),
         "answerability": {
             "status": "partial" if missing_fact_families else "answerable",
             "missing_fact_families": missing_fact_families,
@@ -735,16 +789,44 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     }
 
 
-def _find_callers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return _with_symbol_miss_next_actions(
-        kg.find_callers(
-            _required_string(arguments, "symbol"),
-            limit=_limit(arguments),
-            path=_optional_string(arguments, "path"),
-            line=_optional_int(arguments, "line"),
-            include_all=_optional_bool(arguments, "include_all", default=False),
+def _service_brief_claim_contract() -> JsonObject:
+    return {
+        "scope": "indexed static service, endpoint, event, deploy, and operational facts",
+        "known_rows": [
+            "endpoints",
+            "event_channels",
+            "deploy_mappings",
+            "endpoint_consumers",
+            "operational_surfaces.evidence_partition.known_linked",
+        ],
+        "candidate_or_unlinked_rows": [
+            "operational_surfaces.evidence_partition.unlinked_evidence",
+            "endpoint_consumers with unresolved host/env assumptions",
+        ],
+        "safety_rule": (
+            "Known endpoint, event, deploy, or consumer rows do not prove deploy safety, runtime health, "
+            "schema compatibility, authorization completeness, or absence of unindexed consumers."
         ),
-        direction="callers",
+        "required_caveat": (
+            "For deploy order, safe-deploy, runtime routing, authorization, schema, or production environment claims, "
+            "inspect source/config/operational evidence beyond this static service brief."
+        ),
+    }
+
+
+def _find_callers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
+    return _with_symbol_claim_contract(
+        _with_symbol_miss_next_actions(
+            kg.find_callers(
+                _required_string(arguments, "symbol"),
+                limit=_limit(arguments),
+                path=_optional_string(arguments, "path"),
+                line=_optional_int(arguments, "line"),
+                include_all=_optional_bool(arguments, "include_all", default=False),
+            ),
+            direction="callers",
+        ),
+        tool_name="find_callers",
     )
 
 
@@ -766,6 +848,16 @@ def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> Js
     if payload.get("status") != "not_found":
         return payload
     next_actions = list(payload.get("next_actions", []))
+    coordinate_mismatch = _symbol_coordinate_mismatch_resolution(payload)
+    if coordinate_mismatch is not None:
+        next_actions.extend(str(action) for action in _as_list(coordinate_mismatch.get("next_actions")))
+        next_actions.append(
+            "Symbol resolution found candidates that do not match the requested path/line; retry one `coordinate_mismatch.retry_arguments` entry before treating this as no callers/callees."
+        )
+        return {
+            **payload,
+            "next_actions": _dedupe_strings(next_actions),
+        }
     import_leads = payload.get("import_consumer_leads")
     if isinstance(import_leads, dict) and import_leads.get("status") == "found":
         next_actions.append(
@@ -784,31 +876,74 @@ def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> Js
     }
 
 
+def _symbol_coordinate_mismatch_resolution(payload: JsonObject) -> JsonObject | None:
+    for key in ("target", "source"):
+        value = payload.get(key)
+        if isinstance(value, dict) and value.get("confidence") == "coordinate_mismatch":
+            return value
+    return None
+
+
 def _find_callees(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return _with_symbol_miss_next_actions(
-        kg.find_callees(
-            _required_string(arguments, "symbol"),
-            limit=_limit(arguments),
-            path=_optional_string(arguments, "path"),
-            line=_optional_int(arguments, "line"),
-            include_all=_optional_bool(arguments, "include_all", default=False),
+    return _with_symbol_claim_contract(
+        _with_symbol_miss_next_actions(
+            kg.find_callees(
+                _required_string(arguments, "symbol"),
+                limit=_limit(arguments),
+                path=_optional_string(arguments, "path"),
+                line=_optional_int(arguments, "line"),
+                include_all=_optional_bool(arguments, "include_all", default=False),
+            ),
+            direction="callees",
         ),
-        direction="callees",
+        tool_name="find_callees",
     )
 
 
 def _blast_radius(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    return _with_symbol_miss_next_actions(
-        kg.blast_radius(
-            _required_string(arguments, "symbol"),
-            depth=_bounded_int(arguments.get("depth", 1), field="depth", minimum=1, maximum=6),
-            limit=_limit(arguments),
-            path=_optional_string(arguments, "path"),
-            line=_optional_int(arguments, "line"),
-            include_all=_optional_bool(arguments, "include_all", default=False),
+    return _with_symbol_claim_contract(
+        _with_symbol_miss_next_actions(
+            kg.blast_radius(
+                _required_string(arguments, "symbol"),
+                depth=_bounded_int(arguments.get("depth", 1), field="depth", minimum=1, maximum=6),
+                limit=_limit(arguments),
+                path=_optional_string(arguments, "path"),
+                line=_optional_int(arguments, "line"),
+                include_all=_optional_bool(arguments, "include_all", default=False),
+            ),
+            direction="static downstream impact",
         ),
-        direction="static downstream impact",
+        tool_name="blast_radius",
     )
+
+
+def _with_symbol_claim_contract(payload: JsonObject, *, tool_name: str) -> JsonObject:
+    if "claim_contract" in payload:
+        return payload
+    if tool_name == "blast_radius":
+        scope = "bounded static downstream CALLS closure"
+        known_rows = ["edges"]
+        count_fields = ["edge_count"]
+    elif tool_name == "find_callees":
+        scope = "immediate static downstream CALLS edges"
+        known_rows = ["callees"]
+        count_fields = ["callee_count"]
+    else:
+        scope = "immediate static upstream CALLS edges"
+        known_rows = ["callers"]
+        count_fields = ["caller_count"]
+    return {
+        **payload,
+        "claim_contract": {
+            "scope": scope,
+            "known_rows": known_rows,
+            "count_fields": count_fields,
+            "claim_boundary": (
+                "Static CALLS facts only; verify source before making runtime, endpoint, deploy, safety, "
+                "or absence-of-impact claims."
+            ),
+        },
+    }
 
 
 def _get_event_consumers(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
@@ -872,8 +1007,28 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
                 "whether a zero-consumer result means the event channel is unused",
             ],
         },
+        "claim_contract": _event_claim_contract(result_key),
         "next_actions": _event_next_actions(found=bool(rows), channel=channel),
         result_key: returned,
+    }
+
+
+def _event_claim_contract(result_key: str) -> JsonObject:
+    return {
+        "scope": "indexed static event-channel facts only",
+        "known_rows_field": result_key,
+        "safety_rule": (
+            "Known producer or consumer rows do not prove deploy safety, message compatibility, runtime activity, "
+            "or absence of unindexed subscribers."
+        ),
+        "counting_rule": (
+            "Report known static rows separately from unresolved runtime/config consumers, missing fact families, "
+            "unsupported scopes, and coverage gaps."
+        ),
+        "required_caveat": (
+            "For safe-deploy, time-window, schema, retry, delivery, or runtime-subscriber claims, inspect source/config "
+            "and operational evidence beyond this static packet."
+        ),
     }
 
 
@@ -988,6 +1143,24 @@ def _service_repo(service: JsonObject) -> str | None:
         properties = {}
     repo = identity.get("repo") or properties.get("repo")
     return repo if isinstance(repo, str) and repo.strip() else None
+
+
+def _planning_context_services_for_repo(kg: KgSnapshot, repo: str) -> list[JsonObject]:
+    """Service rows whose repo identity matches a repo anchor.
+
+    A repo anchor must surface its Service entity as the primary identity answer; without
+    this the identity question has a real graph answer the packet hides, forcing the agent
+    onto weaker packaging-metadata evidence.
+    """
+    repo_key = _normalize_repo_text(repo)
+    matches = [
+        service
+        for service in kg.entities
+        if service.get("kind") == "Service"
+        and (svc_repo := _service_repo(service)) is not None
+        and _normalize_repo_text(svc_repo) == repo_key
+    ]
+    return [_service_row(kg, service) for service in sorted(matches, key=_service_sort_key)]
 
 
 def _facts_touching_entity(kg: KgSnapshot, entity_id: str) -> list[JsonObject]:
@@ -1734,6 +1907,15 @@ def _optional_review_surfaces(arguments: JsonObject, field: str) -> list[str]:
     return surfaces
 
 
+def _optional_review_section_aliases(arguments: JsonObject, field: str) -> set[str]:
+    sections: set[str] = set()
+    for value in _optional_string_list(arguments, field):
+        normalized_value = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized_value in REVIEW_CONTEXT_OWNERSHIP_SECTION_ALIASES:
+            sections.add("ownership_context")
+    return sections
+
+
 def _optional_changed_ranges(arguments: JsonObject, field: str) -> list[JsonObject]:
     if field not in arguments:
         return []
@@ -1862,9 +2044,11 @@ def _review_context_properties() -> JsonObject:
             "items": {"type": "string"},
             "description": (
                 "Optional impact surfaces named by the review prompt. Supported canonical values include "
-                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, and tracking are "
-                "accepted. Built-in review sections such as callers and reverse_impact are "
-                "always returned and may be requested as no-op aliases."
+                f"{', '.join(REVIEW_CONTEXT_SURFACES)}; common aliases such as UI, workers, SQS, tracking, schemas, "
+                "and contracts are accepted. Built-in review sections and broad answer categories such as callers, "
+                "reverse_impact, services, and deployables are always returned or covered by other packet sections, "
+                "and may be requested as no-op aliases. Owner/maintainer requests are accepted as explicit coverage "
+                "gaps that point to planning_context.ownership_context."
             ),
         },
         "include_deploy_blockers": {"type": "boolean", "default": False},
@@ -1958,6 +2142,9 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             symbols = [resolution["resolved_symbol"]]
 
     if anchors["repo"]:
+        services = _planning_context_dedupe_rows(
+            services + _planning_context_services_for_repo(kg, anchors["repo"])
+        )[:limit]
         dependencies = _planning_context_dedupe_rows(
             dependencies + _planning_context_collect_rows(_planning_context_repo_matches(kg, anchors["repo"]), limit=limit)
         )
@@ -2045,6 +2232,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     limit = _limit(arguments)
     detail_limit = min(limit, REVIEW_CONTEXT_DETAIL_LIMIT)
     requested_surfaces = _optional_review_surfaces(arguments, "requested_surfaces")
+    requested_review_sections = _optional_review_section_aliases(arguments, "requested_surfaces")
     include_deploy_blockers = _optional_bool(arguments, "include_deploy_blockers", default=False)
 
     changed_symbols: list[JsonObject] = []
@@ -2130,6 +2318,14 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 "reason": "No canonical deploy-blocker relation is implemented yet",
             }
         )
+    if "ownership_context" in requested_review_sections:
+        unsupported_scopes.append(
+            {
+                "kind": "ownership_context",
+                "scope": repo,
+                "reason": "review_context does not assemble ownership evidence; call planning_context with the repo or service and read ownership_context.answer_packet.",
+            }
+        )
 
     status = "found" if any((changed_symbols, direct_callers, direct_callees, repo_dependencies)) else "not_found"
     changed_surface = _review_context_changed_surface(
@@ -2158,6 +2354,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         status=status,
         changed_symbols=changed_symbols,
         include_deploy_blockers=include_deploy_blockers,
+        include_ownership_context="ownership_context" in requested_review_sections,
         surface_status=surface_status,
         requested_surfaces=requested_surfaces,
     )
@@ -2172,11 +2369,23 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     public_endpoint_consumers = _planning_context_public_rows(endpoint_consumer_rows)
     public_event_channels = _planning_context_public_rows(event_channel_rows)
     public_deploy_mappings = _planning_context_public_rows(deploy_mapping_rows)
+    # Without changed_ranges we only know the changed-file symbol inventory, not which
+    # symbols actually changed. Mirror the answer packet: top-level changed_symbols is
+    # empty in that case and the inventory is exposed via changed_file_symbols, so the
+    # list is never mistaken for proof that every file symbol was touched.
+    changed_symbols_in_scope = public_changed_symbols if changed_ranges else []
+    # Caller/callee/transitive edges are "of changed_symbols" per scope_contract, so when no
+    # ranges are supplied (changed_symbols_in_scope empty) they are in-scope-empty too. This
+    # keeps the summary counts, top-level fields, and the answer packet consistent instead of
+    # reporting 0 changed symbols alongside non-zero caller counts.
+    direct_callers_in_scope = public_direct_callers if changed_ranges else []
+    direct_callees_in_scope = public_direct_callees if changed_ranges else []
+    transitive_callers_in_scope = public_transitive_callers if changed_ranges else []
     summary = _review_context_summary(
         changed_files=changed_files,
-        changed_symbols=public_changed_symbols,
-        direct_callers=public_direct_callers,
-        direct_callees=public_direct_callees,
+        changed_symbols=changed_symbols_in_scope,
+        direct_callers=direct_callers_in_scope,
+        direct_callees=direct_callees_in_scope,
         repo_dependencies=public_repo_dependencies,
         endpoints=public_endpoints,
         endpoint_consumers=public_endpoint_consumers,
@@ -2184,7 +2393,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         deploy_mappings=public_deploy_mappings,
         source_coordinates=source_coordinates,
         changed_file_symbols=public_changed_file_symbols,
-        transitive_callers=public_transitive_callers,
+        transitive_callers=transitive_callers_in_scope,
         framework_impact=framework_impact,
         application_impact=application_impact,
     )
@@ -2192,17 +2401,24 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     summary["detail_limit"] = detail_limit
     scope_contract = _review_context_scope_contract(
         changed_ranges=changed_ranges,
-        changed_symbols=public_changed_symbols,
+        changed_symbols=changed_symbols_in_scope,
         changed_file_symbols=public_changed_file_symbols,
     )
+    claim_contract = _review_context_claim_contract()
+    review_packet_changed_symbols = changed_symbols_in_scope
+    review_packet_direct_callers = direct_callers_in_scope
+    review_packet_direct_callees = direct_callees_in_scope
+    review_packet_transitive_callers = transitive_callers_in_scope
     review_answer_packet = _review_context_answer_packet(
         status=status,
         summary=summary,
         scope_contract=scope_contract,
-        changed_symbols=public_changed_symbols,
-        direct_callers=public_direct_callers,
-        direct_callees=public_direct_callees,
-        transitive_callers=public_transitive_callers,
+        claim_contract=claim_contract,
+        changed_symbols=review_packet_changed_symbols,
+        changed_file_symbols=public_changed_file_symbols,
+        direct_callers=review_packet_direct_callers,
+        direct_callees=review_packet_direct_callees,
+        transitive_callers=review_packet_transitive_callers,
         framework_impact=framework_impact,
         application_impact=application_impact,
         runtime_surfaces={
@@ -2219,20 +2435,21 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "repo": repo,
         "summary": summary,
         "review_answer_packet": review_answer_packet,
-        "changed_symbols": public_changed_symbols,
+        "changed_symbols": changed_symbols_in_scope,
         "changed_file_symbols": public_changed_file_symbols,
-        "direct_callers": public_direct_callers,
-        "direct_callees": public_direct_callees,
-        "direct_callers_of_changed_symbols": public_direct_callers,
-        "direct_callees_from_changed_symbols": public_direct_callees,
-        "transitive_callers": public_transitive_callers,
+        "direct_callers": direct_callers_in_scope,
+        "direct_callees": direct_callees_in_scope,
+        "direct_callers_of_changed_symbols": direct_callers_in_scope,
+        "direct_callees_from_changed_symbols": direct_callees_in_scope,
+        "transitive_callers": transitive_callers_in_scope,
         "repo_dependencies": public_repo_dependencies,
         "changed_surface": changed_surface,
         "scope_contract": scope_contract,
+        "claim_contract": claim_contract,
         "impact": {
-            "direct_callers": public_direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
-            "direct_callees": public_direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
-            "transitive_callers": public_transitive_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "direct_callers": direct_callers_in_scope[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "direct_callees": direct_callees_in_scope[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "transitive_callers": transitive_callers_in_scope[:PLANNING_CONTEXT_SECTION_LIMIT],
             "repo_dependencies": public_repo_dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         },
         "runtime_surfaces": {
@@ -2823,10 +3040,19 @@ def _review_context_scope_contract(
 ) -> JsonObject:
     return {
         "changed_symbols": (
-            "Symbols whose source span overlaps changed_ranges. "
-            "When changed_ranges are omitted, this is the changed-file symbol set."
+            "Symbols whose source span overlaps changed_ranges."
             if changed_ranges
-            else "No changed_ranges were supplied; changed_symbols equals the bounded changed-file symbol set."
+            else (
+                "No changed_ranges were supplied, so top-level changed_symbols is empty: the KG cannot tell which "
+                "symbols changed without ranges. Read changed_file_symbols for the bounded changed-file symbol "
+                "inventory (source-inspection context), then inspect the diff before claiming any symbol changed."
+            )
+        ),
+        "review_answer_packet.top_changed_symbols": (
+            "Range-overlap changed symbols only; empty when changed_ranges are omitted."
+        ),
+        "review_answer_packet.changed_file_symbol_inventory": (
+            "Bounded symbol inventory for changed files; source-inspection context, not proof of touched symbols."
         ),
         "changed_file_symbols": "Bounded symbol inventory for the changed files; these are context, not all changed symbols.",
         "direct_callers_of_changed_symbols": "Incoming CALLS edges for changed_symbols only.",
@@ -2837,6 +3063,38 @@ def _review_context_scope_contract(
     }
 
 
+def _review_context_claim_contract() -> JsonObject:
+    return {
+        "scope": "bounded static review context for changed files and optional ranges",
+        "known_runtime_rows": [
+            "runtime_surfaces.endpoints",
+            "runtime_surfaces.endpoint_consumers",
+            "runtime_surfaces.event_channels",
+            "runtime_surfaces.deploy_mappings",
+            "application_impact.runtime_facts",
+        ],
+        "candidate_or_unlinked_rows": [
+            "application_impact.cross_repo_name_leads",
+            "surface_status rows with status=inventory_context or status=unlinked_lead",
+            "coverage_gaps",
+            "unsupported_scopes",
+        ],
+        "safety_rule": (
+            "Known endpoint, event, deploy, contract, or application rows do not prove deploy safety, runtime health, "
+            "schema compatibility, authorization completeness, ownership, or absence of unindexed consumers."
+        ),
+        "changed_symbol_rule": (
+            "If changed_ranges were omitted, top-level changed_symbols is empty and the changed-file symbol "
+            "inventory is exposed via changed_file_symbols / review_answer_packet.changed_file_symbol_inventory; "
+            "that inventory is source-inspection context, so inspect the diff before claiming any listed symbol was touched."
+        ),
+        "required_caveat": (
+            "For deploy order, safe-deploy, runtime routing, endpoint/schema compatibility, ownership, or security claims, "
+            "separate known static rows from missing fact families, unsupported scopes, unlinked leads, and source-verified findings."
+        ),
+    }
+
+
 def _review_context_transitive_callers(
     kg: KgSnapshot,
     *,
@@ -2844,9 +3102,14 @@ def _review_context_transitive_callers(
     depth: int,
     limit: int,
 ) -> list[JsonObject]:
-    root_ids = {
-        str(row["symbol_id"]) for row in changed_symbols if isinstance(row.get("symbol_id"), str) and row["symbol_id"]
-    }
+    root_ids: list[str] = []
+    seen_root_ids: set[str] = set()
+    for row in changed_symbols:
+        symbol_id = row.get("symbol_id")
+        if not isinstance(symbol_id, str) or not symbol_id or symbol_id in seen_root_ids:
+            continue
+        seen_root_ids.add(symbol_id)
+        root_ids.append(symbol_id)
     if not root_ids:
         return []
     incoming: dict[str, list[JsonObject]] = {}
@@ -3031,7 +3294,9 @@ def _review_context_answer_packet(
     status: str,
     summary: JsonObject,
     scope_contract: JsonObject,
+    claim_contract: JsonObject,
     changed_symbols: list[JsonObject],
+    changed_file_symbols: list[JsonObject],
     direct_callers: list[JsonObject],
     direct_callees: list[JsonObject],
     transitive_callers: list[JsonObject],
@@ -3048,10 +3313,11 @@ def _review_context_answer_packet(
         "status": status,
         "answerability": answerability,
         "summary": {
-            "changed_symbol_count": summary["changed_symbol_count"],
-            "direct_caller_count": summary["direct_caller_count"],
-            "direct_callee_count": summary["direct_callee_count"],
-            "transitive_caller_count": summary["transitive_caller_count"],
+            "changed_symbol_count": len(changed_symbols),
+            "changed_file_symbol_count": len(changed_file_symbols),
+            "direct_caller_count": len(direct_callers),
+            "direct_callee_count": len(direct_callees),
+            "transitive_caller_count": len(transitive_callers),
             "framework_model_count": summary["framework_model_count"],
             "framework_relation_count": summary["framework_relation_count"],
             "app_surface_count": summary["app_surface_count"],
@@ -3060,7 +3326,9 @@ def _review_context_answer_packet(
             "detail_limit": summary["detail_limit"],
         },
         "scope_contract": scope_contract,
+        "claim_contract": claim_contract,
         "top_changed_symbols": changed_symbols[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "changed_file_symbol_inventory": changed_file_symbols[:PLANNING_CONTEXT_SECTION_LIMIT],
         "top_direct_callers": direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "top_direct_callees": direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
         "top_transitive_callers": transitive_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -3115,27 +3383,32 @@ def _review_context_surface_status_row(
     application_impact: JsonObject,
     runtime_surfaces: dict[str, list[JsonObject]],
 ) -> JsonObject:
-    known_rows, unlinked_rows, evidence_path = _review_context_surface_rows(
+    context_rows, unlinked_rows, evidence_path = _review_context_surface_rows(
         surface,
         application_impact=application_impact,
         runtime_surfaces=runtime_surfaces,
     )
-    if known_rows:
-        status = "known"
-        interpretation = "Known from structured review packet rows."
+    if context_rows:
+        status = "inventory_context"
+        interpretation = (
+            "Rows exist in the review packet, but they are namespace, static, or term-selected context. "
+            "Use them as source-inspection leads; they do not prove this surface is affected by the change."
+        )
     elif unlinked_rows:
-        status = "unlinked"
+        status = "unlinked_lead"
         interpretation = "Only unlinked source leads are available; verify source before claiming impact."
     else:
         status = "missing"
         interpretation = "No current KG evidence for this requested surface."
+    sample_rows = context_rows or unlinked_rows
     return {
         "surface": surface,
         "status": status,
-        "known_count": len(known_rows),
+        "known_count": 0,
+        "context_count": len(context_rows),
         "unlinked_count": len(unlinked_rows),
         "evidence_path": evidence_path,
-        "sample_rows": [_review_context_surface_sample(row) for row in (known_rows or unlinked_rows)[:2]],
+        "sample_rows": [_review_context_surface_sample(row) for row in sample_rows[:2]],
         "interpretation": interpretation,
     }
 
@@ -3238,6 +3511,7 @@ def _review_context_answerability(
     status: str,
     changed_symbols: list[JsonObject],
     include_deploy_blockers: bool,
+    include_ownership_context: bool,
     surface_status: list[JsonObject],
     requested_surfaces: list[str],
 ) -> JsonObject:
@@ -3250,10 +3524,13 @@ def _review_context_answerability(
         }
     missing = []
     unlinked = []
+    inventory_context = []
     if not changed_symbols:
         missing.append("changed_symbols")
     if include_deploy_blockers:
         missing.append("deploy_blockers")
+    if include_ownership_context:
+        missing.append("ownership_context")
     if requested_surfaces:
         for row in surface_status:
             surface = row.get("surface")
@@ -3261,25 +3538,36 @@ def _review_context_answerability(
                 continue
             if row.get("status") == "missing":
                 missing.append(surface)
-            elif row.get("status") == "unlinked":
+            elif row.get("status") == "inventory_context":
+                inventory_context.append(surface)
+            elif row.get("status") in {"unlinked_lead", "unlinked"}:
                 unlinked.append(surface)
     return {
-        "status": "partial" if missing or unlinked else "answerable",
+        "status": "partial" if missing or unlinked or inventory_context else "answerable",
         "missing_fact_families": missing,
         "unlinked_fact_families": unlinked,
-        "recommended_followups": _review_context_answerability_followups(missing, unlinked),
+        "inventory_context_fact_families": inventory_context,
+        "recommended_followups": _review_context_answerability_followups(missing, unlinked, inventory_context),
     }
 
 
-def _review_context_answerability_followups(missing: list[str], unlinked: list[str]) -> list[str]:
+def _review_context_answerability_followups(
+    missing: list[str], unlinked: list[str], inventory_context: list[str]
+) -> list[str]:
     actions = []
     if "changed_symbols" in missing:
         actions.append("Read the changed files directly; no indexed symbols overlapped the review scope.")
     if "deploy_blockers" in missing:
         actions.append("Use deployment manifests or source inspection; deploy-blocker facts are unsupported by the current KG.")
+    if "ownership_context" in missing:
+        actions.append("Call planning_context with the repo or service and read ownership_context.answer_packet before claiming owners.")
     for surface in missing:
         if surface in REVIEW_CONTEXT_SURFACES:
             actions.append(f"Inspect source or runtime/config evidence for requested surface {surface}; the current KG has no proof.")
+    for surface in inventory_context:
+        actions.append(
+            f"Inspect source for requested surface {surface}; current KG rows are inventory/context leads, not proof of affectedness."
+        )
     for surface in unlinked:
         actions.append(f"Verify unlinked source leads for requested surface {surface} before claiming impact.")
     return actions
@@ -3495,6 +3783,13 @@ def _planning_context_output(
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
         include_legacy_sections=False,
     )
+    runtime_architecture = _planning_context_runtime_architecture_for_anchor_status(
+        runtime_architecture,
+        status=status,
+        query=query,
+        anchors=anchors,
+        line=line,
+    )
     authz_surface = authz_surface_packet(
         kg,
         repo=runtime_repo,
@@ -3535,7 +3830,8 @@ def _planning_context_output(
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
     snapshot_scope = _planning_context_snapshot_scope(kg, anchors)
-    if status == "not_found" and _planning_context_has_indexed_scope(snapshot_scope):
+    indexed_scope_without_rows = status == "not_found" and _planning_context_has_indexed_scope(snapshot_scope)
+    if indexed_scope_without_rows:
         next_actions = [action for action in next_actions if action != PLANNING_CONTEXT_NO_OVERLAP_ACTION]
         next_actions.append(
             "The repo anchor has indexed snapshot scope but no matching first-class dependency, endpoint, event, domain, service, or symbol rows for the supplied filters."
@@ -3543,9 +3839,21 @@ def _planning_context_output(
         next_actions.append(
             "Use `snapshot_summary` and `snapshot_scope` for KG inventory counts, then inspect source or narrower anchors for behavioral claims."
         )
-    answerability = _planning_context_answerability(status=status, anchors=anchors, groups=groups)
+    # Answerability is computed with the original status so its indexed-scope branch (keyed
+    # on not_found) still scopes which claim families are answerable.
+    answerability = _planning_context_answerability(
+        status=status,
+        anchors=anchors,
+        groups=groups,
+        snapshot_scope=snapshot_scope,
+    )
+    # An indexed repo is not "not_found": surface a truthful top-level status so the agent
+    # does not read the anchor as a hard miss. The answerability split still marks
+    # behavioral claims not_answerable while inventory is answerable. Runtime gating and
+    # related_facts above already ran with the original status, so they stay gated.
+    result_status = "partial" if indexed_scope_without_rows else status
     result = {
-        "status": status,
+        "status": result_status,
         "query": query,
         "summary": _planning_context_summary(groups, source_coordinates=source_coordinates),
         "snapshot_summary": _planning_context_snapshot_summary(kg),
@@ -3581,6 +3889,116 @@ def _planning_context_output(
         "next_actions": next_actions,
     }
     return result
+
+
+_RUNTIME_ANSWER_SECTIONS = (
+    "runtime_building_blocks",
+    "domain_routing_map",
+    "deploy_runtime_map",
+    "endpoint_consumer_map",
+    "deploy_order_guidance",
+    "deploy_kind_counts",
+)
+
+
+def _planning_context_runtime_architecture_for_anchor_status(
+    runtime_architecture: JsonObject,
+    *,
+    status: str,
+    query: str | None,
+    anchors: dict[str, str | None],
+    line: int | None = None,
+) -> JsonObject:
+    if not _planning_context_should_gate_runtime_architecture(
+        status=status, query=query, anchors=anchors, line=line
+    ):
+        return runtime_architecture
+    answer_packet = runtime_architecture.get("answer_packet")
+    if not isinstance(answer_packet, dict):
+        answer_packet = {}
+    investigation_brief = answer_packet.get("investigation_brief")
+    if not isinstance(investigation_brief, dict):
+        investigation_brief = {}
+    omitted_sections = [
+        section
+        for section in _RUNTIME_ANSWER_SECTIONS
+        if section in answer_packet and answer_packet.get(section) not in (None, [], {})
+    ]
+    gated_summary = _planning_context_gated_runtime_summary(runtime_architecture, investigation_brief)
+    return {
+        "scope": runtime_architecture.get("scope", {}),
+        "summary": gated_summary,
+        "answer_packet": {
+            "investigation_brief": investigation_brief,
+            "missing_fact_families": answer_packet.get("missing_fact_families", []),
+            "evidence_contract": (
+                "Planning anchor was ambiguous or unresolved. Runtime architecture is available only as an "
+                "investigation brief; omitted runtime maps and counts are inventory context, not an answer to the query."
+            ),
+            "omitted_answer_sections": omitted_sections,
+        },
+        "anchor_resolution_contract": {
+            "status": "inventory_context",
+            "reason": (
+                "The planning anchor did not resolve to a unique primary service/repo/symbol/domain/endpoint/event row."
+            ),
+            "claim_rule": (
+                "Use investigation_brief rows to inspect source or retry with narrower anchors before making runtime "
+                "building-block, domain-routing, deploy-order, endpoint-consumer, or event-surface claims."
+            ),
+            "omitted_answer_sections": omitted_sections,
+        },
+        "assembly_contract": runtime_architecture.get("assembly_contract"),
+    }
+
+
+def _planning_context_should_gate_runtime_architecture(
+    *,
+    status: str,
+    query: str | None,
+    anchors: dict[str, str | None],
+    line: int | None,
+) -> bool:
+    if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
+        return False
+    return status in {"ambiguous", "not_found"}
+
+
+def _planning_context_gated_runtime_summary(
+    runtime_architecture: JsonObject, investigation_brief: JsonObject
+) -> JsonObject:
+    original_summary = runtime_architecture.get("summary")
+    if not isinstance(original_summary, dict):
+        original_summary = {}
+    return {
+        "answer_packet_mode": "investigation_brief_only",
+        "runtime_anchor_count": _list_len(investigation_brief.get("runtime_anchors")),
+        "known_route_lead_count": _list_len(investigation_brief.get("known_routes")),
+        "unlinked_runtime_lead_count": _list_len(investigation_brief.get("unlinked_runtime_leads")),
+        "deploy_unit_lead_count": _list_len(investigation_brief.get("deploy_units")),
+        "consumer_link_lead_count": _list_len(investigation_brief.get("consumer_links")),
+        "recommended_source_check_count": _list_len(investigation_brief.get("recommended_source_checks")),
+        "original_count_fields_omitted": [
+            key
+            for key in (
+                "domain_route_count",
+                "deploy_link_count",
+                "endpoint_surface_count",
+                "client_endpoint_call_count",
+                "event_surface_count",
+                "runtime_building_block_count",
+                "domain_routing_map_count",
+                "deploy_runtime_unit_count",
+                "endpoint_consumer_map_count",
+                "deploy_order_guidance_count",
+            )
+            if key in original_summary
+        ],
+    }
+
+
+def _list_len(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def _planning_context_anchors(arguments: JsonObject) -> JsonObject:
@@ -3822,20 +4240,34 @@ def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | No
     if not repo:
         return {}
     repo_key = _normalize_repo_text(repo)
-    entity_count = sum(1 for entity in kg.entities if _planning_context_entity_repo(entity) == repo_key)
+    entity_count = 0
+    module_count = 0
+    for entity in kg.entities:
+        if not _planning_context_entity_in_repo_scope(entity, repo_key):
+            continue
+        entity_count += 1
+        if entity.get("kind") == "CodeModule":
+            module_count += 1
     fact_count = 0
     for fact in kg.facts:
         subject = kg.entities_by_id.get(fact.get("subject_id"))
         object_ = kg.entities_by_id.get(fact.get("object_id"))
-        if subject and _planning_context_entity_repo(subject) == repo_key:
+        if subject and _planning_context_entity_in_repo_scope(subject, repo_key):
             fact_count += 1
             continue
-        if object_ and _planning_context_entity_repo(object_) == repo_key:
+        if object_ and _planning_context_entity_in_repo_scope(object_, repo_key):
             fact_count += 1
             continue
         qualifier = fact.get("qualifier", {})
         if isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key:
             fact_count += 1
+    facts_by_id = {fact.get("fact_id"): fact for fact in kg.facts}
+    evidence_count = 0
+    for row in kg.evidence:
+        if not isinstance(row, dict):
+            continue
+        if _planning_context_evidence_in_repo_scope(row, repo_key, facts_by_id=facts_by_id, kg=kg):
+            evidence_count += 1
     coverage_rows = [
         row
         for row in kg.coverage
@@ -3853,11 +4285,49 @@ def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | No
         "scope": {"kind": "repo", "repo": repo},
         "count_contract": f"snapshot_scope counts are scoped to repo {repo}.",
         "entity_count": entity_count,
+        "module_count": module_count,
         "fact_count": fact_count,
+        "evidence_count": evidence_count,
         "coverage_count": len(coverage_rows),
         "coverage_states": dict(sorted(coverage_states.items())),
         "coverage_predicates": _top_count_map(coverage_predicates, limit=10),
     }
+
+
+def _planning_context_entity_in_repo_scope(entity: JsonObject, repo_key: str) -> bool:
+    if _planning_context_entity_repo(entity) == repo_key:
+        return True
+    # The Repo entity itself belongs to its own repo scope; its identity carries the repo
+    # name rather than a repo field, so it would otherwise be excluded (off-by-one).
+    if entity.get("kind") == "Repo":
+        name = entity.get("identity", {}).get("name")
+        return isinstance(name, str) and name.strip().lower() == repo_key
+    return False
+
+
+def _planning_context_evidence_in_repo_scope(
+    row: JsonObject, repo_key: str, *, facts_by_id: dict[object, JsonObject], kg: KgSnapshot
+) -> bool:
+    target_id = row.get("target_id")
+    target_type = row.get("target_type")
+    if target_type == "entity":
+        entity = kg.entities_by_id.get(target_id)
+        return bool(entity) and _planning_context_entity_in_repo_scope(entity, repo_key)
+    if target_type == "fact":
+        fact = facts_by_id.get(target_id)
+        if not fact:
+            return False
+        subject = kg.entities_by_id.get(fact.get("subject_id"))
+        object_ = kg.entities_by_id.get(fact.get("object_id"))
+        if (bool(subject) and _planning_context_entity_in_repo_scope(subject, repo_key)) or (
+            bool(object_) and _planning_context_entity_in_repo_scope(object_, repo_key)
+        ):
+            return True
+        # Mirror fact_count's cross-repo consumer scoping so a fact counted in-repo via its
+        # consumer_repo qualifier also has its evidence counted.
+        qualifier = fact.get("qualifier", {})
+        return isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key
+    return False
 
 
 def _planning_context_has_indexed_scope(snapshot_scope: JsonObject) -> bool:
@@ -4155,7 +4625,7 @@ def _planning_context_runtime_architecture_reference(runtime_architecture: JsonO
     answer_packet = runtime_architecture.get("answer_packet")
     if not isinstance(answer_packet, dict):
         answer_packet = {}
-    return {
+    reference = {
         "summary": runtime_architecture.get("summary", {}),
         "scope": runtime_architecture.get("scope", {}),
         "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
@@ -4166,6 +4636,12 @@ def _planning_context_runtime_architecture_reference(runtime_architecture: JsonO
         "read_for_endpoint_consumers": "runtime_architecture.answer_packet.endpoint_consumer_map",
         "read_for_deploy_order": "runtime_architecture.answer_packet.deploy_order_guidance",
     }
+    # Only surface the anchor-resolution contract when an actual gate is present (ambiguous/
+    # unresolved anchor); on a resolved packet an empty {} reads as a false active gate.
+    anchor_resolution_contract = runtime_architecture.get("anchor_resolution_contract")
+    if isinstance(anchor_resolution_contract, dict) and anchor_resolution_contract:
+        reference["anchor_resolution_contract"] = anchor_resolution_contract
+    return reference
 
 
 def _planning_context_service_brief(
@@ -4252,23 +4728,49 @@ def _planning_context_answerability(
     status: str,
     anchors: dict[str, str | None],
     groups: dict[str, list[JsonObject]],
+    snapshot_scope: JsonObject | None = None,
 ) -> JsonObject:
     if status == "ambiguous":
         return {
             "status": "not_answerable",
             "missing_fact_families": ["unambiguous_primary_anchor"],
+            "by_claim_family": {
+                "primary_anchor_resolution": "not_answerable",
+                "runtime_architecture": "not_answerable",
+            },
             "recommended_followups": ["Refine the query with a structured anchor or source coordinate."],
         }
     if status == "not_found":
+        if snapshot_scope is not None and _planning_context_has_indexed_scope(snapshot_scope):
+            return {
+                "status": "partial",
+                "missing_fact_families": ["primary_anchor_behavioral_rows"],
+                "answerable_fact_families": ["snapshot_inventory"],
+                "by_claim_family": {
+                    "inventory_summary": "answerable",
+                    "behavioral_claims": "not_answerable",
+                    "runtime_architecture": "not_answerable",
+                },
+                "recommended_followups": [
+                    "Use snapshot_scope and snapshot_summary only for inventory counts; inspect source or retry with narrower anchors for behavioral claims."
+                ],
+            }
         return {
             "status": "not_answerable",
             "missing_fact_families": ["primary_anchor"],
+            "by_claim_family": {
+                "primary_anchor_resolution": "not_answerable",
+            },
             "recommended_followups": ["Broaden or correct the supplied planning anchor."],
         }
     missing = _planning_context_missing_fact_families(anchors, groups)
     return {
         "status": "partial" if missing else "answerable",
         "missing_fact_families": missing,
+        "by_claim_family": {
+            "primary_anchor_resolution": "answerable",
+            "matched_rows": "partial" if missing else "answerable",
+        },
         "recommended_followups": _planning_context_answerability_followups(missing),
     }
 
@@ -4667,7 +5169,8 @@ _TOOLS: dict[str, McpTool] = {
         name="search_services",
         description=(
             "Searches indexed Service entities by name, slug, namespace, repo, or stored properties. "
-            "Use it when you need candidate services before drilling into a specific service brief or dependency path. "
+            "Use it when you need candidate services before drilling into a specific service brief or dependency path, and as the primary tool for repo/service identity questions (what service is this, its name/slug/namespace/owning repo). "
+            "Treat packaging metadata such as a pyproject.toml package name as a candidate naming lead, not proof of the service identity; prefer the matched Service entity identity and repo link. "
             "Does not return endpoint topology, caller graphs, deploy blockers, or runtime health."
         ),
         input_schema=_object_schema({"query": _nullable_string_schema("Optional service search text."), "limit": _limit_schema()}),
@@ -4709,6 +5212,8 @@ _TOOLS: dict[str, McpTool] = {
             "It walks incoming static CALLS recursively, groups affected symbols by depth, bridges Python __init__ methods to containing class instantiations, and includes terminal import_consumer_leads as source-inspection leads. "
             "Use this instead of chaining repeated find_callers calls when the task needs transitive upstream callers, caller-impact tiers, entry-point leads, or source_inspection_areas for a symbol anchor. "
             "If status is ambiguous, do not treat the empty edge list as no impact; use candidate_impact_previews and disambiguation.retry_arguments, or include_all=true only for exploratory aggregation. "
+            "summary.affected_symbol_count counts only callable affected symbols; module/notebook/script call sites are reported separately in call_site_leads and must not be added to the affected symbol total. "
+            "Large packets are bounded: when output_budget is present the detail rows were compacted to a coordinate-bearing head start, so inspect source coordinates or call a narrower anchor for omitted detail. "
             "Terminal import leads are not runtime-call proof; verify source before claiming endpoint or cross-repo execution."
         ),
         input_schema=_object_schema(
@@ -4734,7 +5239,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns facts whose subject consumes an event channel matching the provided queue, topic, ARN, or channel substring. "
             "Use it when you know the event channel and want the indexed static consumers attached to that channel. "
-            "Does not infer delivery guarantees, runtime subscribers, message schemas, time-window usage, or cross-environment broker state."
+            "Does not infer delivery guarantees, runtime subscribers, message schemas, time-window usage, cross-environment broker state, or the client SDK/API call used to consume the channel; do not state the consuming mechanism unless source confirms it."
         ),
         input_schema=_object_schema(
             {"channel": _string_schema("Event channel name, queue, topic, or ARN substring."), "limit": _limit_schema()},
@@ -4747,7 +5252,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns facts whose subject produces an event channel matching the provided queue, topic, ARN, or channel substring. "
             "Use it when you know the event channel and need the indexed static producers that emit onto it. "
-            "Does not prove messages were published at runtime or in a time window, identify consumers, or recover schema and deployment guarantees."
+            "Does not prove messages were published at runtime or in a time window, identify consumers, recover schema and deployment guarantees, or reveal the client SDK/API call used to produce the channel; do not state the producing mechanism unless source confirms it."
         ),
         input_schema=_object_schema(
             {"channel": _string_schema("Event channel name, queue, topic, or ARN substring."), "limit": _limit_schema()},
@@ -4789,6 +5294,7 @@ _TOOLS: dict[str, McpTool] = {
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
             "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
+            "When a planning anchor is ambiguous or not_found, runtime_architecture.summary.answer_packet_mode is investigation_brief_only and runtime maps/counts are omitted from the answer path until the agent retries with narrower anchors. "
             "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
             "For symbol impact anchors, read related_facts.symbol_impact.reverse_impact; it is a bounded reverse-caller head start with constructor bridges and terminal import leads for targeted source inspection. "
             "For ownership questions, read ownership_context.answer_packet; package authors and package maintainers are candidates only and must not be promoted to service owner unless an explicit ownership source is present. "
@@ -4811,14 +5317,17 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns bounded review context for one repo plus a changed-file set by composing review_answer_packet, changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
             "Read review_answer_packet first; detailed review rows are capped by summary.detail_limit even when a larger limit is requested. "
-            "Use scope_contract to keep changed_symbols distinct from changed_file_symbols: file inventory is context, not proof every symbol changed. "
-            "When the prompt names impact categories, pass requested_surfaces such as ui_screens, scheduled_jobs, sqs_consumers, delivery_workers, or tracking_paths so surface_status can separate known, unlinked, and missing evidence. "
-            "Existing top-level changed_symbols, direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
+            "review_answer_packet.top_changed_symbols contains range-overlap symbols only, while review_answer_packet.changed_file_symbol_inventory carries file inventory when no ranges are supplied. "
+            "When changed_ranges are omitted, top-level changed_symbols and review_answer_packet.top_changed_symbols are empty and the changed-file symbol inventory is exposed via changed_file_symbols; that inventory is source-inspection context, not proof every symbol changed. Inspect the diff before saying a function was touched. "
+            "When the prompt names impact categories, pass requested_surfaces such as ui_screens, scheduled_jobs, sqs_consumers, delivery_workers, tracking_paths, schemas, or contracts so surface_status can separate inventory_context, unlinked_lead, and missing evidence. "
+            "Broad categories such as services and deployables are covered by other review packet sections; owner/maintainer requests are reported as ownership_context coverage gaps pointing to planning_context.ownership_context. "
+            "Top-level direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
             "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "framework_impact includes parser-backed support facts for Django/Celery model fields, model relations, serializers, view/model bindings, tasks, and bounded model relationship paths when present. "
             "authz_surface is available from planning_context/get_service_brief for endpoint-to-handler permission evidence; use source inspection for dynamic middleware or framework defaults not represented in the packet. "
             "application_impact groups changed app/package namespace surfaces into API/model/serializer/worker/scheduled-job sections, app-scoped runtime facts, and unlinked cross-repo name leads that require separate verification. "
             "Use it when you know the changed files and need deterministic static review context before drilling into narrower MCP tools. "
+            "Large packets are bounded: when output_budget is present the detail rows were compacted to a coordinate-bearing head start, so inspect source coordinates or call narrower changed_ranges/exact tools for omitted detail. "
             "Does not infer deploy blockers unless explicitly requested, summarize diffs with an LLM, or invent cross-repo and runtime-only impact."
         ),
         input_schema=_object_schema(_review_context_properties(), required=["repo", "changed_files"]),
