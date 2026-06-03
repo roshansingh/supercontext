@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from source.kg.core.models import Entity, Evidence, Fact, canonical_json
+from source.kg.core.models import Coverage, Entity, Evidence, Fact, canonical_json
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import (
@@ -2942,6 +2942,94 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(len(consumers["coverage_warnings"]), 1)
         self.assertIn("1 indexed consumers but 0 producers", consumers["coverage_warnings"][0])
         self.assertIn("Treat producers coverage as thin, not absent", consumers["coverage_warnings"][0])
+
+    def _language_coverage_row(self, *, repo: str, language: str, file_count: int) -> Coverage:
+        return Coverage(
+            tenant_id="default",
+            predicate="LANGUAGE_SUPPORT",
+            scope_ref={
+                "repo": repo,
+                "repo_owner": "acme",
+                "language": language,
+                "path_prefix": ".",
+                "reason": "unsupported_language",
+                "file_count": file_count,
+                "sample_paths": [f"worker.{language}"],
+            },
+            state="uninstrumented",
+            source_system="repo_discovery",
+        )
+
+    def test_get_service_brief_surfaces_repo_scoped_uninstrumented_language_coverage(self) -> None:
+        # The build records loud-refusal coverage for no-extractor languages; the service
+        # brief must echo it so the agent treats the brief as repo-scoped, not exhaustive.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "payments", "repo": "payments"},
+            )
+            JsonlKgStore(root).write(
+                entities=[service],
+                facts=[],
+                evidence=[],
+                coverage=[
+                    self._language_coverage_row(repo="payments", language="go", file_count=23),
+                    self._language_coverage_row(repo="other", language="rust", file_count=5),
+                ],
+                manifest={"counts": {"entities": 1, "facts": 0}},
+            )
+            kg = KgSnapshot(root)
+
+            brief = call_tool(kg, "get_service_brief", {"service": "payments"})
+
+        self.assertEqual(brief["status"], "found")
+        self.assertEqual(len(brief["coverage_warnings"]), 1)
+        self.assertIn("go (23 files)", brief["coverage_warnings"][0])
+        self.assertIn("coverage gap, not proof of absence", brief["coverage_warnings"][0])
+        # Scoped to the service repo: the unrelated repo's rust files are not surfaced here.
+        self.assertNotIn("rust", brief["coverage_warnings"][0])
+        self.assertIn("coverage_warning", [row.get("trigger") for row in brief["coverage_gaps"]])
+
+    def test_get_service_brief_emits_no_language_warning_when_fully_instrumented(self) -> None:
+        with _fixture_snapshot() as kg:
+            brief = call_tool(kg, "get_service_brief", {"service": "payments"})
+
+        self.assertEqual(brief["status"], "found")
+        self.assertEqual(brief["coverage_warnings"], [])
+
+    def test_symbol_miss_surfaces_uninstrumented_language_coverage(self) -> None:
+        # A resolved symbol with zero callers returns not_found; if the repo has unindexed
+        # languages, the empty result must be framed as a coverage gap, not absence.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            symbol = Entity(
+                kind="CodeSymbol",
+                identity={
+                    "tenant_id": "default",
+                    "repo": "payments",
+                    "module": "payments.gateway",
+                    "qualname": "charge_card",
+                    "symbol_kind": "function",
+                },
+                properties={"path": "payments/gateway.py", "line": 5, "end_line": 12},
+            )
+            JsonlKgStore(root).write(
+                entities=[symbol],
+                facts=[],
+                evidence=[],
+                coverage=[self._language_coverage_row(repo="payments", language="go", file_count=23)],
+                manifest={"counts": {"entities": 1, "facts": 0}},
+            )
+            kg = KgSnapshot(root)
+
+            callers = call_tool(kg, "find_callers", {"symbol": "charge_card"})
+
+        self.assertEqual(callers["status"], "not_found")
+        self.assertEqual(len(callers["coverage_warnings"]), 1)
+        self.assertIn("'payments'", callers["coverage_warnings"][0])
+        self.assertIn("go (23 files)", callers["coverage_warnings"][0])
+        self.assertIn("coverage_warning", [row.get("trigger") for row in callers["coverage_gaps"]])
 
     def test_deploy_blockers_refuses_when_current_kg_has_no_contract(self) -> None:
         with _fixture_snapshot() as kg:
