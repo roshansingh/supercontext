@@ -2887,6 +2887,62 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(producers["event_fact_count"], 1)
         self.assertEqual(producers["returned_count"], 1)
 
+    def test_event_tools_emit_no_asymmetry_warning_when_both_sides_indexed(self) -> None:
+        # Symmetric channel (one producer, one consumer) must not raise a thin-coverage warning.
+        with _fixture_snapshot() as kg:
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "orders"})
+            producers = call_tool(kg, "get_event_producers", {"channel": "orders"})
+
+        self.assertEqual(consumers["coverage_warnings"], [])
+        self.assertEqual(producers["coverage_warnings"], [])
+
+    def test_event_tools_warn_on_producer_consumer_asymmetry_language_agnostic(self) -> None:
+        # A channel consumed by a TS service but with no indexed producer is a coverage
+        # signal, not absence. Derived from the opposite-predicate count at the query layer,
+        # so it holds for any language emitting event facts (here: TypeScript, not Python).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer_service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "web", "repo": "web"},
+            )
+            channel = Entity(
+                kind="EventChannel",
+                identity={
+                    "tenant_id": "default",
+                    "repo": "web",
+                    "broker_kind": "sqs",
+                    "channel_address": "orders-created",
+                    "name": "orders-created",
+                },
+            )
+            consume_fact = Fact("CONSUMES_EVENT", consumer_service.entity_id, channel.entity_id)
+            JsonlKgStore(root).write(
+                entities=[consumer_service, channel],
+                facts=[consume_fact],
+                evidence=[],
+                coverage=[],
+                manifest={"counts": {"entities": 2, "facts": 1}},
+            )
+            kg = KgSnapshot(root)
+
+            producers = call_tool(kg, "get_event_producers", {"channel": "orders-created"})
+            consumers = call_tool(kg, "get_event_consumers", {"channel": "orders-created"})
+
+        # Empty producer side: flagged as thin coverage, not absence (the claim-D scenario).
+        self.assertEqual(producers["status"], "not_found")
+        self.assertEqual(len(producers["coverage_warnings"]), 1)
+        self.assertIn("0 indexed producers but 1 consumers", producers["coverage_warnings"][0])
+        self.assertIn("thin coverage, not proof of absence", producers["coverage_warnings"][0])
+        producer_gap_triggers = [row.get("trigger") for row in producers["coverage_gaps"]]
+        self.assertIn("coverage_warning", producer_gap_triggers)
+
+        # Populated consumer side also flags that the producer side is dark.
+        self.assertEqual(consumers["status"], "found")
+        self.assertEqual(len(consumers["coverage_warnings"]), 1)
+        self.assertIn("1 indexed consumers but 0 producers", consumers["coverage_warnings"][0])
+        self.assertIn("Treat producers coverage as thin, not absent", consumers["coverage_warnings"][0])
+
     def test_deploy_blockers_refuses_when_current_kg_has_no_contract(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "deploy_blockers_for", {"service": "payments"})

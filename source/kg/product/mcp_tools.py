@@ -992,10 +992,23 @@ def _deploy_blockers_for(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     return result
 
 
+_OPPOSITE_EVENT_PREDICATE = {
+    "CONSUMES_EVENT": "PRODUCES_EVENT",
+    "PRODUCES_EVENT": "CONSUMES_EVENT",
+}
+_EVENT_PREDICATE_ROLE = {
+    "CONSUMES_EVENT": "consumers",
+    "PRODUCES_EVENT": "producers",
+}
+
+
 def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, result_key: str) -> JsonObject:
+    opposite_predicate = _OPPOSITE_EVENT_PREDICATE[predicate]
     rows = []
+    opposite_count = 0
     for fact in kg.facts:
-        if fact.get("predicate") != predicate:
+        fact_predicate = fact.get("predicate")
+        if fact_predicate not in (predicate, opposite_predicate):
             continue
         subject = kg.entities_by_id.get(fact["subject_id"])
         object_ = kg.entities_by_id.get(fact["object_id"])
@@ -1003,10 +1016,13 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
             continue
         if channel.lower() not in _event_channel_search_text(object_).lower():
             continue
-        rows.append(_fact_result(kg, fact, subject, object_))
+        if fact_predicate == predicate:
+            rows.append(_fact_result(kg, fact, subject, object_))
+        else:
+            opposite_count += 1
     returned = rows[:limit]
     missing_fact_families = [] if rows else ["static_event_facts"]
-    return {
+    result = {
         "status": "found" if rows else "not_found",
         "channel": channel,
         "event_fact_count": len(rows),
@@ -1025,6 +1041,48 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
         "next_actions": _event_next_actions(found=bool(rows), channel=channel),
         result_key: returned,
     }
+    coverage_warnings = _event_coverage_asymmetry_warnings(
+        channel=channel,
+        result_key=result_key,
+        queried_count=len(rows),
+        opposite_predicate=opposite_predicate,
+        opposite_count=opposite_count,
+    )
+    if coverage_warnings:
+        result["coverage_warnings"] = coverage_warnings
+    return result
+
+
+def _event_coverage_asymmetry_warnings(
+    *,
+    channel: str,
+    result_key: str,
+    queried_count: int,
+    opposite_predicate: str,
+    opposite_count: int,
+) -> list[str]:
+    """Flag producer/consumer asymmetry for an event channel.
+
+    A channel that is indexed on one side only (e.g. consumed but never produced
+    in the loaded snapshot) is a coverage signal, not proof: the missing side is
+    typically external or emitted by an uninstrumented language/service. This is
+    derived deterministically from the opposite-predicate fact count over the same
+    channel match, so it holds for any language whose extractors emit event facts.
+    """
+    opposite_role = _EVENT_PREDICATE_ROLE[opposite_predicate]
+    if queried_count > 0 and opposite_count == 0:
+        return [
+            f"Event channel query {channel!r} matched {queried_count} indexed {result_key} but 0 {opposite_role}; "
+            f"the {opposite_role} side may be external or in an uninstrumented language/service. "
+            f"Treat {opposite_role} coverage as thin, not absent."
+        ]
+    if queried_count == 0 and opposite_count > 0:
+        return [
+            f"Event channel query {channel!r} matched 0 indexed {result_key} but {opposite_count} {opposite_role}; "
+            f"the {result_key} side may be external or in an uninstrumented language/service. "
+            f"Treat this empty {result_key} result as thin coverage, not proof of absence."
+        ]
+    return []
 
 
 def _event_claim_contract(result_key: str) -> JsonObject:
