@@ -1,6 +1,6 @@
 ---
 name: pre-pr-semantic-review
-description: "Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, metrics, loaders, relink/snapshot code, endpoint/path reconciliation, config/YAML contracts, manifest producers/consumers, or GitHub review fixes. Focuses on Copilot-style semantic bugs: Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, metric scope correctness, trust-boundary drift, and regression tests."
+description: "Run before pushing PR updates in this repository, especially after changing extractors, normalization, query/evaluation logic, metrics, loaders, relink/snapshot code, endpoint/path reconciliation, config/YAML contracts, manifest producers/consumers, output-contract/packet-shape/budget code, or GitHub review fixes. Focuses on Copilot-style semantic bugs (Python/AST binding semantics, fail-closed behavior, source-order resolution, multiplicity, validation, path/filter semantics, metric scope correctness, trust-boundary drift) AND change-completeness failures (a new rule applied to only some sites, an inconsistent serialization/measurement unit, partial enum coverage, built-but-unwired code, docs drifting from changed behavior), plus regression tests."
 ---
 
 # Pre-PR Semantic Review
@@ -31,7 +31,42 @@ python -m unittest discover tests
 git status --short --branch
 ```
 
-5. Stop-the-line rule: if Copilot or Claude finds 3 or more semantic issues on one PR, do not keep patching individual comments. Pause, re-read the changed modules end-to-end, classify the findings by failure family, add the missing checklist item or regression class, and run a full adversarial self-review before the next push.
+5. Stop-the-line rule: if a reviewer raises **2 or more findings of the same family** (or 3+ across families) on one PR, do not keep patching individual comments — that is the signature of a change-completeness miss and it will not stop one comment at a time. Pause, name the family, then **enumerate every site/value/doc the family touches across the whole codebase (grep), fix them all in one change, and add a coverage test that fails if a new instance is missed** before the next push. Patching N comments one-by-one across N review rounds means this rule was skipped.
+
+## Change-Completeness And Consistency Checklist
+
+Run this FIRST whenever the change introduces or modifies an output-contract field, a rule
+applied across many call sites, a serialization/measurement unit, a classification map or
+enum, a packet/budget shape, or any guidance describing them. This is the failure family that
+produces long one-comment-at-a-time review threads (each fix correct but narrow).
+
+- Enumerate every site, apply uniformly. When you add a rule ("record this in
+  `truncated_sections`", "sync `*_returned_count`", "classify in `_CANDIDATE_LEAD_KIND`",
+  "signal-rank this section", "bound this list"), grep for EVERY place the rule applies and
+  apply it in the same change — not only the sites you happened to touch. If you fixed 3 sites,
+  search for 5; if 5, look for 8. Recipe: `grep -n '\[:limit\]\|\[:COMPACT\|_compact_'` (or the
+  relevant slice/compactor) and confirm each obeys the new rule.
+- Cover the full input domain. A tier/priority/classification map must include every value the
+  codebase actually emits, not a subset — unknown values silently take the default/lowest rank.
+  Grep the literal set (e.g. `grep -rhoE '"(authoritative_declared|deterministic_static|...)"'`),
+  map them all, and add a test asserting every registered field/enum value is mapped explicitly
+  (not via the generic fallback).
+- Keep one unit/contract consistent across the whole path: produced -> measured -> emitted on
+  the wire -> consumed -> asserted in tests. A budget that measures `canonical_json` must be the
+  exact serialization the server emits and the tests assert. Grep the unit (`canonical_json`,
+  `json.dumps`, `indent=`) across producer/server/tests and reconcile before pushing.
+- Wire what you build; delete what you don't. Every new helper, parameter, or signal must be
+  used on its intended path (e.g. actually pass the anchor you added `match_rank` for). No dead
+  public API. Recipe: `grep -rn "<new_symbol>" source/ | grep -v "def <new_symbol>"` and confirm
+  a real (non-test) caller; if none, wire it or remove it.
+- Update docs/comments/guidance in lockstep with behavior. When an output contract or behavior
+  changes, grep the OLD term/shape across docstrings, advice strings, tool descriptions, SKILL
+  templates, and server instructions, and update every occurrence (e.g. "omitted counts" ->
+  "truncated_sections", "guarantees it fits" -> note the exceeded edge case). Stale guidance that
+  names fields the tool no longer emits is review bait.
+- Mirror parallel code paths. If two functions compute the "same" thing (e.g. `fact_count` vs
+  evidence scoping, or fleet vs anchored budgeting), a rule added to one almost always belongs in
+  the other. Diff the pair and reconcile.
 
 ## Extractor And AST Checklist
 
