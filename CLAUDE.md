@@ -92,7 +92,7 @@ Read ADRs in order; each builds on the prior. Key shape:
 - Evidence rows omit `valid_from`/`valid_to`.
 - Promotion rules not enforced (everything defaults `canonical_status='canonical'`).
 - Coverage row shape simplified.
-- Polyglot ingestion limited to Python + TS/JS; loud-refusal-at-ingestion not wired.
+- Polyglot ingestion limited to Python + TS/JS. Loud-refusal-at-ingestion is wired for inventoried no-extractor source languages and known stacks (the build emits `LANGUAGE_SUPPORT`/`state='uninstrumented'` coverage rows in `source/kg/extraction/framework/runner.py`), and these surface at query time via `planning_context`, `get_service_brief`, and the symbol tools; it is not yet wired for arbitrary unknown extensions. See BACKLOG.md.
 
 When extending `source/`, prefer closing one of these gaps over adding new capability.
 
