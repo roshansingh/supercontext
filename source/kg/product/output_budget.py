@@ -116,14 +116,15 @@ def enforce_planning_context_budget(
     max_chars: int = PLANNING_CONTEXT_MAX_CHARS,
     preserve_planning_sections: bool = False,
 ) -> JsonObject:
-    """Bound a planning_context packet, guaranteeing it fits ``max_chars``.
+    """Bound a planning_context packet to ``max_chars``.
 
     The section-limit pipeline (truncate -> fallback -> minimal -> backfill) handles the
     common case. On real multi-repo snapshots that pipeline can still overshoot (fat authz
-    rows, a duplicated nested authz copy, many sections), so a deterministic scorer-driven
-    hard-cap pass is applied to whatever it returns: redundant duplicates are dropped and the
-    lowest-signal rows of the largest leaf lists are demoted to a coordinate-bearing
-    inspection area until the packet truly fits.
+    rows, many sections), so a deterministic scorer-driven hard-cap pass is applied to
+    whatever it returns: the lowest-signal rows of the largest leaf lists are demoted to a
+    coordinate-bearing inspection area until the packet fits. In the rare case where
+    non-row content alone exceeds the cap, the packet is returned with
+    output_budget.exceeded_after_minimization set rather than dropping required fields.
     """
     budgeted = _enforce_planning_context_budget_core(
         result, max_chars=max_chars, preserve_planning_sections=preserve_planning_sections
@@ -321,9 +322,8 @@ _REVIEW_RELATION_DETAIL_FIELDS = (
 )
 _REVIEW_SYMBOL_DETAIL_FIELDS = ("changed_symbols", "changed_file_symbols")
 _DETAIL_BUDGET_COUNT_RULE = (
-    " summary.*_count fields remain the authoritative totals and summary.*_returned_count reports how many rows are shown; "
-    "truncated_sections lists which detail arrays were sampled. Inspect source for the rows not shown; never add truncated "
-    "or omitted rows to the summary totals."
+    " summary.*_count fields remain the authoritative totals and output_budget.truncated_sections lists which detail arrays "
+    "were sampled. Inspect source for the rows not shown; never add the sampled-away rows to the summary totals."
 )
 _REVIEW_BUDGET_ADVICE = (
     "Detail rows were compacted to bounded, coordinate-bearing head-start rows. Inspect the cited source coordinates or "
@@ -333,6 +333,7 @@ _REVIEW_BUDGET_ADVICE = (
 _REVERSE_IMPACT_BUDGET_ADVICE = (
     "Detail rows were compacted to bounded, coordinate-bearing head-start rows. Inspect the cited source coordinates, use "
     "source_inspection_areas, or call reverse_impact again with a narrower depth or an exact anchor to recover the rows not shown."
+    " summary.*_returned_count reports how many rows are shown versus the *_count totals."
     + _DETAIL_BUDGET_COUNT_RULE
 )
 _DETAIL_BUDGET_ACTION = (
@@ -353,7 +354,8 @@ def enforce_review_context_budget(
     The curated review_answer_packet, summary, scope/claim contracts, surface_status,
     answerability, and common evidence fields are preserved. Verbose static-detail
     arrays (callers/callees/transitive/changed-file inventory/runtime/application
-    surfaces) are compacted to bounded coordinate-bearing rows with omitted counts so
+    surfaces) are compacted to bounded coordinate-bearing rows, with the sampled arrays
+    listed in output_budget.truncated_sections, so
     the agent inspects source rather than doing saved-file archaeology. Row limits
     tighten across passes until the packet fits the cap.
     """
@@ -440,8 +442,9 @@ def enforce_reverse_impact_budget(
     Summary counts (which already separate callable affected symbols from terminal
     import leads), answerability, claim/packet contracts, and common evidence fields
     are preserved. Edges, tiers, affected symbols, and terminal/truncated leads are
-    compacted to bounded coordinate-bearing rows with omitted counts; row limits
-    tighten across passes until the packet fits the cap.
+    compacted to bounded coordinate-bearing rows; sampled arrays are listed in
+    output_budget.truncated_sections and summary.*_returned_count is synced to the rows
+    shown. Row limits tighten across passes until the packet fits the cap.
     """
     measured = len(canonical_json(result))
     if measured <= max_chars:
