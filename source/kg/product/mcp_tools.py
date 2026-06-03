@@ -858,7 +858,9 @@ def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> Js
         # Surface the mismatch as a structured top-level marker plus a distinct answerability
         # so an agent can tell "wrong path/line, symbol exists elsewhere" from a genuinely
         # missing symbol or a real empty result — both of which otherwise share
-        # status=not_found and answerability missing_fact_families=["requested_fact"].
+        # status=not_found and a direction-specific answerability (e.g.
+        # missing_fact_families=["requested_fact"] for find_callers/callees,
+        # ["reverse_callers"] for reverse_impact).
         inner = coordinate_mismatch.get("coordinate_mismatch")
         if isinstance(inner, dict):
             result["coordinate_mismatch"] = inner
