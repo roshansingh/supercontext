@@ -429,26 +429,36 @@ def _compact_review_detail(result: JsonObject, *, limit: int) -> tuple[JsonObjec
     for nested_field in ("framework_impact", "application_impact"):
         nested = result.get(nested_field)
         if isinstance(nested, dict):
-            compact[nested_field] = _compact_nested_detail(nested, limit=limit)
+            compact[nested_field] = _compact_nested_detail(
+                nested, limit=limit, truncated_sections=truncated_sections, label=nested_field
+            )
     source_coordinates = result.get("source_coordinates")
     if isinstance(source_coordinates, list):
-        compact["source_coordinates"] = [
+        kept_coords = [
             _compact_coordinate(row) if isinstance(row, dict) else row
             for row in source_coordinates[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
         ]
+        _record_truncated(truncated_sections, "source_coordinates", original=len(source_coordinates), kept=len(kept_coords))
+        compact["source_coordinates"] = kept_coords
     changed_surface = result.get("changed_surface")
     if isinstance(changed_surface, dict):
         surface = dict(changed_surface)
         symbols = changed_surface.get("symbols")
         if isinstance(symbols, list):
-            surface["symbols"] = [_compact_symbol(row) for row in symbols[:limit] if isinstance(row, dict)]
+            kept_symbols = [_compact_symbol(row) for row in symbols[:limit] if isinstance(row, dict)]
+            _record_truncated(truncated_sections, "changed_surface.symbols", original=len(symbols), kept=len(kept_symbols))
+            surface["symbols"] = kept_symbols
         compact["changed_surface"] = surface
     evidence = result.get("evidence")
     if isinstance(evidence, list):
-        compact["evidence"] = evidence[:limit]
+        kept_evidence = evidence[:limit]
+        _record_truncated(truncated_sections, "evidence", original=len(evidence), kept=len(kept_evidence))
+        compact["evidence"] = kept_evidence
     answer_packet = result.get("review_answer_packet")
     if isinstance(answer_packet, dict):
-        compact["review_answer_packet"] = _compact_review_answer_packet(answer_packet, limit=limit)
+        compact["review_answer_packet"] = _compact_review_answer_packet(
+            answer_packet, limit=limit, truncated_sections=truncated_sections
+        )
     return compact, truncated_sections
 
 
@@ -510,7 +520,9 @@ def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObje
         compact["call_site_leads"] = kept
     roots = result.get("roots")
     if isinstance(roots, list):
-        compact["roots"] = [_compact_symbol(row) for row in roots[:limit] if isinstance(row, dict)]
+        kept_roots = [_compact_symbol(row) for row in roots[:limit] if isinstance(row, dict)]
+        _record_truncated(truncated_sections, "roots", original=len(roots), kept=len(kept_roots))
+        compact["roots"] = kept_roots
     bridges = result.get("constructor_bridges")
     if isinstance(bridges, list):
         kept_bridges = _compact_constructor_bridges(bridges)[:limit]
@@ -528,8 +540,11 @@ def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObje
             truncated_sections, "truncated_terminal_symbols", original=len(truncated_terminals), kept=len(kept_terminals)
         )
         compact["truncated_terminal_symbols"] = kept_terminals
-    if isinstance(result.get("candidate_impact_previews"), list):
-        compact["candidate_impact_previews"] = _compact_candidate_impact_previews(result.get("candidate_impact_previews"))
+    previews = result.get("candidate_impact_previews")
+    if isinstance(previews, list):
+        kept_previews = _compact_candidate_impact_previews(previews)
+        _record_truncated(truncated_sections, "candidate_impact_previews", original=len(previews), kept=len(kept_previews))
+        compact["candidate_impact_previews"] = kept_previews
     source = result.get("source")
     if isinstance(source, dict):
         compact["source"] = _compact_reverse_impact_source(source)
@@ -687,8 +702,12 @@ def _compact_service_brief_surfaces(
         if len(endpoints) > len(kept_endpoints):
             truncated_sections.add("endpoints")
         compact["endpoints"] = kept_endpoints
-    if isinstance(result.get("authz_surface"), dict):
-        compact["authz_surface"] = _compact_authz_surface(result.get("authz_surface"))
+    authz = result.get("authz_surface")
+    if isinstance(authz, dict):
+        compact_authz = _compact_authz_surface(authz)
+        if len(canonical_json(compact_authz)) < len(canonical_json(authz)):
+            truncated_sections.add("authz_surface")
+        compact["authz_surface"] = compact_authz
     inspection_area = _overflow_inspection_area(
         overflow,
         area="service_operational_surface_overflow",
@@ -711,34 +730,49 @@ def _compact_service_brief_surfaces(
     return compact
 
 
-def _compact_nested_detail(value: JsonObject, *, limit: int) -> JsonObject:
-    """Bound every inner list of a nested detail packet without reshaping rows."""
+def _compact_nested_detail(
+    value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None, label: str = ""
+) -> JsonObject:
+    """Bound every inner list of a nested detail packet without reshaping rows.
+
+    Records each truncated inner list in ``truncated_sections`` (when supplied) under a
+    dotted ``label.key`` path so the budget metadata reflects every sampled array.
+    """
     compact: JsonObject = {}
     for key, item in value.items():
         if isinstance(item, list):
-            compact[key] = item[:limit]
+            kept = item[:limit]
+            if truncated_sections is not None and len(item) > len(kept):
+                truncated_sections.add(f"{label}.{key}" if label else key)
+            compact[key] = kept
         elif isinstance(item, dict):
-            compact[key] = {
-                inner_key: inner[:limit] if isinstance(inner, list) else inner
-                for inner_key, inner in item.items()
-            }
+            inner_compact: JsonObject = {}
+            for inner_key, inner in item.items():
+                if isinstance(inner, list):
+                    inner_kept = inner[:limit]
+                    if truncated_sections is not None and len(inner) > len(inner_kept):
+                        path = f"{label}.{key}.{inner_key}" if label else f"{key}.{inner_key}"
+                        truncated_sections.add(path)
+                    inner_compact[inner_key] = inner_kept
+                else:
+                    inner_compact[inner_key] = inner
+            compact[key] = inner_compact
         else:
             compact[key] = item
     return compact
 
 
-def _compact_review_answer_packet(value: JsonObject, *, limit: int) -> JsonObject:
+def _compact_review_answer_packet(
+    value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None
+) -> JsonObject:
     compact = dict(value)
-    inventory = value.get("changed_file_symbol_inventory")
-    if isinstance(inventory, list):
-        compact["changed_file_symbol_inventory"] = [
-            _compact_symbol(row) for row in inventory[:limit] if isinstance(row, dict)
-        ]
-    top_changed = value.get("top_changed_symbols")
-    if isinstance(top_changed, list):
-        compact["top_changed_symbols"] = [
-            _compact_symbol(row) for row in top_changed[:limit] if isinstance(row, dict)
-        ]
+    for field in ("changed_file_symbol_inventory", "top_changed_symbols"):
+        rows = value.get(field)
+        if isinstance(rows, list):
+            kept = [_compact_symbol(row) for row in rows[:limit] if isinstance(row, dict)]
+            if truncated_sections is not None:
+                _record_truncated(truncated_sections, f"review_answer_packet.{field}", original=len(rows), kept=len(kept))
+            compact[field] = kept
     return compact
 
 
