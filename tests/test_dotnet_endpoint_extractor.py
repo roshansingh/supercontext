@@ -102,6 +102,38 @@ public class Endpoints
             endpoints = _endpoints(tmp, {"Endpoints.cs": source})
         self.assertEqual(endpoints, {("GET", "/api/orders/cardtypes"), ("POST", "/api/orders/draft")})
 
+    def test_named_attribute_argument_is_not_treated_as_route(self) -> None:
+        # `[HttpGet(Name = "List")]` has no positional route; Name is metadata, not a path.
+        source = """using Microsoft.AspNetCore.Mvc;
+namespace App;
+[Route("items")]
+public class ItemsController
+{
+    [HttpGet(Name = "ListItems")]
+    public object List() => null;
+
+    [HttpGet("{id}", Name = "GetItem")]
+    public object Get(int id) => null;
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            endpoints = _endpoints(tmp, {"ItemsController.cs": source})
+        self.assertEqual(endpoints, {("GET", "/items"), ("GET", "/items/{id}")})
+
+    def test_method_without_any_route_template_is_skipped(self) -> None:
+        # `[HttpGet]` with no class `[Route]` => no resolvable template; must not emit "/".
+        source = """using Microsoft.AspNetCore.Mvc;
+namespace App;
+public class ThingsController
+{
+    [HttpGet]
+    public object All() => null;
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            endpoints = _endpoints(tmp, {"ThingsController.cs": source})
+        self.assertEqual(endpoints, set())
+
     def test_non_literal_route_is_not_emitted(self) -> None:
         source = """using Microsoft.AspNetCore.Builder;
 public class Endpoints

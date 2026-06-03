@@ -533,6 +533,10 @@ def _attribute_string_args(attribute: Any, source: bytes) -> list[str]:
     for child in arg_list.children:
         if child.type != "attribute_argument":
             continue
+        # Skip named arguments (e.g. `Name = "List"`, `Order = 2`); only the positional
+        # route-template string matters. Named args carry a `=`/name_equals/name_colon child.
+        if any(part.type in {"=", "name_equals", "name_colon"} for part in child.children):
+            continue
         for value in child.children:
             literal = _string_literal_value(value, source)
             if literal is not None:

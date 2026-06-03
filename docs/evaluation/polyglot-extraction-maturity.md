@@ -247,7 +247,7 @@ moved eShop producers 1→2 / channels 13→14 after the Run 2 note was first wr
 | Snapshot | EXPOSES_ENDPOINT | PROD | CONS | note |
 |---|---:|---:|---:|---|
 | realworld (x-repo) | 19 | 0 | 0 | ✅ from the .NET Conduit controllers (lights up the cross-repo fixture; TS backend + client pending) |
-| eShop (.NET) | 38 | 2 | 18 | ✅ minimal APIs incl. MapGroup prefixes (`/api/orders/...`) |
+| eShop (.NET) | 29 | 2 | 18 | ✅ minimal APIs incl. MapGroup prefixes (`/api/orders/...`); convention-routed Identity MVC controllers (bare `[HttpGet]`, no literal template) correctly not emitted |
 | run-aspnetcore (.NET) | 17 | 1 | 1 | ✅ minimal APIs (`/basket/...`, `/products/...`) |
 | otel (poly) | 3 | 0 | 0 | small (+1 .NET) alongside existing express rows |
 | booking-nestjs (TS) | 0 | 0 | 0 | — routes are NestJS `@Controller` (TS endpoints, pending) |

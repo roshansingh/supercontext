@@ -973,6 +973,10 @@ def _dotnet_controller_endpoints(
             args = attribute.get("args") or []
             method_path = str(args[0]) if args else ""
             prefix = _dotnet_owning_class_prefix(qualname, class_prefixes)
+            if not prefix and not method_path:
+                # No literal route template anywhere (convention-based routing we can't resolve);
+                # don't emit a bogus "/" endpoint.
+                continue
             path = _join_route(prefix, method_path)
             _add_endpoint_fact(
                 repo, scanned, int(sym.get("line") or 1), service_entity, build,
