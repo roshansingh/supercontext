@@ -134,11 +134,29 @@ def enforce_planning_context_budget(
     return budgeted
 
 
+def _hard_cap_anchor(result: JsonObject) -> str | None:
+    """The packet's most specific structured anchor, for anchor-relative row ranking.
+
+    Uses structured anchor fields (never the free-form NL query, to avoid keyword matching).
+    """
+    anchors = result.get("anchors")
+    if not isinstance(anchors, dict):
+        return None
+    for field in ("symbol", "service", "endpoint", "event_channel", "domain", "package", "path", "repo"):
+        value = anchors.get(field)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 def _planning_signal_hard_cap(result: JsonObject, *, max_chars: int) -> JsonObject:
     result = deepcopy(result)
     overflow: list[JsonObject] = []
     truncated: set[str] = set()
     guard = 0
+    # Rank against the packet's structured anchor so rows matching the queried
+    # symbol/service/endpoint are kept preferentially over unrelated rows of equal strength.
+    anchor = _hard_cap_anchor(result)
     # Reserve room for the overflow inspection area appended after the loop, so adding it
     # never pushes the packet back over the cap.
     target_budget = max(1, max_chars - _HARD_CAP_AREA_RESERVE)
@@ -148,7 +166,7 @@ def _planning_signal_hard_cap(result: JsonObject, *, max_chars: int) -> JsonObje
         if target is None:
             break
         label, rows = target
-        ranked = rank_rows([row for row in rows if isinstance(row, dict)])
+        ranked = rank_rows([row for row in rows if isinstance(row, dict)], anchor=anchor)
         keep = len(ranked) // 2 if len(ranked) > 1 else 0
         overflow.extend(ranked[keep:])
         rows[:] = ranked[:keep]
