@@ -854,10 +854,22 @@ def _with_symbol_miss_next_actions(payload: JsonObject, *, direction: str) -> Js
         next_actions.append(
             "Symbol resolution found candidates that do not match the requested path/line; retry one `coordinate_mismatch.retry_arguments` entry before treating this as no callers/callees."
         )
-        return {
-            **payload,
-            "next_actions": _dedupe_strings(next_actions),
-        }
+        result = {**payload, "next_actions": _dedupe_strings(next_actions)}
+        # Surface the mismatch as a structured top-level marker plus a distinct answerability
+        # so an agent can tell "wrong path/line, symbol exists elsewhere" from a genuinely
+        # missing symbol or a real no-callers result — both of which otherwise share
+        # status=not_found and answerability missing_fact_families=["requested_fact"].
+        inner = coordinate_mismatch.get("coordinate_mismatch")
+        if isinstance(inner, dict):
+            result["coordinate_mismatch"] = inner
+            result["answerability"] = {
+                "status": "not_answerable",
+                "missing_fact_families": ["correct_coordinate"],
+                "recommended_source_checks": [
+                    "Symbol exists at a different path/line; retry one coordinate_mismatch.retry_arguments entry before treating this as a missing symbol or no-callers/callees result.",
+                ],
+            }
+        return result
     import_leads = payload.get("import_consumer_leads")
     if isinstance(import_leads, dict) and import_leads.get("status") == "found":
         next_actions.append(
