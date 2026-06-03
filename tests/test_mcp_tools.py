@@ -914,7 +914,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result, original)
         self.assertTrue(budgeted["output_budget"]["truncated"])
-        self.assertLessEqual(len(json.dumps(budgeted)), REVIEW_CONTEXT_MAX_CHARS)
+        self.assertLessEqual(len(canonical_json(budgeted)), REVIEW_CONTEXT_MAX_CHARS)
         # Curated head start and contracts survive; verbose detail is bounded.
         self.assertIn("review_answer_packet", budgeted)
         self.assertEqual(budgeted["summary"], original["summary"])
@@ -972,7 +972,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result, original)
         self.assertTrue(budgeted["output_budget"]["truncated"])
-        self.assertLessEqual(len(json.dumps(budgeted)), REVERSE_IMPACT_MAX_CHARS)
+        self.assertLessEqual(len(canonical_json(budgeted)), REVERSE_IMPACT_MAX_CHARS)
         # Authoritative total is preserved; returned-count is synced to shown rows so
         # totals never contradict the sample, and no additive "omitted" number is emitted.
         self.assertEqual(budgeted["summary"]["affected_symbol_count"], 60)
@@ -1017,7 +1017,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result, original)  # input not mutated
         self.assertTrue(budgeted["output_budget"]["truncated"])
-        self.assertLessEqual(len(json.dumps(budgeted)), SERVICE_BRIEF_MAX_CHARS)
+        self.assertLessEqual(len(canonical_json(budgeted)), SERVICE_BRIEF_MAX_CHARS)
         kept_known = budgeted["operational_surfaces"]["evidence_partition"]["known_linked"]
         kept_unlinked = budgeted["operational_surfaces"]["evidence_partition"]["unlinked_evidence"]
         # Signal ranking keeps the stronger known_linked rows over weak unlinked rows.
