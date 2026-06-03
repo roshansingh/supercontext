@@ -682,6 +682,8 @@ def _compact_service_brief_surfaces(
         sections.append(("endpoint_consumers", surfaces.get("endpoint_consumers", []), "candidate"))
         sections.append(("deploy_target_candidates", surfaces.get("deploy_target_candidates", []), "candidate"))
         sections.append(("domain_route_candidates", surfaces.get("domain_route_candidates", []), "candidate"))
+        sections.append(("deploy_link_facts", surfaces.get("deploy_link_facts", []), "known_linked"))
+        sections.append(("deploy_runtime_units", surfaces.get("deploy_runtime_units", []), "known_linked"))
         kept, demoted, truncated = _signal_ranked_sections(sections, char_budget=section_budget, anchor=None)
         if isinstance(partition, dict):
             compact_partition = dict(partition)
@@ -694,6 +696,8 @@ def _compact_service_brief_surfaces(
             "endpoint_consumers",
             "deploy_target_candidates",
             "domain_route_candidates",
+            "deploy_link_facts",
+            "deploy_runtime_units",
         ):
             if field in compact_surfaces:
                 compact_surfaces[field] = kept.get(field, [])
