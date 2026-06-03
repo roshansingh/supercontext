@@ -159,14 +159,14 @@ def _collect(
                 }
             )
             # Primary-constructor parameters are class-scoped receiver bindings.
-            for binding in _parameter_bindings(node, source, qualname):
+            for binding in _parameter_bindings(node, source, symbol_key):
                 bindings.append(binding)
             for child in node.children:
                 _collect(child, source, imports, symbols, calls, bindings, local_assignments, qualname, symbol_key)
             return
 
     if node_type == "field_declaration":
-        for binding in _field_bindings(node, source, qualname_prefix):
+        for binding in _field_bindings(node, source, symbol_key_prefix):
             bindings.append(binding)
         # fall through: keep descending so calls inside field initializers are still collected
 
@@ -187,14 +187,14 @@ def _collect(
                     "end_line": node.end_point[0] + 1,
                 }
             )
-            for binding in _parameter_bindings(node, source, qualname):
+            for binding in _parameter_bindings(node, source, symbol_key):
                 bindings.append(binding)
             for child in node.children:
                 _collect(child, source, imports, symbols, calls, bindings, local_assignments, qualname, symbol_key)
             return
 
     if node_type == "local_declaration_statement":
-        for assignment in _local_assignments(node, source, qualname_prefix):
+        for assignment in _local_assignments(node, source, symbol_key_prefix):
             local_assignments.append(assignment)
 
     if node_type == "invocation_expression":

@@ -167,9 +167,12 @@ def _extract_producers(
         method = str(call.get("method", "")).strip()
         receiver = str(call.get("receiver", "")).strip()
         caller = str(call.get("caller", "")).strip()
-        if not method or not receiver or not caller:
+        caller_key = str(call.get("caller_key", "")).strip()
+        if not method or not receiver or not caller_key:
             continue
-        receiver_type = _resolve_binding_type(bindings, caller, receiver)
+        # Bindings and locals are scoped by the signature-specific symbol key, so resolving by
+        # caller_key keeps overloads from colliding (their receivers/locals don't share a scope).
+        receiver_type = _resolve_binding_type(bindings, caller_key, receiver)
         spec = _PUBLISH_RECEIVERS.get(_simple_name(receiver_type)) if receiver_type else None
         if spec is None:
             continue
@@ -177,12 +180,10 @@ def _extract_producers(
         if method not in methods:
             continue
         line = int(call.get("line") or 1)
-        # Prefer the signature-specific symbol key so an overloaded method attaches the fact
-        # to the exact overload the call sits in, not just the first same-named symbol.
-        subject = symbols_by_key.get(str(call.get("caller_key", ""))) or _first(symbols_by_qualname.get(caller))
+        subject = symbols_by_key.get(caller_key) or _first(symbols_by_qualname.get(caller))
         if subject is None:
             continue
-        channel_address = _resolve_message_type(call, caller, locals_index, line)
+        channel_address = _resolve_message_type(call, caller_key, locals_index, line)
         if not channel_address:
             build.coverage.append(  # type: ignore[attr-defined]
                 Coverage(
@@ -221,8 +222,8 @@ def _extract_producers(
         )
 
 
-def _resolve_binding_type(bindings: dict[tuple[str, str], str], caller: str, receiver: str) -> str | None:
-    scope = caller
+def _resolve_binding_type(bindings: dict[tuple[str, str], str], scope_key: str, receiver: str) -> str | None:
+    scope = scope_key
     while scope:
         found = bindings.get((scope, receiver))
         if found:
@@ -235,7 +236,7 @@ def _resolve_binding_type(bindings: dict[tuple[str, str], str], caller: str, rec
 
 def _resolve_message_type(
     call: JsonObject,
-    caller: str,
+    scope_key: str,
     locals_index: dict[tuple[str, str], list[tuple[int, str]]],
     call_line: int,
 ) -> str | None:
@@ -248,7 +249,7 @@ def _resolve_message_type(
         created = first_arg.get("type")
         return str(created).strip() if created else None
     if kind == "identifier":
-        return _nearest_local_type(locals_index.get((caller, str(first_arg.get("name", "")))), call_line)
+        return _nearest_local_type(locals_index.get((scope_key, str(first_arg.get("name", "")))), call_line)
     return None
 
 

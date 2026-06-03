@@ -160,6 +160,32 @@ public class Sender(IPublishEndpoint publishEndpoint)
         channel = next(e for e in build.entities if e.kind == "EventChannel")
         self.assertEqual(channel.identity["channel_address"], "OrderSubmitted")
 
+    def test_overloaded_methods_resolve_their_own_locals(self) -> None:
+        # Locals are scoped by signature key, so same-named locals in different overloads
+        # resolve independently rather than colliding into an ambiguous refusal.
+        source = """using MassTransit;
+namespace App;
+public class Sender(IPublishEndpoint publishEndpoint)
+{
+    public async Task Go()
+    {
+        var msg = new OrderA();
+        await publishEndpoint.Publish(msg);
+    }
+    public async Task Go(int x)
+    {
+        var msg = new OrderB();
+        await publishEndpoint.Publish(msg);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Sender.cs": source})
+
+        channels = sorted(e.identity["channel_address"] for e in build.entities if e.kind == "EventChannel")
+        self.assertEqual(channels, ["OrderA", "OrderB"])
+        self.assertEqual(len([f for f in build.facts if f.predicate == "PRODUCES_EVENT"]), 2)
+
     def test_ambiguous_shadowed_local_refuses_instead_of_guessing(self) -> None:
         # Same local name redeclared with different types (block scoping not modeled) -> coverage, no fact.
         source = """using MassTransit;
