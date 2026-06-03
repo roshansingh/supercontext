@@ -1918,7 +1918,10 @@ class McpToolsTest(unittest.TestCase):
         # No changed_ranges supplied: top-level changed_symbols is empty; the inventory lives in changed_file_symbols.
         self.assertEqual(result["changed_symbols"], [])
         self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
-        self.assertEqual({row["predicate"] for row in result["direct_callees"]}, {"CALLS"})
+        # No ranges -> caller/callee edges are in-scope-empty (consistent with changed_symbols);
+        # call-edge aggregation is covered by the changed_ranges tests below.
+        self.assertEqual(result["direct_callees"], [])
+        self.assertEqual(result["direct_callers"], [])
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
         self.assertEqual(result["answerability"]["status"], "answerable")
         self.assertEqual(result["summary"]["changed_file_count"], 1)
@@ -1944,7 +1947,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["review_answer_packet"]["claim_contract"], result["claim_contract"])
         self.assertEqual(result["changed_surface"]["files"][0]["symbol_count"], 2)
         self.assertEqual(result["changed_surface"]["symbols"][0]["qualname"], "bootstrap_checkout")
-        self.assertEqual({row["predicate"] for row in result["impact"]["direct_callees"]}, {"CALLS"})
+        self.assertEqual(result["impact"]["direct_callees"], [])
         self.assertEqual({row["predicate"] for row in result["runtime_surfaces"]["endpoints"]}, {"EXPOSES_ENDPOINT"})
         self.assertEqual(
             {row["predicate"] for row in result["runtime_surfaces"]["event_channels"]},
@@ -2023,6 +2026,7 @@ class McpToolsTest(unittest.TestCase):
                 {
                     "repo": "payments",
                     "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 1, "end_line": 200}],
                     "requested_surfaces": ["callers", "reverse_impact"],
                     "limit": 10,
                 },
@@ -2204,6 +2208,7 @@ class McpToolsTest(unittest.TestCase):
                 {
                     "repo": "payments",
                     "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 1, "end_line": 200}],
                     "limit": 10,
                 },
             )

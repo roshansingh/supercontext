@@ -472,8 +472,11 @@ def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObje
         kept = _compact_relation_rows(edges, limit=limit)
         _record_truncated(truncated_sections, "edges", original=len(edges), kept=len(kept))
         compact["edges"] = kept
-    if isinstance(result.get("tiers"), list):
-        compact["tiers"] = _compact_reverse_impact_tiers(result.get("tiers"))[:limit]
+    tiers = result.get("tiers")
+    if isinstance(tiers, list):
+        kept_tiers = _compact_reverse_impact_tiers(tiers)[:limit]
+        _record_truncated(truncated_sections, "tiers", original=len(tiers), kept=len(kept_tiers))
+        compact["tiers"] = kept_tiers
     affected = result.get("affected_symbols")
     if isinstance(affected, list):
         kept = _compact_reverse_impact_symbols(affected)[:limit]
@@ -487,15 +490,23 @@ def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObje
     roots = result.get("roots")
     if isinstance(roots, list):
         compact["roots"] = [_compact_symbol(row) for row in roots[:limit] if isinstance(row, dict)]
-    if "constructor_bridges" in result:
-        compact["constructor_bridges"] = _compact_constructor_bridges(result.get("constructor_bridges"))[:limit]
+    bridges = result.get("constructor_bridges")
+    if isinstance(bridges, list):
+        kept_bridges = _compact_constructor_bridges(bridges)[:limit]
+        _record_truncated(truncated_sections, "constructor_bridges", original=len(bridges), kept=len(kept_bridges))
+        compact["constructor_bridges"] = kept_bridges
     leads = result.get("terminal_import_consumer_leads")
     if isinstance(leads, list):
         kept_leads = _compact_terminal_import_leads(leads)[:limit]
         _record_truncated(truncated_sections, "terminal_import_consumer_leads", original=len(leads), kept=len(kept_leads))
         compact["terminal_import_consumer_leads"] = kept_leads
-    if "truncated_terminal_symbols" in result:
-        compact["truncated_terminal_symbols"] = _compact_truncated_terminal_symbols(result.get("truncated_terminal_symbols"))[:limit]
+    truncated_terminals = result.get("truncated_terminal_symbols")
+    if isinstance(truncated_terminals, list):
+        kept_terminals = _compact_truncated_terminal_symbols(truncated_terminals)[:limit]
+        _record_truncated(
+            truncated_sections, "truncated_terminal_symbols", original=len(truncated_terminals), kept=len(kept_terminals)
+        )
+        compact["truncated_terminal_symbols"] = kept_terminals
     if isinstance(result.get("candidate_impact_previews"), list):
         compact["candidate_impact_previews"] = _compact_candidate_impact_previews(result.get("candidate_impact_previews"))
     source = result.get("source")

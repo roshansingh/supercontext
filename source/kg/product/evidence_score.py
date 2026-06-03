@@ -96,16 +96,21 @@ def match_rank(row: JsonObject, *, anchor: Optional[str] = None) -> int:
     needle = anchor.strip().lower()
     if not needle:
         return 0
+    # Only string identifier fields participate; some rows carry nested dicts under keys
+    # like "endpoint", and str(dict) could spuriously substring-match the anchor.
     identifiers = [
-        str(row.get(key) or "").lower()
+        value.lower()
         for key in ("qualified_name", "qualname", "display_name", "name", "slug", "channel", "endpoint")
+        for value in [row.get(key)]
+        if isinstance(value, str) and value
     ]
-    if any(value == needle for value in identifiers if value):
+    if any(value == needle for value in identifiers):
         return 3
-    path = str(row.get("path") or "").lower()
+    path = row.get("path")
+    path = path.lower() if isinstance(path, str) else ""
     if path and (path == needle or path.endswith(needle) or needle.endswith(path)):
         return 2
-    if any(needle in value or value in needle for value in identifiers if value):
+    if any(needle in value or value in needle for value in identifiers):
         return 1
     return 0
 

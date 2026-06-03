@@ -2363,11 +2363,18 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     # empty in that case and the inventory is exposed via changed_file_symbols, so the
     # list is never mistaken for proof that every file symbol was touched.
     changed_symbols_in_scope = public_changed_symbols if changed_ranges else []
+    # Caller/callee/transitive edges are "of changed_symbols" per scope_contract, so when no
+    # ranges are supplied (changed_symbols_in_scope empty) they are in-scope-empty too. This
+    # keeps the summary counts, top-level fields, and the answer packet consistent instead of
+    # reporting 0 changed symbols alongside non-zero caller counts.
+    direct_callers_in_scope = public_direct_callers if changed_ranges else []
+    direct_callees_in_scope = public_direct_callees if changed_ranges else []
+    transitive_callers_in_scope = public_transitive_callers if changed_ranges else []
     summary = _review_context_summary(
         changed_files=changed_files,
         changed_symbols=changed_symbols_in_scope,
-        direct_callers=public_direct_callers,
-        direct_callees=public_direct_callees,
+        direct_callers=direct_callers_in_scope,
+        direct_callees=direct_callees_in_scope,
         repo_dependencies=public_repo_dependencies,
         endpoints=public_endpoints,
         endpoint_consumers=public_endpoint_consumers,
@@ -2375,7 +2382,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         deploy_mappings=public_deploy_mappings,
         source_coordinates=source_coordinates,
         changed_file_symbols=public_changed_file_symbols,
-        transitive_callers=public_transitive_callers,
+        transitive_callers=transitive_callers_in_scope,
         framework_impact=framework_impact,
         application_impact=application_impact,
     )
@@ -2388,9 +2395,9 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     )
     claim_contract = _review_context_claim_contract()
     review_packet_changed_symbols = changed_symbols_in_scope
-    review_packet_direct_callers = public_direct_callers if changed_ranges else []
-    review_packet_direct_callees = public_direct_callees if changed_ranges else []
-    review_packet_transitive_callers = public_transitive_callers if changed_ranges else []
+    review_packet_direct_callers = direct_callers_in_scope
+    review_packet_direct_callees = direct_callees_in_scope
+    review_packet_transitive_callers = transitive_callers_in_scope
     review_answer_packet = _review_context_answer_packet(
         status=status,
         summary=summary,
@@ -2419,19 +2426,19 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "review_answer_packet": review_answer_packet,
         "changed_symbols": changed_symbols_in_scope,
         "changed_file_symbols": public_changed_file_symbols,
-        "direct_callers": public_direct_callers,
-        "direct_callees": public_direct_callees,
-        "direct_callers_of_changed_symbols": public_direct_callers,
-        "direct_callees_from_changed_symbols": public_direct_callees,
-        "transitive_callers": public_transitive_callers,
+        "direct_callers": direct_callers_in_scope,
+        "direct_callees": direct_callees_in_scope,
+        "direct_callers_of_changed_symbols": direct_callers_in_scope,
+        "direct_callees_from_changed_symbols": direct_callees_in_scope,
+        "transitive_callers": transitive_callers_in_scope,
         "repo_dependencies": public_repo_dependencies,
         "changed_surface": changed_surface,
         "scope_contract": scope_contract,
         "claim_contract": claim_contract,
         "impact": {
-            "direct_callers": public_direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
-            "direct_callees": public_direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
-            "transitive_callers": public_transitive_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "direct_callers": direct_callers_in_scope[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "direct_callees": direct_callees_in_scope[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "transitive_callers": transitive_callers_in_scope[:PLANNING_CONTEXT_SECTION_LIMIT],
             "repo_dependencies": public_repo_dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         },
         "runtime_surfaces": {
