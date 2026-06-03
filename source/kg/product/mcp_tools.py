@@ -4609,10 +4609,9 @@ def _planning_context_runtime_architecture_reference(runtime_architecture: JsonO
     answer_packet = runtime_architecture.get("answer_packet")
     if not isinstance(answer_packet, dict):
         answer_packet = {}
-    return {
+    reference = {
         "summary": runtime_architecture.get("summary", {}),
         "scope": runtime_architecture.get("scope", {}),
-        "anchor_resolution_contract": runtime_architecture.get("anchor_resolution_contract", {}),
         "deploy_kind_counts": answer_packet.get("deploy_kind_counts", {}),
         "missing_fact_families": answer_packet.get("missing_fact_families", []),
         "evidence_contract": answer_packet.get("evidence_contract"),
@@ -4621,6 +4620,12 @@ def _planning_context_runtime_architecture_reference(runtime_architecture: JsonO
         "read_for_endpoint_consumers": "runtime_architecture.answer_packet.endpoint_consumer_map",
         "read_for_deploy_order": "runtime_architecture.answer_packet.deploy_order_guidance",
     }
+    # Only surface the anchor-resolution contract when an actual gate is present (ambiguous/
+    # unresolved anchor); on a resolved packet an empty {} reads as a false active gate.
+    anchor_resolution_contract = runtime_architecture.get("anchor_resolution_contract")
+    if isinstance(anchor_resolution_contract, dict) and anchor_resolution_contract:
+        reference["anchor_resolution_contract"] = anchor_resolution_contract
+    return reference
 
 
 def _planning_context_service_brief(
