@@ -633,8 +633,10 @@ _CANDIDATE_LEAD_KIND: dict[str, str] = {
     "truncated_terminal_symbols": "truncated_source_inspection_lead",
     "deploy_order_guidance": "inference_or_guidance",
     "unlinked_domain_route_samples": "unlinked_source_lead",
+    "endpoint_consumers": "endpoint_consumer_candidate",
     "operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
     "service_operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "application_impact.cross_repo_name_leads": "cross_repo_name_lead",
     "runtime_architecture.answer_packet.unlinked_runtime_leads": "unlinked_source_lead",
 }
 

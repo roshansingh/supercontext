@@ -189,13 +189,16 @@ class McpToolsTest(unittest.TestCase):
             _candidate_lead_kind,
         )
 
+        from source.kg.product.mcp_tools import _CANDIDATE_LEAD_KIND
+
         # call_site_leads must classify as a real lead kind, not the generic fallback.
         self.assertEqual(_candidate_lead_kind("call_site_leads"), "non_callable_call_site_lead")
-        # Every registered candidate-lead field/label resolves deterministically.
+        # Every registered candidate-lead field/label is mapped EXPLICITLY (not via the
+        # generic fallback), so a new field can't silently degrade to "candidate_lead".
         for field in _CANDIDATE_LEAD_FIELDS:
-            self.assertIsInstance(_candidate_lead_kind(field), str)
+            self.assertIn(field, _CANDIDATE_LEAD_KIND, f"{field} missing from _CANDIDATE_LEAD_KIND")
         for field, _path in _NESTED_CANDIDATE_LEAD_FIELDS:
-            self.assertIsInstance(_candidate_lead_kind(field), str)
+            self.assertIn(field, _CANDIDATE_LEAD_KIND, f"{field} missing from _CANDIDATE_LEAD_KIND")
         self.assertEqual(_candidate_lead_kind("unknown_field"), "candidate_lead")
 
     def test_default_tool_metadata_ignores_found_status_without_rows(self) -> None:
