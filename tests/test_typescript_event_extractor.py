@@ -93,6 +93,25 @@ export class Worker {
         consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
         self.assertEqual(len(consumes), 1)  # the @EventPattern consumer still fires
 
+    def test_bare_identifier_emit_is_not_a_producer(self) -> None:
+        # A bare `client.emit(...)` is a local/param, not the `this.client` member, so it must not
+        # be attributed to the class's injected client even when a same-named member exists.
+        source = """import { ClientKafka } from '@nestjs/microservices';
+
+export class Worker {
+  constructor(private readonly client: ClientKafka) {}
+
+  go() {
+    const client = makeEmitter();
+    client.emit('local_not_an_event', {});
+  }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"worker.ts": source})
+
+        self.assertEqual([f for f in build.facts if f.predicate == "PRODUCES_EVENT"], [])
+
     def test_non_literal_channel_emits_coverage_not_a_guess(self) -> None:
         source = """import { EventPattern, ClientKafka } from '@nestjs/microservices';
 

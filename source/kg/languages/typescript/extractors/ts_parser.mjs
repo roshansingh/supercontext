@@ -1961,11 +1961,10 @@ function classClientMembers(classNode) {
 }
 
 function receiverMemberName(expression) {
+  // Only `this.<member>` reliably refers to the class's injected client; a bare identifier in a
+  // method body is a local/parameter/import, so matching it would misattribute the member type.
   if (ts.isPropertyAccessExpression(expression) && expression.expression.kind === ts.SyntaxKind.ThisKeyword) {
     return expression.name.text;
-  }
-  if (ts.isIdentifier(expression)) {
-    return expression.text;
   }
   return null;
 }
