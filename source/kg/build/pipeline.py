@@ -8,6 +8,7 @@ from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject, 
 from source.kg.core.repo_source import RepoSnapshot, discover_repo
 from source.kg.core.store import JsonlKgStore
 from source.kg.core.tenant import resolve_tenant_id
+from source.kg.build.event_channel_promotion import prune_uncorroborated_event_channels
 from source.kg.extraction.framework import Adapter, ExtractionContext
 from source.kg.extraction.framework.registry import validate_adapters
 from source.kg.languages.dotnet.package_resolver import iter_dotnet_package_manifest_paths
@@ -22,6 +23,10 @@ def build_kg(
     repo = discover_repo(repo_path)
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     build = extract_repo(repo, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
+    promotion = prune_uncorroborated_event_channels(build.entities, build.facts)
+    entities = promotion.entities
+    facts = promotion.facts
+    coverage = build.coverage + promotion.coverage
     extractor_names = build.extractor_names
     manifest: JsonObject = {
         "repo_path": str(repo.root),
@@ -41,19 +46,19 @@ def build_kg(
             "unsupported_files_by_language": {
                 language: len(paths) for language, paths in sorted(repo.unsupported_files_by_language.items())
             },
-            "entities": len({entity.entity_id for entity in build.entities}),
-            "facts": len({fact.fact_id for fact in build.facts}),
+            "entities": len({entity.entity_id for entity in entities}),
+            "facts": len({fact.fact_id for fact in facts}),
             "support_facts": len({fact.fact_id for fact in build.support_facts}),
             "evidence": len({row.evidence_id for row in build.evidence}),
-            "coverage": len({row.coverage_id for row in build.coverage}),
+            "coverage": len({row.coverage_id for row in coverage}),
         },
     }
     JsonlKgStore(output_dir).write(
-        entities=build.entities,
-        facts=build.facts,
+        entities=entities,
+        facts=facts,
         support_facts=build.support_facts,
         evidence=build.evidence,
-        coverage=build.coverage,
+        coverage=coverage,
         manifest=manifest,
     )
     return manifest
