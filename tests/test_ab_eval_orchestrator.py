@@ -1250,6 +1250,7 @@ class AbEvalOrchestratorTest(unittest.TestCase):
             "Answer the user's question first",
             "candidate or unlinked leads",
             "coverage gaps or unknowns",
+            "coordinate_mismatch.retry_arguments",
             "inventory_context",
             "investigation_brief_only",
         ]
