@@ -4303,9 +4303,14 @@ def _planning_context_evidence_in_repo_scope(
             return False
         subject = kg.entities_by_id.get(fact.get("subject_id"))
         object_ = kg.entities_by_id.get(fact.get("object_id"))
-        return (bool(subject) and _planning_context_entity_in_repo_scope(subject, repo_key)) or (
+        if (bool(subject) and _planning_context_entity_in_repo_scope(subject, repo_key)) or (
             bool(object_) and _planning_context_entity_in_repo_scope(object_, repo_key)
-        )
+        ):
+            return True
+        # Mirror fact_count's cross-repo consumer scoping so a fact counted in-repo via its
+        # consumer_repo qualifier also has its evidence counted.
+        qualifier = fact.get("qualifier", {})
+        return isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key
     return False
 
 
