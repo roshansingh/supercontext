@@ -539,10 +539,22 @@ def _compact_reverse_detail(result: JsonObject, *, limit: int) -> tuple[JsonObje
     summary = result.get("summary")
     if isinstance(summary, dict):
         synced = dict(summary)
-        if isinstance(compact.get("affected_symbols"), list):
-            synced["affected_symbol_returned_count"] = len(compact["affected_symbols"])
-        if isinstance(compact.get("call_site_leads"), list):
-            synced["call_site_lead_returned_count"] = len(compact["call_site_leads"])
+        for field, key in (
+            ("affected_symbols", "affected_symbol_returned_count"),
+            ("call_site_leads", "call_site_lead_returned_count"),
+            ("constructor_bridges", "constructor_bridge_returned_count"),
+            ("truncated_terminal_symbols", "truncated_terminal_symbol_returned_count"),
+        ):
+            if isinstance(compact.get(field), list):
+                synced[key] = len(compact[field])
+        # terminal_import_lead_returned_count sums the per-row returned counts, so recompute
+        # it from the kept lead rows rather than the pre-budget total.
+        if isinstance(compact.get("terminal_import_consumer_leads"), list):
+            synced["terminal_import_lead_returned_count"] = sum(
+                _safe_non_bool_int(row.get("import_consumer_leads", {}).get("returned_count"))
+                for row in compact["terminal_import_consumer_leads"]
+                if isinstance(row, dict)
+            )
         compact["summary"] = synced
     return compact, truncated_sections
 

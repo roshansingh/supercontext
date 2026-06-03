@@ -27,12 +27,19 @@ from typing import Optional
 
 from source.kg.core.models import JsonObject
 
-# ADR-0006 derivation classes, strongest first.
+# Derivation-class trust tier, strongest first. Follows the ADR-0006 ordering
+# (authoritative_declared > manual_override > deterministic_static > runtime_observed >
+# inferred_llm) and places the extractor-emitted extras (authoritative_static, static_inferred,
+# candidate) consistently. Covers every derivation_class string the codebase emits so no class
+# falls through to rank 0 and gets dropped first.
 _DERIVATION_TIER: dict[str, int] = {
-    "authoritative_declared": 5,
-    "authoritative_static": 4,
-    "deterministic_static": 3,
-    "runtime_observed": 2,
+    "authoritative_declared": 8,
+    "manual_override": 7,
+    "authoritative_static": 6,
+    "deterministic_static": 5,
+    "runtime_observed": 4,
+    "static_inferred": 3,
+    "candidate": 2,
     "inferred_llm": 1,
 }
 _LINKAGE_TIER: dict[str, int] = {

@@ -10,13 +10,27 @@ from source.kg.product.evidence_score import (
 
 
 class EvidenceScoreTest(unittest.TestCase):
-    def test_derivation_rank_uses_strongest_evidence(self) -> None:
-        self.assertEqual(derivation_rank({"derivation_class": "authoritative_declared"}), 5)
-        self.assertEqual(derivation_rank({"derivation_class": "inferred_llm"}), 1)
+    def test_derivation_rank_orders_by_trust(self) -> None:
+        # Exact integers are arbitrary; the ADR-0006 ordering and full class coverage matter.
+        order = [
+            "authoritative_declared",
+            "manual_override",
+            "deterministic_static",
+            "runtime_observed",
+            "inferred_llm",
+        ]
+        ranks = [derivation_rank({"derivation_class": cls}) for cls in order]
+        self.assertEqual(ranks, sorted(ranks, reverse=True))
+        self.assertEqual(len(set(ranks)), len(ranks))  # strictly decreasing
+        # Every derivation_class the codebase emits is ranked above the unknown default (0).
+        for cls in ("authoritative_static", "static_inferred", "candidate"):
+            self.assertGreater(derivation_rank({"derivation_class": cls}), 0)
         self.assertEqual(derivation_rank({}), 0)
         # strongest nested evidence wins
         row = {"evidence": [{"derivation_class": "inferred_llm"}, {"derivation_class": "deterministic_static"}]}
-        self.assertEqual(derivation_rank(row), 3)
+        self.assertEqual(
+            derivation_rank(row), derivation_rank({"derivation_class": "deterministic_static"})
+        )
 
     def test_match_rank_exact_beats_path_beats_substring(self) -> None:
         self.assertEqual(match_rank({"qualified_name": "pkg.mod.fn"}, anchor="pkg.mod.fn"), 3)
