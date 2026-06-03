@@ -134,6 +134,21 @@ public class ThingsController
             endpoints = _endpoints(tmp, {"ThingsController.cs": source})
         self.assertEqual(endpoints, set())
 
+    def test_minimal_api_named_route_argument(self) -> None:
+        # `app.MapGet(pattern: "/x", handler: ...)` — the named arg's value is the route.
+        source = """using Microsoft.AspNetCore.Builder;
+public class Endpoints
+{
+    public void Map(WebApplication app)
+    {
+        app.MapGet(pattern: "/health", handler: () => "ok");
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            endpoints = _endpoints(tmp, {"Endpoints.cs": source})
+        self.assertEqual(endpoints, {("GET", "/health")})
+
     def test_non_literal_route_is_not_emitted(self) -> None:
         source = """using Microsoft.AspNetCore.Builder;
 public class Endpoints

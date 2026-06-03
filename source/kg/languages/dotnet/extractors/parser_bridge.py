@@ -495,7 +495,9 @@ def _invocation_first_arg(node: Any, source: bytes) -> JsonObject:
     argument = next((child for child in arguments.children if child.type == "argument"), None)
     if argument is None:
         return {"kind": "none"}
-    expression = next((child for child in argument.children if child.is_named), None)
+    # For a named argument (`pattern: "/x"`) the first named child is the `name_colon`; the
+    # actual expression is the named child after it.
+    expression = next((child for child in argument.children if child.is_named and child.type != "name_colon"), None)
     if expression is None:
         return {"kind": "none"}
     if expression.type == "object_creation_expression":
