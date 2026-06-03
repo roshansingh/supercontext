@@ -281,4 +281,25 @@ bespoke wrapper resolution. No validatable fixture → deferred. Consequence: re
 the Conduit contract in both backends, but the frontend→backend cross-repo *link* doesn't form
 (no resolvable client CALLS). Honest limitation, not a silent gap.
 
-### Run 6 — (pending: TS client endpoints / gRPC / deferred brokers)
+### Run 6 — FastAPI routes → first cross-language CALLS↔EXPOSES link (2026-06-03)
+
+- Discovery (verify-before-build): the deferred "TS client CALLS" was already handled for
+  **axios** (`collectClientEndpointCalls`); building `pawls` showed 8 axios CALLS but 0 EXPOSES.
+  The real blocker for the cross-language link was **missing FastAPI route extraction** (only
+  Flask/Django existed). So this slice added FastAPI, not a TS client extractor.
+- Added `fastapi_routes.extract_fastapi_routes`: `app = FastAPI()` + `@app.get/post/...('/path')`
+  and `APIRouter(prefix='/p')` + `@router.get('/x')` → EXPOSES_ENDPOINT. Non-literal paths and
+  non-literal router prefixes are skipped.
+
+**New fixture:** `orgs/pawls/pawls` (allenai, Apache-2.0) — TS frontend (`axios.get('/api/...')`)
++ FastAPI backend (`@app.get('/api/...')`).
+
+| Snapshot | EXPOSES_ENDPOINT | CALLS_ENDPOINT | linked paths |
+|---|---:|---:|---|
+| pawls (TS + FastAPI) | 11 | 7 | **7** (frontend axios ↔ backend FastAPI — first real cross-language CALLS↔EXPOSES link) |
+
+This is the cross-language link the RealWorld fixture couldn't form (react superagent is
+wrapper-indirected). Tests: `tests/test_fastapi_routes.py`. No regression (Flask/Django routes
+only recognize on their own imports).
+
+### Run 7 — (pending: raw KafkaJS / Azure Service Bus / gRPC)
