@@ -2078,15 +2078,20 @@ function collectNestRoutes(sourceFile) {
   const routes = [];
 
   function visitClass(classNode) {
-    let prefix;
+    let prefix; // undefined = not a controller; null = non-literal prefix (skip whole controller)
     for (const decorator of nodeDecorators(classNode)) {
       const info = decoratorCall(decorator);
       if (info && info.name === "Controller") {
-        const literal = info.args.length ? stringLiteralValue(info.args[0]) : "";
-        prefix = literal == null ? "" : literal;
+        if (!info.args.length) prefix = "";
+        else {
+          const literal = stringLiteralValue(info.args[0]);
+          prefix = literal == null ? null : literal;
+        }
       }
     }
-    if (prefix === undefined) return; // class is not an HTTP controller
+    // Not a controller, or a non-literal prefix we can't resolve (skip rather than emit a path
+    // that's missing its real prefix).
+    if (prefix === undefined || prefix === null) return;
     for (const member of classNode.members) {
       if (!ts.isMethodDeclaration(member)) continue;
       for (const decorator of nodeDecorators(member)) {
@@ -2097,7 +2102,7 @@ function collectNestRoutes(sourceFile) {
         let methodPath = "";
         if (info.args.length) {
           const literal = stringLiteralValue(info.args[0]);
-          if (literal == null) break; // non-literal route template -> skip this route
+          if (literal == null) continue; // non-literal route template -> skip just this route
           methodPath = literal;
         }
         routes.push({

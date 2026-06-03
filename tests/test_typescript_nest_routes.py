@@ -68,6 +68,21 @@ class TypescriptNestRoutesTest(unittest.TestCase):
             endpoints = _endpoints(tmp, {"articles.controller.ts": source})
         self.assertEqual(endpoints, set())
 
+    def test_non_literal_controller_prefix_skips_all_routes(self) -> None:
+        # If the controller prefix isn't a literal, we can't build correct paths -> skip the whole
+        # controller rather than emit prefix-less routes.
+        source = """import { Controller, Get } from '@nestjs/common';
+const PREFIX = 'articles';
+@Controller(PREFIX)
+export class ArticlesController {
+  @Get('feed')
+  feed() {}
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            endpoints = _endpoints(tmp, {"articles.controller.ts": source})
+        self.assertEqual(endpoints, set())
+
     def test_non_literal_route_template_is_skipped(self) -> None:
         source = """import { Controller, Get } from '@nestjs/common';
 const PATH = ':id';
