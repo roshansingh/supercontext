@@ -26,6 +26,7 @@ CONFIG_EXTENSIONS = {
     ".json",
     ".jsx",
     ".mjs",
+    ".proto",
     ".py",
     ".tf",
     ".toml",
@@ -217,6 +218,30 @@ def endpoint_entity(
             "host": host or None,
         },
         properties={},
+    )
+
+
+def grpc_endpoint_entity(
+    repo: RepoSnapshot,
+    grpc_path: str,
+    *,
+    tenant_id: str | None = None,
+    properties: JsonObject | None = None,
+) -> Entity:
+    # gRPC service methods are case-sensitive and addressed over HTTP/2 POST at
+    # /<package>.<Service>/<Method>; keep the path verbatim (no http normalization).
+    resolved_tenant_id = resolve_tenant_id(tenant_id)
+    return Entity(
+        kind="Endpoint",
+        identity={
+            "tenant_id": resolved_tenant_id,
+            "repo": repo.name,
+            "protocol": "grpc",
+            "method": "POST",
+            "path": grpc_path,
+            "host": None,
+        },
+        properties=properties or {},
     )
 
 

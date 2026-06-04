@@ -1,0 +1,8 @@
+{
+  "entities": {
+    "Endpoint": 2
+  },
+  "facts": {
+    "EXPOSES_ENDPOINT": 2
+  }
+}

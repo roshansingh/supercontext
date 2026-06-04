@@ -334,4 +334,39 @@ gate incl. RxJS-subscribe negative, non-literal→coverage). No regression.
 Tests in `tests/test_dotnet_event_extractor.py` (sender/processor, import gate, non-literal→coverage).
 No regression (run-aspnetcore 1/1, eShop 2/18).
 
-### Run 9 — (pending: gRPC)
+### Run 9 — gRPC proto endpoints (2026-06-03)
+
+- New language-agnostic file-format adapter `config-grpc-proto`. A deterministic proto3/proto2
+  lexer + recursive-descent parser (`source/kg/file_formats/grpc_proto/proto_service_parser.py`)
+  reads `service S { rpc M(Req) returns (Resp); }` blocks. Each rpc → one EXPOSES_ENDPOINT fact on
+  the repo Service entity, with a `grpc` Endpoint addressed at `/<package>.<Service>/<Method>`
+  (protocol `grpc`, HTTP/2 POST, verbatim path — no http normalization). Streaming flags and
+  request/response message types captured in entity properties + fact qualifier.
+- `.proto` added to `CONFIG_EXTENSIONS` so proto files are scanned. Malformed rpc (unparsable
+  signature) → loud-refusal coverage (`reason=unparsed_grpc_rpc`), never guessed. Comments,
+  string literals, option blocks, qualified type names, and multi-service files all handled.
+
+**Fixtures (already cloned):** eShop `basket.proto`, run-aspnetcore `discount.proto`,
+otel-demo `demo.proto` + `health.proto`.
+
+| Snapshot | gRPC Endpoint entities | EXPOSES_ENDPOINT total | of which gRPC | was |
+|---|---:|---:|---:|---:|
+| eShop | 3 | 35 | 6 | 0 |
+| run-aspnetcore | 4 | 21 | 4 | 0 |
+| otel-demo | 24 | 27 | 24 | 0 |
+
+(eShop ships two copies of `basket.proto` — server + client — so 3 distinct endpoint entities but
+6 declaration-site facts, each with its own `bytes_ref`.)
+
+**Known limitation (deferred):** a `.proto` `service` declaration is treated as EXPOSES_ENDPOINT
+regardless of whether the repo generates the server or only a client stub. The proto file is the
+authoritative service contract, but distinguishing client-only copies needs build wiring that lives
+outside the proto (e.g. .NET `<Protobuf GrpcServices="Client">`, or which generated base class is
+subclassed) and is language-specific. In a monorepo this is harmless (same Service entity exposes
+the server copy); in split client/server repos a client-only proto copy would be over-attributed.
+gRPC client CALLS_ENDPOINT extraction is likewise a separate future slice.
+
+Tests in `tests/test_grpc_proto_endpoints.py` (service→endpoints, streaming flags, package-optional
+path, message-only proto = no endpoints/coverage, comments/options resilience, unparsable→coverage,
+multi-service, qualified types) + adapter contract fixtures under `tests/adapters/config-grpc-proto/`.
+No regression (full suite 1216 passing).
