@@ -145,6 +145,7 @@ def _extract_azure_servicebus(
                     predicate=predicate,
                     scope_ref={
                         "repo": repo.name,
+                        "language": "dotnet/csharp",
                         "path": _relative(repo, file_path),
                         "line": line,
                         "reason": "unresolved_servicebus_entity",
