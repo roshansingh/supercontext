@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-_WHITESPACE = " \t\r\f\v﻿"
+# Ordinary whitespace plus a UTF-8 BOM, which some proto files begin with (e.g. eShop's
+# basket.proto). chr(0xFEFF) keeps the BOM out of the source as an invisible literal.
+_WHITESPACE = " \t\r\f\v" + chr(0xFEFF)
 _IDENT_EXTRA = "_."
 
 
