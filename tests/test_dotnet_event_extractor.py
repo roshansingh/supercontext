@@ -275,11 +275,18 @@ public class Worker
         with tempfile.TemporaryDirectory() as tmp:
             build = _extract(tmp, {"Api.cs": producer, "Worker.cs": consumer})
 
-        channel = next(e for e in build.entities if e.kind == "EventChannel")
+        channels = [e for e in build.entities if e.kind == "EventChannel"]
+        self.assertEqual(len(channels), 1)
+        channel = channels[0]
         self.assertEqual(channel.identity["broker_kind"], "azure_servicebus")
         self.assertEqual(channel.identity["channel_address"], "notifications")
-        self.assertEqual(len([f for f in build.facts if f.predicate == "PRODUCES_EVENT"]), 1)
-        self.assertEqual(len([f for f in build.facts if f.predicate == "CONSUMES_EVENT"]), 1)
+        self.assertEqual(channel.properties.get("entity_name"), "notifications")
+        self.assertNotIn("message_type", channel.properties)  # named entity, not a message type
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
+        # producer and consumer must point at the SAME channel entity (the cross-service link)
+        self.assertEqual([f.object_id for f in produces], [channel.entity_id])
+        self.assertEqual([f.object_id for f in consumes], [channel.entity_id])
 
     def test_azure_service_bus_requires_import(self) -> None:
         source = """namespace App;
