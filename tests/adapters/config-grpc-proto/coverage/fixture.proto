@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package svc;
+
+service Broken {
+  rpc Ok(Req) returns (Resp);
+  rpc Bad(Req);
+}
+
+message Req {}
+message Resp {}

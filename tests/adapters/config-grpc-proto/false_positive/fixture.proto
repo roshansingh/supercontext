@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package types;
+
+message Money {
+  int64 units = 1;
+}
+
+enum Currency {
+  USD = 0;
+  EUR = 1;
+}
