@@ -2149,15 +2149,25 @@ function collectKafkaEvents(sourceFile) {
             reason: literal == null ? "non_literal_channel" : null,
           });
         };
-        const topicNode = objectLiteralProperty(node.arguments[0], "topic");
+        const arg = node.arguments[0];
+        const topicNode = objectLiteralProperty(arg, "topic");
+        const topicsNode = objectLiteralProperty(arg, "topics");
         if (topicNode) {
           pushTopic(topicNode);
-        } else {
-          // newer kafkajs `consumer.subscribe({ topics: [...] })`
-          const topicsNode = objectLiteralProperty(node.arguments[0], "topics");
-          if (topicsNode && ts.isArrayLiteralExpression(topicsNode)) {
-            for (const element of topicsNode.elements) pushTopic(element);
-          }
+        } else if (topicsNode && ts.isArrayLiteralExpression(topicsNode)) {
+          for (const element of topicsNode.elements) pushTopic(element); // `{ topics: [...] }`
+        } else if (objectLiteralHasProperty(arg, "topic") || objectLiteralHasProperty(arg, "topics")) {
+          // shorthand `{ topic }` / `{ topics }` (or a non-array `topics`): the topic is a variable
+          // we can't resolve at the call site -> recognize it but emit coverage, not a guess.
+          events.push({
+            predicate,
+            broker: "kafka",
+            api,
+            line,
+            channel: null,
+            channel_raw: rawNodeText(arg, sourceFile),
+            reason: "non_literal_channel",
+          });
         }
       }
     }

@@ -164,6 +164,18 @@ export async function go(consumer: any) {
         consumes = {_channel(build, f) for f in build.facts if f.predicate == "CONSUMES_EVENT"}
         self.assertEqual(consumes, {"a.created", "b.updated"})
 
+    def test_kafkajs_shorthand_topic_emits_coverage(self) -> None:
+        # `producer.send({ topic, messages })` shorthand -> topic is a variable -> coverage, no guess.
+        source = """import { Kafka } from 'kafkajs';
+export async function go(producer: any, topic: string) {
+  await producer.send({ topic, messages: [] });
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"kafka.ts": source})
+        self.assertEqual([f for f in build.facts if f.predicate == "PRODUCES_EVENT"], [])
+        self.assertEqual(len([c for c in build.coverage if c.scope_ref.get("reason") == "unresolved_event_channel"]), 1)
+
     def test_kafkajs_requires_import_and_topic_object(self) -> None:
         # No kafkajs import -> not events; and an RxJS-style .subscribe(callback) has no {topic}.
         no_import = """const producer = makeProducer();
