@@ -132,6 +132,65 @@ export class Worker {
         unresolved = [c for c in build.coverage if c.scope_ref.get("reason") == "unresolved_event_channel"]
         self.assertEqual(len(unresolved), 1)
 
+    def test_raw_kafkajs_producer_and_consumer(self) -> None:
+        source = """import { Kafka } from 'kafkajs';
+const kafka = new Kafka({});
+const producer = kafka.producer();
+const consumer = kafka.consumer({ groupId: 'g' });
+
+export async function go() {
+  await producer.send({ topic: 'order.create', messages: [] });
+  await consumer.subscribe({ topic: 'payment.event', fromBeginning: true });
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"kafka.ts": source})
+
+        channels = {e.identity["channel_address"]: e.identity["broker_kind"] for e in build.entities if e.kind == "EventChannel"}
+        self.assertEqual(channels, {"order.create": "kafka", "payment.event": "kafka"})
+        produces = {_channel(build, f) for f in build.facts if f.predicate == "PRODUCES_EVENT"}
+        consumes = {_channel(build, f) for f in build.facts if f.predicate == "CONSUMES_EVENT"}
+        self.assertEqual(produces, {"order.create"})
+        self.assertEqual(consumes, {"payment.event"})
+
+    def test_kafkajs_subscribe_topics_array(self) -> None:
+        source = """import { Kafka } from 'kafkajs';
+export async function go(consumer: any) {
+  await consumer.subscribe({ topics: ['a.created', 'b.updated'] });
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"kafka.ts": source})
+        consumes = {_channel(build, f) for f in build.facts if f.predicate == "CONSUMES_EVENT"}
+        self.assertEqual(consumes, {"a.created", "b.updated"})
+
+    def test_kafkajs_requires_import_and_topic_object(self) -> None:
+        # No kafkajs import -> not events; and an RxJS-style .subscribe(callback) has no {topic}.
+        no_import = """const producer = makeProducer();
+export function go() { producer.send({ topic: 'x', messages: [] }); }
+"""
+        rxjs_like = """import { Kafka } from 'kafkajs';
+export function go(obs: any) { obs.subscribe((v: any) => v); }
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"a.ts": no_import})
+        self.assertEqual([f for f in build.facts if f.predicate in {"PRODUCES_EVENT", "CONSUMES_EVENT"}], [])
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"b.ts": rxjs_like})
+        self.assertEqual([f for f in build.facts if f.predicate in {"PRODUCES_EVENT", "CONSUMES_EVENT"}], [])
+
+    def test_kafkajs_non_literal_topic_emits_coverage(self) -> None:
+        source = """import { Kafka } from 'kafkajs';
+const TOPIC = process.env.TOPIC;
+export async function go(producer: any) {
+  await producer.send({ topic: TOPIC, messages: [] });
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _events(tmp, {"kafka.ts": source})
+        self.assertEqual([f for f in build.facts if f.predicate == "PRODUCES_EVENT"], [])
+        self.assertEqual(len([c for c in build.coverage if c.scope_ref.get("reason") == "unresolved_event_channel"]), 1)
+
 
 def _channel(build: ConfigKgBuild, fact: object) -> str:
     by_id = {e.entity_id: e for e in build.entities}

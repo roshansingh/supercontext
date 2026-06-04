@@ -2123,6 +2123,50 @@ function collectNestRoutes(sourceFile) {
   return routes;
 }
 
+const KAFKAJS_EVENT_METHODS = { send: "PRODUCES_EVENT", subscribe: "CONSUMES_EVENT" };
+
+// Raw kafkajs: `producer.send({ topic: "t", ... })` (produce) and `consumer.subscribe({ topic: "t" })`
+// (consume). Gated on a `kafkajs` import; the distinctive `{ topic: ... }` object-literal arg keeps
+// the generic `.send`/`.subscribe` method names from matching unrelated calls (e.g. RxJS subscribe).
+function collectKafkaEvents(sourceFile) {
+  if (!importsModule(sourceFile, "kafkajs")) return [];
+  const events = [];
+  function visit(node) {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const predicate = KAFKAJS_EVENT_METHODS[node.expression.name.text];
+      if (predicate && node.arguments.length >= 1 && ts.isObjectLiteralExpression(node.arguments[0])) {
+        const api = `kafkajs.${node.expression.name.text}`;
+        const line = lineOf(sourceFile, node.expression.name.getStart(sourceFile));
+        const pushTopic = (topicNode) => {
+          const literal = stringLiteralValue(topicNode);
+          events.push({
+            predicate,
+            broker: "kafka",
+            api,
+            line,
+            channel: literal,
+            channel_raw: literal == null ? rawNodeText(topicNode, sourceFile) : literal,
+            reason: literal == null ? "non_literal_channel" : null,
+          });
+        };
+        const topicNode = objectLiteralProperty(node.arguments[0], "topic");
+        if (topicNode) {
+          pushTopic(topicNode);
+        } else {
+          // newer kafkajs `consumer.subscribe({ topics: [...] })`
+          const topicsNode = objectLiteralProperty(node.arguments[0], "topics");
+          if (topicsNode && ts.isArrayLiteralExpression(topicsNode)) {
+            for (const element of topicsNode.elements) pushTopic(element);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return events;
+}
+
 const output = {};
 for (const relativePath of files) {
   const absolutePath = path.join(repoRoot, relativePath);
@@ -2141,7 +2185,7 @@ for (const relativePath of files) {
     server_routes: serverRoutes,
     express_routes: serverRoutes,
     client_endpoint_calls: collectClientEndpointCalls(sourceFile),
-    message_events: collectMessageEvents(sourceFile),
+    message_events: [...collectMessageEvents(sourceFile), ...collectKafkaEvents(sourceFile)],
     module_clients: collectModuleClients(sourceFile, axiosLocals, literalBindings),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
     calls: symbols.flatMap((symbol) =>

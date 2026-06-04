@@ -302,4 +302,21 @@ This is the cross-language link the RealWorld fixture couldn't form (react super
 wrapper-indirected). Tests: `tests/test_fastapi_routes.py`. No regression (Flask/Django routes
 only recognize on their own imports).
 
-### Run 7 — (pending: raw KafkaJS / Azure Service Bus / gRPC)
+### Run 7 — raw KafkaJS events (2026-06-03)
+
+- Added raw `kafkajs` extraction (distinct from the NestJS `ClientKafka` abstraction in Run 3):
+  `producer.send({ topic: "t" })` → PRODUCES, `consumer.subscribe({ topic: "t" })` / `{ topics: [...] }`
+  → CONSUMES, broker `kafka`. Gated on a `kafkajs` import; the `{ topic: ... }` object-literal arg
+  disambiguates the generic `.send`/`.subscribe` names (RxJS `.subscribe(cb)` has no `{topic}`).
+  Non-literal topics → coverage.
+
+**New fixture:** `orgs/typescript/payment-processing-microservices` (rehan-adi, MIT).
+
+| Snapshot | PRODUCES | CONSUMES | links |
+|---|---:|---:|---|
+| payment-microservices | 2 | 2 | `order.create` (order→payment) + `payment.event` (payment→order), both cross-service ✅ |
+
+Tests in `tests/test_typescript_event_extractor.py` (producer/consumer, topics array, import+`{topic}`
+gate incl. RxJS-subscribe negative, non-literal→coverage). No regression.
+
+### Run 8 — (pending: Azure Service Bus / gRPC)
