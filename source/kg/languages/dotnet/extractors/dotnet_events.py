@@ -44,6 +44,15 @@ _PUBLISH_RECEIVERS: dict[str, tuple[str, frozenset[str]]] = {
     "IEventBus": ("integration_event", frozenset({"Publish", "PublishAsync"})),
 }
 
+# Azure Service Bus: ServiceBusClient factory method -> predicate. The queue/topic is the first
+# string-literal arg (CreateSender("q") produces; CreateProcessor/CreateReceiver("q") consume).
+_AZURE_SERVICEBUS_IMPORT = "Azure.Messaging.ServiceBus"
+_AZURE_SERVICEBUS_METHODS: dict[str, str] = {
+    "CreateSender": "PRODUCES_EVENT",
+    "CreateProcessor": "CONSUMES_EVENT",
+    "CreateReceiver": "CONSUMES_EVENT",
+}
+
 
 def extract_dotnet_events(
     *,
@@ -86,6 +95,85 @@ def extract_dotnet_events(
         add_fact=add_fact,
         entity_evidence=entity_evidence,
     )
+    _extract_azure_servicebus(
+        repo=repo,
+        file_path=file_path,
+        parsed_file=parsed_file,
+        import_roots=import_roots,
+        symbols_by_qualname=symbols_by_qualname,
+        symbols_by_key=symbols_by_key,
+        build=build,
+        tenant_id=tenant_id,
+        source_system=source_system,
+        add_fact=add_fact,
+        entity_evidence=entity_evidence,
+    )
+
+
+def _extract_azure_servicebus(
+    *,
+    repo: RepoSnapshot,
+    file_path: Path,
+    parsed_file: JsonObject,
+    import_roots: set[str],
+    symbols_by_qualname: dict[str, list[Entity]],
+    symbols_by_key: dict[str, Entity],
+    build: object,
+    tenant_id: str,
+    source_system: str,
+    add_fact: Callable[..., None],
+    entity_evidence: Callable[..., object],
+) -> None:
+    if not _imports_namespace(import_roots, _AZURE_SERVICEBUS_IMPORT):
+        return
+    for call in parsed_file.get("calls", []):
+        predicate = _AZURE_SERVICEBUS_METHODS.get(str(call.get("method", "")))
+        if predicate is None:
+            continue
+        caller = str(call.get("caller", "")).strip()
+        caller_key = str(call.get("caller_key", "")).strip()
+        subject = symbols_by_key.get(caller_key) or _first(symbols_by_qualname.get(caller))
+        if subject is None:
+            continue
+        line = int(call.get("line") or 1)
+        first_arg = call.get("first_arg") or {}
+        channel_address = first_arg.get("value") if first_arg.get("kind") == "string" else None
+        if not channel_address:
+            build.coverage.append(  # type: ignore[attr-defined]
+                Coverage(
+                    tenant_id=tenant_id,
+                    predicate=predicate,
+                    scope_ref={
+                        "repo": repo.name,
+                        "language": "dotnet/csharp",
+                        "path": _relative(repo, file_path),
+                        "line": line,
+                        "reason": "unresolved_servicebus_entity",
+                        "broker_kind": "azure_servicebus",
+                        "method": call.get("method"),
+                    },
+                    state="partially_instrumented",
+                    source_system=source_system,
+                )
+            )
+            continue
+        _emit_event(
+            repo=repo,
+            file_path=file_path,
+            predicate=predicate,
+            subject=subject,
+            broker_kind="azure_servicebus",
+            channel_address=str(channel_address),
+            line=line,
+            end_line=line,
+            source_kind="dotnet_azure_servicebus",
+            api=f"ServiceBus.{call.get('method')}",
+            build=build,
+            tenant_id=tenant_id,
+            add_fact=add_fact,
+            entity_evidence=entity_evidence,
+            channel_properties={"entity_name": str(channel_address)},
+        )
 
 
 def _extract_consumers(
@@ -286,16 +374,28 @@ def _emit_event(
     tenant_id: str,
     add_fact: Callable[..., None],
     entity_evidence: Callable[..., object],
+    channel_properties: JsonObject | None = None,
 ) -> None:
     channel = event_channel_entity(
         repo,
         broker_kind,
         channel_address,
         tenant_id=tenant_id,
-        properties={"message_type": channel_address},
+        # MassTransit/integration-event route by message TYPE; named-entity brokers (Azure SB)
+        # pass their own properties (queue/topic name), so don't mislabel them as message types.
+        properties=channel_properties if channel_properties is not None else {"message_type": channel_address},
     )
-    build.entities.append(channel)  # type: ignore[attr-defined]
-    build.evidence.append(entity_evidence(repo, channel, file_path, line, line))  # type: ignore[attr-defined]
+    # event_channel_entity identity is (broker_kind, channel_address) without file/module, so the
+    # same channel referenced from multiple files resolves to one entity_id. Emit the entity (and
+    # its evidence) once per build; the per-occurrence facts below carry each call site's location.
+    seen = getattr(build, "_emitted_channel_ids", None)
+    if seen is None:
+        seen = set()
+        setattr(build, "_emitted_channel_ids", seen)
+    if channel.entity_id not in seen:
+        seen.add(channel.entity_id)
+        build.entities.append(channel)  # type: ignore[attr-defined]
+        build.evidence.append(entity_evidence(repo, channel, file_path, line, line))  # type: ignore[attr-defined]
     add_fact(
         build,
         predicate,

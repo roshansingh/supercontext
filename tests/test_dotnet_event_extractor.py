@@ -251,6 +251,67 @@ public class Svc(IPublishEndpoint publishEndpoint)
         self.assertEqual(unresolved[0].state, "partially_instrumented")
 
 
+    def test_azure_service_bus_sender_and_processor(self) -> None:
+        producer = """using Azure.Messaging.ServiceBus;
+namespace App;
+public class Api
+{
+    public void Go(ServiceBusClient client)
+    {
+        var sender = client.CreateSender("notifications");
+    }
+}
+"""
+        consumer = """using Azure.Messaging.ServiceBus;
+namespace App;
+public class Worker
+{
+    public void Go(ServiceBusClient client)
+    {
+        var processor = client.CreateProcessor("notifications", "mobile", new ServiceBusProcessorOptions());
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Api.cs": producer, "Worker.cs": consumer})
+
+        channels = [e for e in build.entities if e.kind == "EventChannel"]
+        self.assertEqual(len(channels), 1)
+        channel = channels[0]
+        self.assertEqual(channel.identity["broker_kind"], "azure_servicebus")
+        self.assertEqual(channel.identity["channel_address"], "notifications")
+        self.assertEqual(channel.properties.get("entity_name"), "notifications")
+        self.assertNotIn("message_type", channel.properties)  # named entity, not a message type
+        produces = [f for f in build.facts if f.predicate == "PRODUCES_EVENT"]
+        consumes = [f for f in build.facts if f.predicate == "CONSUMES_EVENT"]
+        # producer and consumer must point at the SAME channel entity (the cross-service link)
+        self.assertEqual([f.object_id for f in produces], [channel.entity_id])
+        self.assertEqual([f.object_id for f in consumes], [channel.entity_id])
+
+    def test_azure_service_bus_requires_import(self) -> None:
+        source = """namespace App;
+public class Api { public void Go(object client) { var s = client.CreateSender("q"); } }
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Api.cs": source})
+        self.assertEqual([f for f in build.facts if f.predicate in {"PRODUCES_EVENT", "CONSUMES_EVENT"}], [])
+
+    def test_azure_service_bus_non_literal_entity_emits_coverage(self) -> None:
+        source = """using Azure.Messaging.ServiceBus;
+namespace App;
+public class Api
+{
+    public void Go(ServiceBusClient client, string name)
+    {
+        var sender = client.CreateSender(name);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"Api.cs": source})
+        self.assertEqual([f for f in build.facts if f.predicate == "PRODUCES_EVENT"], [])
+        self.assertEqual(len([c for c in build.coverage if c.scope_ref.get("reason") == "unresolved_servicebus_entity"]), 1)
+
     def test_namespace_qualified_publish_receiver_is_recognized(self) -> None:
         # A fully-qualified receiver type (e.g. MassTransit.IPublishEndpoint) must still match.
         source = """using MassTransit;

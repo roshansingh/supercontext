@@ -319,4 +319,19 @@ only recognize on their own imports).
 Tests in `tests/test_typescript_event_extractor.py` (producer/consumer, topics array, import+`{topic}`
 gate incl. RxJS-subscribe negative, non-literal→coverage). No regression.
 
-### Run 8 — (pending: Azure Service Bus / gRPC)
+### Run 8 — .NET Azure Service Bus (2026-06-03)
+
+- Added Azure Service Bus to `dotnet_events`: `ServiceBusClient.CreateSender("q")` → PRODUCES,
+  `CreateProcessor("q", ...)` / `CreateReceiver("q")` → CONSUMES, broker `azure_servicebus`, channel
+  = first string-literal arg. Gated on `Azure.Messaging.ServiceBus`; non-literal entity → coverage.
+
+**New fixture:** `orgs/dotnet/dotnet-aspire-connect-messaging` (Azure-Samples, MIT).
+
+| Snapshot | PRODUCES | CONSUMES | link |
+|---|---:|---:|---|
+| aspire-messaging | 1 | 1 | `notifications` (ApiService CreateSender → Worker CreateProcessor), cross-service ✅ |
+
+Tests in `tests/test_dotnet_event_extractor.py` (sender/processor, import gate, non-literal→coverage).
+No regression (run-aspnetcore 1/1, eShop 2/18).
+
+### Run 9 — (pending: gRPC)
