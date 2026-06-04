@@ -2156,18 +2156,23 @@ function collectKafkaEvents(sourceFile) {
           pushTopic(topicNode);
         } else if (topicsNode && ts.isArrayLiteralExpression(topicsNode)) {
           for (const element of topicsNode.elements) pushTopic(element); // `{ topics: [...] }`
-        } else if (objectLiteralHasProperty(arg, "topic") || objectLiteralHasProperty(arg, "topics")) {
+        } else {
           // shorthand `{ topic }` / `{ topics }` (or a non-array `topics`): the topic is a variable
           // we can't resolve at the call site -> recognize it but emit coverage, not a guess.
-          events.push({
-            predicate,
-            broker: "kafka",
-            api,
-            line,
-            channel: null,
-            channel_raw: rawNodeText(arg, sourceFile),
-            reason: "non_literal_channel",
-          });
+          const topicProperty = arg.properties.find(
+            (property) => property.name && (propertyNameText(property.name) === "topic" || propertyNameText(property.name) === "topics")
+          );
+          if (topicProperty) {
+            events.push({
+              predicate,
+              broker: "kafka",
+              api,
+              line,
+              channel: null,
+              channel_raw: rawNodeText(topicProperty, sourceFile),
+              reason: "non_literal_channel",
+            });
+          }
         }
       }
     }
