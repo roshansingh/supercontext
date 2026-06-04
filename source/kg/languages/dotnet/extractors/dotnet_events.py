@@ -385,8 +385,17 @@ def _emit_event(
         # pass their own properties (queue/topic name), so don't mislabel them as message types.
         properties=channel_properties if channel_properties is not None else {"message_type": channel_address},
     )
-    build.entities.append(channel)  # type: ignore[attr-defined]
-    build.evidence.append(entity_evidence(repo, channel, file_path, line, line))  # type: ignore[attr-defined]
+    # event_channel_entity identity is (broker_kind, channel_address) without file/module, so the
+    # same channel referenced from multiple files resolves to one entity_id. Emit the entity (and
+    # its evidence) once per build; the per-occurrence facts below carry each call site's location.
+    seen = getattr(build, "_emitted_channel_ids", None)
+    if seen is None:
+        seen = set()
+        setattr(build, "_emitted_channel_ids", seen)
+    if channel.entity_id not in seen:
+        seen.add(channel.entity_id)
+        build.entities.append(channel)  # type: ignore[attr-defined]
+        build.evidence.append(entity_evidence(repo, channel, file_path, line, line))  # type: ignore[attr-defined]
     add_fact(
         build,
         predicate,
