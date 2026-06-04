@@ -182,13 +182,20 @@ def _parse_rpc(tokens: list[_Token], i: int, rpc_line: int) -> tuple[RpcMethod |
 
     def fail() -> tuple[None, int]:
         # Resync to the end of this statement so the service loop keeps progress
-        # without mis-reading the remainder of the rpc.
+        # without mis-reading the remainder of the rpc. Stop at the service-closing
+        # "}" WITHOUT consuming it, so the service-body loop still sees it and does
+        # not bleed into the next service block.
         j = i
-        while j < n and not _is_punct(tokens[j], ";") and not _is_punct(tokens[j], "{"):
+        while (
+            j < n
+            and not _is_punct(tokens[j], ";")
+            and not _is_punct(tokens[j], "{")
+            and not _is_punct(tokens[j], "}")
+        ):
             j += 1
         if j < n and _is_punct(tokens[j], "{"):
             j = _skip_balanced_braces(tokens, j)
-        elif j < n:
+        elif j < n and _is_punct(tokens[j], ";"):
             j += 1
         return None, j
 

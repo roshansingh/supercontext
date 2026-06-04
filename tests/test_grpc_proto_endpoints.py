@@ -177,6 +177,24 @@ service Broken {
         self.assertEqual(len(unresolved), 1)
         self.assertEqual(unresolved[0].predicate, "EXPOSES_ENDPOINT")
 
+    def test_malformed_rpc_before_service_close_does_not_eat_next_service(self) -> None:
+        # An unterminated rpc right before "}" must not let resync consume the
+        # following service block.
+        source = """syntax = "proto3";
+package svc;
+service First {
+  rpc Bad(Req)
+}
+service Second {
+  rpc Hi(A) returns (B);
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"svc.proto": source})
+        self.assertEqual(_paths(build), {"/svc.Second/Hi"})
+        unresolved = [c for c in build.coverage if c.scope_ref.get("reason") == "unparsed_grpc_rpc"]
+        self.assertEqual(len(unresolved), 1)
+
     def test_adapter_emits_grpc_endpoints_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "basket.proto").write_text(_BASKET_PROTO, encoding="utf-8")
