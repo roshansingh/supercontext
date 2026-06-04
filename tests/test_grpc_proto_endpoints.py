@@ -214,6 +214,36 @@ service S {
         self.assertEqual(endpoint.properties["request_type"], "google.protobuf.Empty")
         self.assertEqual(endpoint.properties["response_type"], "google.protobuf.Empty")
 
+    def test_root_qualified_leading_dot_type_names(self) -> None:
+        # Leading-dot (root-qualified) type names are valid proto and must parse.
+        source = """syntax = "proto3";
+package svc;
+service S {
+  rpc Ping(.google.protobuf.Empty) returns (.svc.Pong);
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"s.proto": source})
+        self.assertEqual(_paths(build), {"/svc.S/Ping"})
+        endpoint = _endpoints(build)[0]
+        self.assertEqual(endpoint.properties["request_type"], "google.protobuf.Empty")
+        self.assertEqual(endpoint.properties["response_type"], "svc.Pong")
+
+    def test_rpc_without_terminator_is_refused(self) -> None:
+        # A proper rpc statement must end with ";" or an options block. An unterminated
+        # signature is malformed and must not be surfaced as an endpoint.
+        source = """syntax = "proto3";
+package svc;
+service S {
+  rpc Bad(Req) returns (Resp)
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            build = _extract(tmp, {"s.proto": source})
+        self.assertEqual(_endpoints(build), [])
+        unresolved = [c for c in build.coverage if c.scope_ref.get("reason") == "unparsed_grpc_rpc"]
+        self.assertEqual(len(unresolved), 1)
+
 
 class ProtoParserUnitTest(unittest.TestCase):
     def test_parse_returns_no_services_for_plain_text(self) -> None:

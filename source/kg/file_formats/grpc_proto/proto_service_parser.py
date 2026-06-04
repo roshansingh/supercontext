@@ -198,10 +198,9 @@ def _parse_rpc(tokens: list[_Token], i: int, rpc_line: int) -> tuple[RpcMethod |
         return fail()
     i += 1
     client_streaming, i = _consume_stream(tokens, i)
-    if i >= n or tokens[i].kind != "name":
+    request_type, i = _consume_type_name(tokens, i)
+    if request_type is None:
         return fail()
-    request_type = tokens[i].text
-    i += 1
     if not (i < n and _is_punct(tokens[i], ")")):
         return fail()
     i += 1
@@ -212,18 +211,20 @@ def _parse_rpc(tokens: list[_Token], i: int, rpc_line: int) -> tuple[RpcMethod |
         return fail()
     i += 1
     server_streaming, i = _consume_stream(tokens, i)
-    if i >= n or tokens[i].kind != "name":
+    response_type, i = _consume_type_name(tokens, i)
+    if response_type is None:
         return fail()
-    response_type = tokens[i].text
-    i += 1
     if not (i < n and _is_punct(tokens[i], ")")):
         return fail()
     i += 1
-    # Trailing ";" or an options block "{ ... }".
+    # A proper rpc statement is terminated by ";" or an options block "{ ... }".
+    # Without a terminator the signature is malformed — refuse, don't surface it.
     if i < n and _is_punct(tokens[i], ";"):
         i += 1
     elif i < n and _is_punct(tokens[i], "{"):
         i = _skip_balanced_braces(tokens, i)
+    else:
+        return fail()
     return (
         RpcMethod(
             name=method,
@@ -235,6 +236,19 @@ def _parse_rpc(tokens: list[_Token], i: int, rpc_line: int) -> tuple[RpcMethod |
         ),
         i,
     )
+
+
+def _consume_type_name(tokens: list[_Token], i: int) -> tuple[str | None, int]:
+    # Message type at a request/response position, optionally root-qualified with a
+    # leading dot (e.g. `.google.protobuf.Empty`). The lexer emits the leading "." as
+    # its own punct token because identifiers cannot start with ".", so consume it here.
+    # Inner dots (`google.protobuf.Empty`) are already part of a single name token.
+    n = len(tokens)
+    if i < n and _is_punct(tokens[i], "."):
+        i += 1
+    if i < n and tokens[i].kind == "name":
+        return tokens[i].text, i + 1
+    return None, i
 
 
 def _consume_stream(tokens: list[_Token], i: int) -> tuple[bool, int]:
