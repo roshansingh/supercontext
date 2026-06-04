@@ -2163,13 +2163,16 @@ function collectKafkaEvents(sourceFile) {
             (property) => property.name && (propertyNameText(property.name) === "topic" || propertyNameText(property.name) === "topics")
           );
           if (topicProperty) {
+            // record just the unresolved value expression (`topics: SOME_VAR` -> `SOME_VAR`,
+            // shorthand `{ topic }` -> `topic`), consistent with channelFromArg.
+            const valueNode = ts.isPropertyAssignment(topicProperty) ? topicProperty.initializer : topicProperty.name;
             events.push({
               predicate,
               broker: "kafka",
               api,
               line,
               channel: null,
-              channel_raw: rawNodeText(topicProperty, sourceFile),
+              channel_raw: rawNodeText(valueNode, sourceFile),
               reason: "non_literal_channel",
             });
           }
