@@ -172,6 +172,7 @@ def _extract_azure_servicebus(
             tenant_id=tenant_id,
             add_fact=add_fact,
             entity_evidence=entity_evidence,
+            channel_properties={"entity_name": str(channel_address)},
         )
 
 
@@ -373,13 +374,16 @@ def _emit_event(
     tenant_id: str,
     add_fact: Callable[..., None],
     entity_evidence: Callable[..., object],
+    channel_properties: JsonObject | None = None,
 ) -> None:
     channel = event_channel_entity(
         repo,
         broker_kind,
         channel_address,
         tenant_id=tenant_id,
-        properties={"message_type": channel_address},
+        # MassTransit/integration-event route by message TYPE; named-entity brokers (Azure SB)
+        # pass their own properties (queue/topic name), so don't mislabel them as message types.
+        properties=channel_properties if channel_properties is not None else {"message_type": channel_address},
     )
     build.entities.append(channel)  # type: ignore[attr-defined]
     build.evidence.append(entity_evidence(repo, channel, file_path, line, line))  # type: ignore[attr-defined]
