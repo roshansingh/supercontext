@@ -16,6 +16,45 @@ The language plugin boundary is intentionally split in two:
 This split keeps repo discovery import-safe while still making each language
 own its extraction behavior.
 
+## Choosing a parser
+
+Pick the best parser per language, not one universal toolkit. The current
+languages already differ on purpose:
+
+- Python uses the standard-library `ast`.
+- TypeScript uses the TypeScript Compiler API via a Node subprocess
+  (`extractors/ts_parser.mjs`).
+- C#/.NET uses tree-sitter through a single-grammar dependency
+  (`tree-sitter` + `tree-sitter-c-sharp`), wired as the optional `[dotnet]`
+  extra in `pyproject.toml`.
+
+When tree-sitter is the right parser, default to a **single-grammar pip
+dependency** under a named optional extra. This is the established pattern
+(C#). It keeps default installs lean, lets each language pick a better parser
+when one exists, and adds exactly the grammar you need.
+
+Do **not** reach for a bundled multi-grammar package (such as
+`tree-sitter-language-pack`, which ships ~165 grammars in one dependency) to add
+one or two languages. A 165-grammar bundle to use one grammar is dead weight,
+and it forces tree-sitter on languages that have a better native parser.
+
+A bundled grammar pack is only justified when the goal is **broad
+generic-symbol-layer breadth** — emitting `CALLS` / `IMPORTS` / `CodeSymbol`
+facts across ten or more languages at once — where per-language dependencies and
+per-language install branches become the real bottleneck and a uniform
+node-type-map extractor (one generic traversal driven by per-language node-type
+lists) scales better than bespoke bridges.
+
+Note the trade-off before choosing that path: the generic symbol layer
+(`CodeModule` / `CodeSymbol` / `IMPORTS` / `CALLS`) is the extra-canonical,
+not-yet-canonical layer (see ADR-0006 and `BACKLOG.md`). It is broad and cheap,
+but it is not the product wedge. The cross-service semantic facts that are the
+wedge — `EXPOSES_ENDPOINT`, `PRODUCES_EVENT` / `CONSUMES_EVENT`, gRPC service
+methods, blast radius — are framework-specific and bespoke per stack; no
+language grammar or symbol-graph tool produces them for you. Add a semantic
+language with a single-grammar dependency; adopt a bundled grammar pack only if
+and when broad symbol coverage itself becomes a product goal.
+
 ## Required Files
 
 - `files.py`: lightweight file matcher used during repo discovery.
