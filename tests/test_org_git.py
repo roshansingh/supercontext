@@ -23,6 +23,8 @@ class OrgGitClientTest(unittest.TestCase):
 
             def run(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
                 commands.append((command, timeout_seconds))
+                if command[:2] == ["git", "-C"] and command[3] == "rev-parse" and "--verify" in command:
+                    raise subprocess.CalledProcessError(returncode=128, cmd=command, stderr="bad revision")
                 if command[1] == "clone":
                     destination.mkdir(parents=True, exist_ok=True)
                 return subprocess.CompletedProcess(command, 0, stdout="abc123\n", stderr="")
@@ -38,7 +40,8 @@ class OrgGitClientTest(unittest.TestCase):
                 commit_sha = GitClient(timeout_seconds=12).sync_repo(repo, destination)
 
             self.assertEqual(commit_sha, "abc123")
-            self.assertEqual(commands[0][0][1], "clone")
+            clone_commands = [command for command, _ in commands if command[1] == "clone"]
+            self.assertEqual(len(clone_commands), 1)
             self.assertEqual(commands[0][1], 12)
             self.assertTrue((destination / ".supercontext-managed-repo").exists())
 
@@ -74,6 +77,65 @@ class OrgGitClientTest(unittest.TestCase):
 
             with (
                 patch("source.kg.org.git._run", side_effect=AssertionError("git must not run")),
+                self.assertRaisesRegex(ValueError, "unmanaged"),
+            ):
+                GitClient(timeout_seconds=12).sync_repo(repo, destination)
+
+            self.assertTrue(sentinel.exists())
+
+    def test_sync_repo_refuses_valid_unmanaged_git_repo_inside_org_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "org"
+            home.mkdir()
+            (home / "config.json").write_text("{}", encoding="utf-8")
+            destination = home / "repos" / "api"
+            (destination / ".git").mkdir(parents=True)
+            sentinel = destination / "manual.txt"
+            sentinel.write_text("do not delete", encoding="utf-8")
+            commands: list[list[str]] = []
+            repo = DiscoveredRepo(
+                name="api",
+                full_name="Acme/api",
+                clone_url="https://github.com/Acme/api",
+                default_branch="main",
+            )
+
+            def run(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                if command[:2] == ["git", "-C"] and command[3] == "rev-parse" and "--verify" in command:
+                    return subprocess.CompletedProcess(command, 0, stdout="abc123\n", stderr="")
+                raise AssertionError(f"unexpected command: {command}")
+
+            with (
+                patch("source.kg.org.git._run", side_effect=run),
+                self.assertRaisesRegex(ValueError, "unmanaged"),
+            ):
+                GitClient(timeout_seconds=12).sync_repo(repo, destination)
+
+            self.assertEqual(len(commands), 1)
+            self.assertTrue(sentinel.exists())
+
+    def test_sync_repo_refuses_when_unmanaged_git_probe_cannot_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "org"
+            home.mkdir()
+            (home / "config.json").write_text("{}", encoding="utf-8")
+            destination = home / "repos" / "api"
+            (destination / ".git").mkdir(parents=True)
+            sentinel = destination / "manual.txt"
+            sentinel.write_text("do not delete", encoding="utf-8")
+            repo = DiscoveredRepo(
+                name="api",
+                full_name="Acme/api",
+                clone_url="https://github.com/Acme/api",
+                default_branch="main",
+            )
+
+            def run(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+                raise OSError("git unavailable")
+
+            with (
+                patch("source.kg.org.git._run", side_effect=run),
                 self.assertRaisesRegex(ValueError, "unmanaged"),
             ):
                 GitClient(timeout_seconds=12).sync_repo(repo, destination)

@@ -363,8 +363,18 @@ class McpToolsTest(unittest.TestCase):
             result = call_tool(kg, "planning_context", {"repo": "latticeai/payments"})
 
         self.assertEqual(result["status"], "found")
+        self.assertTrue(any(row["slug"] == "payments" for row in result["services"]))
         self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"RESOLVES_TO_REPO"})
         self.assertGreater(result["snapshot_scope"]["fact_count"], 0)
+        self.assertGreater(result["inventory"]["summary"]["entity_count"], 0)
+        self.assertGreater(result["inventory"]["summary"]["top_dependency_count"], 0)
+
+    def test_planning_context_symbol_anchor_accepts_owner_repo_query(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"repo": "latticeai/payments", "symbol": "handle_checkout"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["symbols"]))
 
     def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
         with _fixture_snapshot() as kg:

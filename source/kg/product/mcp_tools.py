@@ -1121,7 +1121,7 @@ def _uninstrumented_language_entries(kg: KgSnapshot, *, repo: str | None = None)
         scope_ref = row.get("scope_ref")
         if not isinstance(scope_ref, dict) or scope_ref.get("reason") != "unsupported_language":
             continue
-        if repo_key is not None and _normalize_repo_text(scope_ref.get("repo")) != repo_key:
+        if repo_key is not None and not _repo_text_matches(scope_ref.get("repo"), repo_key):
             continue
         language = scope_ref.get("language")
         if not isinstance(language, str) or not language:
@@ -1301,13 +1301,12 @@ def _planning_context_services_for_repo(kg: KgSnapshot, repo: str) -> list[JsonO
     this the identity question has a real graph answer the packet hides, forcing the agent
     onto weaker packaging-metadata evidence.
     """
-    repo_key = _normalize_repo_text(repo)
     matches = [
         service
         for service in kg.entities
         if service.get("kind") == "Service"
         and (svc_repo := _service_repo(service)) is not None
-        and _normalize_repo_text(svc_repo) == repo_key
+        and _repo_text_matches(svc_repo, repo)
     ]
     return [_service_row(kg, service) for service in sorted(matches, key=_service_sort_key)]
 
@@ -1550,7 +1549,7 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
     for entity in kg.entities:
         if entity.get("kind") != "DeployTarget":
             continue
-        if _planning_context_entity_repo(entity) != repo:
+        if not _repo_text_matches(_planning_context_entity_repo(entity), repo):
             continue
         deploy_target_rows.append(
             _operational_entity_row(kg, entity, match_basis="deploy_target_repo_equals_service_repo")
@@ -1573,7 +1572,9 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
                 }
             )
             continue
-        if _planning_context_entity_repo(subject) == repo or _planning_context_entity_repo(object_) == repo:
+        if _repo_text_matches(_planning_context_entity_repo(subject), repo) or _repo_text_matches(
+            _planning_context_entity_repo(object_), repo
+        ):
             direct_domain_rows.append(row)
             if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
                 domain_route_rows.append(
@@ -2809,7 +2810,7 @@ def _planning_context_service_row_matches(row: JsonObject, anchors: dict[str, st
     if service and service.strip().lower() not in _planning_context_service_row_search_text(row).lower():
         return False
     repo = anchors.get("repo")
-    if repo and _normalize_repo_text(row.get("repo")) != _normalize_repo_text(repo):
+    if repo and not _repo_text_matches(row.get("repo"), repo):
         return False
     return True
 
@@ -2829,7 +2830,7 @@ def _planning_context_symbol_row_matches(
     ):
         return False
     repo = anchors.get("repo")
-    if repo and _normalize_repo_text(row.get("repo")) != _normalize_repo_text(repo):
+    if repo and not _repo_text_matches(row.get("repo"), repo):
         return False
     path = anchors.get("path")
     if path and not _planning_context_path_matches(str(row.get("path") or ""), path):
@@ -4277,7 +4278,7 @@ def _top_dependency_rows(kg: KgSnapshot, *, repo_key: str | None, limit: int) ->
         package = kg.entities_by_id.get(fact.get("object_id"))
         if not module or not package or package.get("kind") != "ExternalPackage":
             continue
-        if repo_key is not None and _planning_context_entity_repo(module) != repo_key:
+        if repo_key is not None and not _repo_text_matches(_planning_context_entity_repo(module), repo_key):
             continue
         qualifier = fact.get("qualifier", {})
         if not isinstance(qualifier, dict):
@@ -4350,7 +4351,7 @@ def _runtime_inventory_counts(kg: KgSnapshot, *, repo_key: str | None) -> JsonOb
         kind = str(entity.get("kind"))
         if kind not in entity_kinds:
             continue
-        if repo_key is not None and _planning_context_entity_repo(entity) != repo_key:
+        if repo_key is not None and not _repo_text_matches(_planning_context_entity_repo(entity), repo_key):
             continue
         entities[kind] = entities.get(kind, 0) + 1
     for fact in kg.facts:
@@ -4369,7 +4370,7 @@ def _runtime_inventory_counts(kg: KgSnapshot, *, repo_key: str | None) -> JsonOb
 def _inventory_entity_count(kg: KgSnapshot, *, repo_key: str | None) -> int:
     if repo_key is None:
         return len(kg.entities)
-    return sum(1 for entity in kg.entities if _planning_context_entity_repo(entity) == repo_key)
+    return sum(1 for entity in kg.entities if _repo_text_matches(_planning_context_entity_repo(entity), repo_key))
 
 
 def _inventory_fact_count(kg: KgSnapshot, *, repo_key: str | None) -> int:

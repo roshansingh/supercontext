@@ -17,7 +17,7 @@ class GitClient:
     def sync_repo(self, repo: DiscoveredRepo, destination: Path) -> str:
         destination = destination.expanduser().resolve()
         if destination.exists():
-            if _is_incomplete_managed_cache_clone(destination):
+            if _is_incomplete_managed_cache_clone(destination, timeout_seconds=self.timeout_seconds):
                 shutil.rmtree(destination)
                 self._clone(repo, destination)
             else:
@@ -74,14 +74,20 @@ def _write_marker(destination: Path, repo: DiscoveredRepo) -> None:
     (destination / MANAGED_REPO_MARKER).write_text(repo.full_name, encoding="utf-8")
 
 
-def _is_incomplete_managed_cache_clone(destination: Path) -> bool:
+def _is_incomplete_managed_cache_clone(destination: Path, *, timeout_seconds: int) -> bool:
     if (destination / MANAGED_REPO_MARKER).exists():
         return False
-    return (
-        destination.parent.name == "repos"
-        and (destination.parent.parent / "config.json").exists()
-        and (destination / ".git").exists()
-    )
+    if destination.parent.name != "repos" or not (destination.parent.parent / "config.json").exists():
+        return False
+    if not (destination / ".git").exists():
+        return False
+    try:
+        _run(["git", "-C", str(destination), "rev-parse", "--verify", "HEAD"], timeout_seconds=timeout_seconds)
+    except subprocess.CalledProcessError:
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return False
 
 
 def _run(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
