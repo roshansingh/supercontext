@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from source.kg.build import relink
 from source.kg.build import runtime_link
@@ -17,6 +18,7 @@ LINKER_SOURCE_SYSTEM = relink.LINKER_SOURCE_SYSTEM
 LINKER_RULE_VERSION = relink.LINKER_RULE_VERSION
 RepoIdentity = relink.RepoIdentity
 PackageProvider = relink.PackageProvider
+BuildProgress = Callable[[int, int, Path], None]
 
 
 @dataclass
@@ -40,11 +42,13 @@ def build_multi_kg(
     output_dir: str | Path,
     strict_extractors: bool = False,
     tenant_id: str | None = None,
+    progress: BuildProgress | None = None,
+    repo_owner: str | None = None,
 ) -> JsonObject:
-    repos = [discover_repo(path) for path in repo_paths]
+    repos = [discover_repo(path, owner=repo_owner) for path in repo_paths]
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     validate_unique_repo_identities(repos, resolved_tenant_id)
-    build = build_multi(repos, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id)
+    build = build_multi(repos, strict_extractors=strict_extractors, tenant_id=resolved_tenant_id, progress=progress)
     manifest: JsonObject = {
         "build_type": "multi_repo",
         "built_at": utc_now_iso(),
@@ -100,6 +104,7 @@ def build_multi(
     repos: list[RepoSnapshot],
     strict_extractors: bool = False,
     tenant_id: str | None = None,
+    progress: BuildProgress | None = None,
 ) -> MultiRepoBuild:
     entities: list[Entity] = []
     facts: list[Fact] = []
@@ -111,7 +116,10 @@ def build_multi(
     runtime_inputs: list[runtime_link.RuntimeLinkerInput] = []
 
     resolved_tenant_id = resolve_tenant_id(tenant_id)
-    for repo in repos:
+    total = len(repos)
+    for index, repo in enumerate(repos, start=1):
+        if progress is not None:
+            progress(index, total, repo.root)
         repo_build = extract_repo(repo, tenant_id=resolved_tenant_id)
         repo_identity = relink.repo_identity(repo, resolved_tenant_id)
         repo_entities = list(repo_build.entities)

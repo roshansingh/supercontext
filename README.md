@@ -72,6 +72,33 @@ supercontext-build-multi-kg \
   --out ./data/kg_runs/example_org
 ```
 
+Build an org-wide KG from GitHub repos with a managed local cache:
+
+```bash
+supercontext org init --provider github --org example-org
+supercontext org sync --org example-org
+supercontext org build --org example-org
+supercontext org serve --org example-org
+```
+
+`org sync` discovers repos with the GitHub CLI, shallow-clones new repos, and fetches existing repos under
+`~/.supercontext/orgs/github/<org>/repos/`. `org build` uses the synced cache to build one multi-repo snapshot under
+`~/.supercontext/orgs/github/<org>/kg/`; it skips rebuilding when the synced repo commit fingerprint is unchanged unless
+`--force` is passed. For scheduled refreshes, run `supercontext org build --org <org> --sync-first` from cron or another
+scheduler. The MCP server can then answer org-scoped questions from any local repo, including about repos that are not
+checked out in the current working directory.
+
+For PR-style local review against the org snapshot, run from any checked-out repo with a committed branch diff:
+
+```bash
+supercontext org review --org example-org --repo example-org/service-a --base main --head HEAD
+```
+
+This computes changed files and line ranges from `git diff <base>...<head>`, then calls the existing `review_context`
+workflow over the org KG. Uncommitted worktree changes are not included. Org-wide use does not add separate MCP tools:
+`planning_context` and `review_context` remain the first-call tools, with the exact primitive tools used only for
+follow-up.
+
 Use `--strict-extractors` when extractor failures should fail the build.
 
 ## Query A KG
