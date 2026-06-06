@@ -56,6 +56,30 @@ class OrgGitClientTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unmanaged"):
                 GitClient(timeout_seconds=12).sync_repo(repo, destination)
 
+    def test_sync_repo_refuses_unmanaged_non_git_dir_inside_org_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "org"
+            home.mkdir()
+            (home / "config.json").write_text("{}", encoding="utf-8")
+            destination = home / "repos" / "api"
+            destination.mkdir(parents=True)
+            sentinel = destination / "manual.txt"
+            sentinel.write_text("do not delete", encoding="utf-8")
+            repo = DiscoveredRepo(
+                name="api",
+                full_name="Acme/api",
+                clone_url="https://github.com/Acme/api",
+                default_branch="main",
+            )
+
+            with (
+                patch("source.kg.org.git._run", side_effect=AssertionError("git must not run")),
+                self.assertRaisesRegex(ValueError, "unmanaged"),
+            ):
+                GitClient(timeout_seconds=12).sync_repo(repo, destination)
+
+            self.assertTrue(sentinel.exists())
+
     def test_sync_repo_refuses_marker_for_different_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             destination = Path(tmpdir) / "repos" / "api"

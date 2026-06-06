@@ -2168,6 +2168,40 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["repo_dependencies"], [])
 
+    def test_repo_dependencies_owner_query_prefers_consumer_identity_over_bare_repo(self) -> None:
+        with _fixture_snapshot() as kg:
+            repo_links = [fact for fact in kg.facts if fact.get("predicate") == "RESOLVES_TO_REPO"]
+            self.assertEqual(len(repo_links), 1)
+            owner_a_link = repo_links[0]
+            owner_a_link["qualifier"] = {
+                **owner_a_link["qualifier"],
+                "consumer_repo": "payments",
+                "package_name": "owner-a-lib",
+                "consumer_repo_identity": {
+                    "tenant_id": "default",
+                    "host": "github.com",
+                    "owner": "owner-a",
+                    "name": "payments",
+                },
+            }
+            owner_b_link = deepcopy(owner_a_link)
+            owner_b_link["qualifier"] = {
+                **owner_b_link["qualifier"],
+                "package_name": "owner-b-lib",
+                "consumer_repo_identity": {
+                    "tenant_id": "default",
+                    "host": "github.com",
+                    "owner": "owner-b",
+                    "name": "payments",
+                },
+            }
+            kg.facts.append(owner_b_link)
+
+            result = kg.repo_dependencies("owner-a/payments", limit=10)
+
+        self.assertEqual(result["dependency_count"], 1)
+        self.assertEqual(result["dependencies"][0]["qualifier"]["package_name"], "owner-a-lib")
+
     def test_review_context_changed_ranges_filter_symbols(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(

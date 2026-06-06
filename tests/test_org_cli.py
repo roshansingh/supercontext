@@ -106,6 +106,79 @@ class OrgCliTest(unittest.TestCase):
             self.assertTrue(arguments["include_deploy_blockers"])
             self.assertEqual(json.loads(stdout.getvalue())["status"], "found")
 
+    def test_git_changed_files_includes_deleted_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree = Path(tmpdir)
+            commands: list[list[str]] = []
+
+            def fake_check_output(command, **kwargs):
+                commands.append(command)
+                return "src/deleted.py\n"
+
+            with patch("source.scripts.supercontext_org.subprocess.check_output", side_effect=fake_check_output):
+                files = supercontext_org._git_changed_files(worktree, base="main", head="feature")
+
+            self.assertEqual(files, ["src/deleted.py"])
+            self.assertIn("--diff-filter=ACDMRTUXB", commands[0])
+
+    def test_git_diff_failure_exits_with_git_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree = Path(tmpdir)
+
+            def fake_check_output(command, **kwargs):
+                raise supercontext_org.subprocess.CalledProcessError(
+                    returncode=128,
+                    cmd=command,
+                    output="",
+                    stderr="fatal: bad revision 'main...feature'",
+                )
+
+            with (
+                patch("source.scripts.supercontext_org.subprocess.check_output", side_effect=fake_check_output),
+                self.assertRaisesRegex(SystemExit, "fatal: bad revision"),
+            ):
+                supercontext_org._git_changed_files(worktree, base="main", head="feature")
+
+    def test_org_serve_build_first_forwards_build_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "org"
+            init_org(provider="github", org="Acme", home=home)
+            stdout = io.StringIO()
+
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "supercontext-org",
+                        "serve",
+                        "--home",
+                        str(home),
+                        "--build-first",
+                        "--force",
+                        "--strict-extractors",
+                        "--tenant",
+                        "tenant-a",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "9999",
+                    ],
+                ),
+                patch("source.scripts.supercontext_org.build_org") as build_mock,
+                patch("source.scripts.supercontext_org.subprocess.run") as run_mock,
+                contextlib.redirect_stdout(stdout),
+            ):
+                supercontext_org.main()
+
+            build_mock.assert_called_once()
+            self.assertEqual(build_mock.call_args.args, (home.resolve(),))
+            self.assertTrue(build_mock.call_args.kwargs["force"])
+            self.assertTrue(build_mock.call_args.kwargs["strict_extractors"])
+            self.assertEqual(build_mock.call_args.kwargs["tenant_id"], "tenant-a")
+            command = run_mock.call_args.args[0]
+            self.assertIn("source.scripts.mcp_server", command)
+            self.assertIn(str(home.resolve() / "kg"), command)
+
 
 if __name__ == "__main__":
     unittest.main()

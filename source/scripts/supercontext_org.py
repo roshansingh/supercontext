@@ -54,6 +54,8 @@ def main() -> None:
     serve_parser.add_argument("--repo-timeout-seconds", type=int, default=300)
     serve_parser.add_argument("--fail-fast", action="store_true", help="Stop sync-first on the first repo clone/fetch failure.")
     serve_parser.add_argument("--force", action="store_true", help="Force rebuild when --build-first is set.")
+    serve_parser.add_argument("--strict-extractors", action="store_true")
+    serve_parser.add_argument("--tenant", help="Tenant id for graph identity when --build-first is set. Defaults to the org name.")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=3845)
 
@@ -158,7 +160,13 @@ def _serve(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
             continue_on_error=not args.fail_fast,
         )
     if args.build_first:
-        build_org(home, force=args.force, progress=_print_build_progress)
+        build_org(
+            home,
+            force=args.force,
+            strict_extractors=args.strict_extractors,
+            tenant_id=args.tenant,
+            progress=_print_build_progress,
+        )
     config = load_org_config(home)
     command = [
         sys.executable,
@@ -199,21 +207,17 @@ def _review(args: argparse.Namespace) -> None:
 
 
 def _git_changed_files(worktree: Path, *, base: str, head: str) -> list[str]:
-    output = subprocess.check_output(
-        ["git", "diff", "--name-only", "--diff-filter=ACMRTUXB", f"{base}...{head}"],
-        cwd=str(worktree),
-        text=True,
-        stderr=subprocess.PIPE,
+    output = _git_check_output(
+        ["git", "diff", "--name-only", "--diff-filter=ACDMRTUXB", f"{base}...{head}"],
+        worktree=worktree,
     )
     return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def _git_changed_ranges(worktree: Path, *, base: str, head: str) -> list[dict[str, int | str]]:
-    output = subprocess.check_output(
+    output = _git_check_output(
         ["git", "diff", "--unified=0", "--no-color", "--no-ext-diff", f"{base}...{head}"],
-        cwd=str(worktree),
-        text=True,
-        stderr=subprocess.PIPE,
+        worktree=worktree,
     )
     ranges: list[dict[str, int | str]] = []
     current_path: str | None = None
@@ -237,6 +241,37 @@ def _git_changed_ranges(worktree: Path, *, base: str, head: str) -> list[dict[st
             }
         )
     return ranges
+
+
+def _git_check_output(command: list[str], *, worktree: Path) -> str:
+    try:
+        return subprocess.check_output(
+            command,
+            cwd=str(worktree),
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(_git_error_message(exc)) from exc
+
+
+def _git_error_message(exc: subprocess.CalledProcessError) -> str:
+    details = [
+        _string_output(exc.stderr),
+        _string_output(exc.output),
+    ]
+    message = "\n".join(value for value in details if value)
+    if not message:
+        message = str(exc)
+    return f"git diff failed: {message}"
+
+
+def _string_output(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    if isinstance(value, str):
+        return value.strip()
+    return ""
 
 
 def _parse_diff_hunk_range(line: str) -> tuple[int, int] | None:

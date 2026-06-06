@@ -27,15 +27,21 @@ def _repo_anchor_matches(candidate: object, requested: object) -> bool:
     return candidate_key.rsplit("/", 1)[-1] == requested_key.rsplit("/", 1)[-1]
 
 
+def _repo_request_is_owner_qualified(requested: object) -> bool:
+    return "/" in str(requested or "").strip()
+
+
 def _repo_identity_matches(value: object, requested: object) -> bool:
     if not isinstance(value, dict):
         return False
     name = value.get("name")
     owner = value.get("owner")
+    if isinstance(owner, str) and isinstance(name, str):
+        if _repo_request_is_owner_qualified(requested):
+            return _repo_anchor_matches(f"{owner}/{name}", requested)
+        return _repo_anchor_matches(name, requested)
     if _repo_anchor_matches(name, requested):
         return True
-    if isinstance(owner, str) and isinstance(name, str):
-        return _repo_anchor_matches(f"{owner}/{name}", requested)
     return False
 
 
@@ -478,7 +484,14 @@ class KgSnapshot:
             consumer_identities = qualifier.get("consumer_repo_identities")
             if not identity_matches and isinstance(consumer_identities, list):
                 identity_matches = any(_repo_identity_matches(row, repo) for row in consumer_identities)
-            if not _repo_anchor_matches(qualifier.get("consumer_repo"), repo) and not identity_matches:
+            has_identity = isinstance(qualifier.get("consumer_repo_identity"), dict) or (
+                isinstance(consumer_identities, list) and any(isinstance(row, dict) for row in consumer_identities)
+            )
+            anchor_matches = _repo_anchor_matches(qualifier.get("consumer_repo"), repo)
+            if _repo_request_is_owner_qualified(repo) and has_identity:
+                if not identity_matches:
+                    continue
+            elif not anchor_matches and not identity_matches:
                 continue
             links.append(self._fact_result(fact, package, target_repo))
         links = sorted(

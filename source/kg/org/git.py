@@ -77,7 +77,11 @@ def _write_marker(destination: Path, repo: DiscoveredRepo) -> None:
 def _is_incomplete_managed_cache_clone(destination: Path) -> bool:
     if (destination / MANAGED_REPO_MARKER).exists():
         return False
-    return destination.parent.name == "repos" and (destination.parent.parent / "config.json").exists()
+    return (
+        destination.parent.name == "repos"
+        and (destination.parent.parent / "config.json").exists()
+        and (destination / ".git").exists()
+    )
 
 
 def _run(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
