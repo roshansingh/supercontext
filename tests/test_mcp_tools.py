@@ -358,6 +358,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertIsInstance(result["snapshot_scope"]["evidence_count"], int)
         self.assertIsInstance(result["snapshot_scope"]["module_count"], int)
 
+    def test_planning_context_repo_anchor_accepts_owner_repo_query_for_dependencies(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"repo": "latticeai/payments"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual({row["predicate"] for row in result["dependencies"]}, {"RESOLVES_TO_REPO"})
+        self.assertGreater(result["snapshot_scope"]["fact_count"], 0)
+
     def test_planning_context_single_substring_service_anchor_stays_found(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(kg, "planning_context", {"service": "pay"})
@@ -2124,6 +2132,7 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "found")
         self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
+        self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
 
     def test_review_context_repo_filter_accepts_bare_repo_for_owner_repo_rows(self) -> None:
         with _fixture_snapshot(symbol_repo="latticeai/payments") as kg:
@@ -2135,6 +2144,29 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "found")
         self.assertTrue(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
+
+    def test_review_context_repo_filter_rejects_different_owner_repo_query(self) -> None:
+        with _fixture_snapshot(symbol_repo="owner-a/payments") as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "owner-b/payments", "changed_files": ["payments/checkout.py"], "limit": 10},
+            )
+
+        self.assertFalse(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
+
+    def test_repo_dependencies_reject_different_owner_repo_query(self) -> None:
+        with _fixture_snapshot() as kg:
+            for fact in kg.facts:
+                if fact.get("predicate") == "RESOLVES_TO_REPO":
+                    fact["qualifier"]["consumer_repo"] = "owner-a/payments"
+            result = call_tool(
+                kg,
+                "review_context",
+                {"repo": "owner-b/payments", "changed_files": ["payments/missing.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["repo_dependencies"], [])
 
     def test_review_context_changed_ranges_filter_symbols(self) -> None:
         with _fixture_snapshot() as kg:
@@ -3111,6 +3143,9 @@ class McpToolsTest(unittest.TestCase):
         instructions = initialized["result"]["instructions"]
         self.assertIn("planning_context first", instructions)
         self.assertIn("review_context first", instructions)
+        self.assertIn("org snapshot", instructions)
+        self.assertIn("same planning_context and review_context tools", instructions)
+        self.assertIn("supercontext org serve", instructions)
         self.assertIn("review_context.application_impact", instructions)
         self.assertIn("normal search/read tools at least once", instructions)
         self.assertIn("service_operational_surfaces.evidence_partition", instructions)

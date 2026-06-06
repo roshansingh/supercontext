@@ -2876,11 +2876,10 @@ def _planning_context_fact_row_matches(
 
 
 def _planning_context_fact_matches_repo(fact: JsonObject, subject: JsonObject, object_: JsonObject, repo: str) -> bool:
-    needle = repo.strip().lower()
     qualifier = fact.get("qualifier", {})
-    if str(qualifier.get("consumer_repo") or "").strip().lower() == needle:
+    if _repo_text_matches(qualifier.get("consumer_repo"), repo):
         return True
-    return any(_planning_context_entity_repo(entity) == needle for entity in (subject, object_))
+    return any(_repo_text_matches(_planning_context_entity_repo(entity), repo) for entity in (subject, object_))
 
 
 def _planning_context_fact_matches_package(fact: JsonObject, subject: JsonObject, object_: JsonObject, package: str) -> bool:
@@ -2898,6 +2897,18 @@ def _planning_context_fact_matches_package(fact: JsonObject, subject: JsonObject
 
 def _normalize_repo_text(value: object) -> str:
     return str(value or "").strip().lower()
+
+
+def _repo_text_matches(candidate: object, requested: object) -> bool:
+    candidate_key = _normalize_repo_text(candidate)
+    requested_key = _normalize_repo_text(requested)
+    if not candidate_key or not requested_key:
+        return False
+    if candidate_key == requested_key:
+        return True
+    if "/" in candidate_key and "/" in requested_key:
+        return False
+    return candidate_key.rsplit("/", 1)[-1] == requested_key.rsplit("/", 1)[-1]
 
 
 def _planning_context_service_row_search_text(row: JsonObject) -> str:
@@ -3144,13 +3155,7 @@ def _review_context_public_symbol_rows(rows: list[JsonObject]) -> list[JsonObjec
 
 
 def _review_context_repo_matches(row_repo: object, requested_repo: object) -> bool:
-    row_key = _normalize_repo_text(row_repo)
-    requested_key = _normalize_repo_text(requested_repo)
-    if not row_key or not requested_key:
-        return False
-    if row_key == requested_key:
-        return True
-    return requested_key.rsplit("/", 1)[-1] == row_key.rsplit("/", 1)[-1]
+    return _repo_text_matches(row_repo, requested_repo)
 
 
 def _review_context_changed_surface(
@@ -4376,12 +4381,12 @@ def _inventory_fact_count(kg: KgSnapshot, *, repo_key: str | None) -> int:
 def _fact_touches_repo(kg: KgSnapshot, fact: JsonObject, repo_key: str) -> bool:
     subject = kg.entities_by_id.get(fact.get("subject_id"))
     object_ = kg.entities_by_id.get(fact.get("object_id"))
-    if subject and _planning_context_entity_repo(subject) == repo_key:
+    if subject and _repo_text_matches(_planning_context_entity_repo(subject), repo_key):
         return True
-    if object_ and _planning_context_entity_repo(object_) == repo_key:
+    if object_ and _repo_text_matches(_planning_context_entity_repo(object_), repo_key):
         return True
     qualifier = fact.get("qualifier", {})
-    return isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key
+    return isinstance(qualifier, dict) and _repo_text_matches(qualifier.get("consumer_repo"), repo_key)
 
 
 def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | None]) -> JsonObject:
@@ -4408,7 +4413,7 @@ def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | No
             fact_count += 1
             continue
         qualifier = fact.get("qualifier", {})
-        if isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key:
+        if isinstance(qualifier, dict) and _repo_text_matches(qualifier.get("consumer_repo"), repo_key):
             fact_count += 1
     facts_by_id = {fact.get("fact_id"): fact for fact in kg.facts}
     evidence_count = 0
@@ -4444,13 +4449,13 @@ def _planning_context_snapshot_scope(kg: KgSnapshot, anchors: dict[str, str | No
 
 
 def _planning_context_entity_in_repo_scope(entity: JsonObject, repo_key: str) -> bool:
-    if _planning_context_entity_repo(entity) == repo_key:
+    if _repo_text_matches(_planning_context_entity_repo(entity), repo_key):
         return True
     # The Repo entity itself belongs to its own repo scope; its identity carries the repo
     # name rather than a repo field, so it would otherwise be excluded (off-by-one).
     if entity.get("kind") == "Repo":
         name = entity.get("identity", {}).get("name")
-        return isinstance(name, str) and name.strip().lower() == repo_key
+        return _repo_text_matches(name, repo_key)
     return False
 
 
@@ -4475,7 +4480,7 @@ def _planning_context_evidence_in_repo_scope(
         # Mirror fact_count's cross-repo consumer scoping so a fact counted in-repo via its
         # consumer_repo qualifier also has its evidence counted.
         qualifier = fact.get("qualifier", {})
-        return isinstance(qualifier, dict) and _normalize_repo_text(qualifier.get("consumer_repo")) == repo_key
+        return isinstance(qualifier, dict) and _repo_text_matches(qualifier.get("consumer_repo"), repo_key)
     return False
 
 
@@ -4490,7 +4495,7 @@ def _planning_context_coverage_row_matches_repo(row: JsonObject, repo_key: str) 
     scope_ref = row.get("scope_ref")
     if not isinstance(scope_ref, dict):
         return False
-    return _normalize_repo_text(scope_ref.get("repo")) == repo_key
+    return _repo_text_matches(scope_ref.get("repo"), repo_key)
 
 
 def _top_count_map(raw_counts: object, *, limit: int) -> JsonObject:
@@ -5098,12 +5103,11 @@ def _planning_context_fact_result(kg: KgSnapshot, fact: JsonObject, subject: Jso
 
 def _planning_context_repo_matches(kg: KgSnapshot, repo: str) -> dict[str, list[JsonObject]]:
     matches: dict[str, list[JsonObject]] = {}
-    repo_key = _normalize_repo_text(repo)
     for fact in kg.facts:
         if fact.get("predicate") != "RESOLVES_TO_REPO":
             continue
         qualifier = fact.get("qualifier", {})
-        if _normalize_repo_text(qualifier.get("consumer_repo")) != repo_key:
+        if not _repo_text_matches(qualifier.get("consumer_repo"), repo):
             continue
         package = kg.entities_by_id.get(fact["subject_id"])
         target_repo = kg.entities_by_id.get(fact["object_id"])

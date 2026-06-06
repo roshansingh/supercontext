@@ -15,6 +15,30 @@ from .call_site import call_site_from_qualifier
 from .reverse_impact import reverse_impact_packet
 
 
+def _repo_anchor_matches(candidate: object, requested: object) -> bool:
+    candidate_key = str(candidate or "").strip().lower()
+    requested_key = str(requested or "").strip().lower()
+    if not candidate_key or not requested_key:
+        return False
+    if candidate_key == requested_key:
+        return True
+    if "/" in candidate_key and "/" in requested_key:
+        return False
+    return candidate_key.rsplit("/", 1)[-1] == requested_key.rsplit("/", 1)[-1]
+
+
+def _repo_identity_matches(value: object, requested: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    name = value.get("name")
+    owner = value.get("owner")
+    if _repo_anchor_matches(name, requested):
+        return True
+    if isinstance(owner, str) and isinstance(name, str):
+        return _repo_anchor_matches(f"{owner}/{name}", requested)
+    return False
+
+
 class KgSnapshot:
     """Read-only KG snapshot plus query helpers shared by query submodules.
 
@@ -439,7 +463,6 @@ class KgSnapshot:
 
     def repo_dependencies(self, repo: str, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit)
-        repo_key = repo.strip().lower()
         links = []
         for fact in self.facts:
             if fact["predicate"] != "RESOLVES_TO_REPO":
@@ -449,7 +472,13 @@ class KgSnapshot:
             if not package or not target_repo:
                 continue
             qualifier = fact.get("qualifier", {})
-            if str(qualifier.get("consumer_repo") or "").strip().lower() != repo_key:
+            if not isinstance(qualifier, dict):
+                continue
+            identity_matches = _repo_identity_matches(qualifier.get("consumer_repo_identity"), repo)
+            consumer_identities = qualifier.get("consumer_repo_identities")
+            if not identity_matches and isinstance(consumer_identities, list):
+                identity_matches = any(_repo_identity_matches(row, repo) for row in consumer_identities)
+            if not _repo_anchor_matches(qualifier.get("consumer_repo"), repo) and not identity_matches:
                 continue
             links.append(self._fact_result(fact, package, target_repo))
         links = sorted(

@@ -23,6 +23,14 @@ supercontext-init
 supercontext-init --serve
 ```
 
+For org-wide context, start the org snapshot endpoint instead:
+
+```bash
+supercontext org serve --org <org>
+```
+
+An org snapshot uses the same planning_context and review_context tools. The snapshot scope is wider, but the MCP surface is unchanged; pass `repo` anchors explicitly, using either `repo` or `owner/repo` when the target repo is known.
+
 Register the printed local HTTP `/mcp` URL in Codex. Keep the server loopback-bound unless the user intentionally accepts an unauthenticated public bind.
 
 ## Common Packet Contract
