@@ -18,6 +18,17 @@ Reproduce with [`harness.py`](./harness.py); raw results in [`results.json`](./r
 > edge — MCP correctly disambiguates a local `dropout()` from `tf.nn.dropout()` where grep
 > structurally cannot — plus a quantified imports-tool gap (308 `IMPORTS` facts in the graph,
 > 0 reachable via any MCP tool).
+>
+> **The actual CodeSearchNet *dataset* (not the repo source):**
+> [`CODESEARCHNET-DATASET-FINDINGS.md`](./CODESEARCHNET-DATASET-FINDINGS.md) runs the
+> dataset's real NL-query retrieval task on all **457,461 downloaded Python functions**,
+> scored by the **official NDCG** (ported from the repo's `relevanceeval.py`) against 2,079
+> human relevance labels. Result: BM25/keyword (Claude-native) NDCG 0.344, TF-IDF 0.249,
+> **SuperContext MCP 0.000** — MCP has no natural-language retrieval tool, so on the dataset
+> task it is a non-participant. Empirical proof that the two surfaces compete on different
+> axes: MCP owns structural navigation, native owns NL retrieval. Harness:
+> [`csn_dataset_eval.py`](./csn_dataset_eval.py), raw:
+> [`csn_dataset_results.json`](./csn_dataset_results.json).
 
 ---
 
