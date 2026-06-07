@@ -9,6 +9,16 @@ truth computed directly from the JSONL snapshot.
 
 Reproduce with [`harness.py`](./harness.py); raw results in [`results.json`](./results.json).
 
+> **Companion run on a third-party codebase:**
+> [`CODESEARCHNET-FINDINGS.md`](./CODESEARCHNET-FINDINGS.md) repeats this head-to-head on the
+> [github/CodeSearchNet](https://github.com/github/CodeSearchNet) source tree with
+> AST-derived ground truth and precision/recall scoring (harness:
+> [`csn_harness.py`](./csn_harness.py), raw: [`csn_results.json`](./csn_results.json)). It
+> confirms the two-regime split and adds the strongest evidence for the graph's *accuracy*
+> edge — MCP correctly disambiguates a local `dropout()` from `tf.nn.dropout()` where grep
+> structurally cannot — plus a quantified imports-tool gap (308 `IMPORTS` facts in the graph,
+> 0 reachable via any MCP tool).
+
 ---
 
 ## Results
