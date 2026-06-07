@@ -29,6 +29,16 @@ Reproduce with [`harness.py`](./harness.py); raw results in [`results.json`](./r
 > axes: MCP owns structural navigation, native owns NL retrieval. Harness:
 > [`csn_dataset_eval.py`](./csn_dataset_eval.py), raw:
 > [`csn_dataset_results.json`](./csn_dataset_results.json).
+>
+> **Agentic run — Claude+MCP vs Claude-alone on the dataset:**
+> [`CODESEARCHNET-AGENT-FINDINGS.md`](./CODESEARCHNET-AGENT-FINDINGS.md) runs Claude as an
+> *agent* (with tools) on 40 dataset queries × 2 arms (80 runs), scored by official NDCG.
+> Result: **Claude+MCP 0.740 ≈ Claude-alone 0.707** — a statistical tie (median 0.750 vs
+> 0.739; head-to-head 17–12–11), with the +4.7% mean gap almost entirely one
+> formatting-failure query. Both agent arms ~2× the best pure retriever (BM25 0.344),
+> confirming reasoning-over-candidates beats keyword ranking, and that MCP's structural tools
+> are inert on NL retrieval. Harness: [`csn_agent_eval.py`](./csn_agent_eval.py), raw:
+> [`csn_agent_results.json`](./csn_agent_results.json).
 
 ---
 
