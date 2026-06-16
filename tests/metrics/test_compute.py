@@ -50,6 +50,169 @@ class CoverageMetricsComputeTest(unittest.TestCase):
 
             self.assertEqual(backend.metric_values["M_evidence_grounding"].value, 0.5)
 
+    def test_useful_edge_does_not_credit_candidate_deploy_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "main.tf").write_text('resource "aws_lambda_function" "api" {}\n', encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            target = Entity("DeployTarget", {"tenant_id": "default", "repo": "repo", "type": "wsgi", "target": "/srv/app/wsgi.py"})
+            deploy = Fact(
+                "DEPLOYS_VIA_CONFIG",
+                service.entity_id,
+                target.entity_id,
+                {"source_kind": "runtime_linker", "resolved_by": "wsgi_ambiguous_module_path_suffix"},
+                canonical_status="candidate",
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[service, target],
+                facts=[deploy],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=service.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "service"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "main.tf",
+                            "line_start": 1,
+                            "line_end": 1,
+                        },
+                        confidence=1.0,
+                    ),
+                    Evidence(
+                        target_type="entity",
+                        target_id=target.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "target"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "main.tf",
+                            "line_start": 1,
+                            "line_end": 1,
+                        },
+                        confidence=1.0,
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=deploy.fact_id,
+                        derivation_class="candidate",
+                        source_system="runtime_linker",
+                        source_ref={"resolved_by": "wsgi_ambiguous_module_path_suffix"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "main.tf",
+                            "line_start": 1,
+                            "line_end": 1,
+                        },
+                        confidence=0.5,
+                    )
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"terraform": 1}},
+                },
+            )
+
+            iac = _cell(compute_all(snapshot, expected_repos=1), "iac")
+
+        self.assertEqual(iac.metric_values["M_useful_edge"].state, "usable")
+        self.assertEqual(iac.metric_values["M_useful_edge"].value, 0.0)
+
+    def test_useful_edge_defaults_non_string_canonical_status_to_canonical(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "main.tf").write_text('resource "aws_lambda_function" "api" {}\n', encoding="utf-8")
+            snapshot = root / "snapshot"
+            service = Entity("Service", {"tenant_id": "default", "namespace": "default", "repo": "repo", "slug": "repo"})
+            target = Entity("DeployTarget", {"tenant_id": "default", "repo": "repo", "type": "wsgi", "target": "/srv/app/wsgi.py"})
+            deploy = Fact(
+                "DEPLOYS_VIA_CONFIG",
+                service.entity_id,
+                target.entity_id,
+                {"source_kind": "runtime_linker", "resolved_by": "wsgi_longest_unique_module_path_suffix"},
+                canonical_status=True,
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[service, target],
+                facts=[deploy],
+                evidence=[
+                    Evidence(
+                        target_type="entity",
+                        target_id=service.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "service"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "main.tf",
+                            "line_start": 1,
+                            "line_end": 1,
+                        },
+                        confidence=1.0,
+                    ),
+                    Evidence(
+                        target_type="entity",
+                        target_id=target.entity_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"entity": "target"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "main.tf",
+                            "line_start": 1,
+                            "line_end": 1,
+                        },
+                        confidence=1.0,
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=deploy.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="runtime_linker",
+                        source_ref={"resolved_by": "wsgi_longest_unique_module_path_suffix"},
+                        bytes_ref={
+                            "repo": "repo",
+                            "commit_sha": "working-tree",
+                            "path": "main.tf",
+                            "line_start": 1,
+                            "line_end": 1,
+                        },
+                        confidence=1.0,
+                    ),
+                ],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"terraform": 1}},
+                },
+            )
+
+            iac = _cell(compute_all(snapshot, expected_repos=1), "iac")
+
+        self.assertEqual(iac.metric_values["M_useful_edge"].state, "usable")
+        self.assertEqual(iac.metric_values["M_useful_edge"].value, 1.0)
+        self.assertEqual(iac.metric_values["M_trust_mix"].value, 0.95)
+
     def test_evidence_grounding_ignores_fact_evidence_outside_dimension_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

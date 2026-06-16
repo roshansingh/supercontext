@@ -560,7 +560,7 @@ def _m_trust_mix(context: _MetricContext) -> MetricValue:
             evidence_by_fact.setdefault(str(row.get("target_id")), []).append(row)
     scores: list[float] = []
     for fact in context.scoped_facts:
-        status_weight = _canonical_status_weight(str(fact.get("canonical_status", "canonical")))
+        status_weight = _canonical_status_weight(_canonical_status(fact))
         rows = evidence_by_fact.get(str(fact.get("fact_id")), [])
         if not rows:
             scores.append(0.0)
@@ -614,6 +614,8 @@ def _m_useful_edge(context: _MetricContext) -> MetricValue:
         return MetricValue(None, "n_a", "no useful-edge anchor entities in scope")
     useful_anchors: set[str] = set()
     for fact in context.scoped_facts:
+        if _canonical_status(fact) != "canonical":
+            continue
         predicate = str(fact.get("predicate"))
         subject_id = str(fact.get("subject_id"))
         object_id = str(fact.get("object_id"))
@@ -1144,6 +1146,11 @@ def _canonical_status_weight(status: str) -> float:
     if status == "demoted":
         return 0.1
     return 0.0
+
+
+def _canonical_status(row: JsonObject) -> str:
+    value = row.get("canonical_status", "canonical")
+    return value if isinstance(value, str) and value else "canonical"
 
 
 def _looks_like_hash_urn(urn: str) -> bool:

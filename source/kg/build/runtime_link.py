@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from source.kg.core.models import Coverage, Entity, Evidence, Fact, JsonObject, utc_now_iso
+from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject, utc_now_iso
 from source.kg.core.repo_source import RepoSnapshot
 
 
@@ -42,6 +42,8 @@ class RuntimeLinkerResult:
     facts: tuple[Fact, ...]
     evidence: tuple[Evidence, ...]
     coverage: tuple[Coverage, ...]
+    canonical_link_count: int
+    candidate_link_count: int
     ambiguous_link_count: int
 
 
@@ -56,6 +58,7 @@ class _CodeModuleCandidate:
 class _RuntimeLinkIssue:
     target: Entity
     reason: str
+    candidate_services: tuple[Entity, ...] = ()
 
 
 def link_runtime_targets(inputs: list[RuntimeLinkerInput] | tuple[RuntimeLinkerInput, ...]) -> RuntimeLinkerResult:
@@ -95,6 +98,34 @@ def link_runtime_targets(inputs: list[RuntimeLinkerInput] | tuple[RuntimeLinkerI
             continue
         resolution = _resolve_wsgi_target(target, module_candidates)
         if isinstance(resolution, _RuntimeLinkIssue):
+            if resolution.reason == "ambiguous_wsgi_module_suffix":
+                source_evidence = _first_coordinate_evidence(evidence_by_target.get(target.entity_id, ()))
+                if source_evidence is not None:
+                    candidate_service_ids = sorted(service.entity_id for service in resolution.candidate_services)
+                    for service in resolution.candidate_services:
+                        if (service.entity_id, target.entity_id) in existing_deploy_links:
+                            continue
+                        fact = Fact(
+                            "DEPLOYS_VIA_CONFIG",
+                            service.entity_id,
+                            target.entity_id,
+                            {
+                                "source_kind": "runtime_linker",
+                                "target_type": target_type,
+                                "resolved_by": "wsgi_ambiguous_module_path_suffix",
+                                "candidate_service_ids": candidate_service_ids,
+                                "rule_version": RUNTIME_LINKER_RULE_VERSION,
+                            },
+                            canonical_status="candidate",
+                        )
+                        evidence_row = _runtime_link_evidence(
+                            fact,
+                            source_evidence,
+                            derivation_class="candidate",
+                            confidence=0.5,
+                        )
+                        emitted[fact.fact_id] = fact
+                        emitted_evidence[evidence_row.evidence_id] = evidence_row
             issues.append(resolution)
             continue
         service = resolution
@@ -111,7 +142,12 @@ def link_runtime_targets(inputs: list[RuntimeLinkerInput] | tuple[RuntimeLinkerI
                 "rule_version": RUNTIME_LINKER_RULE_VERSION,
             },
         )
-        evidence_row = _runtime_link_evidence(fact, target, evidence_by_target)
+        source_evidence = _first_coordinate_evidence(evidence_by_target.get(target.entity_id, ()))
+        evidence_row = (
+            _runtime_link_evidence(fact, source_evidence, derivation_class="deterministic_static", confidence=1.0)
+            if source_evidence is not None
+            else None
+        )
         if evidence_row is None:
             issues.append(_RuntimeLinkIssue(target, "no_target_bytes_ref_evidence"))
             continue
@@ -123,6 +159,8 @@ def link_runtime_targets(inputs: list[RuntimeLinkerInput] | tuple[RuntimeLinkerI
         facts=tuple(emitted[key] for key in sorted(emitted)),
         evidence=tuple(emitted_evidence[key] for key in sorted(emitted_evidence)),
         coverage=coverage,
+        canonical_link_count=sum(1 for fact in emitted.values() if fact.canonical_status == "canonical"),
+        candidate_link_count=sum(1 for fact in emitted.values() if fact.canonical_status == "candidate"),
         ambiguous_link_count=sum(1 for issue in issues if issue.reason == "ambiguous_wsgi_module_suffix"),
     )
 
@@ -184,22 +222,24 @@ def _resolve_wsgi_target(target: Entity, candidates: list[_CodeModuleCandidate])
     longest = [match for match in matches if len(match.path.split("/")) == max_len]
     service_ids = {match.service.entity_id for match in longest}
     if len(service_ids) != 1:
-        return _RuntimeLinkIssue(target, "ambiguous_wsgi_module_suffix")
+        candidate_services = tuple(
+            sorted({match.service.entity_id: match.service for match in longest}.values(), key=lambda item: item.entity_id)
+        )
+        return _RuntimeLinkIssue(target, "ambiguous_wsgi_module_suffix", candidate_services)
     return longest[0].service
 
 
 def _runtime_link_evidence(
     fact: Fact,
-    target: Entity,
-    evidence_by_target: dict[str, list[Evidence]],
-) -> Evidence | None:
-    source = _first_coordinate_evidence(evidence_by_target.get(target.entity_id, ()))
-    if source is None:
-        return None
+    source: Evidence,
+    *,
+    derivation_class: EvidenceDerivationClass,
+    confidence: float,
+) -> Evidence:
     return Evidence(
         target_type="fact",
         target_id=fact.fact_id,
-        derivation_class="deterministic_static",
+        derivation_class=derivation_class,
         source_system=RUNTIME_LINKER_SOURCE_SYSTEM,
         source_ref={
             "predicate": fact.predicate,
@@ -207,7 +247,7 @@ def _runtime_link_evidence(
             "resolved_by": fact.qualifier.get("resolved_by"),
         },
         bytes_ref=source.bytes_ref,
-        confidence=1.0,
+        confidence=confidence,
     )
 
 
@@ -264,6 +304,11 @@ def _coverage_rows(
                     "deploy_target_identity": issue.target.identity,
                     "reason": issue.reason,
                     "rule_version": RUNTIME_LINKER_RULE_VERSION,
+                    **(
+                        {"candidate_service_ids": [service.entity_id for service in issue.candidate_services]}
+                        if issue.candidate_services
+                        else {}
+                    ),
                 },
                 state="partially_instrumented",
                 source_system=RUNTIME_LINKER_SOURCE_SYSTEM,

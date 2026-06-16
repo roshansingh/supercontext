@@ -218,7 +218,8 @@ def relink_snapshot_dirs(
         "runtime_linker": {
             "source_system": runtime_link.RUNTIME_LINKER_SOURCE_SYSTEM,
             "rule_version": runtime_link.RUNTIME_LINKER_RULE_VERSION,
-            "link_count": len(runtime_result.facts),
+            "link_count": runtime_result.canonical_link_count,
+            "candidate_link_count": runtime_result.candidate_link_count,
             "ambiguous_link_count": runtime_result.ambiguous_link_count,
         },
         "counts": {
