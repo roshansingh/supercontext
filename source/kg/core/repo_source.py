@@ -86,6 +86,7 @@ class RepoSnapshot:
 def discover_repo(
     repo_path: str | Path,
     language_files: tuple[LanguageFileMatcher, ...] = REGISTERED_LANGUAGE_FILES,
+    owner: str | None = None,
 ) -> RepoSnapshot:
     root = Path(repo_path).expanduser().resolve()
     if not root.exists():
@@ -96,7 +97,7 @@ def discover_repo(
     return RepoSnapshot(
         root=root,
         name=root.name,
-        owner=root.parent.name,
+        owner=owner or root.parent.name,
         commit_sha=_git_commit_sha(root),
         files_by_language=files_by_language,
         unsupported_files_by_language=unsupported_files_by_language(
