@@ -22,7 +22,7 @@ class EventChannelPromotionResult:
 def prune_uncorroborated_event_channels(
     entities: Sequence[Entity], facts: Sequence[Fact]
 ) -> EventChannelPromotionResult:
-    """Drop EventChannels evidenced only by a config value-shape match.
+    """Demote EventChannels evidenced only by a config value-shape match.
 
     The config scanner mints an EventChannel for any ini/config value shaped like an
     SQS queue name (alphanumeric + dash). That shape also matches unrelated tokens,
@@ -34,16 +34,17 @@ def prune_uncorroborated_event_channels(
         call site or event-source mapping resolved to this address; or
       * a full ARN / queue-URL literal, which is self-identifying.
 
-    Channels with neither are dropped together with their dangling
-    REFERENCES_EVENT_CHANNEL facts, and a loud ``coverage`` row records the refusal so
-    it is auditable rather than silent. This runs on the fully assembled graph, so a
-    config-only reference in one repo is still corroborated by a directional fact in
-    another.
+    Channels with neither are demoted together with facts that point at them, and a
+    loud ``coverage`` row records the refusal so it is auditable rather than silent.
+    This keeps the source-inspection lead available while preventing config-only
+    references from being presented as known event flow. This runs on the fully
+    assembled graph, so a config-only reference in one repo is still corroborated by
+    a directional fact in another.
     """
     corroborated_ids = {
         fact.object_id for fact in facts if fact.predicate in _DIRECTIONAL_EVENT_PREDICATES
     }
-    dropped_ids: set[str] = set()
+    demoted_ids: set[str] = set()
     kept_entities: list[Entity] = []
     coverage: list[Coverage] = []
     for entity in entities:
@@ -53,14 +54,34 @@ def prune_uncorroborated_event_channels(
             and entity.entity_id not in corroborated_ids
             and not _has_channel_literal(entity)
         ):
-            dropped_ids.add(entity.entity_id)
+            demoted_ids.add(entity.entity_id)
+            kept_entities.append(_candidate_entity(entity))
             coverage.append(_uncorroborated_channel_coverage(entity))
             continue
         kept_entities.append(entity)
-    if not dropped_ids:
+    if not demoted_ids:
         return EventChannelPromotionResult(list(entities), list(facts), [])
-    kept_facts = [fact for fact in facts if fact.object_id not in dropped_ids]
+    kept_facts = [_candidate_fact(fact) if fact.object_id in demoted_ids else fact for fact in facts]
     return EventChannelPromotionResult(kept_entities, kept_facts, coverage)
+
+
+def _candidate_entity(entity: Entity) -> Entity:
+    return Entity(
+        kind=entity.kind,
+        identity=dict(entity.identity),
+        properties=dict(entity.properties),
+        canonical_status="candidate",
+    )
+
+
+def _candidate_fact(fact: Fact) -> Fact:
+    return Fact(
+        predicate=fact.predicate,
+        subject_id=fact.subject_id,
+        object_id=fact.object_id,
+        qualifier=dict(fact.qualifier),
+        canonical_status="candidate",
+    )
 
 
 def _has_channel_literal(entity: Entity) -> bool:

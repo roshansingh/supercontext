@@ -61,7 +61,7 @@ When a packet is too large:
 - Use remaining budget to backfill additional compact rows instead of stopping after the first coarse truncation.
 - Never rely on an omitted-row count alone; counts without refs or search terms are not useful to an agent.
 
-Budgeted `related_facts` sections are allowlisted so unknown sections do not pass through raw oversized payloads. Current sections are `service_brief`, `symbol_impact`, `dependency_importers`, `inventory`, `service_operational_surfaces`, `runtime_architecture`, `authz_surface`, `dependencies`, `endpoints`, `endpoint_consumers`, `event_channels`, `deploy_mappings`, and `domains`.
+Budgeted `related_facts` sections are allowlisted so unknown sections do not pass through raw oversized payloads. Current sections are `service_brief`, `symbol_impact`, `dependency_importers`, `inventory`, `service_operational_surfaces`, `runtime_architecture`, `authz_surface`, `dependencies`, `endpoints`, `endpoint_consumers`, `event_channels`, `candidate_or_unlinked_event_channels`, `deploy_mappings`, and `domains`.
 
 ## Tool Fields
 
@@ -94,7 +94,8 @@ Purpose: compact service fact sheet for one unambiguous service.
 | `candidates`, `candidate_count` | Candidate service rows when the query is ambiguous. |
 | `summary` | Counts for endpoint, event, deploy, endpoint-consumer, domain/deploy target, and authz rows. |
 | `endpoints` | `EXPOSES_ENDPOINT`, `CALLS_ENDPOINT`, or `DOCUMENTS_ENDPOINT` rows touching the service. |
-| `event_channels` | Event-channel rows touching the service. |
+| `event_channels` | Known linked `CONSUMES_EVENT` / `PRODUCES_EVENT` rows touching the service. |
+| `candidate_or_unlinked_event_channels` | Candidate or reference event-channel rows touching the service; use as inspection leads, not known event flow. |
 | `deploy_mappings` | `ROUTES_DOMAIN_TO_DEPLOY` and `DEPLOYS_VIA_CONFIG` rows touching the service. |
 | `endpoint_consumers` | Static path/method-matched inbound endpoint consumer packet. |
 | `operational_surfaces` | Service deploy/domain/runtime surfaces split into known linked, unlinked evidence, and missing contracts. |
@@ -278,7 +279,7 @@ Purpose: composed planning packet for fleet or anchored repo/service/symbol/pack
 | `ownership_context` | Owner/maintainer candidate packet that separates explicit ownership from weak package metadata. |
 | `authz_surface` | Authz review-lead packet for endpoint/handler/policy checks. |
 | `anchors` | Structured anchors used: `repo`, `path`, `symbol`, `service`, `package`, `endpoint`, `event_channel`, `domain`. |
-| `services`, `symbols`, `dependencies`, `endpoints`, `endpoint_consumers`, `event_channels`, `domains` | Bounded grouped rows matching the anchors. |
+| `services`, `symbols`, `dependencies`, `endpoints`, `endpoint_consumers`, `event_channels`, `candidate_or_unlinked_event_channels`, `domains` | Bounded grouped rows matching the anchors. `event_channels` is known linked; `candidate_or_unlinked_event_channels` is inspection-only. |
 | `entry_points` | Compact service/symbol/endpoint/event/domain entry rows for scanning. |
 | `related_facts` | Anchor-specific packets such as `dependency_importers`, `symbol_impact`, `authz_surface`, runtime references, dependencies, endpoints, endpoint consumers, event channels, deploy mappings, and domains. In compacted packets it may contain its own `inspection_areas` for omitted related rows. |
 | `source_coordinates` | Bounded coordinates extracted from grouped rows. |
@@ -319,7 +320,7 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | `changed_surface` | Changed-file/range scope explanation. |
 | `scope_contract` | Contract separating changed symbols from file inventory. |
 | `impact` | Compact grouping of callers, callees, transitive callers, and dependencies. |
-| `runtime_surfaces` | Bounded endpoints, endpoint consumers, event channels, and deploy mappings. |
+| `runtime_surfaces` | Bounded endpoints, endpoint consumers, known linked event channels, candidate/unlinked event-channel leads, and deploy mappings. |
 | `framework_impact` | Parser-backed framework facts such as Django/Celery model fields, relations, serializers, views, and tasks. |
 | `application_impact` | App/package namespace surfaces, runtime facts, and cross-repo name leads. |
 | `surface_status` | Requested review surface status: known, unlinked, missing, or unsupported. |

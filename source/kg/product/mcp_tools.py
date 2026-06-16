@@ -634,8 +634,13 @@ _CANDIDATE_LEAD_KIND: dict[str, str] = {
     "deploy_order_guidance": "inference_or_guidance",
     "unlinked_domain_route_samples": "unlinked_source_lead",
     "endpoint_consumers": "endpoint_consumer_candidate",
+    "candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
     "service_operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "runtime_surfaces.candidate_or_unlinked_event_channels": "unlinked_source_lead",
+    "related_facts.candidate_or_unlinked_event_channels": "unlinked_source_lead",
+    "related_facts.service_brief.candidate_or_unlinked_event_channels": "unlinked_source_lead",
+    "review_answer_packet.runtime.candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "application_impact.cross_repo_name_leads": "cross_repo_name_lead",
     "runtime_architecture.answer_packet.unlinked_runtime_leads": "unlinked_source_lead",
 }
@@ -681,6 +686,7 @@ _CANDIDATE_LEAD_FIELDS = (
     "terminal_import_consumer_leads",
     "truncated_terminal_symbols",
     "endpoint_consumers",
+    "candidate_or_unlinked_event_channels",
     "deploy_order_guidance",
     "unlinked_domain_route_samples",
 )
@@ -688,6 +694,16 @@ _CANDIDATE_LEAD_FIELDS = (
 _NESTED_CANDIDATE_LEAD_FIELDS = (
     ("operational_surfaces.evidence_partition.unlinked_evidence", ("operational_surfaces", "evidence_partition", "unlinked_evidence")),
     ("service_operational_surfaces.evidence_partition.unlinked_evidence", ("service_operational_surfaces", "evidence_partition", "unlinked_evidence")),
+    ("runtime_surfaces.candidate_or_unlinked_event_channels", ("runtime_surfaces", "candidate_or_unlinked_event_channels")),
+    ("related_facts.candidate_or_unlinked_event_channels", ("related_facts", "candidate_or_unlinked_event_channels")),
+    (
+        "related_facts.service_brief.candidate_or_unlinked_event_channels",
+        ("related_facts", "service_brief", "candidate_or_unlinked_event_channels"),
+    ),
+    (
+        "review_answer_packet.runtime.candidate_or_unlinked_event_channels",
+        ("review_answer_packet", "runtime", "candidate_or_unlinked_event_channels"),
+    ),
     ("application_impact.cross_repo_name_leads", ("application_impact", "cross_repo_name_leads")),
     ("runtime_architecture.answer_packet.unlinked_runtime_leads", ("runtime_architecture", "answer_packet", "unlinked_runtime_leads")),
 )
@@ -734,7 +750,10 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         [row for row in related if row.get("predicate") in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}]
     )
     events = _planning_context_dedupe_rows(
-        [row for row in related if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}]
+        [row for row in related if _is_known_event_row(row)]
+    )
+    candidate_events = _planning_context_dedupe_rows(
+        [row for row in related if _is_candidate_or_unlinked_event_row(row)]
     )
     deploy_mappings = _planning_context_dedupe_rows(
         [row for row in related if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}]
@@ -769,6 +788,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "summary": {
             "endpoint_fact_count": len(endpoints),
             "event_fact_count": len(events),
+            "candidate_or_unlinked_event_fact_count": len(candidate_events),
             "deploy_mapping_count": len(deploy_mappings),
             "endpoint_consumer_fact_count": endpoint_consumer_packet["summary"]["consumer_fact_count"],
             "endpoint_consumer_service_count": endpoint_consumer_packet["summary"]["consumer_service_count"],
@@ -779,6 +799,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         },
         "endpoints": endpoints[:limit],
         "event_channels": events[:limit],
+        "candidate_or_unlinked_event_channels": candidate_events[:limit],
         "deploy_mappings": deploy_mappings[:limit],
         "endpoint_consumers": endpoint_consumer_packet,
         "operational_surfaces": operational_surfaces,
@@ -805,6 +826,7 @@ def _service_brief_claim_contract() -> JsonObject:
             "operational_surfaces.evidence_partition.known_linked",
         ],
         "candidate_or_unlinked_rows": [
+            "candidate_or_unlinked_event_channels",
             "operational_surfaces.evidence_partition.unlinked_evidence",
             "endpoint_consumers with unresolved host/env assumptions",
         ],
@@ -1013,6 +1035,8 @@ _OPPOSITE_EVENT_PREDICATE = {
     "CONSUMES_EVENT": "PRODUCES_EVENT",
     "PRODUCES_EVENT": "CONSUMES_EVENT",
 }
+_EVENT_FACT_PREDICATES = {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}
+_DIRECTIONAL_EVENT_FACT_PREDICATES = {"CONSUMES_EVENT", "PRODUCES_EVENT"}
 _EVENT_PREDICATE_ROLE = {
     "CONSUMES_EVENT": "consumers",
     "PRODUCES_EVENT": "producers",
@@ -1033,9 +1057,9 @@ def _event_facts(kg: KgSnapshot, *, channel: str, predicate: str, limit: int, re
             continue
         if channel.lower() not in _event_channel_search_text(object_).lower():
             continue
-        if fact_predicate == predicate:
+        if fact_predicate == predicate and _is_known_event_fact(fact, object_):
             rows.append(_fact_result(kg, fact, subject, object_))
-        else:
+        elif fact_predicate == opposite_predicate and _is_known_event_fact(fact, object_):
             opposite_count += 1
     returned = rows[:limit]
     missing_fact_families = [] if rows else ["static_event_facts"]
@@ -1334,6 +1358,9 @@ def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_:
     row = {
         "fact_id": fact["fact_id"],
         "predicate": fact["predicate"],
+        "canonical_status": _row_canonical_status(fact),
+        "subject_canonical_status": _row_canonical_status(subject),
+        "object_canonical_status": _row_canonical_status(object_),
         "subject": display_entity(subject),
         "object": display_entity(object_),
         "qualifier": fact.get("qualifier", {}),
@@ -1342,7 +1369,38 @@ def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_:
     call_site = call_site_from_qualifier(fact.get("qualifier", {}))
     if call_site is not None:
         row["call_site"] = call_site
+    if _is_event_predicate(row["predicate"]):
+        row["linkage_status"] = "known_linked" if _is_known_event_fact(fact, object_) else "candidate_or_unlinked"
     return row
+
+
+def _row_canonical_status(row: JsonObject) -> str:
+    value = row.get("canonical_status", "canonical")
+    return value if isinstance(value, str) and value else "canonical"
+
+
+def _is_event_predicate(value: object) -> bool:
+    return value in _EVENT_FACT_PREDICATES
+
+
+def _is_known_event_fact(fact: JsonObject, channel: JsonObject) -> bool:
+    return (
+        fact.get("predicate") in _DIRECTIONAL_EVENT_FACT_PREDICATES
+        and _row_canonical_status(fact) == "canonical"
+        and _row_canonical_status(channel) == "canonical"
+    )
+
+
+def _is_known_event_row(row: JsonObject) -> bool:
+    return (
+        row.get("predicate") in _DIRECTIONAL_EVENT_FACT_PREDICATES
+        and row.get("canonical_status", "canonical") == "canonical"
+        and row.get("object_canonical_status", "canonical") == "canonical"
+    )
+
+
+def _is_candidate_or_unlinked_event_row(row: JsonObject) -> bool:
+    return _is_event_predicate(row.get("predicate")) and not _is_known_event_row(row)
 
 
 def _endpoint_consumer_packet_for_service(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
@@ -2222,6 +2280,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             endpoints=[],
             endpoint_consumers=[],
             event_channels=[],
+            candidate_or_unlinked_event_channels=[],
             domains=[],
             next_actions=[
                 "Read runtime_architecture.answer_packet for a fleet runtime map; if output_budget is present and truncated is true, use narrower repo/service/domain/endpoint anchors for omitted detail."
@@ -2238,6 +2297,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     endpoints: list[JsonObject] = []
     endpoint_consumers: list[JsonObject] = []
     event_channels: list[JsonObject] = []
+    candidate_or_unlinked_event_channels: list[JsonObject] = []
     domains: list[JsonObject] = []
     next_actions: list[str] = []
 
@@ -2256,6 +2316,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 endpoints=endpoints,
                 endpoint_consumers=endpoint_consumers,
                 event_channels=event_channels,
+                candidate_or_unlinked_event_channels=candidate_or_unlinked_event_channels,
                 domains=domains,
                 next_actions=next_actions,
                 status="ambiguous",
@@ -2267,6 +2328,9 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             endpoints = _planning_context_dedupe_rows(endpoints + related["endpoints"])
             endpoint_consumers = _planning_context_dedupe_rows(endpoint_consumers + related["endpoint_consumers"])
             event_channels = _planning_context_dedupe_rows(event_channels + related["event_channels"])
+            candidate_or_unlinked_event_channels = _planning_context_dedupe_rows(
+                candidate_or_unlinked_event_channels + related["candidate_or_unlinked_event_channels"]
+            )
             domains = _planning_context_dedupe_rows(domains + related["domains"])
     if anchors["symbol"]:
         resolution = kg.lookup_symbol(anchors["symbol"], limit=limit, path=anchors["path"], line=line)
@@ -2283,6 +2347,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
                 endpoints=endpoints,
                 endpoint_consumers=endpoint_consumers,
                 event_channels=event_channels,
+                candidate_or_unlinked_event_channels=candidate_or_unlinked_event_channels,
                 domains=domains,
                 next_actions=next_actions,
                 status="ambiguous",
@@ -2311,6 +2376,13 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             event_channels
             + _planning_context_collect_rows(_planning_context_event_matches(kg, anchors["event_channel"]), limit=limit)
         )
+        candidate_or_unlinked_event_channels = _planning_context_dedupe_rows(
+            candidate_or_unlinked_event_channels
+            + _planning_context_collect_rows(
+                _planning_context_event_matches(kg, anchors["event_channel"], known_only=False),
+                limit=limit,
+            )
+        )
     if anchors["domain"]:
         domains = _planning_context_dedupe_rows(
             domains + _planning_context_collect_rows(_planning_context_domain_matches(kg, anchors["domain"]), limit=limit)
@@ -2335,6 +2407,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             endpoints=endpoints,
             endpoint_consumers=endpoint_consumers,
             event_channels=event_channels,
+            candidate_or_unlinked_event_channels=candidate_or_unlinked_event_channels,
             domains=domains,
             next_actions=next_actions,
             status="ambiguous",
@@ -2352,10 +2425,17 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         endpoints = _planning_context_filter_rows("endpoints", endpoints, anchors, line=line)[:limit]
     elif base_category == "event_channels":
         event_channels = _planning_context_filter_rows("event_channels", event_channels, anchors, line=line)[:limit]
+        candidate_or_unlinked_event_channels = _planning_context_filter_rows(
+            "event_channels", candidate_or_unlinked_event_channels, anchors, line=line
+        )[:limit]
     elif base_category == "domains":
         domains = _planning_context_filter_rows("domains", domains, anchors, line=line)[:limit]
 
-    status = "found" if any((services, symbols, dependencies, endpoints, event_channels, domains)) else "not_found"
+    status = (
+        "found"
+        if any((services, symbols, dependencies, endpoints, event_channels, candidate_or_unlinked_event_channels, domains))
+        else "not_found"
+    )
     if status == "not_found":
         next_actions.append(PLANNING_CONTEXT_NO_OVERLAP_ACTION)
     return _planning_context_output(
@@ -2368,6 +2448,7 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         endpoints=endpoints,
         endpoint_consumers=endpoint_consumers,
         event_channels=event_channels,
+        candidate_or_unlinked_event_channels=candidate_or_unlinked_event_channels,
         domains=domains,
         next_actions=next_actions,
         status=status,
@@ -2457,6 +2538,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     endpoint_rows = runtime_surfaces["endpoints"]
     endpoint_consumer_rows = runtime_surfaces["endpoint_consumers"]
     event_channel_rows = runtime_surfaces["event_channels"]
+    candidate_event_channel_rows = runtime_surfaces["candidate_or_unlinked_event_channels"]
     deploy_mapping_rows = runtime_surfaces["deploy_mappings"]
 
     unsupported_scopes: list[JsonObject] = []
@@ -2491,7 +2573,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         repo_dependencies,
         endpoint_rows,
         endpoint_consumer_rows,
-        event_channel_rows,
+        event_channel_rows + candidate_event_channel_rows,
         deploy_mapping_rows,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
@@ -2518,6 +2600,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     public_endpoints = _planning_context_public_rows(endpoint_rows)
     public_endpoint_consumers = _planning_context_public_rows(endpoint_consumer_rows)
     public_event_channels = _planning_context_public_rows(event_channel_rows)
+    public_candidate_event_channels = _planning_context_public_rows(candidate_event_channel_rows)
     public_deploy_mappings = _planning_context_public_rows(deploy_mapping_rows)
     # Without changed_ranges we only know the changed-file symbol inventory, not which
     # symbols actually changed. Mirror the answer packet: top-level changed_symbols is
@@ -2540,6 +2623,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         endpoints=public_endpoints,
         endpoint_consumers=public_endpoint_consumers,
         event_channels=public_event_channels,
+        candidate_or_unlinked_event_channels=public_candidate_event_channels,
         deploy_mappings=public_deploy_mappings,
         source_coordinates=source_coordinates,
         changed_file_symbols=public_changed_file_symbols,
@@ -2575,6 +2659,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "endpoints": public_endpoints,
             "endpoint_consumers": public_endpoint_consumers,
             "event_channels": public_event_channels,
+            "candidate_or_unlinked_event_channels": public_candidate_event_channels,
             "deploy_mappings": public_deploy_mappings,
         },
         surface_status=surface_status,
@@ -2606,6 +2691,9 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             "endpoints": public_endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
             "endpoint_consumers": public_endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
             "event_channels": public_event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "candidate_or_unlinked_event_channels": public_candidate_event_channels[
+                :PLANNING_CONTEXT_SECTION_LIMIT
+            ],
             "deploy_mappings": public_deploy_mappings[:PLANNING_CONTEXT_SECTION_LIMIT],
         },
         "framework_impact": framework_impact,
@@ -2624,6 +2712,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
             endpoint_rows,
             endpoint_consumer_rows,
             event_channel_rows,
+            candidate_event_channel_rows,
             deploy_mapping_rows,
             framework_impact.get("model_fields", []),
             framework_impact.get("model_relations", []),
@@ -2656,18 +2745,21 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
     repo_rows = list(repo_result.get("dependencies", []))[:limit]
     endpoint_rows = list(endpoint_result.get("endpoints", []))[:limit]
     event_rows = list(event_result.get("event_channels", []))[:limit]
+    candidate_event_rows = list(event_result.get("candidate_or_unlinked", []))[:limit]
     domain_rows = list(domain_result.get("references", []))[:limit]
     exact_endpoint_rows = _planning_context_exact_endpoint_rows(kg, query, limit)
     exact_event_rows = _planning_context_exact_event_rows(kg, query, limit)
     exact_domain_rows = _planning_context_exact_domain_rows(kg, query, limit)
 
+    known_event_count = int(event_result.get("known_linked_count", 0))
+    event_evidence_count = int(event_result.get("event_fact_count", 0))
     resolver_hits = {
         "service": bool(service_matches),
         "symbol": symbol_result["status"] in {"resolved", "ambiguous"},
         "repo": int(repo_result.get("dependency_count", 0)) > 0,
         "package": bool(package_rows),
         "endpoint": int(endpoint_result.get("endpoint_fact_count", 0)) > 0,
-        "event_channel": int(event_result.get("event_fact_count", 0)) > 0,
+        "event_channel": event_evidence_count > 0,
         "domain": int(domain_result.get("reference_count", 0)) > 0,
     }
     unique_matches: dict[str, list[JsonObject]] = {}
@@ -2681,7 +2773,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
         unique_matches["package"] = package_rows
     if len(exact_endpoint_rows) == 1 and int(endpoint_result.get("endpoint_fact_count", 0)) == 1:
         unique_matches["endpoint"] = exact_endpoint_rows
-    if len(exact_event_rows) == 1 and int(event_result.get("event_fact_count", 0)) == 1:
+    if len(exact_event_rows) == 1 and known_event_count == 1:
         unique_matches["event_channel"] = exact_event_rows
     if len(exact_domain_rows) == 1 and int(domain_result.get("reference_count", 0)) == 1:
         unique_matches["domain"] = exact_domain_rows
@@ -2703,6 +2795,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
         dependencies: list[JsonObject] = rows if kind in {"repo", "package"} else []
         endpoints: list[JsonObject] = rows if kind == "endpoint" else []
         event_channels: list[JsonObject] = rows if kind == "event_channel" else []
+        candidate_or_unlinked_event_channels: list[JsonObject] = []
         domains: list[JsonObject] = rows if kind == "domain" else []
         endpoint_consumers: list[JsonObject] = []
         if kind == "service" and len(service_matches) == 1:
@@ -2711,6 +2804,9 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
             endpoints = _planning_context_dedupe_rows(endpoints + related["endpoints"])
             endpoint_consumers = _planning_context_dedupe_rows(endpoint_consumers + related["endpoint_consumers"])
             event_channels = _planning_context_dedupe_rows(event_channels + related["event_channels"])
+            candidate_or_unlinked_event_channels = _planning_context_dedupe_rows(
+                candidate_or_unlinked_event_channels + related["candidate_or_unlinked_event_channels"]
+            )
             domains = _planning_context_dedupe_rows(domains + related["domains"])
         return _planning_context_output(
             kg=kg,
@@ -2722,6 +2818,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
             endpoints=endpoints,
             endpoint_consumers=endpoint_consumers,
             event_channels=event_channels,
+            candidate_or_unlinked_event_channels=candidate_or_unlinked_event_channels,
             domains=domains,
             next_actions=[],
             status="found",
@@ -2756,6 +2853,7 @@ def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> J
         endpoints=endpoint_rows,
         endpoint_consumers=[],
         event_channels=event_rows,
+        candidate_or_unlinked_event_channels=candidate_event_rows,
         domains=domain_rows,
         next_actions=next_actions,
         status="ambiguous",
@@ -3229,6 +3327,7 @@ def _review_context_claim_contract() -> JsonObject:
             "application_impact.runtime_facts",
         ],
         "candidate_or_unlinked_rows": [
+            "runtime_surfaces.candidate_or_unlinked_event_channels",
             "application_impact.cross_repo_name_leads",
             "surface_status rows with status=inventory_context or status=unlinked_lead",
             "coverage_gaps",
@@ -3328,6 +3427,7 @@ def _review_context_runtime_surfaces(
     endpoints: list[JsonObject] = []
     exposed_endpoints: list[JsonObject] = []
     event_channels: list[JsonObject] = []
+    candidate_event_channels: list[JsonObject] = []
     deploy_mappings: list[JsonObject] = []
     for fact in kg.facts:
         predicate = fact.get("predicate")
@@ -3358,8 +3458,11 @@ def _review_context_runtime_surfaces(
             endpoints.append(row)
             if predicate == "EXPOSES_ENDPOINT":
                 exposed_endpoints.append(_planning_context_fact_result(kg, fact, subject, object_))
-        elif predicate in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
-            event_channels.append(row)
+        elif predicate in _EVENT_FACT_PREDICATES:
+            if _is_known_event_fact(fact, object_):
+                event_channels.append(row)
+            else:
+                candidate_event_channels.append(row)
         elif predicate in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}:
             deploy_mappings.append(row)
     endpoint_consumers = _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoints)
@@ -3367,6 +3470,7 @@ def _review_context_runtime_surfaces(
         "endpoints": _planning_context_dedupe_rows(endpoints)[:limit],
         "endpoint_consumers": endpoint_consumers[:limit],
         "event_channels": _planning_context_dedupe_rows(event_channels)[:limit],
+        "candidate_or_unlinked_event_channels": _planning_context_dedupe_rows(candidate_event_channels)[:limit],
         "deploy_mappings": _planning_context_dedupe_rows(deploy_mappings)[:limit],
     }
 
@@ -3406,6 +3510,7 @@ def _review_context_summary(
     endpoints: list[JsonObject],
     endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
+    candidate_or_unlinked_event_channels: list[JsonObject],
     deploy_mappings: list[JsonObject],
     source_coordinates: list[JsonObject],
     framework_impact: JsonObject,
@@ -3422,6 +3527,7 @@ def _review_context_summary(
         "endpoint_fact_count": len(endpoints),
         "endpoint_consumer_fact_count": len(endpoint_consumers),
         "event_fact_count": len(event_channels),
+        "candidate_or_unlinked_event_fact_count": len(candidate_or_unlinked_event_channels),
         "deploy_mapping_count": len(deploy_mappings),
         "framework_model_count": _summary_count(framework_impact, "changed_framework_model_count"),
         "framework_task_count": _summary_count(framework_impact, "task_count"),
@@ -3478,6 +3584,7 @@ def _review_context_answer_packet(
             "app_surface_count": summary["app_surface_count"],
             "app_runtime_fact_count": summary["app_runtime_fact_count"],
             "app_cross_repo_lead_count": summary["app_cross_repo_lead_count"],
+            "candidate_or_unlinked_event_fact_count": summary["candidate_or_unlinked_event_fact_count"],
             "detail_limit": summary["detail_limit"],
         },
         "scope_contract": scope_contract,
@@ -3509,6 +3616,9 @@ def _review_context_answer_packet(
             "endpoints": runtime_surfaces.get("endpoints", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
             "endpoint_consumers": runtime_surfaces.get("endpoint_consumers", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
             "event_channels": runtime_surfaces.get("event_channels", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
+            "candidate_or_unlinked_event_channels": runtime_surfaces.get(
+                "candidate_or_unlinked_event_channels", []
+            )[:PLANNING_CONTEXT_SECTION_LIMIT],
             "deploy_mappings": runtime_surfaces.get("deploy_mappings", [])[:PLANNING_CONTEXT_SECTION_LIMIT],
         },
         "surface_status": surface_status,
@@ -3582,6 +3692,9 @@ def _review_context_surface_rows(
     ]
     runtime_facts = [row for row in application_impact.get("runtime_facts", []) if isinstance(row, dict)]
     event_rows = [row for row in runtime_surfaces.get("event_channels", []) if isinstance(row, dict)]
+    candidate_event_rows = [
+        row for row in runtime_surfaces.get("candidate_or_unlinked_event_channels", []) if isinstance(row, dict)
+    ]
     if surface == "scheduled_jobs":
         return _surface_list(same_repo_surfaces, "scheduled_jobs"), [], "application_impact.same_repo_surfaces.scheduled_jobs"
     if surface == "delivery_workers":
@@ -3605,7 +3718,12 @@ def _review_context_surface_rows(
             for row in event_rows
             if row.get("predicate") == "CONSUMES_EVENT" and _review_context_row_mentions_any(row, {"sqs", "queue"})
         ]
-        return sqs_rows, [], "runtime_surfaces.event_channels"
+        sqs_leads = [
+            row
+            for row in candidate_event_rows
+            if _review_context_row_mentions_any(row, {"sqs", "queue"})
+        ]
+        return sqs_rows, sqs_leads, "runtime_surfaces.event_channels|runtime_surfaces.candidate_or_unlinked_event_channels"
     if surface == "tracking_paths":
         known_rows = [
             row
@@ -3614,10 +3732,15 @@ def _review_context_surface_rows(
         ]
         unlinked_rows = [
             row
-            for row in cross_repo_leads
+            for row in [*cross_repo_leads, *candidate_event_rows]
             if _review_context_row_mentions_any(row, {"tracking", "track"})
         ]
-        return known_rows, unlinked_rows, "application_impact.runtime_facts|cross_repo_name_leads"
+        return (
+            known_rows,
+            unlinked_rows,
+            "application_impact.runtime_facts|runtime_surfaces.event_channels|"
+            "application_impact.cross_repo_name_leads|runtime_surfaces.candidate_or_unlinked_event_channels",
+        )
     raise ValueError(f"Unsupported review surface: {surface}")
 
 
@@ -3859,7 +3982,12 @@ def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, 
         "event_channels": [
             row
             for row in related
-            if row.get("predicate") in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}
+            if _is_known_event_row(row)
+        ][:limit],
+        "candidate_or_unlinked_event_channels": [
+            row
+            for row in related
+            if _is_candidate_or_unlinked_event_row(row)
         ][:limit],
         "domains": [
             row
@@ -3903,6 +4031,7 @@ def _planning_context_output(
     endpoints: list[JsonObject],
     endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
+    candidate_or_unlinked_event_channels: list[JsonObject],
     domains: list[JsonObject],
     next_actions: list[str],
     status: str,
@@ -3915,6 +4044,7 @@ def _planning_context_output(
     bounded_endpoints = _planning_context_public_rows(endpoints)
     bounded_endpoint_consumers = _planning_context_public_rows(endpoint_consumers)
     bounded_event_channels = _planning_context_public_rows(event_channels)
+    bounded_candidate_event_channels = _planning_context_public_rows(candidate_or_unlinked_event_channels)
     bounded_domains = _planning_context_public_rows(domains)
     groups = {
         "services": bounded_services,
@@ -3923,6 +4053,7 @@ def _planning_context_output(
         "endpoints": bounded_endpoints,
         "endpoint_consumers": bounded_endpoint_consumers,
         "event_channels": bounded_event_channels,
+        "candidate_or_unlinked_event_channels": bounded_candidate_event_channels,
         "domains": bounded_domains,
     }
     inventory = _snapshot_inventory_packet(kg, anchors=anchors, limit=PLANNING_CONTEXT_SECTION_LIMIT)
@@ -3964,6 +4095,7 @@ def _planning_context_output(
         endpoints=bounded_endpoints,
         endpoint_consumers=bounded_endpoint_consumers,
         event_channels=bounded_event_channels,
+        candidate_or_unlinked_event_channels=bounded_candidate_event_channels,
         domains=bounded_domains,
         anchors=anchors,
         status=status,
@@ -3981,6 +4113,7 @@ def _planning_context_output(
         bounded_endpoints,
         bounded_endpoint_consumers,
         bounded_event_channels,
+        bounded_candidate_event_channels,
         bounded_domains,
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
@@ -4025,6 +4158,7 @@ def _planning_context_output(
         "endpoints": bounded_endpoints,
         "endpoint_consumers": bounded_endpoint_consumers,
         "event_channels": bounded_event_channels,
+        "candidate_or_unlinked_event_channels": bounded_candidate_event_channels,
         "domains": bounded_domains,
         "entry_points": _planning_context_entry_points(groups),
         "related_facts": related_facts,
@@ -4037,6 +4171,7 @@ def _planning_context_output(
             bounded_endpoints,
             bounded_endpoint_consumers,
             bounded_event_channels,
+            bounded_candidate_event_channels,
             bounded_domains,
         ),
         "coverage_warnings": [],
@@ -4191,6 +4326,7 @@ def _planning_context_summary(groups: dict[str, list[JsonObject]], *, source_coo
         "endpoint_fact_count": len(groups["endpoints"]),
         "endpoint_consumer_fact_count": len(groups["endpoint_consumers"]),
         "event_fact_count": len(groups["event_channels"]),
+        "candidate_or_unlinked_event_fact_count": len(groups["candidate_or_unlinked_event_channels"]),
         "domain_fact_count": len(groups["domains"]),
         "source_coordinate_count": len(source_coordinates),
         "section_limit": PLANNING_CONTEXT_SECTION_LIMIT,
@@ -4512,7 +4648,16 @@ def _top_count_map(raw_counts: object, *, limit: int) -> JsonObject:
 
 def _planning_context_entry_points(groups: dict[str, list[JsonObject]]) -> list[JsonObject]:
     rows: list[JsonObject] = []
-    for kind in ("services", "symbols", "endpoints", "endpoint_consumers", "event_channels", "dependencies", "domains"):
+    for kind in (
+        "services",
+        "symbols",
+        "endpoints",
+        "endpoint_consumers",
+        "event_channels",
+        "candidate_or_unlinked_event_channels",
+        "dependencies",
+        "domains",
+    ):
         for row in groups[kind]:
             entry = {key: value for key, value in row.items() if key != "evidence"}
             entry["section"] = kind
@@ -4531,6 +4676,7 @@ def _planning_context_related_facts(
     endpoints: list[JsonObject],
     endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
+    candidate_or_unlinked_event_channels: list[JsonObject],
     domains: list[JsonObject],
     anchors: dict[str, str | None],
     status: str,
@@ -4542,7 +4688,14 @@ def _planning_context_related_facts(
     line: int | None = None,
 ) -> JsonObject:
     return {
-        "service_brief": _planning_context_service_brief(services, endpoints, endpoint_consumers, event_channels, domains),
+        "service_brief": _planning_context_service_brief(
+            services,
+            endpoints,
+            endpoint_consumers,
+            event_channels,
+            candidate_or_unlinked_event_channels,
+            domains,
+        ),
         "symbol_impact": _planning_context_symbol_impact(kg, symbols, anchors=anchors, status=status, line=line),
         "dependency_importers": dependency_importers,
         "inventory": inventory,
@@ -4553,6 +4706,9 @@ def _planning_context_related_facts(
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "candidate_or_unlinked_event_channels": candidate_or_unlinked_event_channels[
+            :PLANNING_CONTEXT_SECTION_LIMIT
+        ],
         "deploy_mappings": [
             row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}
         ][:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -4804,6 +4960,7 @@ def _planning_context_service_brief(
     endpoints: list[JsonObject],
     endpoint_consumers: list[JsonObject],
     event_channels: list[JsonObject],
+    candidate_or_unlinked_event_channels: list[JsonObject],
     domains: list[JsonObject],
 ) -> JsonObject:
     deploy_mappings = [row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}]
@@ -4814,11 +4971,15 @@ def _planning_context_service_brief(
             "endpoint_fact_count": len(endpoints),
             "endpoint_consumer_fact_count": len(endpoint_consumers),
             "event_fact_count": len(event_channels),
+            "candidate_or_unlinked_event_fact_count": len(candidate_or_unlinked_event_channels),
             "deploy_mapping_count": len(deploy_mappings),
         },
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "event_channels": event_channels[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "candidate_or_unlinked_event_channels": candidate_or_unlinked_event_channels[
+            :PLANNING_CONTEXT_SECTION_LIMIT
+        ],
         "deploy_mappings": deploy_mappings[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
 
@@ -5162,15 +5323,22 @@ def _planning_context_endpoint_matches(kg: KgSnapshot, path_query: str) -> dict[
     return matches
 
 
-def _planning_context_event_matches(kg: KgSnapshot, query: str) -> dict[str, list[JsonObject]]:
+def _planning_context_event_matches(
+    kg: KgSnapshot, query: str, *, known_only: bool = True
+) -> dict[str, list[JsonObject]]:
     matches: dict[str, list[JsonObject]] = {}
     needle = query.lower()
     for fact in kg.facts:
-        if fact.get("predicate") not in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
+        if not _is_event_predicate(fact.get("predicate")):
             continue
         subject = kg.entities_by_id.get(fact["subject_id"])
         channel = kg.entities_by_id.get(fact["object_id"])
         if not subject or not channel or channel.get("kind") != "EventChannel":
+            continue
+        is_known = _is_known_event_fact(fact, channel)
+        if known_only and not is_known:
+            continue
+        if not known_only and is_known:
             continue
         identity = channel.get("identity", {})
         name = str(identity.get("channel_address") or identity.get("name") or "")
@@ -5246,11 +5414,13 @@ def _planning_context_exact_event_rows(kg: KgSnapshot, query: str, limit: int) -
     needle = query.strip().lower()
     rows: list[JsonObject] = []
     for fact in kg.facts:
-        if fact.get("predicate") not in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
+        if not _is_event_predicate(fact.get("predicate")):
             continue
         subject = kg.entities_by_id.get(fact["subject_id"])
         channel = kg.entities_by_id.get(fact["object_id"])
         if not subject or not channel or channel.get("kind") != "EventChannel":
+            continue
+        if not _is_known_event_fact(fact, channel):
             continue
         identity = channel.get("identity", {})
         candidates = {

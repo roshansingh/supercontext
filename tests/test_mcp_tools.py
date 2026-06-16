@@ -1918,6 +1918,127 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(domain["status"], "found")
         self.assertEqual({row["predicate"] for row in domain["domains"]}, {"REFERENCES_DOMAIN"})
 
+    def test_planning_context_excludes_candidate_event_references_from_known_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "campaign", "repo": "campaign"},
+            )
+            channel = Entity(
+                kind="EventChannel",
+                identity={"tenant_id": "default", "broker_kind": "sqs", "channel_address": "orders-created"},
+                canonical_status="candidate",
+            )
+            reference = Fact(
+                "REFERENCES_EVENT_CHANNEL",
+                service.entity_id,
+                channel.entity_id,
+                canonical_status="candidate",
+            )
+            JsonlKgStore(root).write(
+                entities=[service, channel],
+                facts=[reference],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            result = call_tool(KgSnapshot(root), "planning_context", {"service": "campaign", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["event_fact_count"], 0)
+        self.assertEqual(result["summary"]["candidate_or_unlinked_event_fact_count"], 1)
+        self.assertEqual(result["event_channels"], [])
+        self.assertEqual(result["candidate_or_unlinked_event_channels"][0]["predicate"], "REFERENCES_EVENT_CHANNEL")
+        self.assertEqual(
+            result["candidate_or_unlinked_event_channels"][0]["linkage_status"],
+            "candidate_or_unlinked",
+        )
+        self.assertEqual(result["related_facts"]["service_brief"]["summary"]["event_fact_count"], 0)
+        self.assertEqual(
+            result["related_facts"]["service_brief"]["summary"]["candidate_or_unlinked_event_fact_count"],
+            1,
+        )
+        self.assertEqual(result["related_facts"]["service_brief"]["event_channels"], [])
+        self.assertEqual(
+            result["related_facts"]["service_brief"]["candidate_or_unlinked_event_channels"][0]["predicate"],
+            "REFERENCES_EVENT_CHANNEL",
+        )
+
+    def test_planning_context_query_candidate_event_reference_is_not_known_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "campaign", "repo": "campaign"},
+            )
+            channel = Entity(
+                kind="EventChannel",
+                identity={"tenant_id": "default", "broker_kind": "sqs", "channel_address": "orders-created"},
+                canonical_status="candidate",
+            )
+            reference = Fact(
+                "REFERENCES_EVENT_CHANNEL",
+                service.entity_id,
+                channel.entity_id,
+                canonical_status="candidate",
+            )
+            JsonlKgStore(root).write(
+                entities=[service, channel],
+                facts=[reference],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            result = call_tool(KgSnapshot(root), "planning_context", {"query": "orders-created", "limit": 10})
+
+        self.assertEqual(result["summary"]["event_fact_count"], 0)
+        self.assertEqual(result["summary"]["candidate_or_unlinked_event_fact_count"], 1)
+        self.assertEqual(result["event_channels"], [])
+        self.assertEqual(result["candidate_or_unlinked_event_channels"][0]["predicate"], "REFERENCES_EVENT_CHANNEL")
+        self.assertIn(
+            "Use `event_channel=orders-created` to inspect matching event-channel facts.",
+            result["next_actions"],
+        )
+
+    def test_service_brief_partitions_reference_to_canonical_event_channel_as_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            campaign = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "campaign", "repo": "campaign"},
+            )
+            billing = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "billing", "repo": "billing"},
+            )
+            channel = Entity(
+                kind="EventChannel",
+                identity={"tenant_id": "default", "broker_kind": "sqs", "channel_address": "orders-created"},
+            )
+            reference = Fact("REFERENCES_EVENT_CHANNEL", campaign.entity_id, channel.entity_id)
+            producer = Fact("PRODUCES_EVENT", billing.entity_id, channel.entity_id)
+            JsonlKgStore(root).write(
+                entities=[campaign, billing, channel],
+                facts=[reference, producer],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            result = call_tool(KgSnapshot(root), "get_service_brief", {"service": "campaign", "limit": 10})
+
+        self.assertEqual(result["summary"]["event_fact_count"], 0)
+        self.assertEqual(result["summary"]["candidate_or_unlinked_event_fact_count"], 1)
+        self.assertEqual(result["event_channels"], [])
+        candidate = result["candidate_or_unlinked_event_channels"][0]
+        self.assertEqual(candidate["predicate"], "REFERENCES_EVENT_CHANNEL")
+        self.assertEqual(candidate["canonical_status"], "canonical")
+        self.assertEqual(candidate["object_canonical_status"], "canonical")
+        self.assertEqual(candidate["linkage_status"], "candidate_or_unlinked")
+
     def test_planning_context_cross_family_anchors_keep_each_family_context(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(
@@ -2119,6 +2240,66 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(result["source_coordinates"])
         self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
         _assert_additive_fields(self, result)
+
+    def test_review_context_surfaces_candidate_event_references_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "campaign", "repo": "campaign"},
+            )
+            symbol = Entity(
+                kind="CodeSymbol",
+                identity={
+                    "tenant_id": "default",
+                    "repo": "campaign",
+                    "module": "campaign.app",
+                    "qualname": "handle_campaign",
+                    "symbol_kind": "function",
+                },
+                properties={"path": "campaign/app.py", "line": 1, "end_line": 3},
+            )
+            channel = Entity(
+                kind="EventChannel",
+                identity={"tenant_id": "default", "broker_kind": "sqs", "channel_address": "tracking-events"},
+                canonical_status="candidate",
+            )
+            reference = Fact(
+                "REFERENCES_EVENT_CHANNEL",
+                service.entity_id,
+                channel.entity_id,
+                canonical_status="candidate",
+            )
+            JsonlKgStore(root).write(
+                entities=[service, symbol, channel],
+                facts=[reference],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            result = call_tool(
+                KgSnapshot(root),
+                "review_context",
+                {"repo": "campaign", "changed_files": ["campaign/app.py"], "limit": 10},
+            )
+
+        self.assertEqual(result["summary"]["event_fact_count"], 0)
+        self.assertEqual(result["summary"]["candidate_or_unlinked_event_fact_count"], 1)
+        self.assertEqual(result["runtime_surfaces"]["event_channels"], [])
+        candidate = result["runtime_surfaces"]["candidate_or_unlinked_event_channels"][0]
+        self.assertEqual(candidate["predicate"], "REFERENCES_EVENT_CHANNEL")
+        self.assertEqual(candidate["linkage_status"], "candidate_or_unlinked")
+        self.assertEqual(
+            result["review_answer_packet"]["runtime"]["candidate_or_unlinked_event_channels"][0]["predicate"],
+            "REFERENCES_EVENT_CHANNEL",
+        )
+        statuses = {row["surface"]: row for row in result["surface_status"]}
+        self.assertEqual(statuses["tracking_paths"]["status"], "unlinked_lead")
+        self.assertIn(
+            "runtime_surfaces.candidate_or_unlinked_event_channels",
+            statuses["tracking_paths"]["evidence_path"],
+        )
 
     def test_review_context_groups_application_impact_surfaces(self) -> None:
         with _fixture_snapshot(app_surface=True) as kg:

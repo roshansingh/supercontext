@@ -75,6 +75,46 @@ class GoldsetHarnessValidationTest(unittest.TestCase):
         self.assertIsNone(item["repo_name"])
         self.assertIsNone(item["repo_identity"])
 
+    def test_evidence_packet_keeps_candidate_event_channel_rows(self) -> None:
+        packet = EvidencePacketBuilder("Q999", "query", "shape").build(
+            [
+                {
+                    "step": "eventchannel_orders",
+                    "command": "event_channels",
+                    "args": {"channel": "orders-created"},
+                    "purpose": "Find event-channel inspection leads.",
+                    "result": {
+                        "status": "found",
+                        "event_channels": [],
+                        "candidate_or_unlinked": [
+                            {
+                                "fact_id": "fact_event_ref",
+                                "predicate": "REFERENCES_EVENT_CHANNEL",
+                                "subject": "campaign",
+                                "object": "sqs:orders-created",
+                                "qualifier": {
+                                    "resolution": {
+                                        "source_refs": [
+                                            {"repo": "campaign", "path": "settings.ini", "line_start": 7}
+                                        ]
+                                    }
+                                },
+                                "linkage_status": "candidate_or_unlinked",
+                                "evidence": [],
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual(len(packet["evidence_items"]), 1)
+        item = packet["evidence_items"][0]
+        self.assertEqual(item["fact_type"], "REFERENCES_EVENT_CHANNEL")
+        self.assertEqual(item["subject"], "campaign")
+        self.assertEqual(item["object"], "sqs:orders-created")
+        self.assertEqual(item["source_refs"][0]["path"], "settings.ini")
+
     def test_public_answer_harness_refuses_to_build_private_packets(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires --packets-in"):
             _load_or_build_packets("unused", ("Q082",), None)

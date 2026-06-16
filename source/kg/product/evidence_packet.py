@@ -48,7 +48,16 @@ class EvidencePacketBuilder:
     def _items_from_result(self, step_result: JsonObject) -> list[JsonObject]:
         result = step_result["result"]
         rows = []
-        for key in ("references", "endpoints", "event_channels", "mappings", "dependencies", "links"):
+        for key in (
+            "references",
+            "endpoints",
+            "event_channels",
+            "candidate_or_unlinked",
+            "candidate_or_unlinked_event_channels",
+            "mappings",
+            "dependencies",
+            "links",
+        ):
             for row in result.get(key, []):
                 rows.extend(self._items_from_fact_row(step_result, row))
         for row in result.get("candidates", []):
