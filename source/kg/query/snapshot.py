@@ -823,6 +823,8 @@ class KgSnapshot:
         return {
             "status": "found" if known_rows or candidate_rows else "not_found",
             "query": target_query,
+            "deploy_mapping_fact_count": len(known_rows) + len(candidate_rows),
+            "known_linked_count": len(known_rows),
             "mapping_count": len(known_rows),
             "candidate_or_unlinked_count": len(candidate_rows),
             "returned_count": len(returned) + len(returned_candidates),

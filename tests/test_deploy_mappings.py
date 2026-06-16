@@ -49,6 +49,8 @@ class DeployMappingsTest(unittest.TestCase):
             result = KgSnapshot(root).deploy_mappings(limit=10)
 
         self.assertEqual(result["mapping_count"], 0)
+        self.assertEqual(result["deploy_mapping_fact_count"], 1)
+        self.assertEqual(result["known_linked_count"], 0)
         self.assertEqual(result["candidate_or_unlinked_count"], 1)
         self.assertEqual(result["returned_count"], 1)
         self.assertEqual(result["known_returned_count"], 0)
