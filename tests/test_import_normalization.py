@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,25 @@ from source.kg.languages.typescript.normalization.imports import JsImportNormali
 
 
 class PythonImportNormalizationTest(unittest.TestCase):
+    def test_package_init_relative_import_does_not_emit_empty_external_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            package = root / "k8s_cloud_system"
+            package.mkdir()
+            init_py = package / "__init__.py"
+            cli_py = package / "cli.py"
+            init_py.write_text("from . import cli\n", encoding="utf-8")
+            cli_py.write_text("def main():\n    pass\n", encoding="utf-8")
+            repo = _repo_snapshot(root, python_paths=(init_py, cli_py))
+
+            normalizer = PythonImportNormalizer(repo)
+            [normalized] = normalizer.collect(ast.parse(init_py.read_text(encoding="utf-8")), "k8s_cloud_system")
+
+            self.assertEqual(normalized.category, "relative_internal_module")
+            self.assertEqual(normalized.target_name, "k8s_cloud_system")
+            self.assertEqual(normalized.import_root, "k8s_cloud_system")
+            self.assertEqual(normalized.imported_names, ("cli",))
+
     def test_distribution_metadata_maps_import_roots_to_declared_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

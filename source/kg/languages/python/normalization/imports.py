@@ -55,7 +55,9 @@ class NormalizedImport:
 class PythonImportNormalizer:
     def __init__(self, repo: RepoSnapshot) -> None:
         self.repo = repo
-        self.module_names = {self._module_name(path) for path in repo.files_by_language.get("python", ())}
+        python_files = repo.files_by_language.get("python", ())
+        self.module_names = {self._module_name(path) for path in python_files}
+        self.package_modules = {self._module_name(path) for path in python_files if path.name == "__init__.py"}
         self.package_roots = self._package_roots()
         self.declared_dependencies = self._declared_dependencies()
         self.distributions_by_import_root = _distributions_by_import_root()
@@ -146,7 +148,8 @@ class PythonImportNormalizer:
         if not level:
             return None
         parts = current_module.split(".")
-        base_parts = parts[: max(0, len(parts) - level)]
+        package_parts = parts if current_module in self.package_modules else parts[:-1]
+        base_parts = package_parts[: max(0, len(package_parts) - (level - 1))]
         if target:
             base_parts.extend(target.split("."))
         return ".".join(part for part in base_parts if part)
