@@ -572,6 +572,130 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(component["domain_reference_leads"][0]["qualifier"]["literal"], "app.example.com")
         self.assertEqual(component["domain_reference_leads"][0]["evidence_coordinates"][0]["path"], "prod/cloudfront.tf")
 
+    def test_runtime_architecture_investigation_brief_preserves_commit_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "api", "repo": "api"},
+            )
+            domain = Entity(
+                kind="Domain",
+                identity={"tenant_id": "default", "repo": "ops", "name": "api.example.com"},
+            )
+            target = Entity(
+                kind="DeployTarget",
+                identity={"tenant_id": "default", "repo": "ops", "type": "wsgi", "target": "/srv/api/app.wsgi"},
+            )
+            route_fact = Fact(
+                "ROUTES_DOMAIN_TO_DEPLOY",
+                domain.entity_id,
+                target.entity_id,
+                {"source_kind": "fixture_vhost"},
+            )
+            deploy_fact = Fact(
+                "DEPLOYS_VIA_CONFIG",
+                service.entity_id,
+                target.entity_id,
+                {"source_kind": "runtime_linker"},
+            )
+            JsonlKgStore(root).write(
+                entities=[service, domain, target],
+                facts=[route_fact, deploy_fact],
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=route_fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"repo": "ops"},
+                        bytes_ref={
+                            "repo": "ops",
+                            "commit_sha": "ops-sha",
+                            "path": "ops/site.conf",
+                            "line_start": 3,
+                            "line_end": 8,
+                        },
+                        confidence=1.0,
+                    ),
+                    Evidence(
+                        target_type="fact",
+                        target_id=deploy_fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="runtime_linker",
+                        source_ref={"repo": "ops"},
+                        bytes_ref={
+                            "repo": "ops",
+                            "commit_sha": "ops-sha",
+                            "path": "ops/site.conf",
+                            "line_start": 5,
+                            "line_end": 5,
+                        },
+                        confidence=1.0,
+                    ),
+                ],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            architecture = runtime_architecture_packet(KgSnapshot(root), repo=None, limit=10)
+
+        brief = architecture["answer_packet"]["investigation_brief"]
+        self.assertEqual(brief["known_routes"][0]["evidence_coordinates"][0]["commit_sha"], "ops-sha")
+        self.assertEqual(brief["recommended_source_checks"][0]["commit_sha"], "ops-sha")
+        self.assertIn({"repo": "ops", "commit_shas": ["ops-sha"]}, brief["repos_referenced"])
+        self.assertNotIn({"repo": "api", "commit_shas": []}, brief["repos_referenced"])
+        self.assertEqual(
+            brief["kg_only_inspection_contract"]["status"],
+            "source_availability_unresolved_by_supercontext",
+        )
+
+    def test_runtime_architecture_omits_missing_commit_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "api", "repo": "api"},
+            )
+            domain = Entity(
+                kind="Domain",
+                identity={"tenant_id": "default", "repo": "ops", "name": "api.example.com"},
+            )
+            target = Entity(
+                kind="DeployTarget",
+                identity={"tenant_id": "default", "repo": "ops", "type": "wsgi", "target": "/srv/api/app.wsgi"},
+            )
+            route_fact = Fact(
+                "ROUTES_DOMAIN_TO_DEPLOY",
+                domain.entity_id,
+                target.entity_id,
+                {"source_kind": "fixture_vhost"},
+            )
+            JsonlKgStore(root).write(
+                entities=[service, domain, target],
+                facts=[route_fact],
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=route_fact.fact_id,
+                        derivation_class="deterministic_static",
+                        source_system="test",
+                        source_ref={"repo": "ops"},
+                        bytes_ref={"repo": "ops", "path": "ops/site.conf", "line_start": 3, "line_end": 8},
+                        confidence=1.0,
+                    ),
+                ],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            architecture = runtime_architecture_packet(KgSnapshot(root), repo=None, limit=10)
+
+        brief = architecture["answer_packet"]["investigation_brief"]
+        self.assertNotIn("commit_sha", brief["known_routes"][0]["evidence_coordinates"][0])
+        self.assertNotIn("commit_sha", brief["recommended_source_checks"][0])
+        self.assertIn({"repo": "ops", "commit_shas": []}, brief["repos_referenced"])
+
     def test_runtime_architecture_repo_scope_excludes_other_repo_domain_reference_leads(self) -> None:
         with _fixture_snapshot(
             operational_deploy_mapping=True,
