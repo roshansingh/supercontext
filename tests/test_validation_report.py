@@ -927,6 +927,14 @@ class _FakePrivateSmokeKg:
 
     def event_channels(self, channel_query: str, limit: int) -> dict[str, object]:
         self.calls.append(("event_channels", channel_query))
+        if channel_query == "status-events":
+            return {
+                "event_fact_count": 1,
+                "event_channels": [],
+                "candidate_or_unlinked": [
+                    {"qualifier": {"resolution": {"source_refs": [{"path": "fixture.ini"}]}}}
+                ],
+            }
         return {
             "event_fact_count": 1,
             "event_channels": [{"qualifier": {"resolution": {"source_refs": [{"path": "fixture.ini"}]}}}],

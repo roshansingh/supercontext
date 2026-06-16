@@ -45,6 +45,30 @@ def _repo_identity_matches(value: object, requested: object) -> bool:
     return False
 
 
+def _event_linkage_status(fact: JsonObject, channel: JsonObject) -> str:
+    if (
+        fact.get("predicate") in {"CONSUMES_EVENT", "PRODUCES_EVENT"}
+        and _canonical_status(fact) == "canonical"
+        and _canonical_status(channel) == "canonical"
+    ):
+        return "known_linked"
+    return "candidate_or_unlinked"
+
+
+def _canonical_status(row: JsonObject) -> str:
+    value = row.get("canonical_status", "canonical")
+    return value if isinstance(value, str) and value else "canonical"
+
+
+def _event_channel_result_sort_key(row: JsonObject) -> tuple[str, str, str]:
+    qualifier = row.get("qualifier") if isinstance(row.get("qualifier"), dict) else {}
+    return (
+        str(qualifier.get("path", "")),
+        str(row.get("predicate", "")),
+        str(row.get("object", "")),
+    )
+
+
 class KgSnapshot:
     """Read-only KG snapshot plus query helpers shared by query submodules.
 
@@ -648,7 +672,8 @@ class KgSnapshot:
 
     def event_channels(self, channel_query: str | None = None, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit, max_limit=100)
-        rows = []
+        known_rows = []
+        candidate_rows = []
         for fact in self.facts:
             if fact["predicate"] not in {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}:
                 continue
@@ -660,22 +685,37 @@ class KgSnapshot:
             name = str(identity.get("channel_address") or identity.get("name") or "")
             if channel_query and channel_query.lower() not in name.lower():
                 continue
-            rows.append(self._fact_result(fact, subject, channel))
-        rows = sorted(
-            rows,
-            key=lambda row: (
-                str(row["qualifier"].get("path", "")),
-                str(row.get("predicate", "")),
-                str(row.get("object", "")),
-            ),
-        )
-        returned = rows[:limit]
+            linkage_status = _event_linkage_status(fact, channel)
+            row = self._fact_result(
+                fact,
+                subject,
+                channel,
+                canonical_status=_canonical_status(fact),
+                channel_canonical_status=_canonical_status(channel),
+                linkage_status=linkage_status,
+            )
+            if linkage_status == "known_linked":
+                known_rows.append(row)
+            else:
+                candidate_rows.append(row)
+        known_rows = sorted(known_rows, key=_event_channel_result_sort_key)
+        candidate_rows = sorted(candidate_rows, key=_event_channel_result_sort_key)
+        returned = known_rows[:limit]
+        remaining_limit = max(0, limit - len(returned))
+        returned_candidates = candidate_rows[:remaining_limit]
+        total_count = len(known_rows) + len(candidate_rows)
+        returned_count = len(returned) + len(returned_candidates)
         return {
-            "status": "found" if rows else "not_found",
+            "status": "found" if total_count else "not_found",
             "query": channel_query,
-            "event_fact_count": len(rows),
-            "returned_count": len(returned),
+            "event_fact_count": total_count,
+            "known_linked_count": len(known_rows),
+            "candidate_or_unlinked_count": len(candidate_rows),
+            "returned_count": returned_count,
+            "candidate_returned_count": len(returned_candidates),
+            "evidence_buckets": ["known_linked", "candidate_or_unlinked"],
             "event_channels": returned,
+            "candidate_or_unlinked": returned_candidates,
         }
 
     def _endpoint_reconciliation_warnings(

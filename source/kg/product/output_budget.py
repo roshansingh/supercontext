@@ -56,6 +56,7 @@ RELATED_FACT_SECTION_KEYS = frozenset(
         "endpoints",
         "endpoint_consumers",
         "event_channels",
+        "candidate_or_unlinked_event_channels",
         "deploy_mappings",
         "domains",
     }
@@ -85,11 +86,13 @@ _BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
     ("related_facts", "service_brief", "endpoints"),
     ("related_facts", "service_brief", "endpoint_consumers"),
     ("related_facts", "service_brief", "event_channels"),
+    ("related_facts", "service_brief", "candidate_or_unlinked_event_channels"),
     ("related_facts", "service_brief", "deploy_mappings"),
     ("related_facts", "dependencies"),
     ("related_facts", "endpoints"),
     ("related_facts", "endpoint_consumers"),
     ("related_facts", "event_channels"),
+    ("related_facts", "candidate_or_unlinked_event_channels"),
     ("related_facts", "deploy_mappings"),
     ("related_facts", "domains"),
     ("related_facts", "symbol_impact", "direct_callers"),
@@ -1172,6 +1175,7 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
                 "endpoints": result.get("endpoints", []),
                 "endpoint_consumers": result.get("endpoint_consumers", []),
                 "event_channels": result.get("event_channels", []),
+                "candidate_or_unlinked_event_channels": result.get("candidate_or_unlinked_event_channels", []),
                 "domains": result.get("domains", []),
                 "entry_points": result.get("entry_points", {}),
                 "related_facts": _compact_related_facts(result.get("related_facts", {})),
@@ -1210,7 +1214,15 @@ def _compact_related_facts(value: object) -> JsonObject:
     authz = value.get("authz_surface")
     if isinstance(authz, dict):
         compact["authz_surface"] = _compact_authz_surface(authz)
-    for key in ("dependencies", "endpoints", "endpoint_consumers", "event_channels", "deploy_mappings", "domains"):
+    for key in (
+        "dependencies",
+        "endpoints",
+        "endpoint_consumers",
+        "event_channels",
+        "candidate_or_unlinked_event_channels",
+        "deploy_mappings",
+        "domains",
+    ):
         rows, areas = _compact_budgeted_rows(
             value.get(key),
             limit=COMPACT_RUNTIME_HEADSTART_LIMIT,
@@ -1255,6 +1267,7 @@ def _compact_service_brief(value: object) -> tuple[JsonObject, list[JsonObject]]
         ("endpoints", _compact_headstart_or_relation_row),
         ("endpoint_consumers", _compact_headstart_or_relation_row),
         ("event_channels", _compact_headstart_or_relation_row),
+        ("candidate_or_unlinked_event_channels", _compact_headstart_or_relation_row),
         ("deploy_mappings", _compact_headstart_or_relation_row),
     ):
         rows, areas = _compact_budgeted_rows(

@@ -525,7 +525,7 @@ def _private_fixture_smoke_checks(fixture: JsonObject | None) -> list[tuple[str,
             "Do ConfigParser-backed event facts carry source .ini citations?",
             _expect_source_ref_count(
                 lambda kg: kg.event_channels(source_ref_channel, limit=100),
-                "event_channels",
+                ("event_channels", "candidate_or_unlinked"),
                 1,
             ),
         ),
@@ -604,14 +604,17 @@ def _expect_predicate_count(
 
 def _expect_source_ref_count(
     run: Callable[[KgSnapshot], JsonObject],
-    row_key: str,
+    row_key: str | tuple[str, ...],
     minimum: int,
 ) -> CheckFn:
     def check(kg: KgSnapshot) -> tuple[ValidationResult, str, JsonObject]:
         actual = run(kg)
-        rows = actual.get(row_key, [])
-        if not isinstance(rows, list):
-            rows = []
+        rows: list[object] = []
+        row_keys = (row_key,) if isinstance(row_key, str) else row_key
+        for key in row_keys:
+            value = actual.get(key, [])
+            if isinstance(value, list):
+                rows.extend(value)
         matching = [
             row
             for row in rows
