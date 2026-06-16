@@ -1952,6 +1952,50 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(row["consumer_count"], 1)
         self.assertEqual(row["consumers"][0]["consumer"]["name"], "web")
 
+    def test_output_budget_tracks_unlinked_deploy_lead_truncation(self) -> None:
+        leads = [
+            {
+                "status": "candidate_deploy_link",
+                "reason": "wsgi_ambiguous_module_path_suffix",
+                "service": {"name": f"api-{index}"},
+                "deploy_target": {"target": f"/srv/apps/app-{index}/wsgi.py"},
+                "evidence_coordinates": [{"repo": "ops", "path": "apache/site.conf", "line_start": index + 1}],
+            }
+            for index in range(20)
+        ]
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "runtime_architecture": {
+                "scope": {"kind": "fleet"},
+                "summary": {"candidate_or_unlinked_deploy_lead_count": len(leads)},
+                "answer_packet": {
+                    "runtime_building_blocks": [],
+                    "domain_routing_map": [],
+                    "deploy_runtime_map": [],
+                    "unlinked_deploy_leads": leads,
+                    "endpoint_consumer_map": [],
+                    "deploy_order_guidance": [],
+                    "deploy_kind_counts": {},
+                    "evidence_contract": "typed facts only",
+                },
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_planning_context_budget(result, max_chars=len(canonical_json(result)) - 1)
+
+        answer_packet = budgeted["runtime_architecture"]["answer_packet"]
+        self.assertLess(len(answer_packet["unlinked_deploy_leads"]), len(leads))
+        budget = budgeted["output_budget"]
+        self.assertEqual(
+            budget["omitted_counts"]["unlinked_deploy_leads"],
+            len(leads) - len(answer_packet["unlinked_deploy_leads"]),
+        )
+        self.assertIn("runtime_architecture.answer_packet.unlinked_deploy_leads", budget["truncated_sections"])
+
     def test_output_budget_marks_final_packet_when_minimum_still_exceeds_budget(self) -> None:
         result = {
             "tool": "planning_context",
@@ -2277,6 +2321,14 @@ class McpToolsTest(unittest.TestCase):
         unlinked = surfaces["evidence_partition"]["unlinked_evidence"]
         self.assertEqual(unlinked["deploy_link_samples"][0]["predicate"], "DEPLOYS_VIA_CONFIG")
         self.assertEqual(unlinked["deploy_link_samples"][0]["linkage_status"], "candidate_or_unlinked")
+        self.assertIn(
+            "operational_surfaces.candidate_or_unlinked_deploy_links",
+            result["claim_contract"]["candidate_or_unlinked_rows"],
+        )
+        self.assertIn(
+            "operational_surfaces.evidence_partition.unlinked_evidence.deploy_link_samples",
+            result["claim_contract"]["candidate_or_unlinked_rows"],
+        )
 
     def test_planning_context_cross_family_anchors_keep_each_family_context(self) -> None:
         with _fixture_snapshot() as kg:

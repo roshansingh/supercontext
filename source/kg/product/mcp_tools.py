@@ -844,7 +844,9 @@ def _service_brief_claim_contract() -> JsonObject:
         ],
         "candidate_or_unlinked_rows": [
             "candidate_or_unlinked_event_channels",
+            "operational_surfaces.candidate_or_unlinked_deploy_links",
             "operational_surfaces.evidence_partition.unlinked_evidence",
+            "operational_surfaces.evidence_partition.unlinked_evidence.deploy_link_samples",
             "endpoint_consumers with unresolved host/env assumptions",
         ],
         "safety_rule": (
