@@ -113,6 +113,113 @@ class TerraformExtractionTest(unittest.TestCase):
         self.assertEqual(build.entities, [])
         self.assertEqual(build.facts, [])
 
+    def test_lambda_event_source_mapping_emits_sqs_and_stream_consumers(self) -> None:
+        build = _extract_files(
+            {
+                "events.tf": (
+                    'resource "aws_sqs_queue" "orders" {\n'
+                    '  name = "orders-created"\n'
+                    "}\n"
+                    'resource "aws_lambda_event_source_mapping" "orders" {\n'
+                    "  event_source_arn = aws_sqs_queue.orders.arn\n"
+                    '  function_name = "orders-worker"\n'
+                    "}\n"
+                    'resource "aws_lambda_event_source_mapping" "stream" {\n'
+                    '  event_source_arn = "arn:aws:kinesis:us-east-1:123456789012:stream/orders-stream"\n'
+                    '  function_name = "stream-worker"\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(
+            _event_channels(build),
+            [("kinesis", "orders-stream"), ("sqs", "orders-created")],
+        )
+        self.assertEqual(_event_source_kinds(build), ["terraform_lambda_event_source_mapping"])
+        self.assertEqual(_fact_count(build, "CONSUMES_EVENT"), 2)
+
+    def test_sns_topic_subscription_emits_topic_consumer(self) -> None:
+        build = _extract_files(
+            {
+                "events.tf": (
+                    'resource "aws_sns_topic" "orders" {\n'
+                    '  name = "orders-topic"\n'
+                    "}\n"
+                    'resource "aws_sns_topic_subscription" "orders" {\n'
+                    "  topic_arn = aws_sns_topic.orders.arn\n"
+                    '  protocol = "lambda"\n'
+                    '  endpoint = "arn:aws:lambda:us-east-1:123456789012:function:orders-worker"\n'
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_event_channels(build), [("sns", "orders-topic")])
+        self.assertEqual(_event_source_kinds(build), ["terraform_sns_topic_subscription"])
+        self.assertEqual(_fact_count(build, "CONSUMES_EVENT"), 1)
+
+    def test_terraform_event_source_resource_refs_are_directory_scoped(self) -> None:
+        build = _extract_files(
+            {
+                "prod/queue.tf": 'resource "aws_sqs_queue" "orders" {\n  name = "prod-orders"\n}\n',
+                "prod/events.tf": (
+                    'resource "aws_lambda_event_source_mapping" "orders" {\n'
+                    "  event_source_arn = aws_sqs_queue.orders.arn\n"
+                    "}\n"
+                ),
+                "staging/queue.tf": 'resource "aws_sqs_queue" "orders" {\n  name = "staging-orders"\n}\n',
+                "staging/events.tf": (
+                    'resource "aws_lambda_event_source_mapping" "orders" {\n'
+                    "  event_source_arn = aws_sqs_queue.orders.arn\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_event_channels(build), [("sqs", "prod-orders"), ("sqs", "staging-orders")])
+
+    def test_terraform_event_source_duplicate_resource_refs_fail_closed(self) -> None:
+        build = _extract_files(
+            {
+                "events.tf": (
+                    'resource "aws_sqs_queue" "orders" {\n'
+                    '  name = "first-orders"\n'
+                    "}\n"
+                    'resource "aws_sqs_queue" "orders" {\n'
+                    '  name = "second-orders"\n'
+                    "}\n"
+                    'resource "aws_lambda_event_source_mapping" "orders" {\n'
+                    "  event_source_arn = aws_sqs_queue.orders.arn\n"
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_event_channels(build), [])
+        self.assertEqual(_fact_count(build, "CONSUMES_EVENT"), 0)
+
+    def test_terraform_event_sources_fail_closed_for_unresolved_values(self) -> None:
+        build = _extract_files(
+            {
+                "events.tf": (
+                    'resource "aws_sqs_queue" "implicit" {}\n'
+                    'resource "aws_lambda_event_source_mapping" "implicit" {\n'
+                    "  event_source_arn = aws_sqs_queue.implicit.arn\n"
+                    "}\n"
+                    'resource "aws_lambda_event_source_mapping" "interpolated" {\n'
+                    '  event_source_arn = "${aws_sqs_queue.implicit.arn}"\n'
+                    "}\n"
+                    'resource "aws_lambda_event_source_mapping" "id_ref" {\n'
+                    "  event_source_arn = aws_sqs_queue.implicit.id\n"
+                    "}\n"
+                )
+            }
+        )
+
+        self.assertEqual(_event_channels(build), [])
+        self.assertEqual(_fact_count(build, "CONSUMES_EVENT"), 0)
+
     def test_single_quoted_value_is_skipped(self) -> None:
         build = _extract(
             'variable "api_domain" {\n'
@@ -815,6 +922,18 @@ def _deploy_targets(build: ConfigKgBuild) -> list[tuple[str, str]]:
         for entity in build.entities
         if entity.kind == "DeployTarget"
     ]
+
+
+def _event_channels(build: ConfigKgBuild) -> list[tuple[str, str]]:
+    return sorted(
+        (entity.identity["broker_kind"], entity.identity["channel_address"])
+        for entity in build.entities
+        if entity.kind == "EventChannel"
+    )
+
+
+def _event_source_kinds(build: ConfigKgBuild) -> list[str]:
+    return sorted({fact.qualifier["source_kind"] for fact in build.facts if fact.predicate == "CONSUMES_EVENT"})
 
 
 def _coverage_reasons(build: ConfigKgBuild) -> list[str]:

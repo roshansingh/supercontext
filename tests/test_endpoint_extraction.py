@@ -205,6 +205,56 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_methods_by_path(routes), {"/dev-orders": {"GET"}})
 
+    def test_serverless_yaml_event_sources_emit_consumers(self) -> None:
+        build = _extract_config(
+            {
+                "serverless.yml": (
+                    "functions:\n"
+                    "  worker:\n"
+                    "    handler: app.worker\n"
+                    "    events:\n"
+                    "      - sqs: arn:aws:sqs:us-east-1:123456789012:orders-created\n"
+                    "      - sns:\n"
+                    "          topicName: orders-topic\n"
+                    "      - stream:\n"
+                    "          arn: arn:aws:kinesis:us-east-1:123456789012:stream/orders-stream\n"
+                    "      - stream:\n"
+                    "          arn: arn:aws:dynamodb:us-east-1:123456789012:"
+                    "table/orders-table/stream/2026-06-16T00:00:00.000\n"
+                    "      - eventBridge:\n"
+                    "          eventBus: arn:aws:events:us-east-1:123456789012:event-bus/orders-bus\n"
+                    "      - sqs: ${self:custom.queueArn}\n"
+                )
+            }
+        )
+
+        events = _endpoint_rows(build, "CONSUMES_EVENT")
+        source_kinds_by_channel = {
+            entity.identity["channel_address"]: fact.qualifier["source_kind"]
+            for fact, entity in events
+            if fact.qualifier["source_kind"].startswith("serverless_")
+        }
+
+        self.assertEqual(
+            source_kinds_by_channel,
+            {
+                "orders-created": "serverless_sqs_event",
+                "orders-topic": "serverless_sns_event",
+                "orders-stream": "serverless_stream_event",
+                "orders-table": "serverless_stream_event",
+                "orders-bus": "serverless_eventbridge_event",
+            },
+        )
+        stream_properties = {
+            entity.identity["channel_address"]: entity.properties
+            for _, entity in events
+            if entity.identity["broker_kind"] == "dynamodb_stream"
+        }
+        self.assertEqual(
+            stream_properties["orders-table"]["stream_resource"],
+            "table/orders-table/stream/2026-06-16T00:00:00.000",
+        )
+
     def test_serverless_yaml_parse_error_emits_coverage_for_serverless_filename(self) -> None:
         build = _extract_config({"serverless.yml": "functions: [not valid yaml\n"})
 

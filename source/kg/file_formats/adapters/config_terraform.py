@@ -17,8 +17,8 @@ class ConfigTerraformAdapter:
         languages=("config",),
         file_kinds=("config",),
         framework_tags=("terraform",),
-        produces_predicates=("DEPLOYS_VIA_CONFIG", "REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"),
-        produces_entity_kinds=("DeployTarget", "Domain"),
+        produces_predicates=("CONSUMES_EVENT", "DEPLOYS_VIA_CONFIG", "REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"),
+        produces_entity_kinds=("DeployTarget", "Domain", "EventChannel"),
         ontology_scope="mixed",
         source_system=StaticConfigExtractor.source_system,
     )
