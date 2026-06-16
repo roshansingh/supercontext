@@ -26,9 +26,11 @@ class RuntimeLinkTest(unittest.TestCase):
         self.assertEqual(result.facts[0].predicate, "DEPLOYS_VIA_CONFIG")
         self.assertEqual(result.facts[0].subject_id, service.entity_id)
         self.assertEqual(result.facts[0].object_id, target.entity_id)
+        self.assertEqual(result.canonical_link_count, 1)
+        self.assertEqual(result.candidate_link_count, 0)
         self.assertEqual(result.evidence[0].bytes_ref["path"], "apache/site.conf")
 
-    def test_wsgi_target_ambiguous_suffix_emits_no_link(self) -> None:
+    def test_wsgi_target_ambiguous_suffix_emits_candidate_links(self) -> None:
         target = _deploy_target("infra", "/srv/apps/app/wsgi.py")
         result = link_runtime_targets(
             (
@@ -38,7 +40,17 @@ class RuntimeLinkTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result.facts, ())
+        self.assertEqual(len(result.facts), 2)
+        self.assertEqual({fact.canonical_status for fact in result.facts}, {"candidate"})
+        self.assertEqual({fact.qualifier["resolved_by"] for fact in result.facts}, {"wsgi_ambiguous_module_path_suffix"})
+        candidate_sets = {tuple(fact.qualifier["candidate_service_ids"]) for fact in result.facts}
+        self.assertEqual(len(candidate_sets), 1)
+        self.assertEqual(len(next(iter(candidate_sets))), 2)
+        self.assertEqual(len(result.evidence), 2)
+        self.assertEqual({row.derivation_class for row in result.evidence}, {"candidate"})
+        self.assertEqual({row.bytes_ref["path"] for row in result.evidence if row.bytes_ref}, {"apache/site.conf"})
+        self.assertEqual(result.canonical_link_count, 0)
+        self.assertEqual(result.candidate_link_count, 2)
         self.assertEqual(result.ambiguous_link_count, 1)
         self.assertIn("ambiguous_wsgi_module_suffix", {row.scope_ref["reason"] for row in result.coverage})
 

@@ -614,6 +614,8 @@ def _m_useful_edge(context: _MetricContext) -> MetricValue:
         return MetricValue(None, "n_a", "no useful-edge anchor entities in scope")
     useful_anchors: set[str] = set()
     for fact in context.scoped_facts:
+        if str(fact.get("canonical_status", "canonical")) != "canonical":
+            continue
         predicate = str(fact.get("predicate"))
         subject_id = str(fact.get("subject_id"))
         object_id = str(fact.get("object_id"))

@@ -12,6 +12,7 @@ RUNTIME_DOMAIN_PREDICATES = {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}
 RUNTIME_ENDPOINT_PREDICATES = {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}
 RUNTIME_EVENT_PREDICATES = {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}
 RUNTIME_DEPLOY_PREDICATES = {"DEPLOYS_VIA_CONFIG"}
+RUNTIME_UNLINKED_DEPLOY_REASONS = {"ambiguous_wsgi_module_suffix", "no_target_bytes_ref_evidence"}
 RUNTIME_COMPONENT_LIMIT = 12
 RUNTIME_COMPONENT_HARD_CAP = 25
 RUNTIME_COMPONENT_DETAIL_LIMIT = 1
@@ -32,6 +33,7 @@ def runtime_architecture_packet(
     repo_key = _normalize_repo(repo)
     domain_routes: list[JsonObject] = []
     deploy_links: list[JsonObject] = []
+    deploy_candidate_rows: list[JsonObject] = []
     endpoint_rows: list[JsonObject] = []
     client_rows: list[JsonObject] = []
     event_rows: list[JsonObject] = []
@@ -55,7 +57,10 @@ def runtime_architecture_packet(
         if predicate == "ROUTES_DOMAIN_TO_DEPLOY":
             domain_routes.append(row)
         elif predicate == "DEPLOYS_VIA_CONFIG":
-            deploy_links.append(row)
+            if _canonical_status(fact) == "canonical":
+                deploy_links.append(row)
+            else:
+                deploy_candidate_rows.append(row)
         elif predicate == "CALLS_ENDPOINT":
             client_rows.append(row)
         elif predicate in {"EXPOSES_ENDPOINT", "DOCUMENTS_ENDPOINT"}:
@@ -67,6 +72,7 @@ def runtime_architecture_packet(
 
     domain_routes = _dedupe_rows(domain_routes)
     deploy_links = _dedupe_rows(deploy_links)
+    deploy_candidate_rows = _dedupe_rows(deploy_candidate_rows)
     endpoint_rows = _dedupe_rows(endpoint_rows)
     client_rows = _dedupe_rows(client_rows)
     event_rows = _dedupe_rows(event_rows)
@@ -102,6 +108,12 @@ def runtime_architecture_packet(
         limit=RUNTIME_ROUTE_HARD_CAP,
     )
     deploy_runtime_map = _deploy_runtime_map(deploy_links=deploy_links, domain_routes=domain_routes, limit=route_limit)
+    unlinked_deploy_leads = _unlinked_deploy_leads(
+        kg,
+        deploy_candidate_rows=deploy_candidate_rows,
+        repo_key=repo_key,
+        limit=route_limit,
+    )
     endpoint_consumer_map, endpoint_consumer_missing_method_drop_count = _endpoint_consumer_map(
         endpoint_rows=endpoint_rows,
         client_rows=client_rows,
@@ -117,6 +129,7 @@ def runtime_architecture_packet(
         runtime_building_blocks=runtime_building_blocks,
         domain_routing_map=investigation_domain_routing_map,
         deploy_runtime_map=deploy_runtime_map,
+        unlinked_deploy_leads=unlinked_deploy_leads,
         endpoint_consumer_map=endpoint_consumer_map,
         missing_fact_families=missing_fact_families,
         limit=min(max(limit, RUNTIME_INVESTIGATION_BRIEF_LIMIT), RUNTIME_COMPONENT_HARD_CAP),
@@ -127,6 +140,7 @@ def runtime_architecture_packet(
         "summary": {
             "domain_route_count": len(domain_routes),
             "deploy_link_count": len(deploy_links),
+            "candidate_or_unlinked_deploy_lead_count": len(unlinked_deploy_leads),
             "endpoint_surface_count": len(endpoint_rows),
             "client_endpoint_call_count": len(client_rows),
             "event_surface_count": len(event_rows),
@@ -149,6 +163,7 @@ def runtime_architecture_packet(
             "runtime_building_blocks": runtime_building_blocks,
             "domain_routing_map": domain_routing_map,
             "deploy_runtime_map": deploy_runtime_map,
+            "unlinked_deploy_leads": unlinked_deploy_leads,
             "endpoint_consumer_map": endpoint_consumer_map,
             "deploy_order_guidance": deploy_order_guidance,
             "deploy_kind_counts": deploy_kind_counts,
@@ -156,6 +171,7 @@ def runtime_architecture_packet(
             "evidence_contract": (
                 "known_route rows come from ROUTES_DOMAIN_TO_DEPLOY and can be treated as domain-to-deploy evidence. "
                 "deploy_link rows come from DEPLOYS_VIA_CONFIG and link services to deploy targets. "
+                "unlinked_deploy_leads are candidate or unresolved service-to-deploy evidence and must not be treated as known deploy links. "
                 "endpoint_consumer_map rows are proven static CALLS_ENDPOINT consumers matched to provider endpoints. "
                 "deploy_order_guidance rows are practical compatibility inferences from those consumers, not canonical deploy-blocker facts. "
                 "unlinked_domain_reference rows are source leads only and must not be promoted to proven routes. "
@@ -177,6 +193,7 @@ def runtime_architecture_packet(
                 "deploy_kind_counts": deploy_kind_counts,
                 "domain_routes": domain_routes[:limit],
                 "deploy_links": deploy_links[:limit],
+                "unlinked_deploy_leads": unlinked_deploy_leads[:limit],
                 "backend_services": endpoint_rows[:limit],
                 "clients": client_rows[:limit],
                 "events_and_workers": event_rows[:limit],
@@ -184,7 +201,15 @@ def runtime_architecture_packet(
                 "missing_or_unlinked": _missing_or_unlinked(domain_routes, deploy_links, domain_references, limit=limit),
                 "truncated": any(
                     len(rows) > limit
-                    for rows in (domain_routes, deploy_links, endpoint_rows, client_rows, event_rows, domain_references)
+                    for rows in (
+                        domain_routes,
+                        deploy_links,
+                        unlinked_deploy_leads,
+                        endpoint_rows,
+                        client_rows,
+                        event_rows,
+                        domain_references,
+                    )
                 ),
             }
         )
@@ -533,6 +558,7 @@ def _runtime_investigation_brief(
     runtime_building_blocks: list[JsonObject],
     domain_routing_map: list[JsonObject],
     deploy_runtime_map: list[JsonObject],
+    unlinked_deploy_leads: list[JsonObject],
     endpoint_consumer_map: list[JsonObject],
     missing_fact_families: list[str],
     limit: int,
@@ -557,6 +583,11 @@ def _runtime_investigation_brief(
         for unit in deploy_runtime_map
         if isinstance(unit, dict)
     ], key=_deploy_unit_headstart_sort_key), limit=limit, key_fn=_deploy_unit_headstart_diversity_key)
+    deploy_leads = _select_diverse_headstart_rows(sorted([
+        _runtime_deploy_lead_headstart(lead)
+        for lead in unlinked_deploy_leads
+        if isinstance(lead, dict)
+    ], key=_deploy_lead_sort_key), limit=limit, key_fn=_deploy_lead_diversity_key)
     consumer_links = _select_diverse_headstart_rows(sorted([
         _runtime_consumer_headstart(row)
         for row in endpoint_consumer_map
@@ -567,11 +598,12 @@ def _runtime_investigation_brief(
         known_routes=known_routes,
         unlinked_leads=unlinked_leads,
         deploy_units=deploy_units,
+        deploy_leads=deploy_leads,
         consumer_links=consumer_links,
         limit=max(limit, RUNTIME_INVESTIGATION_SOURCE_CHECK_LIMIT),
     )
     repos_referenced = _runtime_repos_referenced(
-        [*component_anchors, *known_routes, *unlinked_leads, *deploy_units, *consumer_links, *source_checks]
+        [*component_anchors, *known_routes, *unlinked_leads, *deploy_units, *deploy_leads, *consumer_links, *source_checks]
     )
     return {
         "purpose": "head_start_for_agent_source_investigation",
@@ -585,6 +617,7 @@ def _runtime_investigation_brief(
         "known_routes": known_routes,
         "unlinked_runtime_leads": unlinked_leads,
         "deploy_units": deploy_units,
+        "unlinked_deploy_leads": deploy_leads,
         "consumer_links": consumer_links,
         "recommended_source_checks": source_checks,
         "missing_fact_families": missing_fact_families,
@@ -689,6 +722,34 @@ def _deploy_unit_headstart_sort_key(row: JsonObject) -> tuple[int, str, str, str
         str(service.get("name") or service.get("slug") or ""),
         str(service.get("repo") or ""),
         str(target.get("name") or target.get("target") or ""),
+    )
+
+
+def _deploy_lead_diversity_key(row: JsonObject) -> tuple[object, ...]:
+    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+    target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+    candidate_services = tuple(
+        service.get("entity_id") or service.get("name") or service.get("slug")
+        for service in _dict_list(row.get("candidate_services"))
+    )
+    return (
+        row.get("status"),
+        row.get("reason"),
+        row.get("deploy_kind"),
+        service.get("entity_id") or service.get("name") or service.get("slug"),
+        candidate_services,
+        target.get("entity_id") or target.get("target"),
+    )
+
+
+def _deploy_lead_sort_key(row: JsonObject) -> tuple[int, str, str, str]:
+    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+    target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+    return (
+        0 if row.get("status") == "candidate_deploy_link" else 1,
+        str(row.get("reason") or ""),
+        str(service.get("name") or service.get("slug") or ""),
+        str(target.get("target") or target.get("name") or ""),
     )
 
 
@@ -820,6 +881,25 @@ def _runtime_deploy_unit_headstart(unit: JsonObject) -> JsonObject:
     return {key: value for key, value in row.items() if value not in (None, {}, [])}
 
 
+def _runtime_deploy_lead_headstart(lead: JsonObject) -> JsonObject:
+    row = {
+        "status": lead.get("status"),
+        "anchor_kind": "deploy_lead",
+        "reason": lead.get("reason"),
+        "service": _brief_entity(lead.get("service")),
+        "candidate_services": [
+            _brief_entity(service)
+            for service in _dict_list(lead.get("candidate_services"))
+        ],
+        "deploy_target": _brief_entity(lead.get("deploy_target")),
+        "deploy_kind": lead.get("deploy_kind"),
+        "match_basis": lead.get("match_basis"),
+        "evidence_coordinates": _dedupe_coordinates(_dict_list(lead.get("evidence_coordinates")))[:2],
+        "interpretation": lead.get("interpretation"),
+    }
+    return {key: value for key, value in row.items() if value not in (None, {}, [])}
+
+
 def _runtime_consumer_headstart(row: JsonObject) -> JsonObject:
     consumers = [
         _brief_entity(consumer.get("consumer"))
@@ -863,6 +943,7 @@ def _runtime_recommended_source_checks(
     known_routes: list[JsonObject],
     unlinked_leads: list[JsonObject],
     deploy_units: list[JsonObject],
+    deploy_leads: list[JsonObject],
     consumer_links: list[JsonObject],
     limit: int,
 ) -> list[JsonObject]:
@@ -881,6 +962,14 @@ def _runtime_recommended_source_checks(
             check
             for unit in deploy_units
             for check in _source_checks_from_row(unit, reason="verify deploy unit and runtime target")
+        ],
+        [
+            check
+            for lead in deploy_leads
+            for check in _source_checks_from_row(
+                lead,
+                reason="verify candidate or unresolved deploy lead before claiming service deployment",
+            )
         ],
         [
             check
@@ -1107,11 +1196,17 @@ def _fact_row(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_: Js
     return {
         "fact_id": fact.get("fact_id"),
         "predicate": fact.get("predicate"),
+        "canonical_status": _canonical_status(fact),
         "subject": _entity_row(subject),
         "object": _entity_row(object_),
         "qualifier": fact.get("qualifier", {}),
         "evidence": kg.evidence_by_target.get(fact.get("fact_id"), []),
     }
+
+
+def _canonical_status(row: JsonObject) -> str:
+    value = row.get("canonical_status", "canonical")
+    return value if isinstance(value, str) and value else "canonical"
 
 
 def _entity_row(entity: JsonObject) -> JsonObject:
@@ -1239,6 +1334,141 @@ def _deploy_target_to_service_rows(deploy_links: list[JsonObject]) -> dict[str, 
             continue
         by_target.setdefault(target_id, []).append(row)
     return by_target
+
+
+def _unlinked_deploy_leads(
+    kg: KgSnapshot,
+    *,
+    deploy_candidate_rows: list[JsonObject],
+    repo_key: str | None,
+    limit: int,
+) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    candidate_target_ids: set[str] = set()
+    for row in deploy_candidate_rows:
+        subject = row.get("subject") if isinstance(row.get("subject"), dict) else {}
+        target = row.get("object") if isinstance(row.get("object"), dict) else {}
+        target_id = target.get("entity_id")
+        if isinstance(target_id, str):
+            candidate_target_ids.add(target_id)
+        qualifier = _compact_qualifier(row.get("qualifier"))
+        rows.append(
+            {
+                "status": "candidate_deploy_link",
+                "reason": qualifier.get("resolved_by") or "candidate_deploy_link",
+                "service": _compact_entity(subject),
+                "candidate_services": _candidate_service_rows(kg, qualifier.get("candidate_service_ids")),
+                "deploy_target": _compact_entity(target),
+                "deploy_kind": _deploy_kind_for_route_or_target(row),
+                "match_basis": qualifier.get("resolved_by"),
+                "qualifier": qualifier,
+                "evidence_coordinates": _evidence_coordinates(row),
+                "interpretation": (
+                    "Candidate service-to-deploy link from runtime config. Verify source before treating it as a known deploy link."
+                ),
+            }
+        )
+
+    for coverage in kg.coverage:
+        if coverage.get("predicate") != "DEPLOYS_VIA_CONFIG" or coverage.get("source_system") != "runtime_linker":
+            continue
+        scope_ref = coverage.get("scope_ref") if isinstance(coverage.get("scope_ref"), dict) else {}
+        reason = scope_ref.get("reason")
+        if reason not in RUNTIME_UNLINKED_DEPLOY_REASONS:
+            continue
+        target_id = scope_ref.get("deploy_target_id")
+        if reason == "ambiguous_wsgi_module_suffix" and isinstance(target_id, str) and target_id in candidate_target_ids:
+            continue
+        target_identity = scope_ref.get("deploy_target_identity")
+        if not isinstance(target_identity, dict):
+            continue
+        if repo_key is not None and _normalize_repo(target_identity.get("repo")) != repo_key:
+            continue
+        target = kg.entities_by_id.get(target_id) if isinstance(target_id, str) else None
+        target_row = _compact_entity(target) if isinstance(target, dict) else _deploy_target_from_identity(target_id, target_identity)
+        rows.append(
+            {
+                "status": "unresolved_deploy_link",
+                "reason": reason,
+                "candidate_services": _candidate_service_rows(kg, scope_ref.get("candidate_service_ids")),
+                "deploy_target": target_row,
+                "deploy_kind": _deploy_kind_from_target_identity(target_identity),
+                "match_basis": reason,
+                "qualifier": {
+                    "source_kind": "runtime_linker",
+                    "reason": reason,
+                    "rule_version": scope_ref.get("rule_version"),
+                },
+                "evidence_coordinates": _entity_evidence_coordinates(kg, target_id),
+                "interpretation": (
+                    "Runtime linker could not emit a known deploy link for this target. Use the target identity and any coordinates as an inspection lead."
+                ),
+            }
+        )
+    return sorted(_dedupe_deploy_leads(rows), key=_deploy_lead_sort_key)[:limit]
+
+
+def _candidate_service_rows(kg: KgSnapshot, value: object) -> list[JsonObject]:
+    if not isinstance(value, list):
+        return []
+    rows = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        entity = kg.entities_by_id.get(item)
+        if isinstance(entity, dict) and entity.get("kind") == "Service":
+            rows.append(_compact_entity(entity))
+    return rows
+
+
+def _deploy_target_from_identity(target_id: object, identity: JsonObject) -> JsonObject:
+    return _compact_entity(
+        {
+            "entity_id": target_id if isinstance(target_id, str) else None,
+            "kind": "DeployTarget",
+            "identity": identity,
+            "properties": {},
+        }
+    )
+
+
+def _entity_evidence_coordinates(kg: KgSnapshot, entity_id: object) -> list[JsonObject]:
+    if not isinstance(entity_id, str):
+        return []
+    return _evidence_coordinates({"evidence": kg.evidence_by_target.get(entity_id, [])})
+
+
+def _deploy_kind_from_target_identity(identity: JsonObject) -> str | None:
+    deploy_type = identity.get("type")
+    if not isinstance(deploy_type, str) or not deploy_type:
+        return None
+    if deploy_type == "wsgi":
+        return "apache_wsgi"
+    return deploy_type
+
+
+def _dedupe_deploy_leads(rows: list[JsonObject]) -> list[JsonObject]:
+    seen = set()
+    deduped = []
+    for row in rows:
+        target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
+        service = row.get("service") if isinstance(row.get("service"), dict) else {}
+        candidate_services = tuple(
+            service.get("entity_id") or service.get("name") or service.get("slug")
+            for service in _dict_list(row.get("candidate_services"))
+        )
+        key = (
+            row.get("status"),
+            row.get("reason"),
+            service.get("entity_id"),
+            candidate_services,
+            target.get("entity_id") or target.get("target"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 def _deploy_kind_counts(runtime_building_blocks: list[JsonObject], domain_routing_map: list[JsonObject]) -> JsonObject:

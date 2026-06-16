@@ -633,16 +633,21 @@ _CANDIDATE_LEAD_KIND: dict[str, str] = {
     "truncated_terminal_symbols": "truncated_source_inspection_lead",
     "deploy_order_guidance": "inference_or_guidance",
     "unlinked_domain_route_samples": "unlinked_source_lead",
+    "candidate_or_unlinked_deploy_links": "unlinked_source_lead",
     "endpoint_consumers": "endpoint_consumer_candidate",
     "candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
     "service_operational_surfaces.evidence_partition.unlinked_evidence": "unlinked_source_lead",
+    "operational_surfaces.candidate_or_unlinked_deploy_links": "unlinked_source_lead",
+    "service_operational_surfaces.candidate_or_unlinked_deploy_links": "unlinked_source_lead",
     "runtime_surfaces.candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "related_facts.candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "related_facts.service_brief.candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "review_answer_packet.runtime.candidate_or_unlinked_event_channels": "unlinked_source_lead",
     "application_impact.cross_repo_name_leads": "cross_repo_name_lead",
     "runtime_architecture.answer_packet.unlinked_runtime_leads": "unlinked_source_lead",
+    "runtime_architecture.answer_packet.unlinked_deploy_leads": "unlinked_source_lead",
+    "runtime_architecture.answer_packet.investigation_brief.unlinked_deploy_leads": "unlinked_source_lead",
 }
 
 
@@ -687,6 +692,7 @@ _CANDIDATE_LEAD_FIELDS = (
     "truncated_terminal_symbols",
     "endpoint_consumers",
     "candidate_or_unlinked_event_channels",
+    "candidate_or_unlinked_deploy_links",
     "deploy_order_guidance",
     "unlinked_domain_route_samples",
 )
@@ -694,6 +700,8 @@ _CANDIDATE_LEAD_FIELDS = (
 _NESTED_CANDIDATE_LEAD_FIELDS = (
     ("operational_surfaces.evidence_partition.unlinked_evidence", ("operational_surfaces", "evidence_partition", "unlinked_evidence")),
     ("service_operational_surfaces.evidence_partition.unlinked_evidence", ("service_operational_surfaces", "evidence_partition", "unlinked_evidence")),
+    ("operational_surfaces.candidate_or_unlinked_deploy_links", ("operational_surfaces", "candidate_or_unlinked_deploy_links")),
+    ("service_operational_surfaces.candidate_or_unlinked_deploy_links", ("service_operational_surfaces", "candidate_or_unlinked_deploy_links")),
     ("runtime_surfaces.candidate_or_unlinked_event_channels", ("runtime_surfaces", "candidate_or_unlinked_event_channels")),
     ("related_facts.candidate_or_unlinked_event_channels", ("related_facts", "candidate_or_unlinked_event_channels")),
     (
@@ -706,6 +714,11 @@ _NESTED_CANDIDATE_LEAD_FIELDS = (
     ),
     ("application_impact.cross_repo_name_leads", ("application_impact", "cross_repo_name_leads")),
     ("runtime_architecture.answer_packet.unlinked_runtime_leads", ("runtime_architecture", "answer_packet", "unlinked_runtime_leads")),
+    ("runtime_architecture.answer_packet.unlinked_deploy_leads", ("runtime_architecture", "answer_packet", "unlinked_deploy_leads")),
+    (
+        "runtime_architecture.answer_packet.investigation_brief.unlinked_deploy_leads",
+        ("runtime_architecture", "answer_packet", "investigation_brief", "unlinked_deploy_leads"),
+    ),
 )
 
 _NESTED_INSPECTION_AREA_FIELDS = (
@@ -756,7 +769,11 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         [row for row in related if _is_candidate_or_unlinked_event_row(row)]
     )
     deploy_mappings = _planning_context_dedupe_rows(
-        [row for row in related if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}]
+        [
+            row
+            for row in related
+            if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY" or _is_known_deploy_row(row)
+        ]
     )
     endpoint_consumer_packet = _endpoint_consumer_packet_for_service(kg, service, limit=limit)
     operational_surfaces = _service_operational_surfaces(kg, service, limit=limit)
@@ -1371,6 +1388,8 @@ def _fact_result(kg: KgSnapshot, fact: JsonObject, subject: JsonObject, object_:
         row["call_site"] = call_site
     if _is_event_predicate(row["predicate"]):
         row["linkage_status"] = "known_linked" if _is_known_event_fact(fact, object_) else "candidate_or_unlinked"
+    if row["predicate"] == "DEPLOYS_VIA_CONFIG":
+        row["linkage_status"] = "known_linked" if _is_known_deploy_fact(fact) else "candidate_or_unlinked"
     return row
 
 
@@ -1401,6 +1420,14 @@ def _is_known_event_row(row: JsonObject) -> bool:
 
 def _is_candidate_or_unlinked_event_row(row: JsonObject) -> bool:
     return _is_event_predicate(row.get("predicate")) and not _is_known_event_row(row)
+
+
+def _is_known_deploy_fact(fact: JsonObject) -> bool:
+    return fact.get("predicate") == "DEPLOYS_VIA_CONFIG" and _row_canonical_status(fact) == "canonical"
+
+
+def _is_known_deploy_row(row: JsonObject) -> bool:
+    return row.get("predicate") == "DEPLOYS_VIA_CONFIG" and row.get("canonical_status", "canonical") == "canonical"
 
 
 def _endpoint_consumer_packet_for_service(kg: KgSnapshot, service: JsonObject, *, limit: int) -> JsonObject:
@@ -1596,11 +1623,13 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
     deploy_link_rows: list[JsonObject] = []
     domain_route_rows: list[JsonObject] = []
     unlinked_domain_route_rows: list[JsonObject] = []
+    unlinked_deploy_link_rows: list[JsonObject] = []
     service_deploy_targets = {
         fact.get("object_id")
         for fact in kg.facts
         if fact.get("predicate") == "DEPLOYS_VIA_CONFIG"
         and fact.get("subject_id") == service_id
+        and _is_known_deploy_fact(fact)
         and isinstance(fact.get("object_id"), str)
     }
 
@@ -1623,12 +1652,16 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
             continue
         row = _fact_result(kg, fact, subject, object_)
         if predicate == "DEPLOYS_VIA_CONFIG" and subject.get("entity_id") == service_id:
-            deploy_link_rows.append(
-                {
-                    **row,
-                    "match_basis": "service_deploys_via_config",
-                }
-            )
+            row = {
+                **row,
+                "match_basis": "service_deploys_via_config"
+                if _is_known_deploy_fact(fact)
+                else "candidate_service_deploys_via_config",
+            }
+            if _is_known_deploy_fact(fact):
+                deploy_link_rows.append(row)
+            else:
+                unlinked_deploy_link_rows.append(row)
             continue
         if _repo_text_matches(_planning_context_entity_repo(subject), repo) or _repo_text_matches(
             _planning_context_entity_repo(object_), repo
@@ -1662,6 +1695,7 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
     deploy_target_rows = _planning_context_dedupe_rows(deploy_target_rows)
     deploy_link_rows = _planning_context_dedupe_rows(deploy_link_rows)
     unlinked_domain_route_rows = _planning_context_dedupe_rows(unlinked_domain_route_rows)
+    unlinked_deploy_link_rows = _planning_context_dedupe_rows(unlinked_deploy_link_rows)
     endpoint_consumer_rows = _planning_context_dedupe_rows(endpoint_consumer_rows)
     deploy_runtime_units = _service_deploy_runtime_units(kg, service, limit=limit)
     deploy_order_guidance = _service_deploy_order_guidance(endpoint_consumer_rows, limit=limit)
@@ -1671,6 +1705,7 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
         deploy_target_rows=deploy_target_rows,
         deploy_link_rows=deploy_link_rows,
         unlinked_domain_route_rows=unlinked_domain_route_rows,
+        unlinked_deploy_link_rows=unlinked_deploy_link_rows,
         endpoint_consumer_rows=endpoint_consumer_rows,
     )
     return {
@@ -1680,6 +1715,7 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
             "deploy_target_candidate_count": deploy_evidence_count,
             "deploy_target_entity_count": len(deploy_target_rows),
             "deploy_link_fact_count": len(deploy_link_rows),
+            "candidate_or_unlinked_deploy_link_count": len(unlinked_deploy_link_rows),
             "deploy_runtime_unit_count": len(deploy_runtime_units),
             "unlinked_domain_route_count": len(unlinked_domain_route_rows),
             "endpoint_consumer_fact_count": len(endpoint_consumer_rows),
@@ -1696,6 +1732,7 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
             deploy_target_rows=deploy_target_rows,
             deploy_link_rows=deploy_link_rows,
             unlinked_domain_route_rows=unlinked_domain_route_rows,
+            unlinked_deploy_link_rows=unlinked_deploy_link_rows,
             missing_contract_items=missing_contract_items,
             limit=limit,
         ),
@@ -1707,6 +1744,7 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
         "deploy_link_facts": deploy_link_rows[:limit],
         "endpoint_consumers": _compact_endpoint_consumer_rows(endpoint_consumer_rows, limit=limit),
         "unlinked_domain_route_samples": unlinked_domain_route_rows[:limit],
+        "candidate_or_unlinked_deploy_links": unlinked_deploy_link_rows[:limit],
         "truncated": any(
             len(rows) > limit
             for rows in (
@@ -1717,10 +1755,11 @@ def _service_operational_surfaces(kg: KgSnapshot, service: JsonObject, *, limit:
                 deploy_runtime_units,
                 endpoint_consumer_rows,
                 unlinked_domain_route_rows,
+                unlinked_deploy_link_rows,
             )
         ),
         "coverage_note": (
-            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; deploy_link_facts require service-to-target evidence; deploy_runtime_units join DEPLOYS_VIA_CONFIG to domain/ingress routes by deploy target. endpoint_consumers are static caller facts; deploy_order_guidance is a practical compatibility inference, not a canonical deploy-blocker fact. unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
+            "domain_route_candidates and deploy_target_candidates require exact repo-identity evidence; deploy_link_facts require known service-to-target evidence; candidate_or_unlinked_deploy_links are source leads only; deploy_runtime_units join known DEPLOYS_VIA_CONFIG to domain/ingress routes by deploy target. endpoint_consumers are static caller facts; deploy_order_guidance is a practical compatibility inference, not a canonical deploy-blocker fact. unlinked_domain_route_samples are fleet config evidence and are not service deploy-blocker facts."
         ),
     }
 
@@ -1732,6 +1771,7 @@ def _operational_evidence_partition(
     deploy_target_rows: list[JsonObject],
     deploy_link_rows: list[JsonObject],
     unlinked_domain_route_rows: list[JsonObject],
+    unlinked_deploy_link_rows: list[JsonObject],
     missing_contract_items: list[JsonObject],
     limit: int,
 ) -> JsonObject:
@@ -1753,11 +1793,13 @@ def _operational_evidence_partition(
             },
         },
         OPERATIONAL_UNLINKED_EVIDENCE: {
-            "status": "found" if unlinked_domain_route_rows else "empty",
+            "status": "found" if unlinked_domain_route_rows or unlinked_deploy_link_rows else "empty",
             "interpretation": OPERATIONAL_BUCKET_DESCRIPTIONS[OPERATIONAL_UNLINKED_EVIDENCE],
             "domain_route_samples": unlinked_domain_route_rows[:limit],
+            "deploy_link_samples": unlinked_deploy_link_rows[:limit],
             "counts": {
                 "domain_route_sample_count": len(unlinked_domain_route_rows),
+                "deploy_link_sample_count": len(unlinked_deploy_link_rows),
             },
         },
         OPERATIONAL_MISSING_CONTRACTS: {
@@ -1774,6 +1816,7 @@ def _operational_missing_contracts(
     deploy_target_rows: list[JsonObject],
     deploy_link_rows: list[JsonObject],
     unlinked_domain_route_rows: list[JsonObject],
+    unlinked_deploy_link_rows: list[JsonObject],
     endpoint_consumer_rows: list[JsonObject] | None = None,
 ) -> list[JsonObject]:
     missing = [
@@ -1812,6 +1855,16 @@ def _operational_missing_contracts(
                 ),
             }
         )
+    if unlinked_deploy_link_rows:
+        missing.append(
+            {
+                "contract": "candidate_service_to_deploy_target",
+                "status": "not_proven",
+                "meaning": (
+                    "Candidate DEPLOYS_VIA_CONFIG rows identify possible service-to-deploy links but are not known deploy evidence."
+                ),
+            }
+        )
     if endpoint_consumer_rows:
         missing.append(
             {
@@ -1839,7 +1892,7 @@ def _service_deploy_runtime_units(kg: KgSnapshot, service: JsonObject, *, limit:
 
     units = []
     for fact in kg.facts:
-        if fact.get("predicate") != "DEPLOYS_VIA_CONFIG" or fact.get("subject_id") != service_id:
+        if not _is_known_deploy_fact(fact) or fact.get("subject_id") != service_id:
             continue
         target = kg.entities_by_id.get(fact.get("object_id"))
         if not target:
@@ -3464,7 +3517,8 @@ def _review_context_runtime_surfaces(
             else:
                 candidate_event_channels.append(row)
         elif predicate in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}:
-            deploy_mappings.append(row)
+            if predicate == "ROUTES_DOMAIN_TO_DEPLOY" or _is_known_deploy_fact(fact):
+                deploy_mappings.append(row)
     endpoint_consumers = _endpoint_consumer_rows_for_exposed_endpoints(kg, exposed_endpoints)
     return {
         "endpoints": _planning_context_dedupe_rows(endpoints)[:limit],
@@ -3992,7 +4046,7 @@ def _planning_context_service_related_rows(kg: KgSnapshot, service: JsonObject, 
         "domains": [
             row
             for row in related
-            if row.get("predicate") in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}
+            if row.get("predicate") in {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"} or _is_known_deploy_row(row)
         ][:limit],
     }
 
@@ -4266,6 +4320,7 @@ def _planning_context_gated_runtime_summary(
         "known_route_lead_count": _list_len(investigation_brief.get("known_routes")),
         "unlinked_runtime_lead_count": _list_len(investigation_brief.get("unlinked_runtime_leads")),
         "deploy_unit_lead_count": _list_len(investigation_brief.get("deploy_units")),
+        "unlinked_deploy_lead_count": _list_len(investigation_brief.get("unlinked_deploy_leads")),
         "consumer_link_lead_count": _list_len(investigation_brief.get("consumer_links")),
         "recommended_source_check_count": _list_len(investigation_brief.get("recommended_source_checks")),
         "original_count_fields_omitted": [
@@ -4273,6 +4328,7 @@ def _planning_context_gated_runtime_summary(
             for key in (
                 "domain_route_count",
                 "deploy_link_count",
+                "candidate_or_unlinked_deploy_lead_count",
                 "endpoint_surface_count",
                 "client_endpoint_call_count",
                 "event_surface_count",
@@ -4483,6 +4539,7 @@ def _runtime_inventory_counts(kg: KgSnapshot, *, repo_key: str | None) -> JsonOb
     }
     entities: dict[str, int] = {}
     facts: dict[str, int] = {}
+    candidate_deploy_link_count = 0
     for entity in kg.entities:
         kind = str(entity.get("kind"))
         if kind not in entity_kinds:
@@ -4497,9 +4554,16 @@ def _runtime_inventory_counts(kg: KgSnapshot, *, repo_key: str | None) -> JsonOb
         if repo_key is not None and not _fact_touches_repo(kg, fact, repo_key):
             continue
         facts[predicate] = facts.get(predicate, 0) + 1
+        if predicate == "DEPLOYS_VIA_CONFIG" and not _is_known_deploy_fact(fact):
+            candidate_deploy_link_count += 1
     return {
         "entity_counts": dict(sorted(entities.items())),
         "fact_counts": dict(sorted(facts.items())),
+        "fact_count_contract": (
+            "fact_counts are raw scoped KG facts. DEPLOYS_VIA_CONFIG may include candidate facts; "
+            "candidate_deploy_link_count reports that subset, while runtime_architecture.deploy_link_count is canonical-only."
+        ),
+        "candidate_deploy_link_count": candidate_deploy_link_count,
     }
 
 
@@ -4710,7 +4774,9 @@ def _planning_context_related_facts(
             :PLANNING_CONTEXT_SECTION_LIMIT
         ],
         "deploy_mappings": [
-            row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}
+            row
+            for row in domains
+            if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY" or _is_known_deploy_row(row)
         ][:PLANNING_CONTEXT_SECTION_LIMIT],
         "domains": domains[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
@@ -4944,6 +5010,7 @@ def _planning_context_runtime_architecture_reference(runtime_architecture: JsonO
         "evidence_contract": answer_packet.get("evidence_contract"),
         "read_top_level_field": "runtime_architecture.answer_packet",
         "read_for_deploy_runtime": "runtime_architecture.answer_packet.deploy_runtime_map",
+        "read_for_candidate_or_unresolved_deploy": "runtime_architecture.answer_packet.unlinked_deploy_leads",
         "read_for_endpoint_consumers": "runtime_architecture.answer_packet.endpoint_consumer_map",
         "read_for_deploy_order": "runtime_architecture.answer_packet.deploy_order_guidance",
     }
@@ -4963,7 +5030,11 @@ def _planning_context_service_brief(
     candidate_or_unlinked_event_channels: list[JsonObject],
     domains: list[JsonObject],
 ) -> JsonObject:
-    deploy_mappings = [row for row in domains if row.get("predicate") in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}]
+    deploy_mappings = [
+        row
+        for row in domains
+        if row.get("predicate") == "ROUTES_DOMAIN_TO_DEPLOY" or _is_known_deploy_row(row)
+    ]
     return {
         "services": services[:PLANNING_CONTEXT_SECTION_LIMIT],
         "summary": {
@@ -5507,7 +5578,7 @@ _TOOLS: dict[str, McpTool] = {
             "Use it after you know the target service and want a bounded operational summary of what the KG has linked to it. "
             "endpoint_consumers are static CALLS_ENDPOINT candidates matched by literal normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
             "Read operational_surfaces.evidence_partition: known_linked uses exact repo-identity joins, unlinked_evidence is source leads only, and missing_contracts lists deploy/runtime claims the KG cannot prove. "
-            "Treat operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; do not promote unlinked domain routes into deploy proof. "
+            "Treat operational_surfaces.deploy_link_facts / known DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; treat candidate_or_unlinked_deploy_links and unlinked domain routes as source leads, not deploy proof. "
             "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime/deploy contracts; if deploy mappings are absent, inspect manifests before making environment claims."
         ),
         input_schema=_object_schema(
@@ -5616,16 +5687,16 @@ _TOOLS: dict[str, McpTool] = {
             "Use it first for broad cross-repo service discovery, runtime architecture, domain-routing, dependency, planning, or impact-map questions before selecting narrower MCP tools or looping over search_services/get_service_brief. "
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
-            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
+            "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, unlinked_deploy_leads, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
             "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "When a planning anchor is ambiguous or not_found, runtime_architecture.summary.answer_packet_mode is investigation_brief_only and runtime maps/counts are omitted from the answer path until the agent retries with narrower anchors. "
-            "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings. "
+            "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings; treat runtime_architecture.answer_packet.unlinked_deploy_leads the same way for candidate or unresolved deploy evidence. "
             "For symbol impact anchors, read related_facts.symbol_impact.reverse_impact; it is a bounded reverse-caller head start with constructor bridges and terminal import leads for targeted source inspection. "
             "For ownership questions, read ownership_context.answer_packet; package authors and package maintainers are candidates only and must not be promoted to service owner unless an explicit ownership source is present. "
             "For security/authz questions, read top-level authz_surface.review_leads plus inspection_areas/inspection_index when present, related_facts.authz_surface as a compact reference, or get_service_brief.authz_surface; it separates endpoint handler bindings, applied policies, in-method checks, unsupported_scopes, and missing/unknown authz instead of treating missing policy as public access. "
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
-            "Treat service_operational_surfaces.deploy_link_facts / DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. Do not promote unlinked domain routes into deploy proof. "
+            "Treat service_operational_surfaces.deploy_link_facts / known DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; candidate_or_unlinked_deploy_links and unlinked domain routes are source leads only. deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. "
             "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Calling it with no anchor returns a fleet packet with compact service identities plus runtime_architecture.answer_packet. "

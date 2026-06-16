@@ -696,6 +696,125 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("commit_sha", brief["recommended_source_checks"][0])
         self.assertIn({"repo": "ops", "commit_shas": []}, brief["repos_referenced"])
 
+    def test_runtime_architecture_partitions_candidate_deploy_links_from_known_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = Entity(
+                kind="DeployTarget",
+                identity={"tenant_id": "default", "repo": "ops", "type": "wsgi", "target": "/srv/apps/app/wsgi.py"},
+            )
+            services = [
+                Entity(
+                    kind="Service",
+                    identity={"tenant_id": "default", "namespace": "default", "slug": slug, "repo": slug},
+                )
+                for slug in ("api-a", "api-b")
+            ]
+            candidate_ids = [service.entity_id for service in services]
+            facts = [
+                Fact(
+                    "DEPLOYS_VIA_CONFIG",
+                    service.entity_id,
+                    target.entity_id,
+                    {
+                        "source_kind": "runtime_linker",
+                        "target_type": "wsgi",
+                        "resolved_by": "wsgi_ambiguous_module_path_suffix",
+                        "candidate_service_ids": candidate_ids,
+                    },
+                    canonical_status="candidate",
+                )
+                for service in services
+            ]
+            JsonlKgStore(root).write(
+                entities=[target, *services],
+                facts=facts,
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="candidate",
+                        source_system="runtime_linker",
+                        source_ref={"resolved_by": "wsgi_ambiguous_module_path_suffix"},
+                        bytes_ref={"repo": "ops", "path": "apache/site.conf", "line_start": 7, "line_end": 8},
+                        confidence=0.5,
+                    )
+                    for fact in facts
+                ],
+                coverage=[
+                    Coverage(
+                        tenant_id="default",
+                        predicate="DEPLOYS_VIA_CONFIG",
+                        scope_ref={
+                            "deploy_target_id": target.entity_id,
+                            "deploy_target_identity": target.identity,
+                            "reason": "ambiguous_wsgi_module_suffix",
+                            "candidate_service_ids": candidate_ids,
+                            "rule_version": "runtime-linker-1",
+                        },
+                        state="partially_instrumented",
+                        source_system="runtime_linker",
+                    )
+                ],
+                manifest={"version": 1},
+            )
+
+            architecture = runtime_architecture_packet(KgSnapshot(root), repo=None, limit=10)
+
+        self.assertEqual(architecture["summary"]["deploy_link_count"], 0)
+        self.assertEqual(architecture["summary"]["candidate_or_unlinked_deploy_lead_count"], 2)
+        self.assertEqual(architecture["answer_packet"]["deploy_runtime_map"], [])
+        leads = architecture["answer_packet"]["unlinked_deploy_leads"]
+        self.assertEqual({lead["status"] for lead in leads}, {"candidate_deploy_link"})
+        self.assertEqual({lead["reason"] for lead in leads}, {"wsgi_ambiguous_module_path_suffix"})
+        self.assertEqual({lead["deploy_target"]["target"] for lead in leads}, {"/srv/apps/app/wsgi.py"})
+        self.assertEqual({len(lead["candidate_services"]) for lead in leads}, {2})
+        self.assertEqual({lead["evidence_coordinates"][0]["path"] for lead in leads}, {"apache/site.conf"})
+        brief = architecture["answer_packet"]["investigation_brief"]
+        self.assertEqual(brief["deploy_units"], [])
+        self.assertEqual({lead["status"] for lead in brief["unlinked_deploy_leads"]}, {"candidate_deploy_link"})
+        self.assertTrue(
+            any(check["reason"] == "verify candidate or unresolved deploy lead before claiming service deployment" for check in brief["recommended_source_checks"])
+        )
+
+    def test_runtime_architecture_surfaces_no_bytes_deploy_coverage_as_unresolved_lead(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = Entity(
+                kind="DeployTarget",
+                identity={"tenant_id": "default", "repo": "ops", "type": "wsgi", "target": "/srv/apps/api/app/wsgi.py"},
+            )
+            JsonlKgStore(root).write(
+                entities=[target],
+                facts=[],
+                evidence=[],
+                coverage=[
+                    Coverage(
+                        tenant_id="default",
+                        predicate="DEPLOYS_VIA_CONFIG",
+                        scope_ref={
+                            "deploy_target_id": target.entity_id,
+                            "deploy_target_identity": target.identity,
+                            "reason": "no_target_bytes_ref_evidence",
+                            "rule_version": "runtime-linker-1",
+                        },
+                        state="partially_instrumented",
+                        source_system="runtime_linker",
+                    )
+                ],
+                manifest={"version": 1},
+            )
+
+            architecture = runtime_architecture_packet(KgSnapshot(root), repo=None, limit=10)
+
+        self.assertEqual(architecture["summary"]["deploy_link_count"], 0)
+        self.assertEqual(architecture["summary"]["candidate_or_unlinked_deploy_lead_count"], 1)
+        lead = architecture["answer_packet"]["unlinked_deploy_leads"][0]
+        self.assertEqual(lead["status"], "unresolved_deploy_link")
+        self.assertEqual(lead["reason"], "no_target_bytes_ref_evidence")
+        self.assertEqual(lead["deploy_target"]["target"], "/srv/apps/api/app/wsgi.py")
+        self.assertEqual(lead["evidence_coordinates"], [])
+
     def test_runtime_architecture_repo_scope_excludes_other_repo_domain_reference_leads(self) -> None:
         with _fixture_snapshot(
             operational_deploy_mapping=True,
@@ -2038,6 +2157,54 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(candidate["canonical_status"], "canonical")
         self.assertEqual(candidate["object_canonical_status"], "canonical")
         self.assertEqual(candidate["linkage_status"], "candidate_or_unlinked")
+
+    def test_service_brief_partitions_candidate_deploy_link_as_unlinked_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = Entity(
+                kind="Service",
+                identity={"tenant_id": "default", "namespace": "default", "slug": "api-a", "repo": "api-a"},
+            )
+            target = Entity(
+                kind="DeployTarget",
+                identity={"tenant_id": "default", "repo": "ops", "type": "wsgi", "target": "/srv/apps/app/wsgi.py"},
+            )
+            deploy = Fact(
+                "DEPLOYS_VIA_CONFIG",
+                service.entity_id,
+                target.entity_id,
+                {"source_kind": "runtime_linker", "resolved_by": "wsgi_ambiguous_module_path_suffix"},
+                canonical_status="candidate",
+            )
+            JsonlKgStore(root).write(
+                entities=[service, target],
+                facts=[deploy],
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=deploy.fact_id,
+                        derivation_class="candidate",
+                        source_system="runtime_linker",
+                        source_ref={"resolved_by": "wsgi_ambiguous_module_path_suffix"},
+                        bytes_ref={"repo": "ops", "path": "apache/site.conf", "line_start": 7, "line_end": 8},
+                        confidence=0.5,
+                    )
+                ],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            result = call_tool(KgSnapshot(root), "get_service_brief", {"service": "api-a", "limit": 10})
+
+        self.assertEqual(result["summary"]["deploy_mapping_count"], 0)
+        surfaces = result["operational_surfaces"]
+        self.assertEqual(surfaces["summary"]["deploy_link_fact_count"], 0)
+        self.assertEqual(surfaces["summary"]["candidate_or_unlinked_deploy_link_count"], 1)
+        self.assertEqual(surfaces["deploy_link_facts"], [])
+        self.assertEqual(surfaces["deploy_runtime_units"], [])
+        unlinked = surfaces["evidence_partition"]["unlinked_evidence"]
+        self.assertEqual(unlinked["deploy_link_samples"][0]["predicate"], "DEPLOYS_VIA_CONFIG")
+        self.assertEqual(unlinked["deploy_link_samples"][0]["linkage_status"], "candidate_or_unlinked")
 
     def test_planning_context_cross_family_anchors_keep_each_family_context(self) -> None:
         with _fixture_snapshot() as kg:

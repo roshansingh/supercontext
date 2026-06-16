@@ -33,6 +33,7 @@ class MultiRepoBuild:
     ambiguous_package_count: int
     package_classifications: tuple[JsonObject, ...]
     runtime_link_count: int
+    runtime_candidate_link_count: int
     runtime_ambiguous_link_count: int
     support_facts: list[Fact] = field(default_factory=list)
 
@@ -75,6 +76,7 @@ def build_multi_kg(
             "source_system": runtime_link.RUNTIME_LINKER_SOURCE_SYSTEM,
             "rule_version": runtime_link.RUNTIME_LINKER_RULE_VERSION,
             "link_count": build.runtime_link_count,
+            "candidate_link_count": build.runtime_candidate_link_count,
             "ambiguous_link_count": build.runtime_ambiguous_link_count,
         },
         "extractor_errors": build.extractor_errors,
@@ -168,7 +170,8 @@ def build_multi(
         link_count=len(link_result.facts),
         ambiguous_package_count=link_result.ambiguous_package_count,
         package_classifications=link_result.package_classifications,
-        runtime_link_count=len(runtime_result.facts),
+        runtime_link_count=runtime_result.canonical_link_count,
+        runtime_candidate_link_count=runtime_result.candidate_link_count,
         runtime_ambiguous_link_count=runtime_result.ambiguous_link_count,
     )
 

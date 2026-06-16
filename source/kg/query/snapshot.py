@@ -798,7 +798,8 @@ class KgSnapshot:
 
     def deploy_mappings(self, target_query: str | None = None, limit: int = 25) -> JsonObject:
         limit = self._clamp_limit(limit, max_limit=100)
-        rows = []
+        known_rows = []
+        candidate_rows = []
         for fact in self.facts:
             if fact["predicate"] not in {"ROUTES_DOMAIN_TO_DEPLOY", "DEPLOYS_VIA_CONFIG"}:
                 continue
@@ -809,15 +810,26 @@ class KgSnapshot:
             haystack = f"{self._display(subject)} {self._display(target)} {fact.get('predicate')} {fact.get('qualifier', {})}".lower()
             if target_query and target_query.lower() not in haystack:
                 continue
-            rows.append(self._fact_result(fact, subject, target))
-        rows = sorted(rows, key=lambda row: (str(row.get("subject")), str(row.get("object"))))
-        returned = rows[:limit]
+            row = self._fact_result(fact, subject, target)
+            if row.get("linkage_status") == "candidate_or_unlinked":
+                candidate_rows.append(row)
+            else:
+                known_rows.append(row)
+        known_rows = sorted(known_rows, key=lambda row: (str(row.get("subject")), str(row.get("object"))))
+        candidate_rows = sorted(candidate_rows, key=lambda row: (str(row.get("subject")), str(row.get("object"))))
+        returned = known_rows[:limit]
+        remaining = max(0, limit - len(returned))
+        returned_candidates = candidate_rows[:remaining]
         return {
-            "status": "found" if rows else "not_found",
+            "status": "found" if known_rows or candidate_rows else "not_found",
             "query": target_query,
-            "mapping_count": len(rows),
+            "mapping_count": len(known_rows),
+            "candidate_or_unlinked_count": len(candidate_rows),
             "returned_count": len(returned),
+            "candidate_returned_count": len(returned_candidates),
+            "evidence_buckets": ["known_linked", "candidate_or_unlinked"],
             "mappings": returned,
+            "candidate_or_unlinked": returned_candidates,
         }
 
     def _clamp_limit(self, limit: int, max_limit: int = 100) -> int:
@@ -1489,11 +1501,16 @@ class KgSnapshot:
             **extra,
             "fact_id": fact["fact_id"],
             "predicate": fact["predicate"],
+            "canonical_status": _canonical_status(fact),
             "subject": self._display(subject),
             "object": self._display(object_),
             "qualifier": fact.get("qualifier", {}),
             "evidence": self.evidence_by_target.get(fact["fact_id"], []),
         }
+        if fact.get("predicate") == "DEPLOYS_VIA_CONFIG":
+            row["linkage_status"] = (
+                "known_linked" if _canonical_status(fact) == "canonical" else "candidate_or_unlinked"
+            )
         call_site = call_site_from_qualifier(fact.get("qualifier", {}))
         if call_site is not None:
             row["call_site"] = call_site

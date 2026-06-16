@@ -65,6 +65,7 @@ RELATED_FACT_SECTION_KEYS = frozenset(
 _RUNTIME_COMPONENTS_PATH = "runtime_architecture.answer_packet.runtime_building_blocks"
 _RUNTIME_ROUTES_PATH = "runtime_architecture.answer_packet.domain_routing_map"
 _RUNTIME_DEPLOY_UNITS_PATH = "runtime_architecture.answer_packet.deploy_runtime_map"
+_RUNTIME_DEPLOY_LEADS_PATH = "runtime_architecture.answer_packet.unlinked_deploy_leads"
 _RUNTIME_CONSUMERS_PATH = "runtime_architecture.answer_packet.endpoint_consumer_map"
 _RUNTIME_DEPLOY_GUIDANCE_PATH = "runtime_architecture.answer_packet.deploy_order_guidance"
 _RUNTIME_INVESTIGATION_BRIEF_PATH = "runtime_architecture.answer_packet.investigation_brief"
@@ -73,6 +74,7 @@ _BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
     ("runtime_architecture", "answer_packet", "investigation_brief", "known_routes"),
     ("runtime_architecture", "answer_packet", "investigation_brief", "unlinked_runtime_leads"),
     ("runtime_architecture", "answer_packet", "investigation_brief", "deploy_units"),
+    ("runtime_architecture", "answer_packet", "investigation_brief", "unlinked_deploy_leads"),
     ("runtime_architecture", "answer_packet", "investigation_brief", "consumer_links"),
     ("runtime_architecture", "answer_packet", "investigation_brief", "recommended_source_checks"),
     *(("authz_surface", key) for key in AUTHZ_COMPACT_LIST_KEYS),
@@ -80,6 +82,7 @@ _BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
     ("runtime_architecture", "answer_packet", "runtime_building_blocks"),
     ("runtime_architecture", "answer_packet", "domain_routing_map"),
     ("runtime_architecture", "answer_packet", "deploy_runtime_map"),
+    ("runtime_architecture", "answer_packet", "unlinked_deploy_leads"),
     ("runtime_architecture", "answer_packet", "endpoint_consumer_map"),
     ("runtime_architecture", "answer_packet", "deploy_order_guidance"),
     ("related_facts", "service_brief", "services"),
@@ -1864,6 +1867,7 @@ def _minimize_runtime_answer_rows(result: JsonObject) -> None:
         "runtime_building_blocks",
         "domain_routing_map",
         "deploy_runtime_map",
+        "unlinked_deploy_leads",
         "endpoint_consumer_map",
         "deploy_order_guidance",
     ):
@@ -1889,6 +1893,7 @@ def _runtime_answer_packet(result: JsonObject) -> JsonObject | None:
 def _minimal_runtime_row(row: JsonObject) -> JsonObject:
     keys = (
         "status",
+        "reason",
         "component_id",
         "name",
         "repo",
@@ -1899,6 +1904,7 @@ def _minimal_runtime_row(row: JsonObject) -> JsonObject:
         "services",
         "source",
         "service",
+        "candidate_services",
         "subject",
         "object",
         "predicate",
@@ -1984,6 +1990,7 @@ def _compact_service_operational_surfaces(value: object) -> JsonObject:
         "deploy_link_facts": _minimal_runtime_rows(value.get("deploy_link_facts")),
         "endpoint_consumers": _minimal_runtime_rows(value.get("endpoint_consumers")),
         "unlinked_domain_route_samples": _minimal_runtime_rows(value.get("unlinked_domain_route_samples")),
+        "candidate_or_unlinked_deploy_links": _minimal_runtime_rows(value.get("candidate_or_unlinked_deploy_links")),
         "coverage_note": value.get("coverage_note"),
     }
 
@@ -2094,6 +2101,11 @@ def _compact_investigation_brief(value: object) -> JsonObject:
         "deploy_units": [
             _compact_headstart_row(row)
             for row in _list_value(value.get("deploy_units"))[:COMPACT_RUNTIME_DEPLOY_UNIT_LIMIT]
+            if isinstance(row, dict)
+        ],
+        "unlinked_deploy_leads": [
+            _compact_headstart_row(row)
+            for row in _list_value(value.get("unlinked_deploy_leads"))[:COMPACT_RUNTIME_LEAD_LIMIT]
             if isinstance(row, dict)
         ],
         "consumer_links": [
