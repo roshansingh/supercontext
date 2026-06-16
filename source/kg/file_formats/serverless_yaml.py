@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from source.kg.core.models import Coverage, Entity, JsonObject
+from source.kg.core.models import Coverage, Entity
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.core.tenant import resolve_tenant_id
+from source.kg.file_formats._shared.channel_normalization import (
+    NormalizedChannel,
+    normalize_aws_stream_arn,
+    normalize_eventbridge_bus,
+    normalize_sns_arn,
+    normalize_sns_topic_name,
+    normalize_sqs_arn,
+    normalize_sqs_queue_name,
+    normalize_sqs_url,
+)
 from source.kg.file_formats._shared.common import (
     CONFIG_SOURCE_SYSTEM,
     ConfigKgBuild,
@@ -24,6 +34,14 @@ class ServerlessRoute:
     route_kind: str
     path: str
     method: str
+    handler: str | None
+    line: int
+
+
+@dataclass(frozen=True)
+class ServerlessEventSource:
+    event_kind: str
+    channel: NormalizedChannel
     handler: str | None
     line: int
 
@@ -51,7 +69,7 @@ def extract_serverless_yaml_routes(
     for route in result.routes:
         endpoint = endpoint_entity(repo, route.method, route.path, tenant_id=resolved_tenant_id)
         add_entity_evidence(build, repo, endpoint, scanned.path, route.line)
-        qualifier: JsonObject = {
+        qualifier = {
             "source_kind": "serverless_route",
             "path": scanned.relative_path,
             "route_kind": route.route_kind,
@@ -70,11 +88,33 @@ def extract_serverless_yaml_routes(
         )
         add_entity_evidence(build, repo, channel, scanned.path, route.line)
         add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, route.line, qualifier=qualifier)
+    for event_source in result.event_sources:
+        channel_ref = event_source.channel
+        channel = event_channel_entity(
+            repo,
+            channel_ref.broker_kind,
+            channel_ref.channel_address,
+            tenant_id=resolved_tenant_id,
+            properties=channel_ref.properties,
+        )
+        add_entity_evidence(build, repo, channel, scanned.path, event_source.line)
+        qualifier = {
+            "source_kind": f"serverless_{event_source.event_kind.lower()}_event",
+            "path": scanned.relative_path,
+            "event_kind": event_source.event_kind,
+            "raw_literal": channel_ref.properties.get("raw_literal"),
+            "broker_kind": channel_ref.broker_kind,
+            "channel_address": channel_ref.channel_address,
+        }
+        if event_source.handler:
+            qualifier["handler"] = event_source.handler
+        add_fact(build, "CONSUMES_EVENT", service_entity, channel, repo, scanned.path, event_source.line, qualifier=qualifier)
 
 
 @dataclass(frozen=True)
 class ServerlessRouteExtraction:
     routes: list[ServerlessRoute]
+    event_sources: list[ServerlessEventSource]
     coverage_reason: str | None = None
 
 
@@ -93,18 +133,19 @@ def is_serverless_yaml_filename(name: str) -> bool:
 
 def serverless_routes(scanned: ScannedFile) -> ServerlessRouteExtraction:
     if not is_serverless_yaml_filename(scanned.path.name):
-        return ServerlessRouteExtraction([])
+        return ServerlessRouteExtraction([], [])
     try:
         import yaml
     except ImportError:
-        return ServerlessRouteExtraction([], coverage_reason="pyyaml_unavailable")
+        return ServerlessRouteExtraction([], [], coverage_reason="pyyaml_unavailable")
     try:
         data = yaml.safe_load(scanned.text)
     except yaml.YAMLError:
-        return ServerlessRouteExtraction([], coverage_reason="serverless_yaml_parse_error")
+        return ServerlessRouteExtraction([], [], coverage_reason="serverless_yaml_parse_error")
     if not _is_serverless_document(data):
-        return ServerlessRouteExtraction([])
+        return ServerlessRouteExtraction([], [])
     routes: list[ServerlessRoute] = []
+    event_sources: list[ServerlessEventSource] = []
     functions = data["functions"]
     for function_config in functions.values():
         if not isinstance(function_config, dict):
@@ -120,7 +161,10 @@ def serverless_routes(scanned: ScannedFile) -> ServerlessRouteExtraction:
             route = _route_from_event(event, handler_value, scanned)
             if route is not None:
                 routes.append(route)
-    return ServerlessRouteExtraction(routes)
+            event_source = _event_source_from_event(event, handler_value, scanned)
+            if event_source is not None:
+                event_sources.append(event_source)
+    return ServerlessRouteExtraction(routes, event_sources)
 
 
 def _is_serverless_document(data: object) -> bool:
@@ -148,6 +192,80 @@ def _route_from_event(event: dict[object, object], handler: str | None, scanned:
             line=_route_line(route_kind, event_config, scanned, path),
         )
     return None
+
+
+def _event_source_from_event(
+    event: dict[object, object],
+    handler: str | None,
+    scanned: ScannedFile,
+) -> ServerlessEventSource | None:
+    for event_kind in ("sqs", "sns", "stream", "eventBridge"):
+        if event_kind not in event:
+            continue
+        channel = _channel_from_event_source(event_kind, event[event_kind])
+        if channel is None:
+            return None
+        return ServerlessEventSource(
+            event_kind=event_kind,
+            channel=channel,
+            handler=handler,
+            line=_event_source_line(event_kind, event[event_kind], scanned, channel),
+        )
+    return None
+
+
+def _channel_from_event_source(event_kind: str, event_config: object) -> NormalizedChannel | None:
+    if isinstance(event_config, str):
+        return _channel_from_event_value(event_kind, event_config)
+    if not isinstance(event_config, dict):
+        return None
+    for key in _event_source_value_keys(event_kind):
+        value = event_config.get(key)
+        if isinstance(value, str):
+            channel = _channel_from_event_value(event_kind, value)
+            if channel is not None:
+                return channel
+    return None
+
+
+def _event_source_value_keys(event_kind: str) -> tuple[str, ...]:
+    if event_kind == "sqs":
+        return ("arn", "queue", "queueName", "name")
+    if event_kind == "sns":
+        return ("arn", "topic", "topicName", "name")
+    if event_kind == "stream":
+        return ("arn",)
+    if event_kind == "eventBridge":
+        return ("eventBus", "eventBusName", "arn", "name")
+    return ()
+
+
+def _channel_from_event_value(event_kind: str, value: str) -> NormalizedChannel | None:
+    if "${" in value:
+        return None
+    if event_kind == "sqs":
+        return normalize_sqs_arn(value) or normalize_sqs_url(value) or normalize_sqs_queue_name(value)
+    if event_kind == "sns":
+        return normalize_sns_arn(value) or normalize_sns_topic_name(value)
+    if event_kind == "stream":
+        return normalize_aws_stream_arn(value)
+    if event_kind == "eventBridge":
+        return normalize_eventbridge_bus(value)
+    return None
+
+
+def _event_source_line(
+    event_kind: str,
+    event_config: object,
+    scanned: ScannedFile,
+    channel: NormalizedChannel,
+) -> int:
+    raw_literal = channel.properties.get("raw_literal")
+    if isinstance(raw_literal, str) and raw_literal:
+        return _line_for_key(scanned, raw_literal)
+    if isinstance(event_config, str):
+        return _line_for_key(scanned, event_config)
+    return _line_for_key(scanned, event_kind)
 
 
 def _route_from_string(route_kind: str, value: str, handler: str | None, scanned: ScannedFile) -> ServerlessRoute | None:

@@ -23,6 +23,15 @@ from source.kg.file_formats._shared.common import (
     add_entity_evidence,
     add_fact,
     domain_entity,
+    event_channel_entity,
+)
+from source.kg.file_formats._shared.channel_normalization import (
+    NormalizedChannel,
+    normalize_aws_stream_arn,
+    normalize_sns_arn,
+    normalize_sns_topic_name,
+    normalize_sqs_arn,
+    normalize_sqs_queue_name,
 )
 from source.kg.file_formats._shared.domain_literals import domain_from_value, safe_config_literal
 from source.kg.file_formats._shared.hcl import (
@@ -32,7 +41,16 @@ from source.kg.file_formats._shared.hcl import (
     quoted_value_at,
     strip_comments,
 )
-from source.kg.file_formats.terraform_runtime import extract_terraform_runtime_routes
+from source.kg.file_formats.terraform_runtime import (
+    TerraformAssignment,
+    TerraformBlock,
+    TerraformResourceRef,
+    extract_terraform_runtime_routes,
+    terraform_block_directory,
+    terraform_quoted_scalar,
+    terraform_resource_ref,
+    terraform_top_level_blocks,
+)
 
 
 @dataclass
@@ -81,6 +99,9 @@ def extract_terraform_files(
     tenant_id: str,
 ) -> None:
     files = tuple(files)
+    terraform_blocks = [
+        block for scanned in files if scanned.path.suffix == ".tf" for block in terraform_top_level_blocks(scanned)
+    ]
     for scanned in files:
         _extract_terraform_domain_literals(
             repo,
@@ -90,7 +111,147 @@ def extract_terraform_files(
             tenant_id,
             skip_cloudfront_aliases=True,
         )
-    extract_terraform_runtime_routes(repo, files, service_entity, build, tenant_id)
+    _extract_terraform_event_sources(repo, terraform_blocks, service_entity, build, tenant_id)
+    extract_terraform_runtime_routes(repo, files, service_entity, build, tenant_id, blocks=terraform_blocks)
+
+
+def _extract_terraform_event_sources(
+    repo: RepoSnapshot,
+    blocks: list[TerraformBlock],
+    service_entity: Entity,
+    build: ConfigKgBuild,
+    tenant_id: str,
+) -> None:
+    channels_by_ref = _terraform_event_channels_by_ref(blocks)
+    for block in blocks:
+        if block.kind != "resource" or len(block.labels) < 2:
+            continue
+        resource_type = block.labels[0]
+        if resource_type == "aws_lambda_event_source_mapping":
+            assignment = block.assignments.get("event_source_arn")
+            channel = _channel_from_terraform_arn_assignment(
+                assignment,
+                channels_by_ref,
+                terraform_block_directory(block),
+            )
+            source_kind = "terraform_lambda_event_source_mapping"
+        elif resource_type == "aws_sns_topic_subscription":
+            assignment = block.assignments.get("topic_arn")
+            channel = _channel_from_terraform_arn_assignment(
+                assignment,
+                channels_by_ref,
+                terraform_block_directory(block),
+            )
+            source_kind = "terraform_sns_topic_subscription"
+        else:
+            continue
+        if assignment is None or channel is None:
+            continue
+        _add_terraform_event_source(repo, build, service_entity, tenant_id, block, assignment.line, channel, source_kind)
+
+
+def _terraform_event_channels_by_ref(
+    blocks: list[TerraformBlock],
+) -> dict[tuple[str, TerraformResourceRef], NormalizedChannel]:
+    channels_by_ref: dict[tuple[str, TerraformResourceRef], NormalizedChannel] = {}
+    seen_refs: set[tuple[str, TerraformResourceRef]] = set()
+    for block in blocks:
+        if block.kind != "resource" or len(block.labels) < 2:
+            continue
+        resource_ref = TerraformResourceRef(resource_type=block.labels[0], resource_name=block.labels[1])
+        key = (terraform_block_directory(block), resource_ref)
+        if block.labels[0] == "aws_sqs_queue":
+            channel = _named_terraform_sqs_queue(block)
+        elif block.labels[0] == "aws_sns_topic":
+            channel = _named_terraform_sns_topic(block)
+        else:
+            continue
+        if key in seen_refs:
+            channels_by_ref.pop(key, None)
+            continue
+        seen_refs.add(key)
+        if channel is not None:
+            channels_by_ref[key] = channel
+    return channels_by_ref
+
+
+def _named_terraform_sqs_queue(block: TerraformBlock) -> NormalizedChannel | None:
+    assignment = block.assignments.get("name")
+    if assignment is None:
+        return None
+    literal = terraform_quoted_scalar(assignment.raw_value)
+    return normalize_sqs_queue_name(literal) if literal is not None else None
+
+
+def _named_terraform_sns_topic(block: TerraformBlock) -> NormalizedChannel | None:
+    assignment = block.assignments.get("name")
+    if assignment is None:
+        return None
+    literal = terraform_quoted_scalar(assignment.raw_value)
+    return normalize_sns_topic_name(literal) if literal is not None else None
+
+
+def _channel_from_terraform_arn_assignment(
+    assignment: TerraformAssignment | None,
+    channels_by_ref: dict[tuple[str, TerraformResourceRef], NormalizedChannel],
+    directory: str,
+) -> NormalizedChannel | None:
+    if assignment is None:
+        return None
+    raw_value = assignment.raw_value
+    literal = terraform_quoted_scalar(raw_value)
+    if literal is not None:
+        return normalize_sqs_arn(literal) or normalize_sns_arn(literal) or normalize_aws_stream_arn(literal)
+    ref = _terraform_arn_resource_ref(raw_value)
+    if ref is None:
+        return None
+    return channels_by_ref.get((directory, ref))
+
+
+def _terraform_arn_resource_ref(raw_value: str) -> TerraformResourceRef | None:
+    value = raw_value.strip()
+    if not value.endswith(".arn"):
+        return None
+    return terraform_resource_ref(value)
+
+
+def _add_terraform_event_source(
+    repo: RepoSnapshot,
+    build: ConfigKgBuild,
+    service_entity: Entity,
+    tenant_id: str,
+    block: TerraformBlock,
+    line_number: int,
+    channel_ref: NormalizedChannel,
+    source_kind: str,
+) -> None:
+    channel = event_channel_entity(
+        repo,
+        channel_ref.broker_kind,
+        channel_ref.channel_address,
+        tenant_id=tenant_id,
+        properties=channel_ref.properties,
+    )
+    path = repo.root / block.relative_path
+    add_entity_evidence(build, repo, channel, path, line_number)
+    add_fact(
+        build,
+        "CONSUMES_EVENT",
+        service_entity,
+        channel,
+        repo,
+        path,
+        line_number,
+        qualifier={
+            "source_kind": source_kind,
+            "path": block.relative_path,
+            "resource_type": block.labels[0],
+            "resource_name": block.labels[1],
+            "raw_literal": channel_ref.properties.get("raw_literal"),
+            "broker_kind": channel_ref.broker_kind,
+            "channel_address": channel_ref.channel_address,
+        },
+    )
 
 
 def _extract_terraform_domain_literals(

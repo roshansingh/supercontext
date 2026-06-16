@@ -69,6 +69,104 @@ def normalize_sns_arn(arn: str) -> NormalizedChannel | None:
     )
 
 
+def normalize_sns_topic_name(name: str) -> NormalizedChannel | None:
+    topic_name = name.strip()
+    if "${" in topic_name or not _is_simple_aws_resource_name(topic_name):
+        return None
+    return NormalizedChannel(
+        broker_kind="sns",
+        channel_address=topic_name,
+        properties={
+            "raw_literal": topic_name,
+            "topic_name": topic_name,
+        },
+    )
+
+
+def normalize_aws_stream_arn(arn: str) -> NormalizedChannel | None:
+    components = _parse_aws_arn(arn)
+    if components is None:
+        return None
+    raw_arn = str(components["arn"])
+    service = str(components["service"])
+    resource = str(components["resource"])
+    if service == "kinesis":
+        stream_prefix = "stream/"
+        if not resource.startswith(stream_prefix):
+            return None
+        stream_name = resource.removeprefix(stream_prefix)
+        if not _is_simple_aws_resource_name(stream_name):
+            return None
+        return NormalizedChannel(
+            broker_kind="kinesis",
+            channel_address=stream_name,
+            properties={
+                "raw_literal": raw_arn,
+                "arn": raw_arn,
+                "region": components["region"],
+                "account_id": components["account_id"],
+                "stream_name": stream_name,
+            },
+        )
+    if service == "dynamodb":
+        table_prefix = "table/"
+        stream_marker = "/stream/"
+        if not resource.startswith(table_prefix) or stream_marker not in resource:
+            return None
+        table_name = resource.removeprefix(table_prefix).split(stream_marker, 1)[0]
+        if not _is_simple_aws_resource_name(table_name):
+            return None
+        return NormalizedChannel(
+            broker_kind="dynamodb_stream",
+            channel_address=table_name,
+            properties={
+                "raw_literal": raw_arn,
+                "arn": raw_arn,
+                "region": components["region"],
+                "account_id": components["account_id"],
+                "stream_resource": resource,
+                "table_name": table_name,
+            },
+        )
+    return None
+
+
+def normalize_eventbridge_bus(value: str) -> NormalizedChannel | None:
+    raw_value = value.strip()
+    if not raw_value or "${" in raw_value:
+        return None
+    components = _parse_aws_arn(raw_value)
+    if components is not None:
+        resource = str(components["resource"])
+        bus_prefix = "event-bus/"
+        if components["service"] != "events" or not resource.startswith(bus_prefix):
+            return None
+        bus_name = resource.removeprefix(bus_prefix)
+        if not _is_simple_aws_resource_name(bus_name):
+            return None
+        return NormalizedChannel(
+            broker_kind="eventbridge",
+            channel_address=bus_name,
+            properties={
+                "raw_literal": raw_value,
+                "arn": raw_value,
+                "region": components["region"],
+                "account_id": components["account_id"],
+                "event_bus_name": bus_name,
+            },
+        )
+    if not _is_simple_aws_resource_name(raw_value):
+        return None
+    return NormalizedChannel(
+        broker_kind="eventbridge",
+        channel_address=raw_value,
+        properties={
+            "raw_literal": raw_value,
+            "event_bus_name": raw_value,
+        },
+    )
+
+
 def normalize_sqs_url(url: str) -> NormalizedChannel | None:
     try:
         parsed = urlparse(url.strip())
@@ -115,22 +213,34 @@ def normalize_sqs_queue_name(name: str) -> NormalizedChannel | None:
 
 
 def parse_arn_components(arn: str) -> JsonObject | None:
+    components = _parse_aws_arn(arn)
+    if components is None or components["service"] not in {"sqs", "sns"}:
+        return None
+    name = str(components["resource"])
+    return {
+        "service": components["service"],
+        "region": components["region"],
+        "account_id": components["account_id"],
+        "name": name,
+        "arn": components["arn"],
+    }
+
+
+def _parse_aws_arn(arn: str) -> JsonObject | None:
     value = arn.strip()
     parts = value.split(":", 5)
     if len(parts) != 6:
         return None
-    prefix, partition, service, region, account_id, name = parts
+    prefix, partition, service, region, account_id, resource = parts
     if prefix != "arn" or partition != "aws":
         return None
-    if service not in {"sqs", "sns"}:
-        return None
-    if not _is_aws_region(region) or not account_id.isdigit() or not name:
+    if not _is_aws_region(region) or not account_id.isdigit() or not resource:
         return None
     return {
         "service": service,
         "region": region,
         "account_id": account_id,
-        "name": name,
+        "resource": resource,
         "arn": value,
     }
 

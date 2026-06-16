@@ -73,6 +73,22 @@ class TerraformResourceRef:
         return f"{self.resource_type}.{self.resource_name}"
 
 
+def terraform_top_level_blocks(scanned: ScannedFile) -> list[TerraformBlock]:
+    return _top_level_blocks(scanned)
+
+
+def terraform_block_directory(block: TerraformBlock) -> str:
+    return _block_directory(block)
+
+
+def terraform_quoted_scalar(value: str) -> str | None:
+    return _quoted_scalar(value)
+
+
+def terraform_resource_ref(value: str) -> TerraformResourceRef | None:
+    return _resource_ref(value)
+
+
 _BLOCK_HEADER_RE = re.compile(r'^(?P<kind>[A-Za-z_][A-Za-z0-9_]*)\s+(?P<labels>(?:"[^"]+"\s*)+)\{')
 _NESTED_BLOCK_RE = re.compile(r"^(?P<kind>[A-Za-z_][A-Za-z0-9_]*)\s*\{")
 _RESOURCE_REF_RE = re.compile(
@@ -86,18 +102,23 @@ def extract_terraform_runtime_routes(
     service_entity: Entity,
     build: ConfigKgBuild,
     tenant_id: str,
+    blocks: Iterable[TerraformBlock] | None = None,
 ) -> None:
     files = tuple(files)
     terraform_files = [scanned for scanned in files if scanned.path.suffix == ".tf"]
-    if not terraform_files:
+    if blocks is None and not terraform_files:
         return
 
-    blocks = [block for scanned in terraform_files for block in _top_level_blocks(scanned)]
-    variable_defaults = _variable_domain_defaults_by_directory(blocks)
-    s3_buckets = _resource_refs_by_directory(blocks, resource_type="aws_s3_bucket")
+    parsed_blocks = (
+        list(blocks)
+        if blocks is not None
+        else [block for scanned in terraform_files for block in _top_level_blocks(scanned)]
+    )
+    variable_defaults = _variable_domain_defaults_by_directory(parsed_blocks)
+    s3_buckets = _resource_refs_by_directory(parsed_blocks, resource_type="aws_s3_bucket")
     emitted_targets: set[str] = set()
 
-    for block in blocks:
+    for block in parsed_blocks:
         if block.kind != "resource" or block.labels[:1] != ("aws_cloudfront_distribution",) or len(block.labels) < 2:
             continue
         aliases = _cloudfront_alias_domains(block, variable_defaults)
