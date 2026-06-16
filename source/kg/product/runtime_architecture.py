@@ -570,12 +570,17 @@ def _runtime_investigation_brief(
         consumer_links=consumer_links,
         limit=max(limit, RUNTIME_INVESTIGATION_SOURCE_CHECK_LIMIT),
     )
+    repos_referenced = _runtime_repos_referenced(
+        [*component_anchors, *known_routes, *unlinked_leads, *deploy_units, *consumer_links, *source_checks]
+    )
     return {
         "purpose": "head_start_for_agent_source_investigation",
         "usage": (
             "Use these anchors to inspect current source files first. Treat known routes and deploy units as typed KG evidence; "
             "treat unlinked leads and missing_fact_families as prompts for source verification, not final conclusions."
         ),
+        "repos_referenced": repos_referenced,
+        "kg_only_inspection_contract": _kg_only_inspection_contract(),
         "runtime_anchors": component_anchors,
         "known_routes": known_routes,
         "unlinked_runtime_leads": unlinked_leads,
@@ -896,6 +901,58 @@ def _runtime_recommended_source_checks(
     return _dedupe_source_checks(checks)[:limit]
 
 
+def _runtime_repos_referenced(rows: list[JsonObject]) -> list[JsonObject]:
+    repo_commits: dict[str, set[str]] = {}
+
+    def add_coordinate(value: JsonObject) -> None:
+        repo = value.get("repo")
+        path = value.get("path")
+        line_start = value.get("line_start")
+        if (
+            not isinstance(repo, str)
+            or not repo.strip()
+            or not isinstance(path, str)
+            or not path.strip()
+            or isinstance(line_start, bool)
+            or not isinstance(line_start, int)
+        ):
+            return
+        commits = repo_commits.setdefault(repo.strip(), set())
+        commit_sha = value.get("commit_sha")
+        if isinstance(commit_sha, str) and commit_sha.strip():
+            commits.add(commit_sha.strip())
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            add_coordinate(value)
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    for row in rows:
+        visit(row)
+    return [
+        {"repo": repo, "commit_shas": sorted(commits)}
+        for repo, commits in sorted(repo_commits.items())
+    ]
+
+
+def _kg_only_inspection_contract() -> JsonObject:
+    return {
+        "status": "source_availability_unresolved_by_supercontext",
+        "host_agent_action": (
+            "Compare repos_referenced with the local workspace or remote source access. "
+            "When a repo is unavailable locally, treat returned coordinates as KG-only inspection leads."
+        ),
+        "coordinate_fields": ["repo", "commit_sha", "path", "line_start", "line_end"],
+        "boundary": (
+            "SuperContext reports KG evidence coordinates and does not infer whether a host agent can read the referenced repo."
+        ),
+    }
+
+
 def _source_checks_from_row(row: JsonObject, *, reason: str) -> list[JsonObject]:
     checks = []
     anchor = _source_check_anchor(row)
@@ -904,6 +961,7 @@ def _source_checks_from_row(row: JsonObject, *, reason: str) -> list[JsonObject]
             "reason": reason,
             "anchor": anchor,
             "repo": coordinate.get("repo"),
+            "commit_sha": coordinate.get("commit_sha"),
             "path": coordinate.get("path"),
             "line_start": coordinate.get("line_start"),
             "line_end": coordinate.get("line_end"),
@@ -930,7 +988,14 @@ def _dedupe_source_checks(rows: list[JsonObject]) -> list[JsonObject]:
     seen = set()
     deduped = []
     for row in rows:
-        key = (row.get("repo"), row.get("path"), row.get("line_start"), row.get("anchor"), row.get("reason"))
+        key = (
+            row.get("repo"),
+            row.get("commit_sha"),
+            row.get("path"),
+            row.get("line_start"),
+            row.get("anchor"),
+            row.get("reason"),
+        )
         if key in seen or row.get("path") is None:
             continue
         seen.add(key)
@@ -956,7 +1021,13 @@ def _dedupe_coordinates(rows: list[JsonObject]) -> list[JsonObject]:
     seen = set()
     deduped = []
     for row in rows:
-        key = (row.get("repo"), row.get("path"), row.get("line_start"), row.get("line_end"))
+        key = (
+            row.get("repo"),
+            row.get("commit_sha"),
+            row.get("path"),
+            row.get("line_start"),
+            row.get("line_end"),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -1263,6 +1334,7 @@ def _evidence_coordinates(row: JsonObject, *, limit: int = 2) -> list[JsonObject
             continue
         coordinate = {
             "repo": bytes_ref.get("repo_name") or bytes_ref.get("repo"),
+            "commit_sha": bytes_ref.get("commit_sha"),
             "path": bytes_ref.get("path"),
             "line_start": bytes_ref.get("line_start"),
             "line_end": bytes_ref.get("line_end"),
