@@ -50,6 +50,9 @@ class DeployMappingsTest(unittest.TestCase):
 
         self.assertEqual(result["mapping_count"], 0)
         self.assertEqual(result["candidate_or_unlinked_count"], 1)
+        self.assertEqual(result["returned_count"], 1)
+        self.assertEqual(result["known_returned_count"], 0)
+        self.assertEqual(result["candidate_returned_count"], 1)
         self.assertEqual(result["mappings"], [])
         candidate = result["candidate_or_unlinked"][0]
         self.assertEqual(candidate["predicate"], "DEPLOYS_VIA_CONFIG")

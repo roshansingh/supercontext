@@ -777,6 +777,78 @@ class McpToolsTest(unittest.TestCase):
             any(check["reason"] == "verify candidate or unresolved deploy lead before claiming service deployment" for check in brief["recommended_source_checks"])
         )
 
+    def test_runtime_architecture_counts_candidate_deploy_leads_before_limiting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            targets = [
+                Entity(
+                    kind="DeployTarget",
+                    identity={
+                        "tenant_id": "default",
+                        "repo": "ops",
+                        "type": "wsgi",
+                        "target": f"/srv/apps/app-{index}/wsgi.py",
+                    },
+                )
+                for index in range(21)
+            ]
+            services = [
+                Entity(
+                    kind="Service",
+                    identity={
+                        "tenant_id": "default",
+                        "namespace": "default",
+                        "slug": f"api-{index}",
+                        "repo": f"api-{index}",
+                    },
+                )
+                for index in range(21)
+            ]
+            facts = [
+                Fact(
+                    "DEPLOYS_VIA_CONFIG",
+                    service.entity_id,
+                    target.entity_id,
+                    {
+                        "source_kind": "runtime_linker",
+                        "target_type": "wsgi",
+                        "resolved_by": "wsgi_ambiguous_module_path_suffix",
+                        "candidate_service_ids": [service.entity_id],
+                    },
+                    canonical_status="candidate",
+                )
+                for service, target in zip(services, targets)
+            ]
+            JsonlKgStore(root).write(
+                entities=[*targets, *services],
+                facts=facts,
+                evidence=[
+                    Evidence(
+                        target_type="fact",
+                        target_id=fact.fact_id,
+                        derivation_class="candidate",
+                        source_system="runtime_linker",
+                        source_ref={"resolved_by": "wsgi_ambiguous_module_path_suffix"},
+                        bytes_ref={
+                            "repo": "ops",
+                            "path": "apache/site.conf",
+                            "line_start": index + 1,
+                            "line_end": index + 1,
+                        },
+                        confidence=0.5,
+                    )
+                    for index, fact in enumerate(facts)
+                ],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            architecture = runtime_architecture_packet(KgSnapshot(root), repo=None, limit=1)
+
+        self.assertEqual(architecture["summary"]["candidate_or_unlinked_deploy_lead_count"], 21)
+        self.assertEqual(len(architecture["answer_packet"]["unlinked_deploy_leads"]), 20)
+        self.assertTrue(architecture["truncated"])
+
     def test_runtime_architecture_surfaces_no_bytes_deploy_coverage_as_unresolved_lead(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

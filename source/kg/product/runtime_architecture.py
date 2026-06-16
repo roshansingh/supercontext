@@ -112,7 +112,6 @@ def runtime_architecture_packet(
         kg,
         deploy_candidate_rows=deploy_candidate_rows,
         repo_key=repo_key,
-        limit=route_limit,
     )
     endpoint_consumer_map, endpoint_consumer_missing_method_drop_count = _endpoint_consumer_map(
         endpoint_rows=endpoint_rows,
@@ -163,7 +162,7 @@ def runtime_architecture_packet(
             "runtime_building_blocks": runtime_building_blocks,
             "domain_routing_map": domain_routing_map,
             "deploy_runtime_map": deploy_runtime_map,
-            "unlinked_deploy_leads": unlinked_deploy_leads,
+            "unlinked_deploy_leads": unlinked_deploy_leads[:route_limit],
             "endpoint_consumer_map": endpoint_consumer_map,
             "deploy_order_guidance": deploy_order_guidance,
             "deploy_kind_counts": deploy_kind_counts,
@@ -729,8 +728,10 @@ def _deploy_lead_diversity_key(row: JsonObject) -> tuple[object, ...]:
     service = row.get("service") if isinstance(row.get("service"), dict) else {}
     target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
     candidate_services = tuple(
-        service.get("entity_id") or service.get("name") or service.get("slug")
-        for service in _dict_list(row.get("candidate_services"))
+        candidate_service.get("entity_id")
+        or candidate_service.get("name")
+        or candidate_service.get("slug")
+        for candidate_service in _dict_list(row.get("candidate_services"))
     )
     return (
         row.get("status"),
@@ -1341,7 +1342,6 @@ def _unlinked_deploy_leads(
     *,
     deploy_candidate_rows: list[JsonObject],
     repo_key: str | None,
-    limit: int,
 ) -> list[JsonObject]:
     rows: list[JsonObject] = []
     candidate_target_ids: set[str] = set()
@@ -1405,7 +1405,7 @@ def _unlinked_deploy_leads(
                 ),
             }
         )
-    return sorted(_dedupe_deploy_leads(rows), key=_deploy_lead_sort_key)[:limit]
+    return sorted(_dedupe_deploy_leads(rows), key=_deploy_lead_sort_key)
 
 
 def _candidate_service_rows(kg: KgSnapshot, value: object) -> list[JsonObject]:
@@ -1454,8 +1454,10 @@ def _dedupe_deploy_leads(rows: list[JsonObject]) -> list[JsonObject]:
         target = row.get("deploy_target") if isinstance(row.get("deploy_target"), dict) else {}
         service = row.get("service") if isinstance(row.get("service"), dict) else {}
         candidate_services = tuple(
-            service.get("entity_id") or service.get("name") or service.get("slug")
-            for service in _dict_list(row.get("candidate_services"))
+            candidate_service.get("entity_id")
+            or candidate_service.get("name")
+            or candidate_service.get("slug")
+            for candidate_service in _dict_list(row.get("candidate_services"))
         )
         key = (
             row.get("status"),
