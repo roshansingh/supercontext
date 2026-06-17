@@ -111,7 +111,7 @@ _PLANNING_BUDGET_ADVICE = (
     "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
 )
 _PLANNING_GENERIC_BUDGET_ADVICE = (
-    "Use the returned related_facts, source_coordinates, inspection_areas, and narrower planning_context anchors such as "
+    "Use the returned related_facts, inspection_areas, and narrower planning_context anchors such as "
     "repo, service, package, path, or line to retrieve omitted detail."
 )
 _TRUNCATED_DETAIL_ACTION = (

@@ -256,6 +256,22 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("runtime_architecture", result["related_facts"])
         self.assertNotIn("authz_surface", result["related_facts"])
 
+    def test_planning_context_path_and_line_anchor_skips_unscoped_runtime_and_authz_surfaces(self) -> None:
+        with _fixture_snapshot() as kg:
+            path = call_tool(kg, "planning_context", {"path": "payments/checkout.py"})
+            path_line = call_tool(
+                kg,
+                "planning_context",
+                {"path": "payments/checkout.py", "line": 10},
+            )
+
+        for result in (path, path_line):
+            self.assertEqual(result["status"], "found")
+            self.assertNotIn("runtime_architecture", result)
+            self.assertNotIn("authz_surface", result)
+            self.assertNotIn("runtime_architecture", result["related_facts"])
+            self.assertNotIn("authz_surface", result["related_facts"])
+
     def test_planning_context_domain_and_event_anchors_include_runtime_not_authz(self) -> None:
         with _fixture_snapshot() as kg:
             domain = call_tool(kg, "planning_context", {"domain": "api.internal.example"})
@@ -579,6 +595,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("authz_surface", budgeted["related_facts"])
         self.assertEqual(budgeted["related_facts"]["dependency_importers"]["summary"]["importer_fact_count"], 20)
         self.assertNotIn("runtime_architecture", budgeted["output_budget"]["advice"])
+        self.assertNotIn("source_coordinates", budgeted["output_budget"]["advice"])
         self.assertIn("related_facts", budgeted["output_budget"]["advice"])
 
     def test_planning_context_includes_service_operational_surfaces(self) -> None:
