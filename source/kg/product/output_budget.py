@@ -110,6 +110,10 @@ _PLANNING_BUDGET_ADVICE = (
     "Use runtime_architecture.answer_packet.investigation_brief as the source-inspection head start, then use narrower "
     "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
 )
+_PLANNING_GENERIC_BUDGET_ADVICE = (
+    "Use the returned related_facts, inspection_areas, and narrower planning_context anchors such as "
+    "repo, service, package, path, or line to retrieve omitted detail."
+)
 _TRUNCATED_DETAIL_ACTION = (
     "When truncated detail matters, call a narrower planning_context anchor or inspect returned refs/search terms instead "
     "of relying on saved-packet exploration."
@@ -922,7 +926,7 @@ def _attach_budget_metadata(
         truncated_sections.append(_RUNTIME_CONSUMERS_PATH)
     if omitted_counts["deploy_order_guidance"] > 0:
         truncated_sections.append(_RUNTIME_DEPLOY_GUIDANCE_PATH)
-    advice = _PLANNING_BUDGET_ADVICE
+    advice = _planning_budget_advice(result)
     if fallback:
         advice += " The response also dropped non-essential planning sections to preserve a valid JSON packet."
     if minimized:
@@ -939,6 +943,12 @@ def _attach_budget_metadata(
     }
     if finalize:
         _append_budget_next_action(result, max_chars=max_chars)
+
+
+def _planning_budget_advice(result: JsonObject) -> str:
+    if isinstance(result.get("runtime_architecture"), dict):
+        return _PLANNING_BUDGET_ADVICE
+    return _PLANNING_GENERIC_BUDGET_ADVICE
 
 
 def _backfill_planning_context(
@@ -1157,9 +1167,7 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         "summary": result.get("summary", {}),
         "snapshot_summary": result.get("snapshot_summary", {}),
         "snapshot_scope": result.get("snapshot_scope", {}),
-        "runtime_architecture": compact_runtime,
         "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
-        "authz_surface": _compact_authz_surface(result.get("authz_surface", {})),
         "related_facts": _compact_related_facts(result.get("related_facts", {})),
         "anchors": result.get("anchors", {}),
         "packet_contract": result.get("packet_contract", {}),
@@ -1174,6 +1182,11 @@ def _planning_context_fallback(result: JsonObject, *, preserve_planning_sections
         "unsupported_scopes": result.get("unsupported_scopes", []),
         "next_actions": result.get("next_actions", []),
     }
+    if compact_runtime:
+        fallback["runtime_architecture"] = compact_runtime
+    compact_authz = _compact_authz_surface(result.get("authz_surface", {}))
+    if compact_authz:
+        fallback["authz_surface"] = compact_authz
     if preserve_planning_sections:
         fallback.update(
             {
@@ -2249,16 +2262,14 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         }
         if isinstance(anchor_resolution_contract, dict) and anchor_resolution_contract:
             compact_runtime["anchor_resolution_contract"] = anchor_resolution_contract
-    return {
+    minimal = {
         "tool": result.get("tool"),
         "status": result.get("status"),
         "query": result.get("query"),
         "summary": result.get("summary", {}),
         "snapshot_summary": result.get("snapshot_summary", {}),
         "snapshot_scope": result.get("snapshot_scope", {}),
-        "runtime_architecture": compact_runtime,
         "ownership_context": _compact_ownership_context(result.get("ownership_context", {})),
-        "authz_surface": _compact_authz_surface(result.get("authz_surface", {})),
         "related_facts": _compact_related_facts(result.get("related_facts", {})),
         "service_operational_surfaces": _compact_service_operational_surfaces(
             result.get("service_operational_surfaces", {})
@@ -2275,6 +2286,12 @@ def _minimal_valid_packet(result: JsonObject) -> JsonObject:
         "unsupported_scopes": [],
         "next_actions": result.get("next_actions", []),
     }
+    if compact_runtime:
+        minimal["runtime_architecture"] = compact_runtime
+    compact_authz = _compact_authz_surface(result.get("authz_surface", {}))
+    if compact_authz:
+        minimal["authz_surface"] = compact_authz
+    return minimal
 
 
 def _list_value(value: object) -> list[object]:

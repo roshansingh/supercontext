@@ -4119,24 +4119,38 @@ def _planning_context_output(
         limit=PLANNING_CONTEXT_SECTION_LIMIT,
     )
     runtime_repo = anchors.get("repo") or _planning_context_single_service_repo(anchors, bounded_services)
-    runtime_architecture = runtime_architecture_packet(
-        kg,
-        repo=runtime_repo,
-        limit=PLANNING_CONTEXT_SECTION_LIMIT,
-        include_legacy_sections=False,
-    )
-    runtime_architecture = _planning_context_runtime_architecture_for_anchor_status(
-        runtime_architecture,
-        status=status,
+    include_runtime_architecture = _planning_context_should_include_runtime_architecture(
         query=query,
         anchors=anchors,
         line=line,
     )
-    authz_surface = authz_surface_packet(
-        kg,
-        repo=runtime_repo,
-        limit=PLANNING_CONTEXT_SECTION_LIMIT,
+    runtime_architecture: JsonObject | None = None
+    if include_runtime_architecture:
+        runtime_architecture = runtime_architecture_packet(
+            kg,
+            repo=runtime_repo,
+            limit=PLANNING_CONTEXT_SECTION_LIMIT,
+            include_legacy_sections=False,
+        )
+        runtime_architecture = _planning_context_runtime_architecture_for_anchor_status(
+            runtime_architecture,
+            status=status,
+            query=query,
+            anchors=anchors,
+            line=line,
+        )
+    include_authz_surface = _planning_context_should_include_authz_surface(
+        query=query,
+        anchors=anchors,
+        line=line,
     )
+    authz_surface: JsonObject | None = None
+    if include_authz_surface:
+        authz_surface = authz_surface_packet(
+            kg,
+            repo=runtime_repo,
+            limit=PLANNING_CONTEXT_SECTION_LIMIT,
+        )
     ownership_context = ownership_context_packet(
         kg,
         repo=runtime_repo,
@@ -4204,9 +4218,7 @@ def _planning_context_output(
         "snapshot_scope": snapshot_scope,
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
-        "runtime_architecture": runtime_architecture,
         "ownership_context": ownership_context,
-        "authz_surface": authz_surface,
         "anchors": {field: anchors.get(field) for field in _PLANNING_CONTEXT_ANCHOR_FIELDS},
         "services": bounded_services,
         "symbols": bounded_symbols,
@@ -4234,6 +4246,10 @@ def _planning_context_output(
         "unsupported_scopes": [],
         "next_actions": next_actions,
     }
+    if runtime_architecture is not None:
+        result["runtime_architecture"] = runtime_architecture
+    if authz_surface is not None:
+        result["authz_surface"] = authz_surface
     return result
 
 
@@ -4308,6 +4324,35 @@ def _planning_context_should_gate_runtime_architecture(
     if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
         return False
     return status in {"ambiguous", "not_found"}
+
+
+def _planning_context_should_include_runtime_architecture(
+    *,
+    query: str | None,
+    anchors: dict[str, str | None],
+    line: int | None,
+) -> bool:
+    if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
+        return True
+    if query is not None and line is None and not any(anchors.values()):
+        return True
+    return any(
+        anchors.get(field)
+        for field in ("repo", "service", "endpoint", "event_channel", "domain")
+    )
+
+
+def _planning_context_should_include_authz_surface(
+    *,
+    query: str | None,
+    anchors: dict[str, str | None],
+    line: int | None,
+) -> bool:
+    if _is_planning_context_fleet_request(query=query, line=line, anchors=anchors):
+        return True
+    if query is not None and line is None and not any(anchors.values()):
+        return True
+    return any(anchors.get(field) for field in ("repo", "service", "endpoint"))
 
 
 def _planning_context_gated_runtime_summary(
@@ -4749,11 +4794,11 @@ def _planning_context_related_facts(
     dependency_importers: JsonObject,
     inventory: JsonObject,
     service_operational_surfaces: JsonObject,
-    runtime_architecture: JsonObject,
-    authz_surface: JsonObject,
+    runtime_architecture: JsonObject | None,
+    authz_surface: JsonObject | None,
     line: int | None = None,
 ) -> JsonObject:
-    return {
+    related = {
         "service_brief": _planning_context_service_brief(
             services,
             endpoints,
@@ -4766,8 +4811,6 @@ def _planning_context_related_facts(
         "dependency_importers": dependency_importers,
         "inventory": inventory,
         "service_operational_surfaces": service_operational_surfaces,
-        "runtime_architecture": _planning_context_runtime_architecture_reference(runtime_architecture),
-        "authz_surface": _planning_context_authz_surface_reference(authz_surface),
         "dependencies": dependencies[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoints": endpoints[:PLANNING_CONTEXT_SECTION_LIMIT],
         "endpoint_consumers": endpoint_consumers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -4782,6 +4825,11 @@ def _planning_context_related_facts(
         ][:PLANNING_CONTEXT_SECTION_LIMIT],
         "domains": domains[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
+    if runtime_architecture is not None:
+        related["runtime_architecture"] = _planning_context_runtime_architecture_reference(runtime_architecture)
+    if authz_surface is not None:
+        related["authz_surface"] = _planning_context_authz_surface_reference(authz_surface)
+    return related
 
 
 def _planning_context_authz_surface_reference(authz_surface: JsonObject) -> JsonObject:
@@ -5699,7 +5747,8 @@ _TOOLS: dict[str, McpTool] = {
             "For service anchors, includes bounded endpoint_consumers from structured endpoint path/method matches when available. "
             "For service operational evidence, read service_operational_surfaces.evidence_partition and keep known_linked, unlinked_evidence, and missing_contracts separate. "
             "Treat service_operational_surfaces.deploy_link_facts / known DEPLOYS_VIA_CONFIG and deploy_runtime_units as service-to-deploy-target evidence; candidate_or_unlinked_deploy_links and unlinked domain routes are source leads only. deploy_order_guidance is practical consumer-compatibility inference, not a canonical deploy-blocker fact. "
-            "For dependency anchors, includes grouped importer evidence; for inventory questions, includes top dependencies and coverage gap samples. "
+            "For dependency anchors, includes grouped importer evidence and does not attach fleet runtime_architecture or authz_surface. Runtime architecture is included only for fleet, unresolved raw-query investigation, repo, service, endpoint, event-channel, or domain anchors; authz_surface is included only for fleet, unresolved raw-query investigation, repo, service, or endpoint anchors. "
+            "For inventory questions, includes top dependencies and coverage gap samples. "
             "Top-level result rows honor limit; nested planning packets are capped by summary.section_limit to stay compact. "
             "Calling it with no anchor returns a fleet packet with compact service identities plus runtime_architecture.answer_packet. "
             "Output is bounded with a compact fleet cap and a larger anchored-detail cap; when truncated, output_budget.omitted_counts, output_budget.backfilled_counts, output_budget.advice, and inspection_areas describe what was omitted and how to retrieve detail via narrower anchors. "

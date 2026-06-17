@@ -119,6 +119,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("known_linked", descriptions["planning_context"])
         self.assertIn("unlinked_evidence", descriptions["planning_context"])
         self.assertIn("missing_contracts", descriptions["planning_context"])
+        self.assertIn("does not attach fleet runtime_architecture or authz_surface", descriptions["planning_context"])
         self.assertIn("runtime_architecture", descriptions["planning_context"])
         self.assertIn("investigation_brief_only", descriptions["planning_context"])
         self.assertIn("related_facts.symbol_impact.reverse_impact", descriptions["planning_context"])
@@ -238,6 +239,54 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(query["status"], "found")
         self.assertEqual(query["anchors"]["package"], "shared-lib")
         self.assertEqual(query["dependencies"][0]["predicate"], "IMPORTS")
+        self.assertNotIn("runtime_architecture", query)
+        self.assertNotIn("authz_surface", query)
+        self.assertNotIn("runtime_architecture", query["related_facts"])
+        self.assertNotIn("authz_surface", query["related_facts"])
+
+    def test_planning_context_non_runtime_symbol_anchor_skips_unscoped_runtime_and_authz_surfaces(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(kg, "planning_context", {"symbol": "charge_card"})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["anchors"]["symbol"], "charge_card")
+        self.assertIn("symbol_impact", result["related_facts"])
+        self.assertNotIn("runtime_architecture", result)
+        self.assertNotIn("authz_surface", result)
+        self.assertNotIn("runtime_architecture", result["related_facts"])
+        self.assertNotIn("authz_surface", result["related_facts"])
+
+    def test_planning_context_path_and_line_anchor_skips_unscoped_runtime_and_authz_surfaces(self) -> None:
+        with _fixture_snapshot() as kg:
+            path = call_tool(kg, "planning_context", {"path": "payments/checkout.py"})
+            path_line = call_tool(
+                kg,
+                "planning_context",
+                {"path": "payments/checkout.py", "line": 10},
+            )
+
+        for result in (path, path_line):
+            self.assertEqual(result["status"], "found")
+            self.assertNotIn("runtime_architecture", result)
+            self.assertNotIn("authz_surface", result)
+            self.assertNotIn("runtime_architecture", result["related_facts"])
+            self.assertNotIn("authz_surface", result["related_facts"])
+
+    def test_planning_context_domain_and_event_anchors_include_runtime_not_authz(self) -> None:
+        with _fixture_snapshot() as kg:
+            domain = call_tool(kg, "planning_context", {"domain": "api.internal.example"})
+            event = call_tool(kg, "planning_context", {"event_channel": "orders-created"})
+
+        self.assertEqual(domain["status"], "found")
+        self.assertEqual(event["status"], "found")
+        self.assertIn("runtime_architecture", domain)
+        self.assertIn("runtime_architecture", domain["related_facts"])
+        self.assertIn("runtime_architecture", event)
+        self.assertIn("runtime_architecture", event["related_facts"])
+        self.assertNotIn("authz_surface", domain)
+        self.assertNotIn("authz_surface", domain["related_facts"])
+        self.assertNotIn("authz_surface", event)
+        self.assertNotIn("authz_surface", event["related_facts"])
 
     def test_planning_context_ambiguous_inputs_fail_closed_and_empty_input_returns_fleet_packet(self) -> None:
         with _fixture_snapshot() as kg:
@@ -296,6 +345,11 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ambiguous")
         self.assertTrue(result["next_actions"])
+        self.assertIn("runtime_architecture", result)
+        runtime = result["runtime_architecture"]
+        self.assertEqual(runtime["summary"]["answer_packet_mode"], "investigation_brief_only")
+        self.assertIn("investigation_brief", runtime["answer_packet"])
+        self.assertNotIn("runtime_building_blocks", runtime["answer_packet"])
 
     def test_planning_context_symbol_ambiguity_returns_candidates(self) -> None:
         with _fixture_snapshot(extra_charge_card_symbol=True) as kg:
@@ -328,6 +382,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("scoped to repo payments", result["inventory"]["count_contract"])
         self.assertGreater(result["snapshot_scope"]["entity_count"], 0)
         self.assertGreater(result["snapshot_scope"]["fact_count"], 0)
+        self.assertEqual(result["runtime_architecture"]["scope"], {"kind": "repo", "repo": "payments"})
+        self.assertEqual(result["authz_surface"]["scope"], {"repo": "payments", "mode": "repo"})
+        self.assertIn("runtime_architecture", result["related_facts"])
+        self.assertIn("authz_surface", result["related_facts"])
 
     def test_planning_context_service_and_repo_narrow_without_scope_rejection(self) -> None:
         with _fixture_snapshot() as kg:
@@ -472,6 +530,73 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["related_facts"]["dependency_importers"]["summary"]["importer_fact_count"], 3)
         self.assertEqual(result["related_facts"]["dependency_importers"]["repo_counts"], {"payments": 3})
         self.assertEqual(result["related_facts"]["dependency_importers"]["packages"][0]["name"], "shared-lib")
+
+    def test_planning_context_package_anchor_skips_unscoped_runtime_and_authz_surfaces(self) -> None:
+        with _fixture_snapshot(
+            extra_package_importers=2,
+            runtime_pressure_routes=4,
+            runtime_pressure_payload_size=200,
+            endpoint_consumer=True,
+            operational_deploy_mapping=True,
+            operational_deploy_link=True,
+        ) as kg:
+            result = call_tool(kg, "planning_context", {"package": "shared-lib", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["anchors"]["package"], "shared-lib")
+        self.assertNotIn("runtime_architecture", result)
+        self.assertNotIn("authz_surface", result)
+        self.assertNotIn("runtime_architecture", result["related_facts"])
+        self.assertNotIn("authz_surface", result["related_facts"])
+        self.assertEqual(result["related_facts"]["dependency_importers"]["summary"]["importer_fact_count"], 3)
+        self.assertEqual(result["related_facts"]["dependency_importers"]["repo_counts"], {"payments": 3})
+
+    def test_planning_context_budget_does_not_reintroduce_skipped_runtime_or_authz_surfaces(self) -> None:
+        importer_rows = [
+            {
+                "predicate": "IMPORTS",
+                "repo": "consumer",
+                "path": f"consumer/module_{index}.py",
+                "payload": "x" * 1_000,
+            }
+            for index in range(20)
+        ]
+        result = {
+            "tool": "planning_context",
+            "status": "found",
+            "summary": {"dependency_count": 20},
+            "snapshot_summary": {},
+            "snapshot_scope": {},
+            "ownership_context": {},
+            "anchors": {"package": "shared-lib"},
+            "related_facts": {
+                "dependency_importers": {
+                    "status": "found",
+                    "summary": {"importer_fact_count": 20, "importer_repo_count": 1},
+                    "importers": importer_rows,
+                    "repo_counts": {"consumer": 20},
+                }
+            },
+            "coverage_warnings": [],
+            "unsupported_scopes": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_planning_context_budget(
+            result,
+            max_chars=3_000,
+            preserve_planning_sections=True,
+        )
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 3_000)
+        self.assertNotIn("runtime_architecture", budgeted)
+        self.assertNotIn("authz_surface", budgeted)
+        self.assertNotIn("runtime_architecture", budgeted["related_facts"])
+        self.assertNotIn("authz_surface", budgeted["related_facts"])
+        self.assertEqual(budgeted["related_facts"]["dependency_importers"]["summary"]["importer_fact_count"], 20)
+        self.assertNotIn("runtime_architecture", budgeted["output_budget"]["advice"])
+        self.assertNotIn("source_coordinates", budgeted["output_budget"]["advice"])
+        self.assertIn("related_facts", budgeted["output_budget"]["advice"])
 
     def test_planning_context_includes_service_operational_surfaces(self) -> None:
         with _fixture_snapshot(operational_deploy_mapping=True, operational_deploy_same_repo=True) as kg:
