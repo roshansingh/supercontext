@@ -1489,8 +1489,8 @@ function propertyNameText(name) {
 function objectLiteralProperty(objectNode, propertyName) {
   if (!ts.isObjectLiteralExpression(objectNode)) return null;
   for (const property of objectNode.properties) {
-    if (!ts.isPropertyAssignment(property)) continue;
-    if (propertyNameText(property.name) === propertyName) return property.initializer;
+    if (ts.isPropertyAssignment(property) && propertyNameText(property.name) === propertyName) return property.initializer;
+    if (ts.isShorthandPropertyAssignment(property) && propertyNameText(property.name) === propertyName) return property.name;
   }
   return null;
 }

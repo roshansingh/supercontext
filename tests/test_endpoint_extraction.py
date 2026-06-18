@@ -636,6 +636,22 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/search"][0]["wrapper_import_source"], "generic-http-client")
         self.assertEqual(qualifiers_by_path["/api/search"][0]["wrapper_imported_name"], "request")
 
+    def test_typescript_http_wrapper_object_calls_resolve_shorthand_properties(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "const service = 'orders-service';\n"
+            "const path = '/api/orders';\n"
+            "get({ service, path });\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_wrapper_call"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service"], "orders-service")
+
     def test_typescript_wrapper_metadata_omits_unresolved_raw_expressions(self) -> None:
         build = _extract_typescript_client(
             "import { get } from '@example/http-client';\n"
