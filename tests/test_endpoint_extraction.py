@@ -757,6 +757,26 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
 
+    def test_typescript_controller_wrapper_methods_preserve_super_service_env_reference(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller } from '@example/http-client';\n"
+            "export class OrdersService extends Controller {\n"
+            "  constructor() {\n"
+            "    super({ service: process.env.SERVICE_NAME, clientAppId: 'web' });\n"
+            "  }\n"
+            "  async search() {\n"
+            "    return this.get({ path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"${env:SERVICE_NAME}"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["SERVICE_NAME"])
+
     def test_typescript_controller_wrapper_methods_normalize_super_host_default(self) -> None:
         build = _extract_typescript_client(
             "import { Controller } from '@example/http-client';\n"

@@ -36,4 +36,4 @@ Regression fixtures include repo-neutral positive and negative cases under [test
 - `uv run --extra dotnet python -m compileall -q source`
 - `uv run --extra dotnet python -m unittest discover -s tests`
 
-Result: full suite passed with 1,290 tests run and 2 skipped.
+Result: full suite passed with 1,291 tests run and 2 skipped.

@@ -1816,7 +1816,12 @@ function endpointDefaultBase(defaults) {
       env_names: Array.isArray(defaults.host_env_names) ? defaults.host_env_names : [],
     };
   }
-  if (typeof defaults.service === "string") return { value: defaults.service, env_names: [] };
+  if (typeof defaults.service === "string") {
+    return {
+      value: defaults.service,
+      env_names: Array.isArray(defaults.service_env_names) ? defaults.service_env_names : [],
+    };
+  }
   return null;
 }
 
