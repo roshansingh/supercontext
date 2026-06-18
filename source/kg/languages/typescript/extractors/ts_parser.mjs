@@ -1990,6 +1990,7 @@ function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bin
   let method = null;
   let receiverLocal = null;
   let binding = null;
+  let wrapperMethod = null;
   if (ts.isIdentifier(node.expression) && importedBindings.has(node.expression.text)) {
     receiverLocal = node.expression.text;
     if (identifierIsLocallyShadowed(node.expression, receiverLocal, sourceFile)) return null;
@@ -1999,7 +2000,8 @@ function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bin
     receiverLocal = node.expression.expression.text;
     if (!importedBindings.has(receiverLocal) || identifierIsLocallyShadowed(node.expression.expression, receiverLocal, sourceFile)) return null;
     binding = importedBindings.get(receiverLocal);
-    method = httpWrapperMethodName(node.expression.name.text);
+    wrapperMethod = node.expression.name.text;
+    method = httpWrapperMethodName(wrapperMethod);
   } else {
     return null;
   }
@@ -2013,6 +2015,7 @@ function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bin
     wrapper_import_source: binding.import_source,
     wrapper_imported_name: binding.imported_name,
   };
+  if (wrapperMethod != null) metadata.wrapper_method = wrapperMethod;
   return rowFromTarget(
     resolved.target,
     resolved.method ?? method ?? "ANY",

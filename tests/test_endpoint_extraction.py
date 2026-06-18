@@ -588,11 +588,13 @@ class EndpointExtractionTest(unittest.TestCase):
     def test_typescript_imported_http_wrapper_object_calls_are_resolved(self) -> None:
         build = _extract_typescript_client(
             "import { get, post as create, del } from '@example/http-client';\n"
+            "import * as http from '@example/http-client';\n"
             "const SERVICE = 'orders-service';\n"
             "const API_VERSION = '2025-01-01';\n"
             "get({ service: SERVICE, path: `/api/orders/${orderId}`, clientAppId: 'web', apiVersion: API_VERSION });\n"
             "create({ host: process.env.API_HOST, url: 'api/orders', clientAppId: 'web' });\n"
             "del({ baseUrl: 'http://localhost:3000/api', path: 'orders/' });\n"
+            "http.put({ service: SERVICE, path: '/api/order-status' });\n"
         )
 
         calls = _endpoint_rows(build, "CALLS_ENDPOINT")
@@ -604,15 +606,18 @@ class EndpointExtractionTest(unittest.TestCase):
                 "/api/orders/{orderId}": {"GET"},
                 "/api/orders": {"POST"},
                 "/api/orders/": {"DELETE"},
+                "/api/order-status": {"PUT"},
             },
         )
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders/{orderId}"], {"http_wrapper_call"})
         self.assertEqual(_hosts_by_path(calls)["/api/orders/{orderId}"], {"orders-service"})
         self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"${env:API_HOST}"})
         self.assertEqual(_hosts_by_path(calls)["/api/orders/"], {"localhost"})
+        self.assertEqual(_hosts_by_path(calls)["/api/order-status"], {"orders-service"})
         self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["service"], "orders-service")
         self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["api_version"], "2025-01-01")
         self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["route_params"], ["orderId"])
+        self.assertEqual(qualifiers_by_path["/api/order-status"][0]["wrapper_method"], "put")
         self.assertEqual(qualifiers_by_path["/api/orders"][0]["host_resolution_kind"], "env_backed_unresolved")
         self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
 
