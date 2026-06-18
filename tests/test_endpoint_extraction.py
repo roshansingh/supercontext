@@ -744,6 +744,22 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
 
+    def test_typescript_controller_wrapper_methods_fail_closed_on_unresolved_super_default(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller } from '@example/http-client';\n"
+            "export class OrdersService extends Controller {\n"
+            "  constructor() {\n"
+            "    super({ service: serviceName, clientAppId: 'web' });\n"
+            "  }\n"
+            "  async search() {\n"
+            "    return this.get({ path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
     def test_typescript_http_wrapper_object_calls_require_wrapper_context(self) -> None:
         build = _extract_typescript_client(
             "import { get, post } from '@example/http-client';\n"

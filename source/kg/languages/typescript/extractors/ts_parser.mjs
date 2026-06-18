@@ -1812,6 +1812,14 @@ function endpointDefaultBase(defaults) {
   return null;
 }
 
+function endpointDefaultsHaveUnresolvedBase(defaults) {
+  return (
+    typeof defaults.base_url_raw === "string" ||
+    typeof defaults.host_raw === "string" ||
+    typeof defaults.service_raw === "string"
+  );
+}
+
 function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {}) {
   if (!ts.isObjectLiteralExpression(configNode)) return null;
   const targetProperty = endpointConfigTargetProperty(configNode);
@@ -1829,11 +1837,21 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
   } else {
     const hostNode = objectLiteralProperty(configNode, "host") ?? objectLiteralProperty(configNode, "service");
     const defaultBase = endpointDefaultBase(defaults);
-    target = hostNode
-      ? targetWithHostLikeBase(targetProperty.initializer, hostNode, sourceFile, bindings)
-      : defaultBase != null
-        ? targetWithHostValue(targetProperty.initializer, defaultBase.value, sourceFile, bindings, defaultBase.env_names)
-      : resolveEndpointTarget(targetProperty.initializer, sourceFile, bindings);
+    if (hostNode) {
+      target = targetWithHostLikeBase(targetProperty.initializer, hostNode, sourceFile, bindings);
+    } else if (defaultBase != null) {
+      target = targetWithHostValue(targetProperty.initializer, defaultBase.value, sourceFile, bindings, defaultBase.env_names);
+    } else if (endpointDefaultsHaveUnresolvedBase(defaults)) {
+      target = {
+        kind: "unresolved",
+        path: null,
+        host: null,
+        raw_target: rawNodeText(targetProperty.initializer, sourceFile),
+        reason: "host_or_service_unresolved",
+      };
+    } else {
+      target = resolveEndpointTarget(targetProperty.initializer, sourceFile, bindings);
+    }
   }
   const metadata = endpointConfigMetadata(configNode, sourceFile, bindings, defaults);
   return {
