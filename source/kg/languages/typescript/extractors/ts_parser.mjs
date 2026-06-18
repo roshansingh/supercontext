@@ -1660,7 +1660,7 @@ function endpointConfigLooksLikeAxiosRequestConfig(configNode) {
   const targetProperty = endpointConfigTargetProperty(configNode);
   return (
     targetProperty != null &&
-    propertyNameText(targetProperty.name) === "url" &&
+    targetProperty.name === "url" &&
     objectLiteralProperty(configNode, "baseURL") != null &&
     objectLiteralProperty(configNode, "service") == null &&
     objectLiteralProperty(configNode, "host") == null &&

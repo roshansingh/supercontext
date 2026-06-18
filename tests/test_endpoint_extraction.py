@@ -653,6 +653,26 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_wrapper_call"})
         self.assertFalse(_call_site_coverage(build))
 
+    def test_typescript_imported_axios_base_url_config_is_not_wrapper_call(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.ts": (
+                    "import axios from 'axios';\n"
+                    "export const request = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/orders.ts": (
+                    "import { request } from './api';\n"
+                    "request({ url: '/api/orders', baseURL: 'http://localhost:4000', method: 'post' });\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"imported_axios_call"})
+
     def test_typescript_controller_wrapper_methods_use_super_endpoint_defaults(self) -> None:
         build = _extract_typescript_client(
             "import { Controller } from '@example/http-client';\n"
