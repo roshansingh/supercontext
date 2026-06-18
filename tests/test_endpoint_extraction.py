@@ -636,6 +636,22 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/search"][0]["wrapper_import_source"], "generic-http-client")
         self.assertEqual(qualifiers_by_path["/api/search"][0]["wrapper_imported_name"], "request")
 
+    def test_typescript_wrapper_metadata_omits_unresolved_raw_expressions(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "get({ service: 'orders-service', path: '/api/orders', apiVersion: runtimeVersion });\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifier = _qualifiers_by_path(calls)["/api/orders"][0]
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(qualifier["service"], "orders-service")
+        self.assertNotIn("api_version_raw", qualifier)
+        self.assertNotIn("service_raw", qualifier)
+        self.assertNotIn("client_app_id_raw", qualifier)
+
     def test_typescript_imported_wrapper_overlaps_local_axios_client_only_once(self) -> None:
         build = _extract_typescript_client_files(
             {
