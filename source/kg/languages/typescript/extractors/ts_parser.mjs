@@ -1655,6 +1655,14 @@ function endpointConfigHasWrapperContext(configNode) {
   );
 }
 
+function endpointConfigHasBaseContext(configNode) {
+  return (
+    endpointConfigBaseUrlProperty(configNode) != null ||
+    objectLiteralProperty(configNode, "host") != null ||
+    objectLiteralProperty(configNode, "service") != null
+  );
+}
+
 function endpointConfigLooksLikeAxiosRequestConfig(configNode) {
   // Axios uses baseURL; lowercase baseUrl remains available for app-level wrapper configs.
   const targetProperty = endpointConfigTargetProperty(configNode);
@@ -2055,7 +2063,7 @@ function classSuperEndpointDefaults(classNode, sourceFile, bindings) {
         node.expression.kind === ts.SyntaxKind.SuperKeyword &&
         node.arguments.length >= 1 &&
         ts.isObjectLiteralExpression(node.arguments[0]) &&
-        endpointConfigHasWrapperContext(node.arguments[0])
+        endpointConfigHasBaseContext(node.arguments[0])
       ) {
         const configNode = node.arguments[0];
         const metadata = endpointConfigDefaults(configNode, sourceFile, bindings);
