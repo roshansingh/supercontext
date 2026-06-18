@@ -585,6 +585,137 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/v1/reports"][0]["resolution_kind"], "template")
         self.assertFalse(_call_site_coverage(build))
 
+    def test_typescript_imported_http_wrapper_object_calls_are_resolved(self) -> None:
+        build = _extract_typescript_client(
+            "import { get, post as create, del } from '@example/http-client';\n"
+            "const SERVICE = 'orders-service';\n"
+            "const API_VERSION = '2025-01-01';\n"
+            "get({ service: SERVICE, path: `/api/orders/${orderId}`, clientAppId: 'web', apiVersion: API_VERSION });\n"
+            "create({ host: process.env.API_HOST, url: 'api/orders', clientAppId: 'web' });\n"
+            "del({ baseUrl: 'http://localhost:3000/api', path: 'orders/' });\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/orders/{orderId}": {"GET"},
+                "/api/orders": {"POST"},
+                "/api/orders/": {"DELETE"},
+            },
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders/{orderId}"], {"http_wrapper_call"})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders/{orderId}"], {"orders-service"})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"${env:API_HOST}"})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders/"], {"localhost"})
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["service"], "orders-service")
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["api_version"], "2025-01-01")
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["route_params"], ["orderId"])
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+
+    def test_typescript_generic_request_wrapper_uses_base_url_and_method(self) -> None:
+        build = _extract_typescript_client(
+            "import { request } from 'generic-http-client';\n"
+            "request({ baseUrl: 'http://localhost:3000/api', path: 'search', method: 'patch' });\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/search": {"PATCH"}})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/search"], {"http_wrapper_call"})
+        self.assertEqual(_hosts_by_path(calls)["/api/search"], {"localhost"})
+        self.assertEqual(qualifiers_by_path["/api/search"][0]["wrapper_import_source"], "generic-http-client")
+        self.assertEqual(qualifiers_by_path["/api/search"][0]["wrapper_imported_name"], "request")
+
+    def test_typescript_imported_wrapper_overlaps_local_axios_client_only_once(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api.ts": (
+                    "import axios from 'axios';\n"
+                    "export const request = axios.create({ baseURL: 'http://localhost:3000' });\n"
+                ),
+                "src/orders.ts": (
+                    "import { request } from './api';\n"
+                    "request({ service: 'orders-service', url: '/api/orders', method: 'post' });\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_wrapper_call"})
+        self.assertFalse(_call_site_coverage(build))
+
+    def test_typescript_controller_wrapper_methods_use_super_endpoint_defaults(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller } from '@example/http-client';\n"
+            "const API_VERSION = '2025-01-01';\n"
+            "export class OrdersService extends Controller {\n"
+            "  constructor() {\n"
+            "    super({ service: 'orders-service', clientAppId: 'web', apiVersion: API_VERSION });\n"
+            "  }\n"
+            "  async getOrder(orderId) {\n"
+            "    return this.get({ path: `/api/orders/${orderId}` });\n"
+            "  }\n"
+            "  async createOrder(data) {\n"
+            "    return this.post({ path: '/api/orders', data });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders/{orderId}": {"GET"}, "/api/orders": {"POST"}})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders/{orderId}"], {"http_controller_wrapper_call"})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders/{orderId}"], {"orders-service"})
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["service"], "orders-service")
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["api_version"], "2025-01-01")
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["wrapper_receiver"], "this")
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["route_params"], ["orderId"])
+
+    def test_typescript_controller_wrapper_methods_use_super_base_url_default(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller } from '@example/http-client';\n"
+            "export class OrdersService extends Controller {\n"
+            "  constructor() {\n"
+            "    super({ baseUrl: 'http://localhost:3000/api', clientAppId: 'web' });\n"
+            "  }\n"
+            "  async search() {\n"
+            "    return this.get({ path: 'orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
+
+    def test_typescript_http_wrapper_object_calls_require_wrapper_context(self) -> None:
+        build = _extract_typescript_client(
+            "import { get, post } from '@example/http-client';\n"
+            "import { run } from '@example/tasks';\n"
+            "function localGet(options) { return options.path; }\n"
+            "localGet({ service: 'orders-service', path: '/api/local' });\n"
+            "get({ path: '/api/missing-context' });\n"
+            "post({ service: 'orders-service', label: '/api/missing-path' });\n"
+            "run({ service: 'orders-service', path: '/api/not-http', method: 'get' });\n"
+            "class Plain {\n"
+            "  read() { return this.get({ path: '/api/not-controller' }); }\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+
     def test_typescript_client_calls_emit_env_host_confidence_and_coverage(self) -> None:
         build = _extract_typescript_client(
             "import axios from 'axios';\n"

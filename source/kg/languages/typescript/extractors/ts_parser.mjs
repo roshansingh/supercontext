@@ -132,6 +132,20 @@ function collectImports(sourceFile) {
 }
 
 const HTTP_METHODS = new Set(["get", "post", "put", "delete", "patch", "options", "head"]);
+const HTTP_WRAPPER_METHODS = new Map([
+  ["get", "GET"],
+  ["post", "POST"],
+  ["put", "PUT"],
+  ["patch", "PATCH"],
+  ["delete", "DELETE"],
+  ["del", "DELETE"],
+  ["head", "HEAD"],
+  ["options", "OPTIONS"],
+  ["fetch", "ANY"],
+  ["request", "ANY"],
+]);
+const ENDPOINT_CONFIG_TARGET_PROPERTIES = ["path", "url"];
+const ENDPOINT_CONFIG_BASE_URL_PROPERTIES = ["baseURL", "baseUrl", "base_url"];
 const ASSIGNMENT_OPERATORS = new Set([
   ts.SyntaxKind.EqualsToken,
   ts.SyntaxKind.PlusEqualsToken,
@@ -1481,6 +1495,15 @@ function objectLiteralProperty(objectNode, propertyName) {
   return null;
 }
 
+function objectLiteralPropertyFromNames(objectNode, propertyNames) {
+  if (!ts.isObjectLiteralExpression(objectNode)) return null;
+  for (const propertyName of propertyNames) {
+    const property = objectLiteralProperty(objectNode, propertyName);
+    if (property) return { name: propertyName, initializer: property };
+  }
+  return null;
+}
+
 function objectLiteralHasProperty(objectNode, propertyName) {
   if (!ts.isObjectLiteralExpression(objectNode)) return false;
   for (const property of objectNode.properties) {
@@ -1609,6 +1632,42 @@ function methodFromOptionsLike(node) {
   return value == null ? null : value.toUpperCase();
 }
 
+function httpWrapperMethodName(name) {
+  return HTTP_WRAPPER_METHODS.get(name) ?? null;
+}
+
+function endpointConfigTargetProperty(configNode) {
+  return objectLiteralPropertyFromNames(configNode, ENDPOINT_CONFIG_TARGET_PROPERTIES);
+}
+
+function endpointConfigBaseUrlProperty(configNode) {
+  return objectLiteralPropertyFromNames(configNode, ENDPOINT_CONFIG_BASE_URL_PROPERTIES);
+}
+
+function endpointConfigHasWrapperContext(configNode) {
+  return (
+    endpointConfigBaseUrlProperty(configNode) != null ||
+    objectLiteralProperty(configNode, "host") != null ||
+    objectLiteralProperty(configNode, "service") != null ||
+    objectLiteralProperty(configNode, "port") != null ||
+    objectLiteralProperty(configNode, "apiVersion") != null ||
+    objectLiteralProperty(configNode, "clientAppId") != null
+  );
+}
+
+function endpointConfigLooksLikeAxiosRequestConfig(configNode) {
+  const targetProperty = endpointConfigTargetProperty(configNode);
+  return (
+    targetProperty?.name === "url" &&
+    objectLiteralProperty(configNode, "baseURL") != null &&
+    objectLiteralProperty(configNode, "service") == null &&
+    objectLiteralProperty(configNode, "host") == null &&
+    objectLiteralProperty(configNode, "port") == null &&
+    objectLiteralProperty(configNode, "apiVersion") == null &&
+    objectLiteralProperty(configNode, "clientAppId") == null
+  );
+}
+
 function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpression) {
   const target = resolveEndpointExpression(targetNode, sourceFile, bindings, new Set(), null, { relativePathAllowed: true });
   if (!baseUrlExpression) return resolveEndpointTarget(targetNode, sourceFile, bindings);
@@ -1634,12 +1693,155 @@ function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpr
   return resolved.kind === "unresolved" ? { kind: "unresolved", path: null, host: null, raw_target: target.raw } : resolved;
 }
 
-function rowFromTarget(target, method, line, sourceKind) {
+function normalizeConfiguredPath(value) {
+  const trimmed = String(value).trim();
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function trimLeadingSlashes(value) {
+  let start = 0;
+  while (start < value.length && value[start] === "/") start += 1;
+  return value.slice(start);
+}
+
+function trimTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
+function carryEndpointExpressionDetails(resolved, expression) {
+  resolved.resolution_kind = expression.resolution_kind ?? null;
+  if (Array.isArray(expression.route_params)) resolved.route_params = expression.route_params;
+  if (resolved.kind === "host_unresolved" && Array.isArray(expression.env_names)) resolved.env_names = expression.env_names;
+  return resolved;
+}
+
+function targetWithHostValue(targetNode, hostValue, sourceFile, bindings, envNames = []) {
+  const target = resolveEndpointExpression(targetNode, sourceFile, bindings, new Set(), null, { relativePathAllowed: true });
+  if (target.kind === "unresolved" || target.value == null) {
+    return { kind: "unresolved", path: null, host: null, raw_target: target.raw, reason: target.reason ?? null };
+  }
+  const targetValue = String(target.value).trim();
+  if (targetValue.startsWith("http://") || targetValue.startsWith("https://") || targetValue.startsWith("${env:")) {
+    return resolveEndpointTarget(targetNode, sourceFile, bindings);
+  }
+  const trimmedHost = String(hostValue).trim();
+  if (trimmedHost.startsWith("http://") || trimmedHost.startsWith("https://") || trimmedHost.startsWith("${env:")) {
+    const combined = `${trimTrailingSlashes(trimmedHost)}/${trimLeadingSlashes(targetValue)}`;
+    const resolved = splitResolvedEndpointTarget(combined);
+    if (envNames.length > 0) resolved.env_names = envNames;
+    return carryEndpointExpressionDetails(resolved, target);
+  }
+  if (trimmedHost.length > 0) {
+    const resolved = {
+      kind: "resolved",
+      path: normalizeConfiguredPath(targetValue),
+      host: trimmedHost,
+      raw_target: target.raw,
+    };
+    return carryEndpointExpressionDetails(resolved, target);
+  }
+  const resolved = splitResolvedEndpointTarget(normalizeConfiguredPath(targetValue));
+  return carryEndpointExpressionDetails(resolved, target);
+}
+
+function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings) {
+  const host = resolveEndpointExpression(hostNode, sourceFile, bindings);
+  if (host.kind === "resolved" || host.kind === "env") {
+    return targetWithHostValue(targetNode, host.value, sourceFile, bindings, Array.isArray(host.env_names) ? host.env_names : []);
+  }
+  return targetWithHostValue(targetNode, "", sourceFile, bindings);
+}
+
+function resolvedMetadataValue(node, sourceFile, bindings) {
+  const resolved = resolveEndpointExpression(node, sourceFile, bindings);
+  if ((resolved.kind === "resolved" || resolved.kind === "env") && typeof resolved.value === "string") return resolved;
+  return null;
+}
+
+function addConfigMetadataValue(metadata, key, node, sourceFile, bindings) {
+  if (!node) return;
+  const resolved = resolvedMetadataValue(node, sourceFile, bindings);
+  if (resolved != null) {
+    metadata[key] = resolved.value;
+    if (Array.isArray(resolved.env_names)) metadata[`${key}_env_names`] = uniqueStrings(resolved.env_names);
+    return;
+  }
+  metadata[`${key}_raw`] = rawNodeText(node, sourceFile);
+}
+
+function endpointConfigMetadata(configNode, sourceFile, bindings, defaults = {}) {
+  const metadata = { ...defaults };
+  addConfigMetadataValue(metadata, "service", objectLiteralProperty(configNode, "service"), sourceFile, bindings);
+  addConfigMetadataValue(metadata, "api_version", objectLiteralProperty(configNode, "apiVersion"), sourceFile, bindings);
+  addConfigMetadataValue(metadata, "client_app_id", objectLiteralProperty(configNode, "clientAppId"), sourceFile, bindings);
+  return metadata;
+}
+
+function endpointConfigDefaults(configNode, sourceFile, bindings) {
+  const defaults = endpointConfigMetadata(configNode, sourceFile, bindings);
+  const baseUrlProperty = endpointConfigBaseUrlProperty(configNode);
+  addConfigMetadataValue(defaults, "base_url", baseUrlProperty?.initializer, sourceFile, bindings);
+  addConfigMetadataValue(defaults, "host", objectLiteralProperty(configNode, "host"), sourceFile, bindings);
+  return defaults;
+}
+
+function endpointDefaultBase(defaults) {
+  if (typeof defaults.base_url === "string") {
+    return {
+      value: defaults.base_url,
+      env_names: Array.isArray(defaults.base_url_env_names) ? defaults.base_url_env_names : [],
+    };
+  }
+  if (typeof defaults.host === "string") {
+    return {
+      value: defaults.host,
+      env_names: Array.isArray(defaults.host_env_names) ? defaults.host_env_names : [],
+    };
+  }
+  if (typeof defaults.service === "string") return { value: defaults.service, env_names: [] };
+  return null;
+}
+
+function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {}) {
+  if (!ts.isObjectLiteralExpression(configNode)) return null;
+  const targetProperty = endpointConfigTargetProperty(configNode);
+  if (!targetProperty) return null;
+
+  const baseUrlProperty = endpointConfigBaseUrlProperty(configNode);
+  let target;
+  if (baseUrlProperty) {
+    target = composedTargetWithBaseUrl(
+      targetProperty.initializer,
+      sourceFile,
+      bindings,
+      resolveEndpointExpression(baseUrlProperty.initializer, sourceFile, bindings)
+    );
+  } else {
+    const hostNode = objectLiteralProperty(configNode, "host") ?? objectLiteralProperty(configNode, "service");
+    const defaultBase = endpointDefaultBase(defaults);
+    target = hostNode
+      ? targetWithHostLikeBase(targetProperty.initializer, hostNode, sourceFile, bindings)
+      : defaultBase != null
+        ? targetWithHostValue(targetProperty.initializer, defaultBase.value, sourceFile, bindings, defaultBase.env_names)
+      : resolveEndpointTarget(targetProperty.initializer, sourceFile, bindings);
+  }
+  const metadata = endpointConfigMetadata(configNode, sourceFile, bindings, defaults);
+  return {
+    target,
+    method: methodFromOptionsLike(configNode),
+    metadata,
+  };
+}
+
+function rowFromTarget(target, method, line, sourceKind, metadata = {}) {
+  const extra = metadata && typeof metadata === "object" ? metadata : {};
   if (target.kind === "external") {
-    return { external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind };
+    return { external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind, ...extra };
   }
   if (target.kind === "unresolved") {
-    return { unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null };
+    return { unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null, ...extra };
   }
   return {
     method: method ?? "ANY",
@@ -1654,6 +1856,7 @@ function rowFromTarget(target, method, line, sourceKind) {
     host_resolution_kind: target.host_resolution_kind ?? null,
     route_params: Array.isArray(target.route_params) ? target.route_params : null,
     env_names: Array.isArray(target.env_names) ? target.env_names : null,
+    ...extra,
   };
 }
 
@@ -1770,6 +1973,129 @@ function importedClientCallFromNode(node, sourceFile, importedBindings, bindings
   };
 }
 
+function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bindings) {
+  if (!ts.isCallExpression(node) || node.arguments.length < 1 || !ts.isObjectLiteralExpression(node.arguments[0])) return null;
+  const configNode = node.arguments[0];
+  if (endpointConfigTargetProperty(configNode) == null || !endpointConfigHasWrapperContext(configNode)) return null;
+  if (endpointConfigLooksLikeAxiosRequestConfig(configNode)) return null;
+
+  let method = null;
+  let receiverLocal = null;
+  let binding = null;
+  if (ts.isIdentifier(node.expression) && importedBindings.has(node.expression.text)) {
+    receiverLocal = node.expression.text;
+    if (identifierIsLocallyShadowed(node.expression, receiverLocal, sourceFile)) return null;
+    binding = importedBindings.get(receiverLocal);
+    method = httpWrapperMethodName(binding.imported_name) ?? httpWrapperMethodName(receiverLocal);
+  } else if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
+    receiverLocal = node.expression.expression.text;
+    if (!importedBindings.has(receiverLocal) || identifierIsLocallyShadowed(node.expression.expression, receiverLocal, sourceFile)) return null;
+    binding = importedBindings.get(receiverLocal);
+    method = httpWrapperMethodName(node.expression.name.text);
+  } else {
+    return null;
+  }
+
+  const resolved = endpointTargetFromConfig(configNode, sourceFile, bindings);
+  if (!resolved) return null;
+  if (method == null) return null;
+  const metadata = {
+    ...resolved.metadata,
+    wrapper_receiver: receiverLocal,
+    wrapper_import_source: binding.import_source,
+    wrapper_imported_name: binding.imported_name,
+  };
+  return rowFromTarget(
+    resolved.target,
+    resolved.method ?? method ?? "ANY",
+    lineOf(sourceFile, node.expression.getStart(sourceFile)),
+    "http_wrapper_call",
+    metadata
+  );
+}
+
+function classSuperEndpointDefaults(classNode, sourceFile, bindings) {
+  const defaults = {};
+  for (const member of classNode.members) {
+    if (!ts.isConstructorDeclaration(member) || !member.body) continue;
+    let found = false;
+    function visit(node) {
+      if (found) return;
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+        node.arguments.length >= 1 &&
+        ts.isObjectLiteralExpression(node.arguments[0]) &&
+        endpointConfigHasWrapperContext(node.arguments[0])
+      ) {
+        const configNode = node.arguments[0];
+        const metadata = endpointConfigDefaults(configNode, sourceFile, bindings);
+        for (const [key, value] of Object.entries(metadata)) {
+          defaults[key] = value;
+        }
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(member.body);
+  }
+  return Object.keys(defaults).length > 0 ? defaults : null;
+}
+
+function thisHttpWrapperCallFromNode(node, sourceFile, bindings, defaults) {
+  if (
+    !ts.isCallExpression(node) ||
+    node.arguments.length < 1 ||
+    !ts.isObjectLiteralExpression(node.arguments[0]) ||
+    !ts.isPropertyAccessExpression(node.expression) ||
+    node.expression.expression.kind !== ts.SyntaxKind.ThisKeyword
+  ) {
+    return null;
+  }
+  const method = httpWrapperMethodName(node.expression.name.text);
+  if (method == null || endpointConfigTargetProperty(node.arguments[0]) == null) return null;
+  const resolved = endpointTargetFromConfig(node.arguments[0], sourceFile, bindings, defaults);
+  if (!resolved) return null;
+  const metadata = {
+    ...resolved.metadata,
+    wrapper_receiver: "this",
+    wrapper_method: node.expression.name.text,
+  };
+  return rowFromTarget(
+    resolved.target,
+    resolved.method ?? method,
+    lineOf(sourceFile, node.expression.getStart(sourceFile)),
+    "http_controller_wrapper_call",
+    metadata
+  );
+}
+
+function collectHttpControllerWrapperCalls(sourceFile, bindings) {
+  const calls = [];
+  function visitClass(classNode) {
+    const defaults = classSuperEndpointDefaults(classNode, sourceFile, bindings);
+    if (defaults == null) return;
+    function visit(node) {
+      const call = thisHttpWrapperCallFromNode(node, sourceFile, bindings, defaults);
+      if (call) calls.push(call);
+      ts.forEachChild(node, visit);
+    }
+    for (const member of classNode.members) {
+      if (!ts.isConstructorDeclaration(member)) visit(member);
+    }
+  }
+  function visit(node) {
+    if (ts.isClassDeclaration(node)) {
+      visitClass(node);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return calls;
+}
+
 function clientCallFromNode(node, sourceFile, axiosLocals, axiosClients, axiosClientBaseUrls, bindings) {
   if (!ts.isCallExpression(node)) return null;
   if (ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
@@ -1823,12 +2149,17 @@ function collectClientEndpointCalls(sourceFile) {
   const bindings = collectTopLevelLiteralBindings(sourceFile);
   const { clients: axiosClients, baseUrls: axiosClientBaseUrls } = collectAxiosClients(sourceFile, axiosLocals, bindings);
   const importedBindings = importedBindingsByLocal(sourceFile);
-  const calls = [];
+  const calls = collectHttpControllerWrapperCalls(sourceFile, bindings);
   function visit(node) {
     const call = clientCallFromNode(node, sourceFile, axiosLocals, axiosClients, axiosClientBaseUrls, bindings);
     if (call) calls.push(call);
-    const importedCall = importedClientCallFromNode(node, sourceFile, importedBindings, bindings);
-    if (importedCall) calls.push(importedCall);
+    const wrapperCall = importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bindings);
+    if (wrapperCall) {
+      calls.push(wrapperCall);
+    } else {
+      const importedCall = importedClientCallFromNode(node, sourceFile, importedBindings, bindings);
+      if (importedCall) calls.push(importedCall);
+    }
     ts.forEachChild(node, visit);
   }
   visit(sourceFile);

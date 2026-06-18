@@ -310,6 +310,7 @@ def extract_typescript_client_endpoint_calls(
             host_resolution_kind = row.get("host_resolution_kind")
             route_params = row.get("route_params")
             env_names = row.get("env_names")
+            qualifier_extra = _endpoint_row_metadata(row)
             _add_endpoint_fact(
                 repo,
                 scanned,
@@ -327,6 +328,7 @@ def extract_typescript_client_endpoint_calls(
                 resolution_kind=resolution_kind if isinstance(resolution_kind, str) else None,
                 host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
                 route_params=route_params if _is_string_list(route_params) else None,
+                extra_qualifier=qualifier_extra,
                 validate_path=False,
             )
             if _is_string_list(env_names):
@@ -458,6 +460,26 @@ def _add_imported_client_endpoint_call(
             raw_target,
             "partially_instrumented",
         )
+
+
+def _endpoint_row_metadata(row: dict) -> dict[str, object] | None:
+    metadata: dict[str, object] = {}
+    for key in (
+        "service",
+        "service_raw",
+        "api_version",
+        "api_version_raw",
+        "client_app_id",
+        "client_app_id_raw",
+        "wrapper_receiver",
+        "wrapper_method",
+        "wrapper_import_source",
+        "wrapper_imported_name",
+    ):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            metadata[key] = value
+    return metadata or None
 
 
 def _build_module_clients_index(parsed_files: dict[str, object]) -> dict[str, dict[str, object]]:
@@ -1085,6 +1107,7 @@ def _add_endpoint_fact(
     resolution_kind: str | None = None,
     host_resolution_kind: str | None = None,
     route_params: list[str] | None = None,
+    extra_qualifier: dict[str, object] | None = None,
     validate_path: bool = True,
 ) -> None:
     normalized_path = normalize_endpoint_path(path)
@@ -1101,6 +1124,9 @@ def _add_endpoint_fact(
         qualifier["host_resolution_kind"] = host_resolution_kind
     if route_params:
         qualifier["route_params"] = route_params
+    if extra_qualifier:
+        for key, value in extra_qualifier.items():
+            qualifier.setdefault(key, value)
     add_fact(
         build,
         predicate,
