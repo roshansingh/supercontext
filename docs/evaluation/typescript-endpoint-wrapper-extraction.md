@@ -16,16 +16,18 @@ Baseline on the same local TypeScript monorepo checkout before the change:
 - `CALLS_ENDPOINT` facts: 5
 - `source_kind` counts: `{"fetch_call": 5}`
 
-After the change on the same checkout:
+After the change on the same checkout, with the review hardening that fails closed when a wrapper
+declares `host`/`service` but that expression is unresolved:
 
 - TypeScript/JavaScript files discovered: 1,489
-- `CALLS_ENDPOINT` facts: 139
-- `source_kind` counts: `{"http_wrapper_call": 113, "http_controller_wrapper_call": 21, "fetch_call": 5}`
-- Wrapper-derived facts: 134
+- `CALLS_ENDPOINT` facts: 65
+- `source_kind` counts: `{"http_wrapper_call": 39, "http_controller_wrapper_call": 21, "fetch_call": 5}`
+- Wrapper-derived facts: 60
+- Wrapper calls withheld as explicit coverage rows because `host`/`service` was unresolved: 76
 
 Representative new wrapper evidence preserved service names, API versions, safe template route parameters, and env-backed host confidence without adding generated snapshots to the repository.
 
-Regression fixtures include repo-neutral positive and negative cases under [test_endpoint_extraction.py](../../tests/test_endpoint_extraction.py), including a generic `request({ baseUrl, path, method })` helper shape that does not depend on tenant-specific method names.
+Regression fixtures include repo-neutral positive and negative cases under [test_endpoint_extraction.py](../../tests/test_endpoint_extraction.py), including a generic `request({ baseUrl, path, method })` helper shape that does not depend on tenant-specific method names and a fail-closed unresolved `service`/`host` wrapper case.
 
 ## Verification
 
@@ -34,4 +36,4 @@ Regression fixtures include repo-neutral positive and negative cases under [test
 - `uv run --extra dotnet python -m compileall -q source`
 - `uv run --extra dotnet python -m unittest discover -s tests`
 
-Result: full suite passed with 1,283 tests run and 2 skipped.
+Result: full suite passed with 1,285 tests run and 2 skipped.

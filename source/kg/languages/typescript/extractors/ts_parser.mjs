@@ -1656,9 +1656,11 @@ function endpointConfigHasWrapperContext(configNode) {
 }
 
 function endpointConfigLooksLikeAxiosRequestConfig(configNode) {
+  // Axios uses baseURL; lowercase baseUrl remains available for app-level wrapper configs.
   const targetProperty = endpointConfigTargetProperty(configNode);
   return (
-    targetProperty?.name === "url" &&
+    targetProperty != null &&
+    propertyNameText(targetProperty.name) === "url" &&
     objectLiteralProperty(configNode, "baseURL") != null &&
     objectLiteralProperty(configNode, "service") == null &&
     objectLiteralProperty(configNode, "host") == null &&
@@ -1751,7 +1753,13 @@ function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings) {
   if (host.kind === "resolved" || host.kind === "env") {
     return targetWithHostValue(targetNode, host.value, sourceFile, bindings, Array.isArray(host.env_names) ? host.env_names : []);
   }
-  return targetWithHostValue(targetNode, "", sourceFile, bindings);
+  return {
+    kind: "unresolved",
+    path: null,
+    host: null,
+    raw_target: rawNodeText(targetNode, sourceFile),
+    reason: "host_or_service_unresolved",
+  };
 }
 
 function resolvedMetadataValue(node, sourceFile, bindings) {
@@ -1838,12 +1846,13 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
 function rowFromTarget(target, method, line, sourceKind, metadata = {}) {
   const extra = metadata && typeof metadata === "object" ? metadata : {};
   if (target.kind === "external") {
-    return { external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind, ...extra };
+    return { ...extra, external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind };
   }
   if (target.kind === "unresolved") {
-    return { unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null, ...extra };
+    return { ...extra, unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null };
   }
   return {
+    ...extra,
     method: method ?? "ANY",
     path: target.path,
     host: target.host,
@@ -1856,7 +1865,6 @@ function rowFromTarget(target, method, line, sourceKind, metadata = {}) {
     host_resolution_kind: target.host_resolution_kind ?? null,
     route_params: Array.isArray(target.route_params) ? target.route_params : null,
     env_names: Array.isArray(target.env_names) ? target.env_names : null,
-    ...extra,
   };
 }
 
@@ -2086,7 +2094,7 @@ function collectHttpControllerWrapperCalls(sourceFile, bindings) {
     }
   }
   function visit(node) {
-    if (ts.isClassDeclaration(node)) {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       visitClass(node);
       return;
     }

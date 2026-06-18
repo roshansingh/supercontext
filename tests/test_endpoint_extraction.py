@@ -700,6 +700,25 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
 
+    def test_typescript_controller_wrapper_methods_normalize_super_host_default(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller } from '@example/http-client';\n"
+            "const OrdersService = class extends Controller {\n"
+            "  constructor() {\n"
+            "    super({ host: 'http://localhost:8080/api', clientAppId: 'web' });\n"
+            "  }\n"
+            "  async search() {\n"
+            "    return this.get({ path: 'orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
+
     def test_typescript_http_wrapper_object_calls_require_wrapper_context(self) -> None:
         build = _extract_typescript_client(
             "import { get, post } from '@example/http-client';\n"
@@ -715,6 +734,19 @@ class EndpointExtractionTest(unittest.TestCase):
         )
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+
+    def test_typescript_http_wrapper_object_calls_fail_closed_on_unresolved_host_context(self) -> None:
+        build = _extract_typescript_client(
+            "import { get, post } from '@example/http-client';\n"
+            "const SERVICE = 'orders-service';\n"
+            "get({ service: SERVICE, path: '/api/orders' });\n"
+            "post({ service: serviceName, path: '/api/users' });\n"
+            "get({ host: makeHost(), path: '/api/profiles' });\n"
+        )
+
+        self.assertEqual(_methods_by_path(_endpoint_rows(build, "CALLS_ENDPOINT")), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(_endpoint_rows(build, "CALLS_ENDPOINT"))["/api/orders"], {"orders-service"})
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 2)
 
     def test_typescript_client_calls_emit_env_host_confidence_and_coverage(self) -> None:
         build = _extract_typescript_client(
