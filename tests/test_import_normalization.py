@@ -10,7 +10,7 @@ from unittest.mock import patch
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.python.normalization import imports as python_imports
 from source.kg.languages.python.normalization.imports import ImportRef, PythonImportNormalizer
-from source.kg.languages.typescript.module_resolution import load_typescript_config_object
+from source.kg.languages.typescript.module_resolution import load_typescript_config_object, load_typescript_path_aliases
 from source.kg.languages.typescript.normalization import imports as typescript_imports
 from source.kg.languages.typescript.normalization.imports import JsImportNormalizer, JsImportRef
 
@@ -469,6 +469,20 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(windows_import.category, "relative_internal_module")
             self.assertEqual(windows_import.target_name, "src.feature.child")
 
+    def test_relative_imports_resolve_dotted_module_filenames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            spec = _write(root / "src" / "app.component.spec.ts", "import { AppComponent } from './app.component';\n")
+            component = _write(root / "src" / "app.component.ts", "export class AppComponent {}\n")
+            repo = _repo_snapshot(root, typescript_paths=(spec, component))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("./app.component"), "src.app.component.spec", "src/app.component.spec.ts")
+
+            self.assertEqual(normalized.category, "relative_internal_module")
+            self.assertEqual(normalized.target_name, "src.app.component")
+            self.assertEqual(normalized.module_name, "src.app.component")
+
     def test_nested_tsconfig_path_alias_is_scoped_to_importing_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -545,6 +559,86 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.category, "internal_module")
             self.assertEqual(normalized.target_name, "packages.widget.src.ts.value")
 
+    def test_nested_tsconfig_inherits_path_aliases_from_extended_base_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "tsconfig.base.json",
+                '{"compilerOptions":{"baseUrl":".","paths":{"@acme/widgets":["libs/widgets/src/index.ts"]}}}\n',
+            )
+            _write(root / "apps" / "web" / "tsconfig.json", '{"extends":"../../tsconfig.base.json"}\n')
+            app = _write(root / "apps" / "web" / "src" / "app.ts", "import { Widget } from '@acme/widgets';\n")
+            widgets = _write(root / "libs" / "widgets" / "src" / "index.ts", "export const Widget = 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, widgets))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@acme/widgets"), "apps.web.src.app", "apps/web/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "libs.widgets.src")
+            self.assertEqual(normalized.import_root, "@acme/widgets")
+
+    def test_root_tsconfig_extends_base_config_dedupes_inherited_path_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.base.json", '{"compilerOptions":{"baseUrl":".","paths":{"@acme/*":["libs/*"]}}}\n')
+            _write(root / "tsconfig.json", '{"extends":"./tsconfig.base.json"}\n')
+
+            aliases = load_typescript_path_aliases(root)
+
+            self.assertEqual(aliases, (("@acme/*", ("libs/*",)),))
+
+    def test_tsconfig_list_extends_uses_local_extended_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.base.json", '{"compilerOptions":{"baseUrl":".","paths":{"@base/*":["src/base/*"]}}}\n')
+            _write(root / "packages" / "widget" / "tsconfig.json", '{"extends":["../../missing.json","../../tsconfig.base.json"]}\n')
+            app = _write(root / "packages" / "widget" / "src" / "app.ts", "import value from '@base/value';\n")
+            value = _write(root / "src" / "base" / "value.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, value))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@base/value"), "packages.widget.src.app", "packages/widget/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.base.value")
+
+    def test_tsconfig_extends_cycle_does_not_block_parent_alias_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"extends":"./tsconfig.base.json"}\n')
+            _write(
+                root / "tsconfig.base.json",
+                '{"extends":"./tsconfig.json","compilerOptions":{"baseUrl":".","paths":{"@cycle":["src/cycle.ts"]}}}\n',
+            )
+            app = _write(root / "src" / "app.ts", "import cycle from '@cycle';\n")
+            cycle = _write(root / "src" / "cycle.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, cycle))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@cycle"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.cycle")
+
+    def test_extended_base_url_applies_to_child_config_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.base.json", '{"compilerOptions":{"baseUrl":"."}}\n')
+            _write(
+                root / "apps" / "web" / "tsconfig.json",
+                '{"extends":"../../tsconfig.base.json","compilerOptions":{"paths":{"@pkg/*":["libs/*"]}}}\n',
+            )
+            app = _write(root / "apps" / "web" / "src" / "app.ts", "import core from '@pkg/core';\n")
+            core = _write(root / "libs" / "core.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, core))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@pkg/core"), "apps.web.src.app", "apps/web/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "libs.core")
+
     def test_typescript_config_loader_fails_closed_on_decode_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "tsconfig.json"
@@ -607,6 +701,20 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(internal_import.target_name, "src.shared.config")
             self.assertEqual(dependency_import.category, "third_party")
             self.assertEqual(dependency_import.distribution_name, "react")
+
+    def test_base_url_imports_resolve_dotted_module_filenames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"baseUrl":"."}}\n')
+            app = _write(root / "src" / "app.ts", "import { UserDto } from 'src/models/user.dto';\n")
+            model = _write(root / "src" / "models" / "user.dto.ts", "export interface UserDto {}\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, model))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("src/models/user.dto"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.models.user.dto")
 
     def test_node_builtin_modules_are_sourced_from_runtime_inventory(self) -> None:
         builtin_modules = {
