@@ -291,6 +291,192 @@ class PythonImportNormalizationTest(unittest.TestCase):
 
 
 class TypeScriptImportNormalizationTest(unittest.TestCase):
+    def test_tsconfig_path_alias_resolves_internal_module_with_jsonc_and_fallback_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "tsconfig.json",
+                "{\n"
+                "  // jsonc comments are valid in tsconfig files\n"
+                '  "compilerOptions": {\n'
+                '    "baseUrl": ".",\n'
+                '    "paths": {\n'
+                '      "~/*": ["missing/*", "src/*",],\n'
+                '      "@app/*": ["app/*"]\n'
+                "    }\n"
+                "  }\n"
+                "}\n",
+            )
+            app = _write(root / "src" / "app.ts", "import { api } from '~/lib/api';\n")
+            api = _write(root / "src" / "lib" / "api.ts", "export const api = 1;\n")
+            view = _write(root / "app" / "view.ts", "export const view = 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, api, view))
+            normalizer = JsImportNormalizer(repo)
+
+            alias = normalizer.normalize(_js_ref("~/lib/api"), "src.app", "src/app.ts")
+            scoped_alias = normalizer.normalize(_js_ref("@app/view"), "src.app", "src/app.ts")
+
+            self.assertEqual(alias.category, "internal_module")
+            self.assertEqual(alias.target_name, "src.lib.api")
+            self.assertEqual(alias.module_name, "src.lib.api")
+            self.assertEqual(alias.import_root, "~")
+            self.assertEqual(scoped_alias.category, "internal_module")
+            self.assertEqual(scoped_alias.target_name, "app.view")
+            self.assertEqual(scoped_alias.import_root, "@app")
+
+    def test_root_tsconfig_and_jsconfig_aliases_are_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"paths":{"@ts/*":["ts/*"]}}}\n')
+            _write(root / "jsconfig.json", '{"compilerOptions":{"paths":{"@js/*":["js/*"]}}}\n')
+            app = _write(root / "src" / "app.ts", "import tsValue from '@ts/value';\nimport jsValue from '@js/value';\n")
+            ts_value = _write(root / "ts" / "value.ts", "export default 1;\n")
+            js_value = _write(root / "js" / "value.ts", "export default 2;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, ts_value, js_value))
+            normalizer = JsImportNormalizer(repo)
+
+            ts_import = normalizer.normalize(_js_ref("@ts/value"), "src.app", "src/app.ts")
+            js_import = normalizer.normalize(_js_ref("@js/value"), "src.app", "src/app.ts")
+
+            self.assertEqual(ts_import.category, "internal_module")
+            self.assertEqual(ts_import.target_name, "ts.value")
+            self.assertEqual(js_import.category, "internal_module")
+            self.assertEqual(js_import.target_name, "js.value")
+
+    def test_unresolved_alias_collision_still_uses_declared_dependency_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "package.json", '{"dependencies":{"react":"18.0.0"}}\n')
+            _write(root / "tsconfig.json", '{"compilerOptions":{"paths":{"react/*":["missing/*"]}}}\n')
+            app = _write(root / "src" / "app.ts", "import jsxRuntime from 'react/jsx-runtime';\n")
+            repo = _repo_snapshot(root, typescript_paths=(app,))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("react/jsx-runtime"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "third_party")
+            self.assertEqual(normalized.import_root, "react")
+            self.assertEqual(normalized.distribution_name, "react")
+
+    def test_unconfigured_at_slash_import_resolves_from_src(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = _write(root / "src" / "app.ts", "import api from '@/api';\n")
+            api = _write(root / "src" / "api.ts", "export default {};\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, api))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@/api"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.api")
+            self.assertEqual(normalized.import_root, "@")
+
+    def test_configured_at_slash_alias_wins_over_src_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"paths":{"@/*":["app/*"]}}}\n')
+            app = _write(root / "src" / "app.ts", "import api from '@/api';\n")
+            src_api = _write(root / "src" / "api.ts", "export default 'src';\n")
+            app_api = _write(root / "app" / "api.ts", "export default 'app';\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, src_api, app_api))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@/api"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "app.api")
+            self.assertEqual(normalized.import_root, "@")
+
+    def test_relative_imports_resolve_directory_index_and_index_file_siblings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = _write(root / "src" / "app.ts", "import feature from './feature';\n")
+            index = _write(root / "src" / "feature" / "index.ts", "import { child } from './child';\n")
+            child = _write(root / "src" / "feature" / "child.ts", "export const child = 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, index, child))
+            normalizer = JsImportNormalizer(repo)
+
+            directory_import = normalizer.normalize(_js_ref("./feature"), "src.app", "src/app.ts")
+            index_sibling_import = normalizer.normalize(
+                _js_ref("./child"),
+                "src.feature",
+                "src/feature/index.ts",
+            )
+
+            self.assertEqual(directory_import.category, "relative_internal_module")
+            self.assertEqual(directory_import.target_name, "src.feature")
+            self.assertEqual(index_sibling_import.category, "relative_internal_module")
+            self.assertEqual(index_sibling_import.target_name, "src.feature.child")
+
+    def test_nested_tsconfig_path_alias_is_scoped_to_importing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"paths":{"~/*":["root/*"]}}}\n')
+            _write(
+                root / "packages" / "widget" / "tsconfig.json",
+                '{"compilerOptions":{"baseUrl":".","paths":{"~/*":["./src/*"]}}}\n',
+            )
+            app = _write(root / "packages" / "widget" / "src" / "app.ts", "import timeout from '~/constants/apiTimeout';\n")
+            config = _write(
+                root / "packages" / "widget" / "src" / "constants" / "apiTimeout.ts",
+                "export default 5000;\n",
+            )
+            root_config = _write(root / "root" / "constants" / "apiTimeout.ts", "export default 1000;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, config, root_config))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(
+                _js_ref("~/constants/apiTimeout"),
+                "packages.widget.src.app",
+                "packages/widget/src/app.ts",
+            )
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "packages.widget.src.constants.apiTimeout")
+
+    def test_local_package_imports_resolve_before_declared_dependency_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "package.json",
+                '{"dependencies":{"@acme/ui":"workspace:*"},"workspaces":["packages/*"]}\n',
+            )
+            _write(root / "packages" / "ui" / "package.json", '{"name":"@acme/ui","main":"src/index.ts"}\n')
+            app = _write(root / "src" / "app.ts", "import Button from '@acme/ui/Button';\n")
+            ui_index = _write(root / "packages" / "ui" / "src" / "index.ts", "export { Button } from './Button';\n")
+            button = _write(root / "packages" / "ui" / "src" / "Button.ts", "export const Button = 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, ui_index, button))
+            normalizer = JsImportNormalizer(repo)
+
+            subpath_import = normalizer.normalize(_js_ref("@acme/ui/Button"), "src.app", "src/app.ts")
+            root_import = normalizer.normalize(_js_ref("@acme/ui"), "src.app", "src/app.ts")
+
+            self.assertEqual(subpath_import.category, "internal_module")
+            self.assertEqual(subpath_import.target_name, "packages.ui.src.Button")
+            self.assertIsNone(subpath_import.distribution_name)
+            self.assertEqual(root_import.category, "internal_module")
+            self.assertEqual(root_import.target_name, "packages.ui.src")
+
+    def test_base_url_imports_resolve_after_declared_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "package.json", '{"dependencies":{"react":"18.0.0"}}\n')
+            _write(root / "tsconfig.json", '{"compilerOptions":{"baseUrl":"src"}}\n')
+            app = _write(root / "src" / "app.ts", "import config from 'shared/config';\nimport React from 'react';\n")
+            config = _write(root / "src" / "shared" / "config.ts", "export default {};\n")
+            react_shadow = _write(root / "src" / "react.ts", "export default {};\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, config, react_shadow))
+            normalizer = JsImportNormalizer(repo)
+
+            internal_import = normalizer.normalize(_js_ref("shared/config"), "src.app", "src/app.ts")
+            dependency_import = normalizer.normalize(_js_ref("react"), "src.app", "src/app.ts")
+
+            self.assertEqual(internal_import.category, "internal_module")
+            self.assertEqual(internal_import.target_name, "src.shared.config")
+            self.assertEqual(dependency_import.category, "third_party")
+            self.assertEqual(dependency_import.distribution_name, "react")
+
     def test_node_builtin_modules_are_sourced_from_runtime_inventory(self) -> None:
         builtin_modules = {
             "async_hooks",
@@ -401,6 +587,16 @@ def _repo_snapshot(
         commit_sha="test-sha",
         files_by_language={"python": python_paths, "typescript": typescript_paths},
     )
+
+
+def _write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _js_ref(raw_target: str) -> JsImportRef:
+    return JsImportRef(raw_target=raw_target, line=1, imported_names=(), local_names=())
 
 
 if __name__ == "__main__":
