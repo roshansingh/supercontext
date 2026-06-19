@@ -10,6 +10,7 @@ from unittest.mock import patch
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.python.normalization import imports as python_imports
 from source.kg.languages.python.normalization.imports import ImportRef, PythonImportNormalizer
+from source.kg.languages.typescript.module_resolution import load_typescript_config_object
 from source.kg.languages.typescript.normalization import imports as typescript_imports
 from source.kg.languages.typescript.normalization.imports import JsImportNormalizer, JsImportRef
 
@@ -451,6 +452,41 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
 
             self.assertEqual(normalized.category, "internal_module")
             self.assertEqual(normalized.target_name, "packages.widget.src.constants.apiTimeout")
+
+    def test_nested_tsconfig_and_jsconfig_aliases_are_merged_per_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "packages" / "widget" / "tsconfig.json",
+                '{"compilerOptions":{"paths":{"@ts/*":["src/ts/*"]}}}\n',
+            )
+            _write(
+                root / "packages" / "widget" / "jsconfig.json",
+                '{"compilerOptions":{"paths":{"@js/*":["src/js/*"]}}}\n',
+            )
+            app = _write(
+                root / "packages" / "widget" / "src" / "app.ts",
+                "import tsValue from '@ts/value';\nimport jsValue from '@js/value';\n",
+            )
+            ts_value = _write(root / "packages" / "widget" / "src" / "ts" / "value.ts", "export default 1;\n")
+            js_value = _write(root / "packages" / "widget" / "src" / "js" / "value.ts", "export default 2;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, ts_value, js_value))
+            normalizer = JsImportNormalizer(repo)
+
+            ts_import = normalizer.normalize(_js_ref("@ts/value"), "packages.widget.src.app", "packages/widget/src/app.ts")
+            js_import = normalizer.normalize(_js_ref("@js/value"), "packages.widget.src.app", "packages/widget/src/app.ts")
+
+            self.assertEqual(ts_import.category, "internal_module")
+            self.assertEqual(ts_import.target_name, "packages.widget.src.ts.value")
+            self.assertEqual(js_import.category, "internal_module")
+            self.assertEqual(js_import.target_name, "packages.widget.src.js.value")
+
+    def test_typescript_config_loader_fails_closed_on_decode_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "tsconfig.json"
+            path.write_bytes(b"\xff\xfe\x00")
+
+            self.assertEqual(load_typescript_config_object(path), {})
 
     def test_local_package_imports_resolve_before_declared_dependency_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -81,7 +81,7 @@ def load_typescript_path_aliases(repo_root: Path) -> TypeScriptPathAliases:
     aliases: list[tuple[str, tuple[str, ...]]] = []
     for config_path, config in _load_typescript_configs(repo_root):
         aliases.extend(load_typescript_path_aliases_for_config(repo_root, config_path, config))
-    return tuple(sorted(aliases, key=_typescript_path_pattern_sort_key, reverse=True))
+    return sort_typescript_path_aliases(tuple(aliases))
 
 
 def load_typescript_path_aliases_for_config(
@@ -110,7 +110,11 @@ def load_typescript_path_aliases_for_config(
         )
         if targets:
             aliases.append((pattern, targets))
-    return tuple(sorted(aliases, key=_typescript_path_pattern_sort_key, reverse=True))
+    return sort_typescript_path_aliases(tuple(aliases))
+
+
+def sort_typescript_path_aliases(path_aliases: TypeScriptPathAliases) -> TypeScriptPathAliases:
+    return tuple(sorted(path_aliases, key=_typescript_path_pattern_sort_key, reverse=True))
 
 
 def load_typescript_base_urls(repo_root: Path) -> tuple[str, ...]:
@@ -179,7 +183,7 @@ def _normalize_repo_relative_path(value: str) -> str:
 def _load_jsonc_object(path: Path) -> dict[str, object]:
     try:
         text = path.read_text(encoding="utf-8-sig")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
     try:
         data = json.loads(_strip_trailing_json_commas(_strip_jsonc_comments(text)))

@@ -19,6 +19,7 @@ from source.kg.languages.typescript.module_resolution import (
     resolve_typescript_import_path,
     resolve_typescript_module_path_candidate,
     resolve_typescript_path_alias_import,
+    sort_typescript_path_aliases,
 )
 
 
@@ -395,11 +396,15 @@ class JsImportNormalizer:
             base_urls = load_typescript_base_urls_for_config(self.repo.root, config_path, config)
             if not path_aliases and not base_urls:
                 continue
-            scopes[scope_dir] = _TsResolutionScope(
-                path_aliases=path_aliases,
-                base_urls=base_urls,
-            )
+            scope = _TsResolutionScope(path_aliases=path_aliases, base_urls=base_urls)
+            scopes[scope_dir] = self._merge_resolution_scopes(scopes[scope_dir], scope) if scope_dir in scopes else scope
         return scopes
+
+    def _merge_resolution_scopes(self, first: _TsResolutionScope, second: _TsResolutionScope) -> _TsResolutionScope:
+        return _TsResolutionScope(
+            path_aliases=sort_typescript_path_aliases(tuple(dict.fromkeys(first.path_aliases + second.path_aliases))),
+            base_urls=tuple(dict.fromkeys(first.base_urls + second.base_urls)),
+        )
 
     def _resolution_scope(self, current_path: str | None) -> _TsResolutionScope:
         if not current_path:
