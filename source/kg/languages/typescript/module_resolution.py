@@ -17,6 +17,7 @@ def resolve_typescript_import_path(
     path_aliases: TypeScriptPathAliases,
 ) -> str | None:
     importer_path = importer_path.replace("\\", "/")
+    import_source = import_source.replace("\\", "/")
     if not import_source.startswith("."):
         return resolve_typescript_path_alias_import(import_source, module_paths, path_aliases)
     importer_dir = posixpath.dirname(importer_path)

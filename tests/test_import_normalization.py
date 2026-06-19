@@ -325,6 +325,21 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(scoped_alias.target_name, "app.view")
             self.assertEqual(scoped_alias.import_root, "@app")
 
+    def test_exact_path_alias_import_root_uses_root_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"paths":{"foo/bar":["src/lib"]}}}\n')
+            app = _write(root / "src" / "app.ts", "import lib from 'foo/bar';\n")
+            lib = _write(root / "src" / "lib.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, lib))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("foo/bar"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.lib")
+            self.assertEqual(normalized.import_root, "foo")
+
     def test_root_tsconfig_and_jsconfig_aliases_are_merged(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -427,6 +442,15 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.category, "relative_internal_module")
             self.assertEqual(normalized.target_name, "src.feature.child")
 
+            windows_import = normalizer.normalize(
+                _js_ref(".\\child"),
+                "src.feature.app",
+                "src\\feature\\app.ts",
+            )
+
+            self.assertEqual(windows_import.category, "relative_internal_module")
+            self.assertEqual(windows_import.target_name, "src.feature.child")
+
     def test_nested_tsconfig_path_alias_is_scoped_to_importing_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -480,6 +504,28 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(ts_import.target_name, "packages.widget.src.ts.value")
             self.assertEqual(js_import.category, "internal_module")
             self.assertEqual(js_import.target_name, "packages.widget.src.js.value")
+
+    def test_nested_tsconfig_takes_precedence_when_same_alias_exists_in_jsconfig(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "packages" / "widget" / "tsconfig.json",
+                '{"compilerOptions":{"paths":{"@same/*":["src/ts/*"]}}}\n',
+            )
+            _write(
+                root / "packages" / "widget" / "jsconfig.json",
+                '{"compilerOptions":{"paths":{"@same/*":["src/js/*"]}}}\n',
+            )
+            app = _write(root / "packages" / "widget" / "src" / "app.ts", "import value from '@same/value';\n")
+            ts_value = _write(root / "packages" / "widget" / "src" / "ts" / "value.ts", "export default 1;\n")
+            js_value = _write(root / "packages" / "widget" / "src" / "js" / "value.ts", "export default 2;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, ts_value, js_value))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@same/value"), "packages.widget.src.app", "packages/widget/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "packages.widget.src.ts.value")
 
     def test_typescript_config_loader_fails_closed_on_decode_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

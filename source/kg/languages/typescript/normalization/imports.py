@@ -145,6 +145,7 @@ class JsImportNormalizer:
         self.base_urls = load_typescript_base_urls(repo.root)
         self.resolution_scopes = self._resolution_scopes()
         self.resolution_scope_dirs = tuple(sorted(self.resolution_scopes, key=len, reverse=True))
+        self.package_json_paths = self._collect_package_json_paths()
         self.local_packages = self._local_packages()
         self.declared_dependencies = self._declared_dependencies()
         self.node_builtins = _node_builtin_modules()
@@ -301,7 +302,7 @@ class JsImportNormalizer:
 
     def _declared_dependencies(self) -> dict[str, str]:
         names: set[str] = set()
-        for package_json in self._package_json_paths():
+        for package_json in self.package_json_paths:
             data = self._read_package_json(package_json)
             if not data:
                 continue
@@ -311,7 +312,7 @@ class JsImportNormalizer:
 
     def _local_packages(self) -> dict[str, _LocalPackage]:
         packages_by_name: dict[str, list[_LocalPackage]] = {}
-        for package_json in self._package_json_paths():
+        for package_json in self.package_json_paths:
             data = self._read_package_json(package_json)
             raw_name = data.get("name") if data else None
             if not isinstance(raw_name, str) or not raw_name.strip():
@@ -356,7 +357,7 @@ class JsImportNormalizer:
                 entrypoints.append(value.strip())
         return tuple(entrypoints)
 
-    def _package_json_paths(self) -> tuple[Path, ...]:
+    def _collect_package_json_paths(self) -> tuple[Path, ...]:
         paths: list[Path] = []
         for package_json in self.repo.root.glob("**/package.json"):
             if self._is_ignored_path(package_json):
@@ -418,12 +419,16 @@ class JsImportNormalizer:
 
     def _typescript_config_paths(self) -> tuple[Path, ...]:
         paths: list[Path] = []
+        seen: set[Path] = set()
         for config_name in ("tsconfig.json", "jsconfig.json"):
-            for config_path in self.repo.root.glob(f"**/{config_name}"):
+            for config_path in sorted(self.repo.root.glob(f"**/{config_name}")):
                 if self._is_ignored_path(config_path):
                     continue
+                if config_path in seen:
+                    continue
+                seen.add(config_path)
                 paths.append(config_path)
-        return tuple(sorted(set(paths)))
+        return tuple(paths)
 
     def _read_jsonc_object(self, path: Path) -> dict[str, object]:
         return load_typescript_config_object(path)
@@ -453,7 +458,7 @@ class JsImportNormalizer:
         if pattern is None:
             return None
         if "*" not in pattern:
-            return pattern
+            return self._import_root(pattern)
         prefix, _suffix = pattern.split("*", 1)
         return prefix.rstrip("/") or self._import_root(target)
 
