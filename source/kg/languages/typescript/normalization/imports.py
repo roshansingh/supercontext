@@ -18,7 +18,6 @@ from source.kg.languages.typescript.module_resolution import (
     match_typescript_path_pattern,
     resolve_typescript_import_path,
     resolve_typescript_module_path_candidate,
-    resolve_typescript_path_alias_import,
     resolve_typescript_path_alias_match,
     sort_typescript_path_aliases,
 )
@@ -256,7 +255,7 @@ class JsImportNormalizer:
         package = self.local_packages.get(import_root.lower())
         if package is None:
             return None
-        subpath = target.removeprefix(package.name).lstrip("/")
+        subpath = target.removeprefix(import_root).lstrip("/")
         for candidate in self._local_package_candidates(package, subpath):
             resolved = self._resolve_module_path(candidate)
             if resolved is not None:

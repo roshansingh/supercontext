@@ -575,6 +575,20 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(root_import.category, "internal_module")
             self.assertEqual(root_import.target_name, "packages.ui.src")
 
+    def test_local_package_subpath_uses_import_root_when_manifest_name_case_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "packages" / "ui" / "package.json", '{"name":"@Acme/UI"}\n')
+            app = _write(root / "src" / "app.ts", "import Button from '@acme/ui/Button';\n")
+            button = _write(root / "packages" / "ui" / "src" / "Button.ts", "export const Button = 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, button))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@acme/ui/Button"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "packages.ui.src.Button")
+
     def test_base_url_imports_resolve_after_declared_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
