@@ -340,6 +340,24 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.target_name, "src.lib")
             self.assertEqual(normalized.import_root, "foo")
 
+    def test_alias_import_root_comes_from_resolving_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "tsconfig.json",
+                '{"compilerOptions":{"paths":{"@scope/*":["missing/*"],"@scope/pkg/*":["src/*"]}}}\n',
+            )
+            app = _write(root / "src" / "app.ts", "import api from '@scope/pkg/api';\n")
+            api = _write(root / "src" / "api.ts", "export default {};\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, api))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@scope/pkg/api"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.api")
+            self.assertEqual(normalized.import_root, "@scope/pkg")
+
     def test_root_tsconfig_and_jsconfig_aliases_are_merged(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

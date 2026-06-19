@@ -32,6 +32,15 @@ def resolve_typescript_path_alias_import(
     module_paths: Container[str],
     path_aliases: TypeScriptPathAliases,
 ) -> str | None:
+    resolved = resolve_typescript_path_alias_match(import_source, module_paths, path_aliases)
+    return resolved[0] if resolved is not None else None
+
+
+def resolve_typescript_path_alias_match(
+    import_source: str,
+    module_paths: Container[str],
+    path_aliases: TypeScriptPathAliases,
+) -> tuple[str, str] | None:
     for pattern, targets in path_aliases:
         capture = match_typescript_path_pattern(pattern, import_source)
         if capture is None:
@@ -46,7 +55,7 @@ def resolve_typescript_path_alias_import(
                 continue
             resolved = resolve_typescript_module_path_candidate(normalized, module_paths)
             if resolved is not None:
-                return resolved
+                return resolved, pattern
     return None
 
 

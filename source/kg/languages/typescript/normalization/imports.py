@@ -19,6 +19,7 @@ from source.kg.languages.typescript.module_resolution import (
     resolve_typescript_import_path,
     resolve_typescript_module_path_candidate,
     resolve_typescript_path_alias_import,
+    resolve_typescript_path_alias_match,
     sort_typescript_path_aliases,
 )
 
@@ -159,17 +160,17 @@ class JsImportNormalizer:
         target = ref.raw_target
         scope = self._resolution_scope(current_path)
         default_root = self._import_root(target)
-        alias_root = self._matched_path_alias_root(target, scope.path_aliases)
 
         if target.startswith("."):
             module_name = self._resolve_relative(target, current_module, current_path)
             category = "relative_internal_module" if module_name in self.module_names else "unknown"
             return self._normalized(ref, category, module_name, default_root, None, module_name)
 
-        alias_path = resolve_typescript_path_alias_import(target, self.module_paths, scope.path_aliases)
-        if alias_path is not None:
+        alias_match = resolve_typescript_path_alias_match(target, self.module_paths, scope.path_aliases)
+        if alias_match is not None:
+            alias_path, alias_pattern = alias_match
             module_name = self._path_to_module(alias_path)
-            return self._normalized(ref, "internal_module", module_name, alias_root or default_root, None, module_name)
+            return self._normalized(ref, "internal_module", module_name, self._path_alias_root(alias_pattern), None, module_name)
 
         if target.startswith("@/"):
             module_path = self._resolve_module_path(f"src/{target[2:]}")
@@ -200,7 +201,7 @@ class JsImportNormalizer:
             module_name = self._path_to_module(module_path)
             return self._normalized(ref, "internal_module", module_name, default_root, None, module_name)
 
-        root = alias_root or default_root
+        root = self._matched_path_alias_root(target, scope.path_aliases) or default_root
         return self._normalized(ref, "unknown", root, root, None, None)
 
     def _normalized(
@@ -457,10 +458,13 @@ class JsImportNormalizer:
         pattern = self._matched_path_alias_pattern(target, path_aliases)
         if pattern is None:
             return None
+        return self._path_alias_root(pattern)
+
+    def _path_alias_root(self, pattern: str) -> str:
         if "*" not in pattern:
             return self._import_root(pattern)
         prefix, _suffix = pattern.split("*", 1)
-        return prefix.rstrip("/") or self._import_root(target)
+        return prefix.rstrip("/") or self._import_root(pattern)
 
     def _matched_path_alias_pattern(self, target: str, path_aliases: TypeScriptPathAliases) -> str | None:
         for pattern, _targets in path_aliases:
