@@ -143,6 +143,7 @@ class JsImportNormalizer:
         self.path_aliases = load_typescript_path_aliases(repo.root)
         self.base_urls = load_typescript_base_urls(repo.root)
         self.resolution_scopes = self._resolution_scopes()
+        self.resolution_scope_dirs = tuple(sorted(self.resolution_scopes, key=len, reverse=True))
         self.local_packages = self._local_packages()
         self.declared_dependencies = self._declared_dependencies()
         self.node_builtins = _node_builtin_modules()
@@ -405,7 +406,7 @@ class JsImportNormalizer:
             return self.resolution_scopes[""]
         normalized = current_path.replace("\\", "/")
         current_dir = posixpath.dirname(normalized)
-        for scope_dir in sorted(self.resolution_scopes, key=len, reverse=True):
+        for scope_dir in self.resolution_scope_dirs:
             if not scope_dir or current_dir == scope_dir or current_dir.startswith(f"{scope_dir}/"):
                 return self.resolution_scopes[scope_dir]
         return self.resolution_scopes[""]

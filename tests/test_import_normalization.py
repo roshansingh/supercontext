@@ -409,6 +409,23 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(index_sibling_import.category, "relative_internal_module")
             self.assertEqual(index_sibling_import.target_name, "src.feature.child")
 
+    def test_relative_imports_normalize_windows_style_importer_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = _write(root / "src" / "feature" / "app.ts", "import { child } from './child';\n")
+            child = _write(root / "src" / "feature" / "child.ts", "export const child = 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, child))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(
+                _js_ref("./child"),
+                "src.feature.app",
+                "src\\feature\\app.ts",
+            )
+
+            self.assertEqual(normalized.category, "relative_internal_module")
+            self.assertEqual(normalized.target_name, "src.feature.child")
+
     def test_nested_tsconfig_path_alias_is_scoped_to_importing_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
