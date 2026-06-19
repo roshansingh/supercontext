@@ -102,7 +102,11 @@ class TypeScriptCompilerApiExtractor:
         self._add_fact(build, "DEFINED_IN", module_entity, repo_entity, repo, file_path, 1, 1)
         self._add_fact(build, "IMPLEMENTS", module_entity, service_entity, repo, file_path, 1, 1)
 
-        imports = [normalizer.normalize(self._import_ref(row), module_name) for row in parsed_file.get("imports", [])]
+        relative_file_path = str(file_path.relative_to(repo.root))
+        imports = [
+            normalizer.normalize(self._import_ref(row), module_name, relative_file_path)
+            for row in parsed_file.get("imports", [])
+        ]
         if ctx is not None:
             ctx.import_roots_by_language.setdefault("javascript", set()).update(import_ref.import_root for import_ref in imports)
         imports_by_local = self._imports_by_local(imports)
