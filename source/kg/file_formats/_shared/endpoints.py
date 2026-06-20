@@ -437,6 +437,7 @@ def _add_imported_client_endpoint_call(
         resolution_kind=resolution_kind if isinstance(resolution_kind, str) else None,
         host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
         route_params=route_params if _is_string_list(route_params) else None,
+        extra_qualifier=_endpoint_row_metadata(resolved),
         validate_path=False,
     )
     if _is_string_list(env_names):
@@ -467,8 +468,12 @@ def _endpoint_row_metadata(row: dict) -> dict[str, object] | None:
     metadata: dict[str, object] = {}
     for key in (
         "service",
+        "service_raw",
         "api_version",
         "client_app_id",
+        "host_raw",
+        "base_url_raw",
+        "reason",
         "wrapper_receiver",
         "wrapper_method",
         "wrapper_import_source",
@@ -619,6 +624,9 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
     base_kind = base_url.get("kind")
     base_value = base_url.get("value")
     if base_kind not in {"resolved", "env"} or not isinstance(base_value, str):
+        unresolved_base_target = _compose_imported_client_unresolved_base_target(target, base_url)
+        if unresolved_base_target is not None:
+            return unresolved_base_target
         return {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
     combined = f"{base_value.strip().rstrip('/')}/{target_value.lstrip('/')}"
     resolved = _split_resolved_endpoint_target(combined)
@@ -632,6 +640,35 @@ def _compose_imported_client_target(target: dict, base_url: object) -> dict[str,
     if resolved["kind"] == "host_unresolved" and env_names:
         resolved["env_names"] = env_names
     return resolved if resolved["kind"] != "unresolved" else {"kind": "unresolved", "path": None, "host": None, "raw_target": raw_target}
+
+
+def _compose_imported_client_unresolved_base_target(target: dict, base_url: object) -> dict[str, object] | None:
+    target_value = target.get("value")
+    if not isinstance(target_value, str):
+        return None
+    target_value = target_value.strip()
+    if not target_value or target_value.startswith(("http://", "https://", "${env:")):
+        return None
+    raw_target = target.get("raw")
+    resolved: dict[str, object] = {
+        "kind": "host_unresolved",
+        "path": normalize_endpoint_path(target_value),
+        "host": None,
+        "raw_target": raw_target if isinstance(raw_target, str) else target_value,
+        "reason": "host_or_service_unresolved",
+        "host_resolution_kind": "expression_unresolved",
+    }
+    if isinstance(base_url, dict):
+        base_raw = base_url.get("raw")
+        if isinstance(base_raw, str) and base_raw:
+            resolved["base_url_raw"] = base_raw
+    resolution_kind = target.get("resolution_kind")
+    route_params = target.get("route_params")
+    if isinstance(resolution_kind, str):
+        resolved["resolution_kind"] = resolution_kind
+    if _is_string_list(route_params):
+        resolved["route_params"] = route_params
+    return resolved
 
 
 def _is_string_list(value: object) -> bool:

@@ -218,6 +218,20 @@ function templateParameterizationFailure(value, followingText, hasMoreSpans, opt
     : "template_dynamic_composite_segment";
 }
 
+function isReferenceLikeExpression(node) {
+  if (!node) return false;
+  if (ts.isIdentifier(node) || node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.SuperKeyword) return true;
+  if (ts.isPropertyAccessExpression(node)) return isReferenceLikeExpression(node.expression);
+  if (ts.isElementAccessExpression(node)) return isReferenceLikeExpression(node.expression);
+  if (node.kind === ts.SyntaxKind.ParenthesizedExpression && node.expression) return isReferenceLikeExpression(node.expression);
+  return false;
+}
+
+function canTreatTemplateSpanAsUnresolvedHost(value, followingText, spanIndex, expression) {
+  // The emitted endpoint path is the static suffix after an unknown base/host; confidence and coverage remain low-trust.
+  return spanIndex === 0 && value.length === 0 && followingText.startsWith("/") && isReferenceLikeExpression(expression);
+}
+
 function topLevelLiteralBindingValue(node, bindings, invalid, depth = 0) {
   if (depth > 32) return null;
   const literal = stringLiteralValue(node);
@@ -1006,6 +1020,7 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
   if (ts.isTemplateExpression(node)) {
     let value = node.head.text;
     let hostUnresolved = false;
+    let unresolvedHostRaw = null;
     const routeParams = [];
     let envNames = [];
     for (let index = 0; index < node.templateSpans.length; index += 1) {
@@ -1018,32 +1033,42 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
       } else if (resolved.kind === "resolved") {
         value += resolved.value;
       } else {
-        const paramName = routeParamNameFromExpression(span.expression);
-        if (paramName == null || !isSafeRouteParamName(paramName)) {
-          return {
-            kind: "unresolved",
-            value: null,
-            raw: rawNodeText(node, sourceFile),
-            reason: "template_dynamic_expression_unsafe",
-          };
+        if (canTreatTemplateSpanAsUnresolvedHost(value, span.literal.text, index, span.expression)) {
+          hostUnresolved = true;
+          unresolvedHostRaw = rawNodeText(span.expression, sourceFile);
+        } else {
+          const paramName = routeParamNameFromExpression(span.expression);
+          if (paramName == null || !isSafeRouteParamName(paramName)) {
+            return {
+              kind: "unresolved",
+              value: null,
+              raw: rawNodeText(node, sourceFile),
+              reason: "template_dynamic_expression_unsafe",
+            };
+          }
+          const reason = templateParameterizationFailure(value, span.literal.text, index < node.templateSpans.length - 1, options);
+          if (reason != null) {
+            return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason };
+          }
+          value += `{${paramName}}`;
+          routeParams.push(paramName);
         }
-        const reason = templateParameterizationFailure(value, span.literal.text, index < node.templateSpans.length - 1, options);
-        if (reason != null) {
-          return { kind: "unresolved", value: null, raw: rawNodeText(node, sourceFile), reason };
-        }
-        value += `{${paramName}}`;
-        routeParams.push(paramName);
       }
       value += span.literal.text;
     }
     const result = expressionResult(
-      hostUnresolved ? "env" : "resolved",
+      unresolvedHostRaw != null ? "host_unresolved" : hostUnresolved ? "env" : "resolved",
       value,
       rawNodeText(node, sourceFile),
       routeParams.length > 0 ? "template_parameterized" : "template"
     );
     if (routeParams.length > 0) result.route_params = uniqueStrings(routeParams);
     if (envNames.length > 0) result.env_names = uniqueStrings(envNames);
+    if (unresolvedHostRaw != null) {
+      result.reason = "template_dynamic_host_position";
+      result.host_raw = unresolvedHostRaw;
+      result.host_resolution_kind = "expression_unresolved";
+    }
     return result;
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
@@ -1115,6 +1140,18 @@ function splitResolvedEndpointTarget(value) {
 function resolveEndpointTarget(node, sourceFile, bindings) {
   const expression = resolveEndpointExpression(node, sourceFile, bindings);
   if (expression.kind === "unresolved" || expression.value == null) {
+    return { kind: "unresolved", path: null, host: null, raw_target: expression.raw, reason: expression.reason ?? null };
+  }
+  if (expression.kind === "host_unresolved") {
+    const target = splitResolvedEndpointTarget(normalizeConfiguredPath(expression.value));
+    if (target.kind === "resolved") {
+      target.kind = "host_unresolved";
+      target.host = null;
+      target.raw_target = expression.raw;
+      target.reason = expression.reason ?? "template_dynamic_host_position";
+      target.host_resolution_kind = expression.host_resolution_kind ?? "expression_unresolved";
+      return carryEndpointExpressionDetails(target, expression);
+    }
     return { kind: "unresolved", path: null, host: null, raw_target: expression.raw, reason: expression.reason ?? null };
   }
   const target = splitResolvedEndpointTarget(expression.value);
@@ -1689,7 +1726,15 @@ function composedTargetWithBaseUrl(targetNode, sourceFile, bindings, baseUrlExpr
   if (targetValue.startsWith("http://") || targetValue.startsWith("https://") || targetValue.startsWith("${env:")) {
     return resolveEndpointTarget(targetNode, sourceFile, bindings);
   }
-  if (baseUrlExpression.kind !== "resolved" && baseUrlExpression.kind !== "env") return { kind: "unresolved", path: null, host: null, raw_target: target.raw };
+  if (baseUrlExpression.kind !== "resolved" && baseUrlExpression.kind !== "env") {
+    return targetWithUnresolvedHostPathExpression(
+      target,
+      target.raw,
+      "host_or_service_unresolved",
+      baseUrlExpression.raw,
+      "base_url_raw"
+    );
+  }
   const baseValue = String(baseUrlExpression.value).trim();
   const combined = `${baseValue.replace(/\/+$/, "")}/${targetValue.replace(/^\/+/, "")}`;
   const resolved = splitResolvedEndpointTarget(combined);
@@ -1724,7 +1769,44 @@ function carryEndpointExpressionDetails(resolved, expression) {
   resolved.resolution_kind = expression.resolution_kind ?? null;
   if (Array.isArray(expression.route_params)) resolved.route_params = expression.route_params;
   if (resolved.kind === "host_unresolved" && Array.isArray(expression.env_names)) resolved.env_names = expression.env_names;
+  for (const key of ["host_raw", "service_raw", "base_url_raw"]) {
+    if (typeof expression[key] === "string") resolved[key] = expression[key];
+  }
   return resolved;
+}
+
+function targetWithUnresolvedHostPathExpression(target, rawTarget, reason, unresolvedBaseRaw = null, unresolvedBaseRawKey = "host_raw") {
+  if (target.kind === "unresolved" || target.value == null) {
+    return { kind: "unresolved", path: null, host: null, raw_target: target.raw, reason: target.reason ?? null };
+  }
+  const targetValue = String(target.value).trim();
+  if (targetValue.startsWith("http://") || targetValue.startsWith("https://") || targetValue.startsWith("${env:")) {
+    const resolved = splitResolvedEndpointTarget(targetValue);
+    return resolved.kind === "unresolved"
+      ? { kind: "unresolved", path: null, host: null, raw_target: target.raw, reason: target.reason ?? null }
+      : carryEndpointExpressionDetails(resolved, target);
+  }
+  const resolved = {
+    kind: "host_unresolved",
+    path: normalizeConfiguredPath(targetValue),
+    host: null,
+    raw_target: rawTarget,
+    reason,
+    host_resolution_kind: "expression_unresolved",
+  };
+  if (typeof unresolvedBaseRaw === "string" && unresolvedBaseRaw.length > 0) resolved[unresolvedBaseRawKey] = unresolvedBaseRaw;
+  return carryEndpointExpressionDetails(resolved, target);
+}
+
+function targetWithUnresolvedHostPath(targetNode, sourceFile, bindings, reason, unresolvedBaseRaw = null, unresolvedBaseRawKey = "host_raw") {
+  const target = resolveEndpointExpression(targetNode, sourceFile, bindings, new Set(), null, { relativePathAllowed: true });
+  return targetWithUnresolvedHostPathExpression(
+    target,
+    rawNodeText(targetNode, sourceFile),
+    reason,
+    unresolvedBaseRaw,
+    unresolvedBaseRawKey
+  );
 }
 
 function targetWithHostValue(targetNode, hostValue, sourceFile, bindings, envNames = []) {
@@ -1756,18 +1838,19 @@ function targetWithHostValue(targetNode, hostValue, sourceFile, bindings, envNam
   return carryEndpointExpressionDetails(resolved, target);
 }
 
-function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings) {
+function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings, unresolvedBaseRawKey = "host_raw") {
   const host = resolveEndpointExpression(hostNode, sourceFile, bindings);
   if (host.kind === "resolved" || host.kind === "env") {
     return targetWithHostValue(targetNode, host.value, sourceFile, bindings, Array.isArray(host.env_names) ? host.env_names : []);
   }
-  return {
-    kind: "unresolved",
-    path: null,
-    host: null,
-    raw_target: rawNodeText(targetNode, sourceFile),
-    reason: "host_or_service_unresolved",
-  };
+  return targetWithUnresolvedHostPath(
+    targetNode,
+    sourceFile,
+    bindings,
+    "host_or_service_unresolved",
+    rawNodeText(hostNode, sourceFile),
+    unresolvedBaseRawKey
+  );
 }
 
 function resolvedMetadataValue(node, sourceFile, bindings) {
@@ -1833,6 +1916,13 @@ function endpointDefaultsHaveUnresolvedBase(defaults) {
   );
 }
 
+function endpointDefaultUnresolvedBase(defaults) {
+  if (typeof defaults.base_url_raw === "string") return { raw: defaults.base_url_raw, rawKey: "base_url_raw" };
+  if (typeof defaults.host_raw === "string") return { raw: defaults.host_raw, rawKey: "host_raw" };
+  if (typeof defaults.service_raw === "string") return { raw: defaults.service_raw, rawKey: "service_raw" };
+  return null;
+}
+
 function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {}) {
   if (!ts.isObjectLiteralExpression(configNode)) return null;
   const targetProperty = endpointConfigTargetProperty(configNode);
@@ -1848,20 +1938,28 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
       resolveEndpointExpression(baseUrlProperty.initializer, sourceFile, bindings)
     );
   } else {
-    const hostNode = objectLiteralProperty(configNode, "host") ?? objectLiteralProperty(configNode, "service");
+    const hostProperty = objectLiteralPropertyFromNames(configNode, ["host", "service"]);
     const defaultBase = endpointDefaultBase(defaults);
-    if (hostNode) {
-      target = targetWithHostLikeBase(targetProperty.initializer, hostNode, sourceFile, bindings);
+    if (hostProperty) {
+      target = targetWithHostLikeBase(
+        targetProperty.initializer,
+        hostProperty.initializer,
+        sourceFile,
+        bindings,
+        `${hostProperty.name}_raw`
+      );
     } else if (defaultBase != null) {
       target = targetWithHostValue(targetProperty.initializer, defaultBase.value, sourceFile, bindings, defaultBase.env_names);
     } else if (endpointDefaultsHaveUnresolvedBase(defaults)) {
-      target = {
-        kind: "unresolved",
-        path: null,
-        host: null,
-        raw_target: rawNodeText(targetProperty.initializer, sourceFile),
-        reason: "host_or_service_unresolved",
-      };
+      const unresolvedDefaultBase = endpointDefaultUnresolvedBase(defaults);
+      target = targetWithUnresolvedHostPath(
+        targetProperty.initializer,
+        sourceFile,
+        bindings,
+        "host_or_service_unresolved",
+        unresolvedDefaultBase?.raw,
+        unresolvedDefaultBase?.rawKey ?? "host_raw"
+      );
     } else {
       target = resolveEndpointTarget(targetProperty.initializer, sourceFile, bindings);
     }
@@ -1876,14 +1974,19 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
 
 function rowFromTarget(target, method, line, sourceKind, metadata = {}) {
   const extra = metadata && typeof metadata === "object" ? metadata : {};
+  const targetExtra = {};
+  for (const key of ["host_raw", "service_raw", "base_url_raw"]) {
+    if (typeof target[key] === "string" && target[key].length > 0) targetExtra[key] = target[key];
+  }
   if (target.kind === "external") {
-    return { ...extra, external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind };
+    return { ...extra, ...targetExtra, external: true, host: target.host, path: target.path, raw_target: target.raw_target, line, source_kind: sourceKind };
   }
   if (target.kind === "unresolved") {
-    return { ...extra, unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null };
+    return { ...extra, ...targetExtra, unresolved: true, raw_target: target.raw_target, line, source_kind: sourceKind, reason: target.reason ?? null };
   }
   return {
     ...extra,
+    ...targetExtra,
     method: method ?? "ANY",
     path: target.path,
     host: target.host,
