@@ -796,7 +796,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
         self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"http_controller_wrapper_call"})
 
-    def test_typescript_controller_wrapper_methods_fail_closed_on_unresolved_super_default(self) -> None:
+    def test_typescript_controller_wrapper_methods_emit_candidate_for_unresolved_super_default(self) -> None:
         build = _extract_typescript_client(
             "import { Controller } from '@example/http-client';\n"
             "export class OrdersService extends Controller {\n"
@@ -809,7 +809,15 @@ class EndpointExtractionTest(unittest.TestCase):
             "}\n"
         )
 
-        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["host_resolution_kind"], "expression_unresolved")
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "serviceName")
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["client_app_id"], "web")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
 
     def test_typescript_controller_wrapper_methods_require_super_base_context(self) -> None:
@@ -843,7 +851,7 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
 
-    def test_typescript_http_wrapper_object_calls_fail_closed_on_unresolved_host_context(self) -> None:
+    def test_typescript_http_wrapper_object_calls_emit_candidates_for_unresolved_host_context(self) -> None:
         build = _extract_typescript_client(
             "import { get, post } from '@example/http-client';\n"
             "const SERVICE = 'orders-service';\n"
@@ -852,8 +860,20 @@ class EndpointExtractionTest(unittest.TestCase):
             "get({ host: makeHost(), path: '/api/profiles' });\n"
         )
 
-        self.assertEqual(_methods_by_path(_endpoint_rows(build, "CALLS_ENDPOINT")), {"/api/orders": {"GET"}})
-        self.assertEqual(_hosts_by_path(_endpoint_rows(build, "CALLS_ENDPOINT"))["/api/orders"], {"orders-service"})
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {"/api/orders": {"GET"}, "/api/users": {"POST"}, "/api/profiles": {"GET"}},
+        )
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(_hosts_by_path(calls)["/api/users"], {None})
+        self.assertEqual(_hosts_by_path(calls)["/api/profiles"], {None})
+        self.assertEqual(qualifiers_by_path["/api/users"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifiers_by_path["/api/users"][0]["host_resolution_kind"], "expression_unresolved")
+        self.assertEqual(qualifiers_by_path["/api/users"][0]["service_raw"], "serviceName")
+        self.assertEqual(qualifiers_by_path["/api/profiles"][0]["host_raw"], "makeHost()")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 2)
 
     def test_typescript_client_calls_emit_env_host_confidence_and_coverage(self) -> None:
@@ -934,7 +954,7 @@ class EndpointExtractionTest(unittest.TestCase):
             "fetch(`/items/${getId()}`);\n"
             "fetch(`/items/${a}-${b}`);\n"
             "fetch(`/items/${a + b}`);\n"
-            "fetch(`${baseUrl}/items`);\n"
+            "fetch(`${baseUrl}${path}`);\n"
             "fetch(`/${tenant}${suffix}/items`);\n"
         )
 
@@ -944,6 +964,27 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("target_dynamic_template_segment", 0), 0)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("unresolved_target", 0), 0)
+
+    def test_typescript_client_unresolved_template_host_emits_path_candidate(self) -> None:
+        build = _extract_typescript_client(
+            "fetch(`${apiHost}/api/projects/${projectId}/activities/search`, { method: 'POST' });\n"
+            "fetch(`${getHost()}/api/unsafe`);\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/projects/{projectId}/activities/search": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/projects/{projectId}/activities/search"], {None})
+        qualifier = qualifiers_by_path["/api/projects/{projectId}/activities/search"][0]
+        self.assertEqual(qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(qualifier["host_resolution_kind"], "expression_unresolved")
+        self.assertEqual(qualifier["host_raw"], "apiHost")
+        self.assertEqual(qualifier["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifier["route_params"], ["projectId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_expression_unsafe"], 1)
 
     def test_typescript_client_env_host_template_parameterizes_safe_path_segment(self) -> None:
         build = _extract_typescript_client("fetch(`${process.env.API_HOST}/api/users/${userId}`);\n")
@@ -993,6 +1034,28 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_expression_unsafe"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_composite_segment"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
+    def test_typescript_configured_axios_unresolved_base_emits_path_candidate(self) -> None:
+        build = _extract_typescript_client(
+            "import axios from 'axios';\n"
+            "const api = axios.create({ baseURL: apiRoot });\n"
+            "api.post(`/api/projects/${projectId}/orders`);\n"
+            "api.get(`${pathRoot}${suffix}`);\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/projects/{projectId}/orders": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/projects/{projectId}/orders"], {None})
+        qualifier = qualifiers_by_path["/api/projects/{projectId}/orders"][0]
+        self.assertEqual(qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifier["host_resolution_kind"], "expression_unresolved")
+        self.assertEqual(qualifier["base_url_raw"], "apiRoot")
+        self.assertEqual(qualifier["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifier["route_params"], ["projectId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 1)
 
     def test_typescript_configured_axios_url_constructor_relative_template_uses_base(self) -> None:
         build = _extract_typescript_client(
@@ -1722,6 +1785,36 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/token/"][0]["host_resolution_kind"], "env_backed_unresolved")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
         self.assertEqual(_fact_lines_by_path(build, "CALLS_ENDPOINT", "/api/token/"), [3])
+
+    def test_typescript_imported_axios_client_unresolved_base_emits_path_candidate(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/api/axiosConfig.ts": (
+                    "import axios from 'axios';\n"
+                    "const api = axios.create({ baseURL: apiRoot });\n"
+                    "export default api;\n"
+                ),
+                "src/orders.ts": (
+                    "import api from './api/axiosConfig';\n"
+                    "export function load(projectId: string) {\n"
+                    "  return api.get(`/api/projects/${projectId}/orders`);\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/projects/{projectId}/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/projects/{projectId}/orders"], {None})
+        qualifier = qualifiers_by_path["/api/projects/{projectId}/orders"][0]
+        self.assertEqual(qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifier["host_resolution_kind"], "expression_unresolved")
+        self.assertEqual(qualifier["base_url_raw"], "apiRoot")
+        self.assertEqual(qualifier["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifier["route_params"], ["projectId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
 
     def test_typescript_imported_default_axios_client_setter_parameter_shadows_receiver(self) -> None:
         build = _extract_typescript_client_files(
