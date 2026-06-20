@@ -1666,7 +1666,7 @@ function methodFromOptionsLike(node) {
   const methodNode = objectLiteralProperty(node, "method");
   if (methodNode) {
     const value = stringLiteralValue(methodNode);
-    if (value != null) return value.toUpperCase();
+    return value == null ? null : value.toUpperCase();
   }
   const initNode = objectLiteralProperty(node, "init");
   if (initNode && ts.isObjectLiteralExpression(initNode)) return methodFromOptionsLike(initNode);

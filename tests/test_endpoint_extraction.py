@@ -582,6 +582,25 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/orders"][0]["host_resolution_kind"], "env_backed_unresolved")
         self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
 
+    def test_typescript_fetch_object_config_keeps_dynamic_top_level_method_unresolved(self) -> None:
+        build = _extract_typescript_client(
+            "function load(fetch, methodName) {\n"
+            "  fetch({\n"
+            "    url: '/api/orders',\n"
+            "    method: methodName,\n"
+            "    init: { method: 'POST' },\n"
+            "  });\n"
+            "  fetch({\n"
+            "    url: '/api/profiles',\n"
+            "    init: { method: methodName },\n"
+            "  });\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"ANY"}, "/api/profiles": {"ANY"}})
+
     def test_typescript_fetch_object_config_requires_url_or_path(self) -> None:
         build = _extract_typescript_client(
             "function load(fetch) {\n"
