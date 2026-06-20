@@ -561,7 +561,10 @@ class KgSnapshot:
             if fact["predicate"] != "REFERENCES_ENV_VAR" or fact["object_id"] not in env_var_ids:
                 continue
             qualifier = fact.get("qualifier", {})
-            if not isinstance(qualifier, dict) or qualifier.get("reference_kind") != "code_access":
+            if not isinstance(qualifier, dict) or qualifier.get("reference_kind") not in {
+                "code_access",
+                "endpoint_env_host",
+            }:
                 continue
             subject = self.entities_by_id.get(fact["subject_id"])
             object_ = self.entities_by_id.get(fact["object_id"])
