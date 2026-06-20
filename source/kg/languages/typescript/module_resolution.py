@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Container
+from dataclasses import dataclass
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import posixpath
 
 
 JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 TypeScriptPathAliases = tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True)
+class _ConfigSection:
+    path: Path
+    config: dict[str, object]
 
 
 def resolve_typescript_import_path(
@@ -63,7 +70,7 @@ def resolve_typescript_module_path_candidate(normalized: str, module_paths: Cont
     if not normalized or normalized.startswith("/"):
         return None
     candidates = [normalized]
-    if posixpath.splitext(normalized)[1] == "":
+    if not normalized.endswith(JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES):
         candidates.extend(f"{normalized}{suffix}" for suffix in JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES)
         candidates.extend(posixpath.join(normalized, f"index{suffix}") for suffix in JAVASCRIPT_TYPESCRIPT_IMPORT_SUFFIXES)
     for candidate in candidates:
@@ -89,8 +96,13 @@ def load_typescript_config_object(path: Path) -> dict[str, object]:
 
 def load_typescript_path_aliases(repo_root: Path) -> TypeScriptPathAliases:
     aliases: list[tuple[str, tuple[str, ...]]] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     for config_path, config in _load_typescript_configs(repo_root):
-        aliases.extend(load_typescript_path_aliases_for_config(repo_root, config_path, config))
+        for alias in load_typescript_path_aliases_for_config(repo_root, config_path, config):
+            if alias in seen:
+                continue
+            seen.add(alias)
+            aliases.append(alias)
     return sort_typescript_path_aliases(tuple(aliases))
 
 
@@ -99,22 +111,25 @@ def load_typescript_path_aliases_for_config(
     config_path: Path,
     config: dict[str, object] | None = None,
 ) -> TypeScriptPathAliases:
-    config_data = config if config is not None else _load_jsonc_object(config_path)
+    config_data = _effective_config_section(repo_root, config_path, config, "paths")
     aliases: list[tuple[str, tuple[str, ...]]] = []
-    config_dir = _config_directory(repo_root, config_path)
-    compiler_options = config_data.get("compilerOptions")
+    config_dir = _config_directory(repo_root, config_data.path)
+    compiler_options = config_data.config.get("compilerOptions")
     if not isinstance(compiler_options, dict):
         return ()
     paths = compiler_options.get("paths")
     if not isinstance(paths, dict):
         return ()
-    base_url = compiler_options.get("baseUrl")
-    base_prefix = _normalize_repo_relative_path(base_url) if isinstance(base_url, str) else "."
+    base_config_data = _effective_config_section(repo_root, config_path, config, "baseUrl")
+    base_compiler_options = base_config_data.config.get("compilerOptions")
+    base_url = base_compiler_options.get("baseUrl") if isinstance(base_compiler_options, dict) else None
+    base_config_dir = _config_directory(repo_root, base_config_data.path)
+    base_prefix = _normalize_repo_relative_path(posixpath.join(base_config_dir, base_url)) if isinstance(base_url, str) else config_dir
     for pattern, raw_targets in paths.items():
         if not isinstance(pattern, str) or not isinstance(raw_targets, list):
             continue
         targets = tuple(
-            _normalize_repo_relative_path(posixpath.join(config_dir, base_prefix, target))
+            _normalize_repo_relative_path(posixpath.join(base_prefix, target))
             for target in raw_targets
             if isinstance(target, str)
         )
@@ -141,14 +156,14 @@ def load_typescript_base_urls_for_config(
     config_path: Path,
     config: dict[str, object] | None = None,
 ) -> tuple[str, ...]:
-    config_data = config if config is not None else _load_jsonc_object(config_path)
-    compiler_options = config_data.get("compilerOptions")
+    config_data = _effective_config_section(repo_root, config_path, config, "baseUrl")
+    compiler_options = config_data.config.get("compilerOptions")
     if not isinstance(compiler_options, dict):
         return ()
     base_url = compiler_options.get("baseUrl")
     if not isinstance(base_url, str):
         return ()
-    return (_normalize_repo_relative_path(posixpath.join(_config_directory(repo_root, config_path), base_url)),)
+    return (_normalize_repo_relative_path(posixpath.join(_config_directory(repo_root, config_data.path), base_url)),)
 
 
 def _load_typescript_configs(repo_root: Path) -> tuple[tuple[Path, dict[str, object]], ...]:
@@ -158,9 +173,95 @@ def _load_typescript_configs(repo_root: Path) -> tuple[tuple[Path, dict[str, obj
     return tuple(configs)
 
 
+def _effective_config_section(
+    repo_root: Path,
+    config_path: Path,
+    config: dict[str, object] | None,
+    compiler_option: str,
+) -> _ConfigSection:
+    chain = _typescript_config_chain(repo_root, config_path, config, frozenset())
+    for section in reversed(chain):
+        compiler_options = section.config.get("compilerOptions")
+        if isinstance(compiler_options, dict) and compiler_option in compiler_options:
+            return section
+    current_config = config if config is not None else _load_jsonc_object(config_path)
+    return _ConfigSection(config_path, current_config)
+
+
+def _typescript_config_chain(
+    repo_root: Path,
+    config_path: Path,
+    config: dict[str, object] | None,
+    seen: frozenset[Path],
+) -> tuple[_ConfigSection, ...]:
+    resolved_path = config_path.resolve()
+    if resolved_path in seen:
+        return ()
+    config_data = config if config is not None else _load_jsonc_object(config_path)
+    chain: list[_ConfigSection] = []
+    next_seen = seen | frozenset((resolved_path,))
+    for extends_value in _extends_values(config_data):
+        extends_path = _resolve_extends_path(repo_root, config_path, extends_value)
+        if extends_path is None:
+            continue
+        chain.extend(_typescript_config_chain(repo_root, extends_path, None, next_seen))
+    chain.append(_ConfigSection(config_path, config_data))
+    return tuple(chain)
+
+
+def _extends_values(config: dict[str, object]) -> tuple[str, ...]:
+    raw_extends = config.get("extends")
+    if isinstance(raw_extends, str):
+        return (raw_extends,)
+    if isinstance(raw_extends, list):
+        return tuple(value for value in raw_extends if isinstance(value, str))
+    return ()
+
+
+def _resolve_extends_path(repo_root: Path, config_path: Path, extends_value: str) -> Path | None:
+    candidate = Path(_normalize_extends_path_value(extends_value))
+    if not _is_path_like_extends_value(extends_value):
+        # Package-style extends require node_modules/package export resolution; leave them unresolved.
+        return None
+    if PureWindowsPath(extends_value).is_absolute() and not candidate.is_absolute():
+        return None
+    if not candidate.is_absolute():
+        candidate = config_path.parent / candidate
+    candidates = [candidate]
+    if candidate.suffix == "":
+        candidates.append(candidate.with_suffix(".json"))
+        candidates.append(candidate / "tsconfig.json")
+    repo_root = repo_root.resolve()
+    for path in candidates:
+        resolved_path = path.resolve()
+        if _is_relative_to(resolved_path, repo_root) and resolved_path.is_file():
+            return resolved_path
+    return None
+
+
+def _normalize_extends_path_value(extends_value: str) -> str:
+    return PureWindowsPath(extends_value).as_posix()
+
+
+def _is_path_like_extends_value(extends_value: str) -> bool:
+    return (
+        extends_value.startswith((".", "/", "\\"))
+        or Path(extends_value).is_absolute()
+        or PureWindowsPath(extends_value).is_absolute()
+    )
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
 def _root_typescript_config_paths(repo_root: Path) -> tuple[Path, ...]:
     paths: list[Path] = []
-    for config_name in ("tsconfig.json", "jsconfig.json"):
+    for config_name in ("tsconfig.json", "jsconfig.json", "tsconfig.base.json"):
         config_path = repo_root / config_name
         if config_path.exists():
             paths.append(config_path)
@@ -169,7 +270,7 @@ def _root_typescript_config_paths(repo_root: Path) -> tuple[Path, ...]:
 
 def _config_directory(repo_root: Path, config_path: Path) -> str:
     try:
-        relative_dir = config_path.parent.relative_to(repo_root).as_posix()
+        relative_dir = config_path.resolve().parent.relative_to(repo_root.resolve()).as_posix()
     except ValueError:
         return ""
     return "" if relative_dir == "." else relative_dir

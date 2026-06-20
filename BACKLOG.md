@@ -1,7 +1,7 @@
 # SuperContext Backlog
 
 Status: living index of deferred work and open follow-ups across the project.
-Last updated: 2026-05-21.
+Last updated: 2026-06-20.
 
 This file is the single place to scan "what's deferred and why." Per-ADR open-follow-up sections are the authoritative source; this is the index. Refresh when ADRs change.
 
@@ -32,6 +32,7 @@ Format: `Item | Source | Trigger to revisit`.
 | Classify KG coverage rows currently captured as `unknown` in count baselines by adding `scope_ref.reason` at emission sites and regenerating `tests/baselines/kg_counts/*.json` | Debate 8 PR-0 baseline review | Before treating T2 count-baseline drift as a strict OSS-readiness gate |
 | Per-repo import-root metadata resolution — Python import normalization currently reads `importlib.metadata.packages_distributions()` from the runner environment, not the target repo's venv/lockfile; Node builtin normalization reads the runner `node` on `PATH` plus fallback inventory | Debate 8 PR-C review | Before hosted analysis claims target-repo environment fidelity |
 | Namespace-package subpath ownership for Python imports — `google.*` style namespace packages fail closed when multiple declared distributions share one import root; resolve with package file metadata or target-env module ownership | Debate 8 PR-C review | When namespace package imports become product-critical |
+| Package-style TypeScript config inheritance — the TS resolver follows local and absolute `tsconfig` / `jsconfig` `extends` chains, but intentionally leaves npm package-style bases such as `@tsconfig/node18/tsconfig.json` unresolved because they require package export and install-tree resolution | ts-config-import-resolution pre-PR review, 2026-06-20 | When package-based TS presets leave alias or `baseUrl` imports classified as unknown |
 | CODEOWNERS extractor for ownership facts — emit canonical `OWNS` unless ADR-0006 later ratifies an `OWNED_BY` inverse; requires extractor support and predicate emission policy | Debate 19 PR-11 parked follow-up | When deploy-blocker semantics or PR-bot ownership routing becomes a product surface |
 | `USES_SCHEMA` qualifier with version chains — current schema-use modeling is partial for deploy-blocker semantics | Debate 19 PR-11 parked follow-up | When `deploy_blockers_for` lands meaningfully |
 | Evidence `valid_from` / `valid_to` envelope — current `Evidence` dataclass omits the ADR-0006 time-validity fields | Debate 19 PR-11 parked follow-up | When time-window-based `M_freshness` reporting becomes needed |
