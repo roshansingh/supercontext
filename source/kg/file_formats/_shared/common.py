@@ -279,3 +279,61 @@ def normalize_endpoint_path(path: str) -> str:
     if not value.startswith("/") and not value.startswith("http"):
         value = "/" + value
     return value
+
+
+def normalize_endpoint_path_shape(path: str) -> str:
+    value = normalize_endpoint_path(path).rstrip("/") or "/"
+    if value == "/" or value.startswith("http"):
+        return value
+    return "/" + "/".join(_normalize_endpoint_path_segment(segment) for segment in value.split("/") if segment)
+
+
+def endpoint_path_shape_matches_prefix(path: str, path_prefix: str) -> bool:
+    value = normalize_endpoint_path_shape(path)
+    prefix = normalize_endpoint_path_shape(path_prefix)
+    return value == prefix or value.startswith(prefix.rstrip("/") + "/")
+
+
+def _normalize_endpoint_path_segment(segment: str) -> str:
+    if _is_colon_route_param(segment) or _is_angle_route_param(segment) or _is_brace_route_param(segment):
+        return "{param}"
+    return segment
+
+
+def _is_colon_route_param(segment: str) -> bool:
+    if not segment.startswith(":"):
+        return False
+    name = segment[1:].removesuffix("?")
+    paren_start = name.find("(")
+    if paren_start >= 0 and name.endswith(")"):
+        name = name[:paren_start]
+    return _is_route_param_name(name)
+
+
+def _is_angle_route_param(segment: str) -> bool:
+    if not (segment.startswith("<") and segment.endswith(">")):
+        return False
+    body = segment[1:-1].strip()
+    if not body:
+        return False
+    name = body.rsplit(":", 1)[-1].strip()
+    return _is_route_param_name(name)
+
+
+def _is_brace_route_param(segment: str) -> bool:
+    if not (segment.startswith("{") and segment.endswith("}")):
+        return False
+    body = segment[1:-1].strip()
+    if body.startswith("*"):
+        body = body[1:].strip()
+    name = body.split(":", 1)[0].strip()
+    return _is_route_param_name(name)
+
+
+def _is_route_param_name(value: str) -> bool:
+    if not value:
+        return False
+    first = value[0]
+    if not (first == "_" or first.isalpha()):
+        return False
+    return all(char == "_" or char == "-" or char.isalnum() for char in value[1:])

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from source.kg.core.display import display_entity
+from source.kg.file_formats._shared.common import endpoint_path_shape_matches_prefix, normalize_endpoint_path_shape
 from source.kg.core.models import JsonObject
 from source.kg.core.store import read_jsonl
 
@@ -589,8 +590,12 @@ class KgSnapshot:
             if not subject or not endpoint or endpoint.get("kind") != "Endpoint":
                 continue
             path = str(endpoint.get("identity", {}).get("path", ""))
-            if path_query and path_query.lower() not in path.lower():
-                continue
+            if path_query:
+                query = str(path_query)
+                path_haystacks = {path.lower(), normalize_endpoint_path_shape(path).lower()}
+                query_needles = {query.lower(), normalize_endpoint_path_shape(query).lower()}
+                if not any(needle in haystack for needle in query_needles for haystack in path_haystacks):
+                    continue
             rows.append(self._fact_result(fact, subject, endpoint))
         rows = sorted(
             rows,
@@ -782,14 +787,7 @@ class KgSnapshot:
     def _endpoint_path_matches(self, entity: JsonObject, path_prefix: str) -> bool:
         if entity.get("kind") != "Endpoint":
             return False
-        path = self._normalize_endpoint_reconciliation_path(str(entity.get("identity", {}).get("path", "")))
-        return path.startswith(path_prefix)
-
-    def _normalize_endpoint_reconciliation_path(self, path: str) -> str:
-        value = path.strip()
-        if not value.startswith("/"):
-            value = "/" + value
-        return value.rstrip("/") or "/"
+        return endpoint_path_shape_matches_prefix(str(entity.get("identity", {}).get("path", "")), path_prefix)
 
     def _entity_repo(self, entity: JsonObject) -> str | None:
         identity = entity.get("identity", {})

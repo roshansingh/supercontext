@@ -5,9 +5,11 @@ import ipaddress
 
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject
+from source.kg.file_formats._shared.common import normalize_endpoint_path_shape
 from source.kg.query.snapshot import KgSnapshot
 
 
+ENDPOINT_PATH_SHAPE_MATCH_BASIS = "canonical_endpoint_path_shape_and_compatible_method"
 RUNTIME_DOMAIN_PREDICATES = {"REFERENCES_DOMAIN", "ROUTES_DOMAIN_TO_DEPLOY"}
 RUNTIME_ENDPOINT_PREDICATES = {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}
 RUNTIME_EVENT_PREDICATES = {"REFERENCES_EVENT_CHANNEL", "CONSUMES_EVENT", "PRODUCES_EVENT"}
@@ -481,7 +483,7 @@ def _endpoint_consumer_map(
                     "consumer": _compact_entity(consumer),
                     "called_endpoint": _compact_entity(client_row.get("object")),
                     "qualifier": _compact_qualifier(client_row.get("qualifier")),
-                    "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
+                    "match_basis": ENDPOINT_PATH_SHAPE_MATCH_BASIS,
                     "evidence_coordinates": _evidence_coordinates(client_row),
                 }
             )
@@ -493,7 +495,7 @@ def _endpoint_consumer_map(
                 "provider_endpoint": _compact_entity(provider_endpoint),
                 "consumers": sorted(consumers, key=_consumer_sort_key)[:limit],
                 "consumer_count": len(consumers),
-                "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
+                "match_basis": ENDPOINT_PATH_SHAPE_MATCH_BASIS,
                 "evidence_coordinates": _evidence_coordinates(provider_row),
             }
         )
@@ -1889,7 +1891,10 @@ def _endpoint_key(entity: JsonObject) -> tuple[str | None, str | None]:
     path = identity.get("path")
     # Method-aware endpoint joins intentionally fail closed when one side lacks
     # a method; otherwise any path-only endpoint could absorb method-specific calls.
-    return (str(method).upper() if method is not None else None, str(path) if path is not None else None)
+    return (
+        str(method).upper() if method is not None else None,
+        normalize_endpoint_path_shape(str(path)) if path is not None else None,
+    )
 
 
 def _endpoint_key_from_row(row: JsonObject) -> tuple[str | None, str | None] | None:

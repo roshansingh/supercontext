@@ -11,11 +11,28 @@ from source.kg.core.models import Coverage, Entity, Fact
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
 from source.kg.core.store import JsonlKgStore
+from source.kg.file_formats._shared.common import endpoint_path_shape_matches_prefix, normalize_endpoint_path_shape
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
 from source.kg.query.snapshot import KgSnapshot
 
 
 class EndpointExtractionTest(unittest.TestCase):
+    def test_endpoint_path_shape_normalizes_framework_route_params(self) -> None:
+        self.assertEqual(normalize_endpoint_path_shape("/orders/:orderId"), "/orders/{param}")
+        self.assertEqual(normalize_endpoint_path_shape("/orders/{orderId}"), "/orders/{param}")
+        self.assertEqual(normalize_endpoint_path_shape("/orders/<int:order_id>/"), "/orders/{param}")
+        self.assertEqual(normalize_endpoint_path_shape("/orders/{orderId:int}"), "/orders/{param}")
+        self.assertEqual(normalize_endpoint_path_shape("/files/{*path}"), "/files/{param}")
+
+    def test_endpoint_path_shape_keeps_composite_and_regex_segments(self) -> None:
+        self.assertEqual(normalize_endpoint_path_shape("/files/:name.json"), "/files/:name.json")
+        self.assertEqual(normalize_endpoint_path_shape("/^legacy/(?P<slug>[-a-z]+)/$"), "/^legacy/(?P<slug>[-a-z]+)/$")
+
+    def test_endpoint_path_shape_prefix_matches_segment_boundaries(self) -> None:
+        self.assertTrue(endpoint_path_shape_matches_prefix("/tenants/:tenantId/orders", "/tenants/{id}"))
+        self.assertTrue(endpoint_path_shape_matches_prefix("/v1/orders", "/v1/"))
+        self.assertFalse(endpoint_path_shape_matches_prefix("/v1beta/orders", "/v1/"))
+
     def test_flask_ast_routes_emit_without_path_value_filtering(self) -> None:
         build = _extract_config(
             {
@@ -2297,6 +2314,78 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual([row["key"] for row in result["documented_AND_implemented"]], ["/v1/orders"])
         self.assertEqual([row["key"] for row in result["documented_AND_called"]], ["/v1/orders"])
         self.assertEqual(result["coverage_warnings"], [])
+
+    def test_reconcile_endpoints_matches_route_parameter_shapes(self) -> None:
+        docs_service = _service_entity("api-docs")
+        backend_service = _service_entity("orders-api")
+        client_service = _service_entity("web-app")
+        docs_endpoint = _endpoint_entity("api-docs", "ANY", "/v1/orders/{orderId}")
+        backend_endpoint = _endpoint_entity("orders-api", "GET", "/v1/orders/:id")
+        client_endpoint = _endpoint_entity("web-app", "GET", "/v1/orders/<int:order_id>")
+        facts = [
+            Fact("DOCUMENTS_ENDPOINT", docs_service.entity_id, docs_endpoint.entity_id),
+            Fact("EXPOSES_ENDPOINT", backend_service.entity_id, backend_endpoint.entity_id),
+            Fact("CALLS_ENDPOINT", client_service.entity_id, client_endpoint.entity_id),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=[docs_service, backend_service, client_service, docs_endpoint, backend_endpoint, client_endpoint],
+                facts=facts,
+                evidence=[],
+                coverage=[],
+                manifest={},
+            )
+
+            snapshot = KgSnapshot(tmpdir)
+            result = snapshot.reconcile_endpoints(
+                docs_scope=("api-docs",),
+                backend_scope=("orders-api",),
+                client_scope=("web-app",),
+            )
+            endpoint_query = snapshot.endpoints(path_query="/v1/orders/{id}", limit=10)
+
+        self.assertEqual([row["key"] for row in result["documented_AND_implemented"]], ["/v1/orders/{param}"])
+        self.assertEqual([row["key"] for row in result["documented_AND_called"]], ["/v1/orders/{param}"])
+        self.assertEqual(endpoint_query["endpoint_fact_count"], 3)
+        self.assertEqual(
+            {row["object"] for row in endpoint_query["endpoints"]},
+            {"ANY /v1/orders/{orderId}", "GET /v1/orders/:id", "GET /v1/orders/<int:order_id>"},
+        )
+
+    def test_reconcile_endpoint_path_prefix_requires_segment_boundary(self) -> None:
+        docs_service = _service_entity("api-docs")
+        backend_service = _service_entity("orders-api")
+        client_service = _service_entity("web-app")
+        docs_endpoint = _endpoint_entity("api-docs", "ANY", "/v1/orders")
+        backend_endpoint = _endpoint_entity("orders-api", "POST", "/v1/orders")
+        client_endpoint = _endpoint_entity("web-app", "POST", "/v1/orders")
+        facts = [
+            Fact("DOCUMENTS_ENDPOINT", docs_service.entity_id, docs_endpoint.entity_id),
+            Fact("EXPOSES_ENDPOINT", backend_service.entity_id, backend_endpoint.entity_id),
+            Fact("CALLS_ENDPOINT", client_service.entity_id, client_endpoint.entity_id),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=[docs_service, backend_service, client_service, docs_endpoint, backend_endpoint, client_endpoint],
+                facts=facts,
+                evidence=[],
+                coverage=[],
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).reconcile_endpoints(
+                docs_scope=("api-docs",),
+                backend_scope=("orders-api",),
+                client_scope=("web-app",),
+                path_prefix="/v1/ord",
+            )
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["documented_AND_implemented"], [])
+        self.assertEqual(result["documented_AND_called"], [])
+        self.assertEqual([warning["scope"] for warning in result["coverage_warnings"]], ["docs", "backend", "client"])
 
     def test_reconcile_endpoints_warns_when_docs_scope_has_no_documented_endpoints(self) -> None:
         backend_service = _service_entity("orders-api")

@@ -12,6 +12,7 @@ from source.kg.core.models import Coverage, Entity, Evidence, Fact, canonical_js
 from source.kg.core.store import JsonlKgStore
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.mcp_tools import (
+    ENDPOINT_PATH_SHAPE_MATCH_BASIS,
     TOOL_NAMES,
     _planning_context_has_resolved_anchor,
     _planning_context_authz_surface_reference,
@@ -1095,6 +1096,21 @@ class McpToolsTest(unittest.TestCase):
             architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
 
         self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+
+    def test_runtime_architecture_matches_endpoint_consumers_by_path_shape(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            provider_endpoint_path="/orders/<int:order_id>",
+            endpoint_consumer_path="/orders/{orderId}",
+        ) as kg:
+            architecture = runtime_architecture_packet(kg, repo="payments", limit=10)
+
+        self.assertEqual(architecture["summary"]["client_endpoint_call_count"], 1)
+        row = architecture["answer_packet"]["endpoint_consumer_map"][0]
+        self.assertEqual(row["match_basis"], ENDPOINT_PATH_SHAPE_MATCH_BASIS)
+        self.assertEqual(row["consumers"][0]["match_basis"], ENDPOINT_PATH_SHAPE_MATCH_BASIS)
+        self.assertEqual(row["provider_endpoint"]["path"], "/orders/<int:order_id>")
+        self.assertEqual(row["consumers"][0]["called_endpoint"]["path"], "/orders/{orderId}")
 
     def test_runtime_architecture_does_not_match_partial_method_endpoints(self) -> None:
         with _fixture_snapshot(endpoint_consumer=True, provider_endpoint_method=None, endpoint_consumer_method="POST") as kg:
@@ -2468,6 +2484,21 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual({row["predicate"] for row in result["endpoints"]}, {"EXPOSES_ENDPOINT"})
         self.assertEqual({row["predicate"] for row in result["event_channels"]}, {"CONSUMES_EVENT", "PRODUCES_EVENT"})
 
+    def test_planning_context_endpoint_anchor_matches_route_parameter_shapes(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            provider_endpoint_path="/orders/:orderId",
+            endpoint_consumer_path="/orders/{id}",
+        ) as kg:
+            result = call_tool(kg, "planning_context", {"endpoint": "/orders/{orderId}", "limit": 10})
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["summary"]["endpoint_fact_count"], 2)
+        self.assertEqual(
+            {row["object"] for row in result["endpoints"]},
+            {"POST /orders/:orderId", "${env:PAYMENTS_API_BASE_URL} POST /orders/{id}"},
+        )
+
     def test_planning_context_service_enrichment_survives_secondary_anchor(self) -> None:
         with _fixture_snapshot(extra_service_endpoint=True) as kg:
             result = call_tool(kg, "planning_context", {"service": "payments", "endpoint": "/checkout", "limit": 10})
@@ -2521,8 +2552,34 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(packet["summary"]["host_resolution_kind_counts"], {"env_backed_unresolved": 1})
         self.assertEqual(packet["consumers"][0]["consumer"]["slug"], "web")
         self.assertEqual(packet["consumers"][0]["matched_provider_endpoint"]["path"], "/checkout")
-        self.assertEqual(packet["consumers"][0]["match_basis"], "literal_normalized_endpoint_path_and_compatible_method")
+        self.assertEqual(packet["consumers"][0]["match_basis"], ENDPOINT_PATH_SHAPE_MATCH_BASIS)
         self.assertTrue(any("endpoint_consumers" in action for action in result["next_actions"]))
+
+    def test_get_service_brief_matches_endpoint_consumers_by_path_shape(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            provider_endpoint_path="/orders/:orderId",
+            endpoint_consumer_path="/orders/{id}",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        packet = result["endpoint_consumers"]
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 1)
+        self.assertEqual(packet["summary"]["consumer_fact_count"], 1)
+        self.assertEqual(packet["summary"]["match_basis"], ENDPOINT_PATH_SHAPE_MATCH_BASIS)
+        self.assertEqual(packet["consumers"][0]["matched_provider_endpoint"]["path"], "/orders/{param}")
+        self.assertEqual(packet["consumers"][0]["match_basis"], ENDPOINT_PATH_SHAPE_MATCH_BASIS)
+
+    def test_get_service_brief_does_not_shape_match_composite_param_segments(self) -> None:
+        with _fixture_snapshot(
+            endpoint_consumer=True,
+            provider_endpoint_path="/files/:name.json",
+            endpoint_consumer_path="/files/{name}",
+        ) as kg:
+            result = call_tool(kg, "get_service_brief", {"service": "payments", "limit": 10})
+
+        self.assertEqual(result["summary"]["endpoint_consumer_fact_count"], 0)
+        self.assertEqual(result["endpoint_consumers"]["consumers"], [])
 
     def test_get_service_brief_surfaces_operational_deploy_candidates(self) -> None:
         with _fixture_snapshot(operational_deploy_mapping=True, operational_deploy_same_repo=True) as kg:
@@ -4335,7 +4392,9 @@ class _fixture_snapshot:
         endpoint_consumer: bool = False,
         same_repo_endpoint_consumer: bool = False,
         provider_endpoint_method: str | None = "POST",
+        provider_endpoint_path: str = "/checkout",
         endpoint_consumer_method: str | None = "POST",
+        endpoint_consumer_path: str = "/checkout",
         operational_deploy_mapping: bool = False,
         operational_deploy_same_repo: bool = False,
         operational_deploy_link: bool = False,
@@ -4363,7 +4422,9 @@ class _fixture_snapshot:
         self.endpoint_consumer = endpoint_consumer
         self.same_repo_endpoint_consumer = same_repo_endpoint_consumer
         self.provider_endpoint_method = provider_endpoint_method
+        self.provider_endpoint_path = provider_endpoint_path
         self.endpoint_consumer_method = endpoint_consumer_method
+        self.endpoint_consumer_path = endpoint_consumer_path
         self.operational_deploy_mapping = operational_deploy_mapping
         self.operational_deploy_same_repo = operational_deploy_same_repo
         self.operational_deploy_link = operational_deploy_link
@@ -4483,7 +4544,7 @@ class _fixture_snapshot:
                 "repo": "payments",
                 "protocol": "http",
                 "method": self.provider_endpoint_method,
-                "path": "/checkout",
+                "path": self.provider_endpoint_path,
                 "host": None,
             },
         )
@@ -4509,7 +4570,7 @@ class _fixture_snapshot:
                 "repo": "web",
                 "protocol": "http",
                 "method": self.endpoint_consumer_method,
-                "path": "/checkout",
+                "path": self.endpoint_consumer_path,
                 "host": "${env:PAYMENTS_API_BASE_URL}",
             },
         )
@@ -4648,7 +4709,7 @@ class _fixture_snapshot:
             "EXPOSES_ENDPOINT",
             service.entity_id,
             endpoint.entity_id,
-            {"method": self.provider_endpoint_method, "path": "/checkout"},
+            {"method": self.provider_endpoint_method, "path": self.provider_endpoint_path},
         )
         extra_endpoint_fact = Fact(
             "EXPOSES_ENDPOINT",
@@ -4665,8 +4726,8 @@ class _fixture_snapshot:
                 "confidence": "host_unresolved_path_resolved",
                 "host_resolution_kind": "env_backed_unresolved",
                 "method": self.endpoint_consumer_method,
-                "path": "/checkout",
-                "raw_target": "${env:PAYMENTS_API_BASE_URL}/checkout",
+                "path": self.endpoint_consumer_path,
+                "raw_target": f"${{env:PAYMENTS_API_BASE_URL}}{self.endpoint_consumer_path}",
                 "resolution_kind": "path_resolved",
                 "source_kind": "http_client",
             },

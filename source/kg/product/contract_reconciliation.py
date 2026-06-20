@@ -6,6 +6,7 @@ from typing import Literal
 
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject
+from source.kg.file_formats._shared.common import endpoint_path_shape_matches_prefix, normalize_endpoint_path_shape
 
 
 IdentityKey = Literal["endpoint_path", "event_channel", "display_name"]
@@ -95,7 +96,7 @@ def _contract_rows(kg, side: ContractSide, identity_key: IdentityKey) -> list[Js
         if repo_filter and not _row_in_repos(subject, object_, repo_filter):
             continue
         key = _identity_key(object_, identity_key)
-        if side.path_prefix and not key.startswith(side.path_prefix):
+        if side.path_prefix and not endpoint_path_shape_matches_prefix(key, side.path_prefix):
             continue
         rows.append(
             {
@@ -204,10 +205,7 @@ def _identity_key(entity: JsonObject, identity_key: IdentityKey) -> str:
 
 
 def _normalize_path(path: str) -> str:
-    value = path.strip()
-    if not value.startswith("/"):
-        value = "/" + value
-    return value.rstrip("/") or "/"
+    return normalize_endpoint_path_shape(path)
 
 
 def _row_in_repos(subject: JsonObject, object_: JsonObject, repos: set[str]) -> bool:
