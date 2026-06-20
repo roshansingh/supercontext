@@ -341,6 +341,10 @@ def extract_typescript_client_endpoint_calls(
                     build,
                     tenant_id,
                     env_names,
+                    endpoint_method=method,
+                    endpoint_path=path,
+                    raw_target=raw_target,
+                    host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
                 )
             if confidence == "host_unresolved_path_resolved":
                 reason = row.get("reason")
@@ -420,6 +424,8 @@ def _add_imported_client_endpoint_call(
     host_resolution_kind = resolved.get("host_resolution_kind")
     route_params = resolved.get("route_params")
     env_names = resolved.get("env_names")
+    method = str(row.get("method") or "ANY").upper()
+    path = str(resolved["path"])
     _add_endpoint_fact(
         repo,
         scanned,
@@ -427,8 +433,8 @@ def _add_imported_client_endpoint_call(
         service_entity,
         build,
         "CALLS_ENDPOINT",
-        str(row.get("method") or "ANY").upper(),
-        str(resolved["path"]),
+        method,
+        path,
         "imported_axios_call",
         tenant_id,
         host=resolved.get("host") if isinstance(resolved.get("host"), str) else None,
@@ -449,6 +455,10 @@ def _add_imported_client_endpoint_call(
             build,
             tenant_id,
             env_names,
+            endpoint_method=method,
+            endpoint_path=path,
+            raw_target=raw_target,
+            host_resolution_kind=host_resolution_kind if isinstance(host_resolution_kind, str) else None,
         )
     if confidence == "host_unresolved_path_resolved":
         reason = resolved.get("reason") or row.get("reason")
@@ -694,6 +704,11 @@ def _add_endpoint_env_var_references(
     build: ConfigKgBuild,
     tenant_id: str,
     env_names: object,
+    *,
+    endpoint_method: str | None = None,
+    endpoint_path: str | None = None,
+    raw_target: str | None = None,
+    host_resolution_kind: str | None = None,
 ) -> None:
     if not _is_string_list(env_names):
         return
@@ -702,6 +717,15 @@ def _add_endpoint_env_var_references(
     for name in _merge_string_lists(env_names):
         env_entity = env_var_entity(repo, name, tenant_id)
         add_entity_evidence(build, repo, env_entity, scanned.path, line_number)
+        qualifier = {"name": name, "reference_kind": "endpoint_env_host"}
+        if endpoint_method is not None:
+            qualifier["endpoint_method"] = endpoint_method
+        if endpoint_path is not None:
+            qualifier["endpoint_path"] = normalize_endpoint_path(endpoint_path)
+        if raw_target is not None:
+            qualifier["raw_target"] = raw_target
+        if host_resolution_kind is not None:
+            qualifier["host_resolution_kind"] = host_resolution_kind
         add_fact(
             build,
             "REFERENCES_ENV_VAR",
@@ -710,7 +734,7 @@ def _add_endpoint_env_var_references(
             repo,
             scanned.path,
             line_number,
-            qualifier={"name": name, "reference_kind": "endpoint_env_host"},
+            qualifier=qualifier,
         )
 
 

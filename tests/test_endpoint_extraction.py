@@ -2283,6 +2283,157 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(len(env_usage), 1)
         self.assertEqual(env_usage[0]["evidence"][0]["bytes_ref"]["path"], "src/api.ts")
 
+    def test_domain_references_include_endpoint_env_host_citations(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                ".env": "VITE_API_ROOT=https://api.example.com\n",
+                "client.ts": (
+                    "import axios from 'axios';\n"
+                    "const api = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "api.get('/api/token/');\n"
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=build.entities,
+                facts=build.facts,
+                evidence=build.evidence,
+                coverage=build.coverage,
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).domain_references("api.example.com", limit=20)
+
+        endpoint_env_usage = [
+            row
+            for row in result["references"]
+            if row["predicate"] == "REFERENCES_ENV_VAR"
+            and isinstance(row.get("qualifier"), dict)
+            and row["qualifier"].get("reference_kind") == "endpoint_env_host"
+        ]
+        self.assertEqual(len(endpoint_env_usage), 1)
+        qualifier = endpoint_env_usage[0]["qualifier"]
+        self.assertEqual(qualifier["endpoint_method"], "GET")
+        self.assertEqual(qualifier["endpoint_path"], "/api/token/")
+        self.assertEqual(qualifier["raw_target"], "${env:VITE_API_ROOT}/api/token/")
+        self.assertEqual(qualifier["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(endpoint_env_usage[0]["evidence"][0]["bytes_ref"]["path"], "client.ts")
+        self.assertNotIn("ROUTES_DOMAIN_TO_DEPLOY", {row["predicate"] for row in result["references"]})
+        self.assertNotIn("CALLS_ENDPOINT", {row["predicate"] for row in result["references"]})
+
+    def test_domain_references_include_imported_endpoint_env_host_citations(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                ".env": "VITE_API_ROOT=https://api.example.com\n",
+                "src/api/axiosConfig.tsx": (
+                    "import axios from 'axios';\n"
+                    "const client = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "export default client;\n"
+                ),
+                "src/api/login.api.tsx": (
+                    "import client from './axiosConfig';\n"
+                    "export function login() {\n"
+                    "  return client.post('/api/token/', {});\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=build.entities,
+                facts=build.facts,
+                evidence=build.evidence,
+                coverage=build.coverage,
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).domain_references("api.example.com", limit=20)
+
+        endpoint_env_usage = [
+            row
+            for row in result["references"]
+            if row["predicate"] == "REFERENCES_ENV_VAR"
+            and isinstance(row.get("qualifier"), dict)
+            and row["qualifier"].get("reference_kind") == "endpoint_env_host"
+        ]
+        self.assertEqual(len(endpoint_env_usage), 1)
+        qualifier = endpoint_env_usage[0]["qualifier"]
+        self.assertEqual(qualifier["endpoint_method"], "POST")
+        self.assertEqual(qualifier["endpoint_path"], "/api/token/")
+        self.assertEqual(qualifier["raw_target"], "/api/token/")
+        self.assertEqual(qualifier["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(endpoint_env_usage[0]["evidence"][0]["bytes_ref"]["path"], "src/api/login.api.tsx")
+
+    def test_domain_references_exclude_endpoint_env_host_without_domain_link(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "client.ts": (
+                    "import axios from 'axios';\n"
+                    "const api = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "api.get('/api/token/');\n"
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=build.entities,
+                facts=build.facts,
+                evidence=build.evidence,
+                coverage=build.coverage,
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).domain_references("api.example.com", limit=20)
+
+        endpoint_env_usage = [
+            row
+            for row in result["references"]
+            if row["predicate"] == "REFERENCES_ENV_VAR"
+            and isinstance(row.get("qualifier"), dict)
+            and row["qualifier"].get("reference_kind") == "endpoint_env_host"
+        ]
+        self.assertEqual(result["reference_count"], 0)
+        self.assertEqual(endpoint_env_usage, [])
+
+    def test_domain_references_scope_endpoint_env_host_to_matching_env_domain(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                ".env": (
+                    "VITE_API_ROOT=https://api.example.com\n"
+                    "VITE_OTHER_ROOT=https://other.example.com\n"
+                ),
+                "client.ts": (
+                    "import axios from 'axios';\n"
+                    "const api = axios.create({ baseURL: import.meta.env.VITE_API_ROOT });\n"
+                    "api.get('/api/token/');\n"
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=build.entities,
+                facts=build.facts,
+                evidence=build.evidence,
+                coverage=build.coverage,
+                manifest={},
+            )
+
+            result = KgSnapshot(tmpdir).domain_references("other.example.com", limit=20)
+
+        endpoint_env_usage = [
+            row
+            for row in result["references"]
+            if row["predicate"] == "REFERENCES_ENV_VAR"
+            and isinstance(row.get("qualifier"), dict)
+            and row["qualifier"].get("reference_kind") == "endpoint_env_host"
+        ]
+        self.assertEqual(endpoint_env_usage, [])
+
     def test_reconcile_endpoints_matches_docs_backend_and_client_by_path(self) -> None:
         docs_service = _service_entity("api-docs")
         backend_service = _service_entity("orders-api")
