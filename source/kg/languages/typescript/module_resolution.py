@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Container
 from dataclasses import dataclass
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import posixpath
 
 
@@ -219,10 +219,12 @@ def _extends_values(config: dict[str, object]) -> tuple[str, ...]:
 
 
 def _resolve_extends_path(repo_root: Path, config_path: Path, extends_value: str) -> Path | None:
-    if not extends_value.startswith((".", "/")):
+    candidate = Path(extends_value)
+    if not _is_path_like_extends_value(extends_value):
         # Package-style extends require node_modules/package export resolution; leave them unresolved.
         return None
-    candidate = Path(extends_value)
+    if PureWindowsPath(extends_value).is_absolute() and not candidate.is_absolute():
+        return None
     if not candidate.is_absolute():
         candidate = config_path.parent / candidate
     candidates = [candidate]
@@ -235,6 +237,14 @@ def _resolve_extends_path(repo_root: Path, config_path: Path, extends_value: str
         if _is_relative_to(resolved_path, repo_root) and resolved_path.is_file():
             return resolved_path
     return None
+
+
+def _is_path_like_extends_value(extends_value: str) -> bool:
+    return (
+        extends_value.startswith((".", "/", "\\"))
+        or Path(extends_value).is_absolute()
+        or PureWindowsPath(extends_value).is_absolute()
+    )
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

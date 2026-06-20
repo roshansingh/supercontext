@@ -11,7 +11,11 @@ from unittest.mock import patch
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.python.normalization import imports as python_imports
 from source.kg.languages.python.normalization.imports import ImportRef, PythonImportNormalizer
-from source.kg.languages.typescript.module_resolution import load_typescript_config_object, load_typescript_path_aliases
+from source.kg.languages.typescript.module_resolution import (
+    _is_path_like_extends_value,
+    load_typescript_config_object,
+    load_typescript_path_aliases,
+)
 from source.kg.languages.typescript.normalization import imports as typescript_imports
 from source.kg.languages.typescript.normalization.imports import JsImportNormalizer, JsImportRef
 
@@ -659,6 +663,11 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
 
             self.assertEqual(normalized.category, "unknown")
             self.assertEqual(normalized.target_name, "@outside/value")
+
+    def test_tsconfig_extends_path_classifier_accepts_windows_absolute_paths(self) -> None:
+        self.assertTrue(_is_path_like_extends_value("C:/repo/tsconfig.base.json"))
+        self.assertTrue(_is_path_like_extends_value(r"C:\repo\tsconfig.base.json"))
+        self.assertFalse(_is_path_like_extends_value("@tsconfig/node18/tsconfig.json"))
 
     def test_tsconfig_extends_cycle_does_not_block_parent_alias_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
