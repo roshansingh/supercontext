@@ -5,6 +5,7 @@ from typing import Callable
 
 from source.kg.core.display import display_entity
 from source.kg.core.models import JsonObject, canonical_json
+from source.kg.file_formats._shared.common import normalize_endpoint_path_shape
 from source.kg.product.application_impact import application_impact_packet
 from source.kg.product.authz_surface import authz_surface_packet
 from source.kg.product.framework_impact import framework_impact_packet
@@ -18,7 +19,7 @@ from source.kg.product.output_budget import (
     enforce_reverse_impact_budget,
     enforce_service_brief_budget,
 )
-from source.kg.product.runtime_architecture import runtime_architecture_packet
+from source.kg.product.runtime_architecture import ENDPOINT_PATH_SHAPE_MATCH_BASIS, runtime_architecture_packet
 from source.kg.query.call_site import call_site_from_qualifier
 from source.kg.query.snapshot import KgSnapshot
 
@@ -793,7 +794,7 @@ def _get_service_brief(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         )
     if endpoint_consumer_packet["summary"]["consumer_fact_count"] > 0:
         next_actions.append(
-            "endpoint_consumers are static path-matched CALLS_ENDPOINT facts; verify host/env resolution before treating them as runtime dependencies."
+            "endpoint_consumers are static path-shape-matched CALLS_ENDPOINT facts; verify host/env resolution before treating them as runtime dependencies."
         )
     coverage_warnings = _uninstrumented_language_coverage_warnings(
         _uninstrumented_language_entries(kg, repo=service_repo),
@@ -1456,7 +1457,7 @@ def _endpoint_consumer_packet(kg: KgSnapshot, exposed_endpoint_rows: list[JsonOb
             "consumer_service_count": len(consumer_keys),
             "confidence_counts": confidence_counts,
             "host_resolution_kind_counts": host_resolution_counts,
-            "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
+            "match_basis": ENDPOINT_PATH_SHAPE_MATCH_BASIS,
             "section_limit": limit,
         },
         "consumers": public_rows[:limit],
@@ -1514,7 +1515,7 @@ def _endpoint_consumer_rows_for_exposed_endpoints(
                     "path": endpoint_path,
                     "methods": sorted(provider_methods),
                 },
-                "match_basis": "literal_normalized_endpoint_path_and_compatible_method",
+                "match_basis": ENDPOINT_PATH_SHAPE_MATCH_BASIS,
             }
         )
     return _planning_context_dedupe_rows(rows)
@@ -1564,7 +1565,7 @@ def _endpoint_path(endpoint: JsonObject) -> str | None:
     path = identity.get("path")
     if not isinstance(path, str) or not path.strip():
         return None
-    return _normalize_endpoint_query(path)
+    return normalize_endpoint_path_shape(path)
 
 
 def _endpoint_method(endpoint: JsonObject, fact: JsonObject | None = None) -> str | None:
@@ -3161,7 +3162,7 @@ def _planning_context_entity_name(entity: JsonObject) -> str:
 def _planning_context_endpoint_entity_matches(entity: JsonObject, endpoint: str) -> bool:
     if entity.get("kind") != "Endpoint":
         return False
-    return endpoint.strip().lower() in str(entity.get("identity", {}).get("path") or "").lower()
+    return _planning_context_endpoint_path_matches(str(entity.get("identity", {}).get("path") or ""), endpoint)
 
 
 def _planning_context_event_channel_entity_matches(entity: JsonObject, event_channel: str) -> bool:
@@ -5425,7 +5426,6 @@ def _planning_context_package_matches(kg: KgSnapshot, package_name: str) -> dict
 
 def _planning_context_endpoint_matches(kg: KgSnapshot, path_query: str) -> dict[str, list[JsonObject]]:
     matches: dict[str, list[JsonObject]] = {}
-    needle = path_query.lower()
     for fact in kg.facts:
         if fact.get("predicate") not in {"EXPOSES_ENDPOINT", "CALLS_ENDPOINT", "DOCUMENTS_ENDPOINT"}:
             continue
@@ -5434,7 +5434,7 @@ def _planning_context_endpoint_matches(kg: KgSnapshot, path_query: str) -> dict[
         if not subject or not endpoint or endpoint.get("kind") != "Endpoint":
             continue
         path = str(endpoint.get("identity", {}).get("path", ""))
-        if needle not in path.lower():
+        if not _planning_context_endpoint_path_matches(path, path_query):
             continue
         matches.setdefault(fact["object_id"], []).append(
             {
@@ -5576,10 +5576,17 @@ def _planning_context_exact_domain_rows(kg: KgSnapshot, query: str, limit: int) 
 
 
 def _normalize_endpoint_query(value: str) -> str:
-    normalized = value.strip()
-    if not normalized.startswith("/"):
-        normalized = "/" + normalized
-    return normalized.rstrip("/") or "/"
+    return normalize_endpoint_path_shape(value)
+
+
+def _planning_context_endpoint_path_matches(path: str, endpoint: str) -> bool:
+    raw_needle = endpoint.strip().lower()
+    raw_haystack = path.strip().lower()
+    if raw_needle and raw_needle in raw_haystack:
+        return True
+    shape_needle = normalize_endpoint_path_shape(endpoint).lower()
+    shape_haystack = normalize_endpoint_path_shape(path).lower()
+    return bool(shape_needle and shape_needle in shape_haystack)
 
 
 def _symbol_refinement_actions(symbols: list[JsonObject]) -> list[str]:
@@ -5624,9 +5631,9 @@ _TOOLS: dict[str, McpTool] = {
     "get_service_brief": McpTool(
         name="get_service_brief",
         description=(
-            "Returns a compact service brief plus related endpoint, path-matched endpoint-consumer, event-channel, deploy-mapping, and operational domain/deploy-target candidate facts for one matched service. "
+            "Returns a compact service brief plus related endpoint, path-shape-matched endpoint-consumer, event-channel, deploy-mapping, and operational domain/deploy-target candidate facts for one matched service. "
             "Use it after you know the target service and want a bounded operational summary of what the KG has linked to it. "
-            "endpoint_consumers are static CALLS_ENDPOINT candidates matched by literal normalized endpoint path and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
+            "endpoint_consumers are static CALLS_ENDPOINT candidates matched by canonical endpoint path shape and compatible method; verify unresolved hosts/env before runtime or deploy claims. "
             "Read operational_surfaces.evidence_partition: known_linked uses exact repo-identity joins, unlinked_evidence is source leads only, and missing_contracts lists deploy/runtime claims the KG cannot prove. "
             "Treat operational_surfaces.deploy_link_facts / known DEPLOYS_VIA_CONFIG as service-to-deploy-target evidence; treat candidate_or_unlinked_deploy_links and unlinked domain routes as source leads, not deploy proof. "
             "Does not traverse caller graphs, compute downstream blast radius, or infer missing runtime/deploy contracts; if deploy mappings are absent, inspect manifests before making environment claims."
@@ -5738,7 +5745,7 @@ _TOOLS: dict[str, McpTool] = {
             "Includes additive grouped context: summary, snapshot_summary, snapshot_scope, inventory, entry_points, related_facts, source_coordinates with provenance, and answerability metadata. "
             "Use snapshot_summary.count_contract, snapshot_scope.count_contract, and inventory.count_contract to keep fleet-wide counts separate from repo-scoped counts. "
             "runtime_architecture assembles typed domain, deploy, endpoint, client, and event facts into runtime_building_blocks, domain_routing_map, deploy_runtime_map, unlinked_deploy_leads, endpoint_consumer_map, deploy_order_guidance, deploy_kind_counts split by component vs unlinked route leads, and an answer_packet without promoting unlinked evidence. "
-            "runtime_architecture.summary.client_endpoint_call_count is path-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
+            "runtime_architecture.summary.client_endpoint_call_count is path-shape-scoped candidate fact count; subtract or inspect endpoint_consumer_missing_method_drop_count before treating it as usable consumer evidence. "
             "When a planning anchor is ambiguous or not_found, runtime_architecture.summary.answer_packet_mode is investigation_brief_only and runtime maps/counts are omitted from the answer path until the agent retries with narrower anchors. "
             "For runtime architecture answers, include verified runtime_architecture.answer_packet.investigation_brief.unlinked_runtime_leads such as API Gateway hostnames, private IPs, and static-site CNAME domains as referenced runtime targets with a caveat, not as proven route mappings; treat runtime_architecture.answer_packet.unlinked_deploy_leads the same way for candidate or unresolved deploy evidence. "
             "For symbol impact anchors, read related_facts.symbol_impact.reverse_impact; it is a bounded reverse-caller head start with constructor bridges and terminal import leads for targeted source inspection. "
@@ -5768,7 +5775,7 @@ _TOOLS: dict[str, McpTool] = {
             "When the prompt names impact categories, pass requested_surfaces such as ui_screens, scheduled_jobs, sqs_consumers, delivery_workers, tracking_paths, schemas, or contracts so surface_status can separate inventory_context, unlinked_lead, and missing evidence. "
             "Broad categories such as services and deployables are covered by other review packet sections; owner/maintainer requests are reported as ownership_context coverage gaps pointing to planning_context.ownership_context. "
             "Top-level direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
-            "runtime_surfaces includes bounded path-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
+            "runtime_surfaces includes bounded path-shape-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "framework_impact includes parser-backed support facts for Django/Celery model fields, model relations, serializers, view/model bindings, tasks, and bounded model relationship paths when present. "
             "authz_surface is available from planning_context/get_service_brief for endpoint-to-handler permission evidence; use source inspection for dynamic middleware or framework defaults not represented in the packet. "
             "application_impact groups changed app/package namespace surfaces into API/model/serializer/worker/scheduled-job sections, app-scoped runtime facts, and unlinked cross-repo name leads that require separate verification. "
