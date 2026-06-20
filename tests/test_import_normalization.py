@@ -608,6 +608,24 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.category, "internal_module")
             self.assertEqual(normalized.target_name, "src.base.value")
 
+    def test_backslash_relative_tsconfig_extends_resolves_across_platforms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.base.json", '{"compilerOptions":{"baseUrl":".","paths":{"@win/*":["src/win/*"]}}}\n')
+            _write(
+                root / "packages" / "widget" / "tsconfig.json",
+                json.dumps({"extends": r"..\..\tsconfig.base.json"}) + "\n",
+            )
+            app = _write(root / "packages" / "widget" / "src" / "app.ts", "import value from '@win/value';\n")
+            value = _write(root / "src" / "win" / "value.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, value))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@win/value"), "packages.widget.src.app", "packages/widget/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.win.value")
+
     def test_tsconfig_directory_extends_resolves_nested_tsconfig_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -219,7 +219,7 @@ def _extends_values(config: dict[str, object]) -> tuple[str, ...]:
 
 
 def _resolve_extends_path(repo_root: Path, config_path: Path, extends_value: str) -> Path | None:
-    candidate = Path(extends_value)
+    candidate = Path(_normalize_extends_path_value(extends_value))
     if not _is_path_like_extends_value(extends_value):
         # Package-style extends require node_modules/package export resolution; leave them unresolved.
         return None
@@ -237,6 +237,10 @@ def _resolve_extends_path(repo_root: Path, config_path: Path, extends_value: str
         if _is_relative_to(resolved_path, repo_root) and resolved_path.is_file():
             return resolved_path
     return None
+
+
+def _normalize_extends_path_value(extends_value: str) -> str:
+    return PureWindowsPath(extends_value).as_posix()
 
 
 def _is_path_like_extends_value(extends_value: str) -> bool:
