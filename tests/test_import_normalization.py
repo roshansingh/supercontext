@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import subprocess
 import tempfile
 import unittest
@@ -620,6 +621,44 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
 
             self.assertEqual(normalized.category, "internal_module")
             self.assertEqual(normalized.target_name, "src.dir.value")
+
+    def test_absolute_tsconfig_extends_resolves_when_under_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            shared_config = _write(
+                root / "configs" / "shared.json",
+                '{"compilerOptions":{"baseUrl":"..","paths":{"@inside/*":["src/inside/*"]}}}\n',
+            )
+            _write(root / "tsconfig.json", json.dumps({"extends": shared_config.as_posix()}) + "\n")
+            app = _write(root / "src" / "app.ts", "import value from '@inside/value';\n")
+            value = _write(root / "src" / "inside" / "value.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, value))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@inside/value"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.inside.value")
+
+    def test_tsconfig_extends_outside_repo_root_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            root = workspace / "repo"
+            root.mkdir()
+            outside_config = _write(
+                workspace / "shared.json",
+                '{"compilerOptions":{"baseUrl":".","paths":{"@outside/*":["src/outside/*"]}}}\n',
+            )
+            _write(root / "tsconfig.json", json.dumps({"extends": outside_config.as_posix()}) + "\n")
+            app = _write(root / "src" / "app.ts", "import value from '@outside/value';\n")
+            value = _write(root / "src" / "outside" / "value.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, value))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@outside/value"), "src.app", "src/app.ts")
+
+            self.assertEqual(normalized.category, "unknown")
+            self.assertEqual(normalized.target_name, "@outside/value")
 
     def test_tsconfig_extends_cycle_does_not_block_parent_alias_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
