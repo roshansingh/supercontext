@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from source.kg.core.display import display_entity
-from source.kg.file_formats._shared.common import endpoint_path_shape_matches_prefix, normalize_endpoint_path_shape
 from source.kg.core.models import JsonObject
 from source.kg.core.store import read_jsonl
+from source.kg.file_formats._shared.common import endpoint_path_shape_matches_prefix, normalize_endpoint_path_shape
 
 from . import aggregations, path_search
 from .call_site import call_site_from_qualifier

@@ -96,7 +96,7 @@ def _contract_rows(kg, side: ContractSide, identity_key: IdentityKey) -> list[Js
         if repo_filter and not _row_in_repos(subject, object_, repo_filter):
             continue
         key = _identity_key(object_, identity_key)
-        if side.path_prefix and not endpoint_path_shape_matches_prefix(key, side.path_prefix):
+        if side.path_prefix and not _identity_key_matches_prefix(identity_key, key, side.path_prefix):
             continue
         rows.append(
             {
@@ -206,6 +206,12 @@ def _identity_key(entity: JsonObject, identity_key: IdentityKey) -> str:
 
 def _normalize_path(path: str) -> str:
     return normalize_endpoint_path_shape(path)
+
+
+def _identity_key_matches_prefix(identity_key: IdentityKey, key: str, path_prefix: str) -> bool:
+    if identity_key == "endpoint_path":
+        return endpoint_path_shape_matches_prefix(key, path_prefix)
+    return key.startswith(path_prefix)
 
 
 def _row_in_repos(subject: JsonObject, object_: JsonObject, repos: set[str]) -> bool:

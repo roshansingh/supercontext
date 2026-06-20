@@ -13,6 +13,7 @@ from source.kg.languages.typescript.files import TYPESCRIPT_EXTENSIONS
 from source.kg.core.store import JsonlKgStore
 from source.kg.file_formats._shared.common import endpoint_path_shape_matches_prefix, normalize_endpoint_path_shape
 from source.kg.file_formats._shared.static_config import StaticConfigExtractor
+from source.kg.product.contract_reconciliation import ContractReconciliationSpec, ContractSide, reconcile_contract
 from source.kg.query.snapshot import KgSnapshot
 
 
@@ -2386,6 +2387,53 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(result["documented_AND_implemented"], [])
         self.assertEqual(result["documented_AND_called"], [])
         self.assertEqual([warning["scope"] for warning in result["coverage_warnings"]], ["docs", "backend", "client"])
+
+    def test_reconcile_contract_non_endpoint_prefix_uses_plain_string_prefix(self) -> None:
+        producer = _service_entity("orders-api")
+        consumer = _service_entity("worker")
+        channel = Entity(
+            kind="EventChannel",
+            identity={
+                "tenant_id": "default",
+                "repo": "orders-api",
+                "broker_kind": "sqs",
+                "channel_address": "orders-created",
+                "name": "orders-created",
+            },
+        )
+        facts = [
+            Fact("PRODUCES_EVENT", producer.entity_id, channel.entity_id),
+            Fact("CONSUMES_EVENT", consumer.entity_id, channel.entity_id),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            JsonlKgStore(tmpdir).write(
+                entities=[producer, consumer, channel],
+                facts=facts,
+                evidence=[],
+                coverage=[],
+                manifest={},
+            )
+
+            result = reconcile_contract(
+                KgSnapshot(tmpdir),
+                ContractReconciliationSpec(
+                    name="events",
+                    identity_key="event_channel",
+                    left=ContractSide(
+                        name="produced",
+                        predicates=("PRODUCES_EVENT",),
+                        path_prefix="sqs:ord",
+                    ),
+                    right=ContractSide(
+                        name="consumed",
+                        predicates=("CONSUMES_EVENT",),
+                        path_prefix="sqs:ord",
+                    ),
+                ),
+            )
+
+        self.assertEqual([row["key"] for row in result["matched"]], ["sqs:orders-created"])
 
     def test_reconcile_endpoints_warns_when_docs_scope_has_no_documented_endpoints(self) -> None:
         backend_service = _service_entity("orders-api")
