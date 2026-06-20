@@ -120,7 +120,7 @@ def load_typescript_path_aliases_for_config(
     paths = compiler_options.get("paths")
     if not isinstance(paths, dict):
         return ()
-    base_config_data = _effective_config_section(config_data.path, config_data.config, "baseUrl")
+    base_config_data = _effective_config_section(config_path, config, "baseUrl")
     base_compiler_options = base_config_data.config.get("compilerOptions")
     base_url = base_compiler_options.get("baseUrl") if isinstance(base_compiler_options, dict) else None
     base_config_dir = _config_directory(repo_root, base_config_data.path)
@@ -226,6 +226,7 @@ def _resolve_extends_path(config_path: Path, extends_value: str) -> Path | None:
     candidates = [candidate]
     if candidate.suffix == "":
         candidates.append(candidate.with_suffix(".json"))
+        candidates.append(candidate / "tsconfig.json")
     for path in candidates:
         if path.is_file():
             return path

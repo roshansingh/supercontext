@@ -603,6 +603,24 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.category, "internal_module")
             self.assertEqual(normalized.target_name, "src.base.value")
 
+    def test_tsconfig_directory_extends_resolves_nested_tsconfig_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "configs" / "shared" / "tsconfig.json",
+                '{"compilerOptions":{"baseUrl":"../..","paths":{"@dir/*":["src/dir/*"]}}}\n',
+            )
+            _write(root / "packages" / "widget" / "tsconfig.json", '{"extends":"../../configs/shared"}\n')
+            app = _write(root / "packages" / "widget" / "src" / "app.ts", "import value from '@dir/value';\n")
+            value = _write(root / "src" / "dir" / "value.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, value))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@dir/value"), "packages.widget.src.app", "packages/widget/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.dir.value")
+
     def test_tsconfig_extends_cycle_does_not_block_parent_alias_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -638,6 +656,24 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
 
             self.assertEqual(normalized.category, "internal_module")
             self.assertEqual(normalized.target_name, "libs.core")
+
+    def test_child_base_url_override_applies_to_inherited_path_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.base.json", '{"compilerOptions":{"baseUrl":".","paths":{"@shared/*":["shared/*"]}}}\n')
+            _write(
+                root / "apps" / "web" / "tsconfig.json",
+                '{"extends":"../../tsconfig.base.json","compilerOptions":{"baseUrl":"."}}\n',
+            )
+            app = _write(root / "apps" / "web" / "src" / "app.ts", "import util from '@shared/util';\n")
+            util = _write(root / "apps" / "web" / "shared" / "util.ts", "export default 1;\n")
+            repo = _repo_snapshot(root, typescript_paths=(app, util))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@shared/util"), "apps.web.src.app", "apps/web/src/app.ts")
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "apps.web.shared.util")
 
     def test_typescript_config_loader_fails_closed_on_decode_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

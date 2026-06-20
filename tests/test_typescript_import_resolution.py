@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,10 @@ from source.kg.core.repo_source import RepoSnapshot
 from source.kg.languages.typescript.extractors.compiler_api_extractor import TypeScriptCompilerApiExtractor
 
 
+NODE_AVAILABLE = shutil.which("node") is not None
+
+
+@unittest.skipIf(not NODE_AVAILABLE, "node executable not available for the TypeScript parser bridge")
 class TypeScriptImportResolutionExtractorTest(unittest.TestCase):
     def test_resolved_imports_emit_code_module_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
