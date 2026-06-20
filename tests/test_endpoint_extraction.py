@@ -552,6 +552,49 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(_methods_by_path(calls), {"/api/orders": {"ANY"}})
 
+    def test_typescript_fetch_object_config_resolves_url_and_nested_init_method(self) -> None:
+        build = _extract_typescript_client(
+            "function load(fetch, userId) {\n"
+            "  fetch({\n"
+            "    url: `/api/users/${userId}`,\n"
+            "    init: { method: 'POST' },\n"
+            "    apiVersion: '2026-01-01',\n"
+            "  });\n"
+            "  fetch({\n"
+            "    host: process.env.API_HOST,\n"
+            "    path: 'api/orders',\n"
+            "    init: { method: 'patch' },\n"
+            "  });\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {"/api/users/{userId}": {"POST"}, "/api/orders": {"PATCH"}},
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/api/users/{userId}"], {"fetch_call"})
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["api_version"], "2026-01-01")
+        self.assertEqual(qualifiers_by_path["/api/users/{userId}"][0]["route_params"], ["userId"])
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"${env:API_HOST}"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+
+    def test_typescript_fetch_object_config_requires_url_or_path(self) -> None:
+        build = _extract_typescript_client(
+            "function load(fetch) {\n"
+            "  fetch({ init: { method: 'POST' }, body: JSON.stringify(data) });\n"
+            "  fetch({ url: computeUrl(), init: { method: 'POST' } });\n"
+            "  fetch({ url: '/api/spread', ...override });\n"
+            "}\n"
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["unresolved_target"], 2)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
     def test_typescript_client_calls_resolve_constants_concat_and_axios_config_shapes(self) -> None:
         build = _extract_typescript_client(
             "import axios from 'axios';\n"
