@@ -416,6 +416,23 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
         self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["SERVICE_URL"])
 
+    def test_python_http_client_env_detection_respects_imports_and_shadowing(self) -> None:
+        alias_build = _extract_python_client(
+            "import os as operating_system\n"
+            "import requests\n"
+            "requests.get(operating_system.getenv('SERVICE_URL'))\n"
+        )
+        shadowed_build = _extract_python_client(
+            "import requests\n\n"
+            "def call(os):\n"
+            "    requests.get(os.getenv('SERVICE_URL'))\n"
+        )
+        unimported_build = _extract_python_client("import requests\nrequests.get(os.getenv('SERVICE_URL'))\n")
+
+        self.assertEqual(_env_reference_names(alias_build, "endpoint_env_host"), ["SERVICE_URL"])
+        self.assertEqual(_env_reference_names(shadowed_build, "endpoint_env_host"), [])
+        self.assertEqual(_env_reference_names(unimported_build, "endpoint_env_host"), [])
+
     def test_python_http_client_path_env_placeholder_does_not_emit_host_env_reference(self) -> None:
         build = _extract_python_client("import os\nimport requests\nrequests.get(f'/api/{os.getenv(\"USER_ID\")}')\n")
 

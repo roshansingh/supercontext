@@ -197,7 +197,7 @@ def _base_from_factory(factory_call: ast.Call | None, resolver: ValueResolver, s
     if base_node is None:
         return None
     raw = _raw_node(base_node, source_text)
-    env_name = _env_name_from_node(base_node)
+    env_name = _env_name_from_node(base_node, resolver)
     if env_name is not None:
         return BaseTarget(
             "host_unresolved",
@@ -212,7 +212,7 @@ def _base_from_factory(factory_call: ast.Call | None, resolver: ValueResolver, s
     if isinstance(resolved, ResolvedValue) and isinstance(resolved.value, str):
         return _base_from_string(resolved.value, raw)
     if isinstance(base_node, ast.JoinedStr):
-        target = _target_from_joined_str(base_node, source_text, allow_relative=False)
+        target = _target_from_joined_str(base_node, resolver, source_text, allow_relative=False)
         if target.kind == "host_unresolved":
             return BaseTarget(
                 "host_unresolved",
@@ -234,7 +234,7 @@ def _target_from_node(
     allow_relative: bool,
 ) -> EndpointTarget:
     raw = _raw_node(node, source_text)
-    env_name = _env_name_from_node(node)
+    env_name = _env_name_from_node(node, resolver)
     if env_name is not None:
         return EndpointTarget(
             "unresolved",
@@ -246,7 +246,7 @@ def _target_from_node(
             env_names=(env_name,),
         )
     if isinstance(node, ast.JoinedStr):
-        return _target_from_joined_str(node, source_text, allow_relative=allow_relative)
+        return _target_from_joined_str(node, resolver, source_text, allow_relative=allow_relative)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         rendered = _render_string_expression(node, resolver, source_text)
         if isinstance(rendered, UnresolvedValue):
@@ -264,9 +264,15 @@ def _target_from_node(
     return EndpointTarget("unresolved", None, None, raw, reason=_coverage_reason(resolved))
 
 
-def _target_from_joined_str(node: ast.JoinedStr, source_text: str, *, allow_relative: bool) -> EndpointTarget:
+def _target_from_joined_str(
+    node: ast.JoinedStr,
+    resolver: ValueResolver,
+    source_text: str,
+    *,
+    allow_relative: bool,
+) -> EndpointTarget:
     raw = _raw_node(node, source_text)
-    rendered = _render_joined_str(node, source_text)
+    rendered = _render_joined_str(node, resolver, source_text)
     if isinstance(rendered, UnresolvedValue):
         return EndpointTarget("unresolved", None, None, raw, reason=_coverage_reason(rendered))
     return _target_from_string(
@@ -381,7 +387,7 @@ def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_tex
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return RenderedString(node.value, "literal")
     if isinstance(node, ast.JoinedStr):
-        return _render_joined_str(node, source_text)
+        return _render_joined_str(node, resolver, source_text)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         left = _render_string_expression(node.left, resolver, source_text)
         if isinstance(left, UnresolvedValue):
@@ -394,7 +400,7 @@ def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_tex
             "concat",
             _merge_tuple(left.route_params, right.route_params),
         )
-    env_name = _env_name_from_node(node)
+    env_name = _env_name_from_node(node, resolver)
     if env_name is not None:
         return RenderedString(f"${{env:{env_name}}}", "env_reference")
     resolved = resolver.resolve_value(node)
@@ -403,7 +409,7 @@ def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_tex
     return UnresolvedValue(_coverage_reason(resolved), _raw_node(node, source_text))
 
 
-def _render_joined_str(node: ast.JoinedStr, source_text: str) -> RenderedString | UnresolvedValue:
+def _render_joined_str(node: ast.JoinedStr, resolver: ValueResolver, source_text: str) -> RenderedString | UnresolvedValue:
     parts: list[str] = []
     route_params: list[str] = []
     for value in node.values:
@@ -412,7 +418,7 @@ def _render_joined_str(node: ast.JoinedStr, source_text: str) -> RenderedString 
             continue
         if not isinstance(value, ast.FormattedValue):
             return UnresolvedValue("template_dynamic_expression_unsafe", _raw_node(value, source_text))
-        env_name = _env_name_from_node(value.value)
+        env_name = _env_name_from_node(value.value, resolver)
         if env_name is not None:
             parts.append(f"${{env:{env_name}}}")
             continue
@@ -546,6 +552,7 @@ def _resolver(
     call: HttpClientCall,
 ) -> ValueResolver:
     imported_modules, imported_values = import_bindings(imports)
+    _bind_stdlib_os_imports(imports, imported_modules, imported_values)
     local_values = _module_values(module_name, literal_index)
     known_local_names: set[str] = set()
     if call.enclosing_function is not None:
@@ -564,6 +571,21 @@ def _resolver(
     )
 
 
+def _bind_stdlib_os_imports(
+    imports: list[NormalizedImport],
+    imported_modules: dict[str, str],
+    imported_values: dict[str, LiteralRef],
+) -> None:
+    for import_ref in imports:
+        if import_ref.category != "stdlib" or import_ref.import_root != "os":
+            continue
+        if import_ref.imported_names:
+            for imported_name in import_ref.imported_names:
+                imported_values.setdefault(imported_name, LiteralRef("os", imported_name))
+            continue
+        imported_modules.setdefault(import_ref.alias or import_ref.import_root, "os")
+
+
 def _module_values(module_name: str, literal_index: LiteralIndex) -> dict[str, ast.AST]:
     return {
         ref.name: node
@@ -579,25 +601,43 @@ def _keyword_arg(node: ast.Call, name: str) -> ast.AST | None:
     return None
 
 
-def _env_name_from_node(node: ast.AST) -> str | None:
+def _env_name_from_node(node: ast.AST, resolver: ValueResolver) -> str | None:
     if isinstance(node, ast.Call):
-        call_name = _call_name(node.func)
-        if call_name in {"os.getenv", "os.environ.get"}:
+        os_parts = _resolved_os_parts(_attribute_parts(node.func), resolver)
+        if os_parts in {("getenv",), ("environ", "get")}:
             if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
                 return node.args[0].value
-    if isinstance(node, ast.Subscript) and _call_name(node.value) == "os.environ":
+    if isinstance(node, ast.Subscript) and _resolved_os_parts(_attribute_parts(node.value), resolver) == ("environ",):
         if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
             return node.slice.value
     return None
 
 
-def _call_name(node: ast.AST) -> str:
+def _attribute_parts(node: ast.AST) -> tuple[str, ...]:
     if isinstance(node, ast.Name):
-        return node.id
+        return (node.id,)
     if isinstance(node, ast.Attribute):
-        value = _call_name(node.value)
-        return f"{value}.{node.attr}" if value else node.attr
-    return ""
+        return (*_attribute_parts(node.value), node.attr)
+    return ()
+
+
+def _resolved_os_parts(parts: tuple[str, ...], resolver: ValueResolver) -> tuple[str, ...] | None:
+    if not parts:
+        return None
+    root = parts[0]
+    if (
+        root in resolver.scope.blocked_names
+        or root in resolver.scope.local_values
+        or root in resolver.scope.local_resolved_values
+    ):
+        return None
+    module_name = resolver.scope.imported_modules.get(root)
+    if module_name == "os":
+        return parts[1:]
+    imported_ref = resolver.scope.imported_values.get(root)
+    if imported_ref is not None and imported_ref.module_name == "os":
+        return (imported_ref.name, *parts[1:])
+    return None
 
 
 def _route_param_name(node: ast.AST) -> str | None:
