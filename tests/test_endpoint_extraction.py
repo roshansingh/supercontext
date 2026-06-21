@@ -403,6 +403,12 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
 
+    def test_python_http_client_external_urls_are_suppressed_not_promoted(self) -> None:
+        build = _extract_python_client("import requests\nrequests.get('https://api.example.com/v1/charges')\n")
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
     def test_python_http_client_template_host_emits_path_candidate(self) -> None:
         build = _extract_python_client(
             "import requests\n\n"

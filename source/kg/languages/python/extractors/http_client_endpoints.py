@@ -88,6 +88,8 @@ def extract_http_client_endpoint_calls(
         resolver = _resolver(module_name, literal_index, imports, call)
         target = _target_for_call(call, resolver, source_text)
         if target.kind in {"unresolved", "external"} or target.path is None:
+            # Dynamic or intentionally suppressed calls are explicit coverage rows,
+            # not extractor-support gaps; metrics use the row to cover the opportunity.
             _add_endpoint_coverage(build, repo, file_path, line, target, source_system, tenant_id, "uninstrumented")
             continue
 
@@ -134,6 +136,8 @@ def _target_for_call(call: HttpClientCall, resolver: ValueResolver, source_text:
     if base is None:
         return target
     if base.kind == "external":
+        # An explicit client base_url is endpoint dependency context. Bare absolute
+        # URLs remain suppressed as generic third-party calls in _target_from_string.
         return EndpointTarget(
             "resolved",
             _join_paths(base.path_prefix, target.path or "/"),
@@ -250,7 +254,7 @@ def _target_from_node(
 
 def _target_from_joined_str(node: ast.JoinedStr, source_text: str, *, allow_relative: bool) -> EndpointTarget:
     raw = _raw_node(node, source_text)
-    rendered = _render_joined_str(node)
+    rendered = _render_joined_str(node, source_text)
     if isinstance(rendered, UnresolvedValue):
         return EndpointTarget("unresolved", None, None, raw, reason=_coverage_reason(rendered))
     return _target_from_string(
@@ -369,7 +373,7 @@ def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_tex
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return RenderedString(node.value, "literal")
     if isinstance(node, ast.JoinedStr):
-        return _render_joined_str(node)
+        return _render_joined_str(node, source_text)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         left = _render_string_expression(node.left, resolver, source_text)
         if isinstance(left, UnresolvedValue):
@@ -392,7 +396,7 @@ def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_tex
     return UnresolvedValue(_coverage_reason(resolved), _raw_node(node, source_text))
 
 
-def _render_joined_str(node: ast.JoinedStr) -> RenderedString | UnresolvedValue:
+def _render_joined_str(node: ast.JoinedStr, source_text: str) -> RenderedString | UnresolvedValue:
     parts: list[str] = []
     route_params: list[str] = []
     env_names: list[str] = []
@@ -401,7 +405,7 @@ def _render_joined_str(node: ast.JoinedStr) -> RenderedString | UnresolvedValue:
             parts.append(value.value)
             continue
         if not isinstance(value, ast.FormattedValue):
-            return UnresolvedValue("template_dynamic_expression_unsafe", ast.unparse(value))
+            return UnresolvedValue("template_dynamic_expression_unsafe", _raw_node(value, source_text))
         env_name = _env_name_from_node(value.value)
         if env_name is not None:
             parts.append(f"${{env:{env_name}}}")
@@ -410,7 +414,7 @@ def _render_joined_str(node: ast.JoinedStr) -> RenderedString | UnresolvedValue:
             continue
         param_name = _route_param_name(value.value)
         if param_name is None:
-            return UnresolvedValue("template_dynamic_expression_unsafe", ast.unparse(value.value))
+            return UnresolvedValue("template_dynamic_expression_unsafe", _raw_node(value.value, source_text))
         parts.append("{" + param_name + "}")
         if param_name not in route_params:
             route_params.append(param_name)
