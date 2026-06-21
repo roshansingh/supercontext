@@ -1664,9 +1664,13 @@ function collectModuleClients(sourceFile, axiosLocals, bindings) {
 
 function methodFromOptionsLike(node) {
   const methodNode = objectLiteralProperty(node, "method");
-  if (!methodNode) return null;
-  const value = stringLiteralValue(methodNode);
-  return value == null ? null : value.toUpperCase();
+  if (methodNode) {
+    const value = stringLiteralValue(methodNode);
+    return value == null ? null : value.toUpperCase();
+  }
+  const initNode = objectLiteralProperty(node, "init");
+  if (initNode && ts.isObjectLiteralExpression(initNode)) return methodFromOptionsLike(initNode);
+  return null;
 }
 
 function httpWrapperMethodName(name) {
@@ -2245,6 +2249,22 @@ function clientCallFromNode(node, sourceFile, axiosLocals, axiosClients, axiosCl
   if (!ts.isCallExpression(node)) return null;
   if (ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
     if (node.arguments.length < 1) return null;
+    if (
+      ts.isObjectLiteralExpression(node.arguments[0]) &&
+      !objectLiteralHasDynamicProperty(node.arguments[0]) &&
+      endpointConfigTargetProperty(node.arguments[0]) != null
+    ) {
+      const resolved = endpointTargetFromConfig(node.arguments[0], sourceFile, bindings);
+      if (resolved) {
+        return rowFromTarget(
+          resolved.target,
+          resolved.method,
+          lineOf(sourceFile, node.expression.getStart(sourceFile)),
+          "fetch_call",
+          resolved.metadata
+        );
+      }
+    }
     const target = resolveEndpointTarget(node.arguments[0], sourceFile, bindings);
     const method = node.arguments.length >= 2 ? methodFromOptionsLike(node.arguments[1]) : null;
     return rowFromTarget(target, method, lineOf(sourceFile, node.expression.getStart(sourceFile)), "fetch_call");
