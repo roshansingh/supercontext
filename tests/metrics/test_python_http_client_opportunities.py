@@ -138,7 +138,7 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
         self.assertEqual([row.source_kind for row in opportunities], ["requests.get"])
         self.assertEqual([row.line for row in opportunities], [5])
 
-    def test_metrics_report_uncovered_http_client_opportunity_as_silent_gap(self) -> None:
+    def test_metrics_count_extracted_http_client_opportunity_as_covered(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "repo"
@@ -147,16 +147,39 @@ class PythonHttpClientOpportunityTest(unittest.TestCase):
                 "[project]\nname = 'repo'\ndependencies = ['fastapi', 'requests']\n",
                 encoding="utf-8",
             )
-            (repo / "app.py").write_text("import requests\nrequests.get('https://example.com')\n", encoding="utf-8")
+            (repo / "app.py").write_text("import requests\nrequests.get('/health')\n", encoding="utf-8")
             snapshot = root / "snapshot"
 
             build_kg(repo, snapshot)
             backend = _backend_cell(compute_all(snapshot, expected_repos=1))
 
         self.assertEqual(backend.metric_values["M_extractor_opportunity"].state, "usable")
-        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 0.0)
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 1.0)
         self.assertEqual(backend.metric_values["M_silent_gap"].state, "usable")
-        self.assertEqual(backend.metric_values["M_silent_gap"].value, 1.0)
+        self.assertEqual(backend.metric_values["M_silent_gap"].value, 0.0)
+
+    def test_metrics_count_dynamic_http_client_target_as_explicit_non_silent_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname = 'repo'\ndependencies = ['fastapi', 'requests']\n",
+                encoding="utf-8",
+            )
+            (repo / "app.py").write_text(
+                "import requests\n"
+                "def call(url):\n"
+                "    requests.get(url)\n",
+                encoding="utf-8",
+            )
+            snapshot = root / "snapshot"
+
+            build_kg(repo, snapshot)
+            backend = _backend_cell(compute_all(snapshot, expected_repos=1))
+
+        self.assertEqual(backend.metric_values["M_extractor_opportunity"].value, 0.0)
+        self.assertEqual(backend.metric_values["M_silent_gap"].value, 0.0)
 
     def test_metrics_count_fact_backed_http_client_opportunity_as_covered(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

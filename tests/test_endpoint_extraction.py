@@ -344,6 +344,193 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(len(coverage), 1)
         self.assertEqual(coverage[0].scope_ref["file_path"], "bad_app.py")
 
+    def test_python_http_client_calls_are_ast_backed(self) -> None:
+        build = _extract_python_client(
+            "import os\n"
+            "import requests as rq\n"
+            "from httpx import Client, get as http_get\n"
+            "import aiohttp\n\n"
+            "API_PATH = '/api/orders'\n\n"
+            "def call(user_id):\n"
+            "    rq.post(API_PATH)\n"
+            "    http_get(f'/api/users/{user_id}')\n"
+            "    client = Client(base_url='https://user:token@service.example.com:8443/base')\n"
+            "    client.patch('profiles')\n"
+            "    with aiohttp.ClientSession(base_url=os.getenv('API_HOST')) as session:\n"
+            "        session.put('/events')\n"
+            "    rq.request('DELETE', '/api/old')\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/orders": {"POST"},
+                "/api/users/{user_id}": {"GET"},
+                "/base/profiles": {"PATCH"},
+                "/events": {"PUT"},
+                "/api/old": {"DELETE"},
+            },
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"requests.post"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/users/{user_id}"], {"httpx.get"})
+        self.assertEqual(_source_kinds_by_path(calls)["/base/profiles"], {"httpx.client.patch"})
+        self.assertEqual(_source_kinds_by_path(calls)["/events"], {"aiohttp.client.put"})
+        self.assertEqual(_hosts_by_path(calls)["/base/profiles"], {"service.example.com:8443"})
+        self.assertEqual(_hosts_by_path(calls)["/events"], {"${env:API_HOST}"})
+        self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["route_params"], ["user_id"])
+        self.assertEqual(qualifiers_by_path["/events"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+        self.assertEqual(_env_reference_qualifiers(build, "endpoint_env_host")[0]["raw_target"], "os.getenv('API_HOST')")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+
+    def test_python_http_client_calls_fail_closed_for_dynamic_targets_and_methods(self) -> None:
+        build = _extract_python_client(
+            "import requests\n"
+            "url = '/module-url'\n\n"
+            "def call(url, method):\n"
+            "    requests.get(url)\n"
+            "    requests.request(method, '/api/orders')\n"
+            "    requests.post(build_url())\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"ANY"}})
+        self.assertNotIn("/module-url", _methods_by_path(calls))
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
+    def test_python_http_client_external_urls_are_suppressed_not_promoted(self) -> None:
+        build = _extract_python_client("import requests\nrequests.get('https://user:token@api.example.com/v1/charges')\n")
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
+    def test_python_http_client_env_url_without_path_keeps_env_reference(self) -> None:
+        build = _extract_python_client("import os\nimport requests\nrequests.get(os.getenv('SERVICE_URL'))\n")
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["SERVICE_URL"])
+
+    def test_python_http_client_env_detection_respects_imports_and_shadowing(self) -> None:
+        alias_build = _extract_python_client(
+            "import os as operating_system\n"
+            "import requests\n"
+            "requests.get(operating_system.getenv('SERVICE_URL'))\n"
+        )
+        shadowed_build = _extract_python_client(
+            "import requests\n\n"
+            "def call(os):\n"
+            "    requests.get(os.getenv('SERVICE_URL'))\n"
+        )
+        unimported_build = _extract_python_client("import requests\nrequests.get(os.getenv('SERVICE_URL'))\n")
+
+        self.assertEqual(_env_reference_names(alias_build, "endpoint_env_host"), ["SERVICE_URL"])
+        self.assertEqual(_env_reference_names(shadowed_build, "endpoint_env_host"), [])
+        self.assertEqual(_env_reference_names(unimported_build, "endpoint_env_host"), [])
+
+    def test_python_http_client_env_only_template_is_not_marked_literal(self) -> None:
+        build = _extract_python_client("import os\nimport requests\nrequests.get(f'{os.getenv(\"API_HOST\")}/api/health')\n")
+
+        qualifiers_by_path = _qualifiers_by_path(_endpoint_rows(build, "CALLS_ENDPOINT"))
+
+        self.assertEqual(qualifiers_by_path["/api/health"][0]["resolution_kind"], "template_parameterized")
+
+    def test_python_http_client_env_only_template_base_url_keeps_env_reference(self) -> None:
+        build = _extract_python_client(
+            "import os\n"
+            "from httpx import Client\n"
+            "client = Client(base_url=f\"{os.getenv('API_HOST')}\")\n"
+            "client.get('/events')\n"
+        )
+
+        rows = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_hosts_by_path(rows)["/events"], {"${env:API_HOST}"})
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+        self.assertEqual(
+            _env_reference_qualifiers(build, "endpoint_env_host")[0]["raw_target"],
+            "f\"{os.getenv('API_HOST')}\"",
+        )
+
+    def test_python_http_client_path_env_placeholder_does_not_emit_host_env_reference(self) -> None:
+        build = _extract_python_client("import os\nimport requests\nrequests.get(f'/api/{os.getenv(\"USER_ID\")}')\n")
+
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), [])
+
+    def test_python_http_client_raw_qualifier_values_are_capped(self) -> None:
+        long_segment = "a" * 120
+        build = _extract_python_client(
+            "import os\n"
+            "import requests\n"
+            "from httpx import Client\n"
+            f"requests.get('/api/{long_segment}')\n"
+            f"client = Client(base_url='https://service.example.com/{long_segment}')\n"
+            "client.get('/orders')\n"
+            f"requests.get(os.getenv('SERVICE_URL', 'https://example.com/{long_segment}'))\n"
+        )
+
+        call_qualifiers = [fact.qualifier for fact, _ in _endpoint_rows(build, "CALLS_ENDPOINT")]
+        env_qualifiers = [
+            fact.qualifier
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == "endpoint_env_host"
+        ]
+
+        self.assertTrue(call_qualifiers)
+        self.assertTrue(env_qualifiers)
+        self.assertTrue(any("base_url_raw" in qualifier for qualifier in call_qualifiers))
+        self.assertTrue(all(len(str(qualifier.get("raw_target", ""))) <= 80 for qualifier in call_qualifiers))
+        self.assertTrue(all(len(str(qualifier.get("base_url_raw", ""))) <= 80 for qualifier in call_qualifiers))
+        self.assertTrue(all(len(str(qualifier.get("raw_target", ""))) <= 80 for qualifier in env_qualifiers))
+
+    def test_python_http_client_template_host_emits_path_candidate(self) -> None:
+        build = _extract_python_client(
+            "import requests\n\n"
+            "def call(service_url, base_uri, email):\n"
+            "    requests.get(f'{service_url}/api/health')\n"
+            "    requests.post(f'{base_uri}/api/users/{email}')\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/health": {"GET"}, "/api/users/{email}": {"POST"}})
+        self.assertEqual(qualifiers_by_path["/api/health"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifiers_by_path["/api/users/{email}"][0]["route_params"], ["email"])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"],
+            2,
+        )
+
+    def test_python_http_client_calls_resolve_sessions_and_direct_chains_source_order(self) -> None:
+        build = _extract_python_client(
+            "import requests\n"
+            "import httpx\n\n"
+            "def call():\n"
+            "    session = requests.Session()\n"
+            "    session.delete('/session')\n"
+            "    requests.Session().get('/direct')\n"
+            "    client = httpx.Client(base_url='/api')\n"
+            "    client.post('orders')\n"
+            "    client = object()\n"
+            "    client.get('/not-http-client')\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {"/session": {"DELETE"}, "/direct": {"GET"}, "/api/orders": {"POST"}},
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/direct"], {"requests.client.get"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"httpx.client.post"})
+
     def test_static_config_does_not_use_javascript_endpoint_regexes(self) -> None:
         build = _extract_config({"server.ts": "app.post('/orders', handler)\nfetch('/orders')\n"})
 
@@ -2774,6 +2961,21 @@ def _extract_typescript_client_files(files: dict[str, str]):
         return extract_repo(repo)
 
 
+def _extract_python_client(source: str):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        source_path = root / "client.py"
+        source_path.write_text(source, encoding="utf-8")
+        repo = RepoSnapshot(
+            root=root,
+            name="python-client",
+            owner="test",
+            commit_sha="test-sha",
+            files_by_language={"python": (source_path,), "typescript": ()},
+        )
+        return extract_repo(repo)
+
+
 def _service_entity(repo: str) -> Entity:
     return Entity(kind="Service", identity={"tenant_id": "local-dev", "repo": repo, "namespace": "default", "slug": repo})
 
@@ -2852,6 +3054,14 @@ def _env_reference_names(build, reference_kind: str) -> list[str]:
         if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == reference_kind
     ]
     return sorted(name for name in names if isinstance(name, str))
+
+
+def _env_reference_qualifiers(build, reference_kind: str) -> list[dict[str, object]]:
+    return [
+        fact.qualifier
+        for fact in build.facts
+        if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == reference_kind
+    ]
 
 
 def _env_reference_object_ids(build, reference_kind: str) -> set[str]:
