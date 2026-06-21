@@ -384,6 +384,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["route_params"], ["user_id"])
         self.assertEqual(qualifiers_by_path["/events"][0]["host_resolution_kind"], "env_backed_unresolved")
         self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+        self.assertEqual(_env_reference_qualifiers(build, "endpoint_env_host")[0]["raw_target"], "os.getenv('API_HOST')")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
 
     def test_python_http_client_calls_fail_closed_for_dynamic_targets_and_methods(self) -> None:
@@ -3036,6 +3037,14 @@ def _env_reference_names(build, reference_kind: str) -> list[str]:
         if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == reference_kind
     ]
     return sorted(name for name in names if isinstance(name, str))
+
+
+def _env_reference_qualifiers(build, reference_kind: str) -> list[dict[str, object]]:
+    return [
+        fact.qualifier
+        for fact in build.facts
+        if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == reference_kind
+    ]
 
 
 def _env_reference_object_ids(build, reference_kind: str) -> set[str]:

@@ -498,7 +498,7 @@ def _add_env_var_references(
             "name": name,
             "reference_kind": "endpoint_env_host",
             "endpoint_method": endpoint_method,
-            "raw_target": _cap_raw_text(target.raw_target),
+            "raw_target": _cap_raw_text(target.base_url_raw or target.raw_target),
             "host_resolution_kind": target.host_resolution_kind or "env_backed_unresolved",
         }
         if target.path is not None:
