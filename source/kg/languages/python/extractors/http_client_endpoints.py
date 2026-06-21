@@ -279,7 +279,7 @@ def _target_from_joined_str(
         rendered.value,
         raw,
         allow_relative=allow_relative,
-        resolution_kind="template_parameterized" if rendered.route_params else "literal",
+        resolution_kind=rendered.resolution_kind,
         route_params=tuple(rendered.route_params),
     )
 

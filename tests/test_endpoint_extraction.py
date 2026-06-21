@@ -433,6 +433,13 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_env_reference_names(shadowed_build, "endpoint_env_host"), [])
         self.assertEqual(_env_reference_names(unimported_build, "endpoint_env_host"), [])
 
+    def test_python_http_client_env_only_template_is_not_marked_literal(self) -> None:
+        build = _extract_python_client("import os\nimport requests\nrequests.get(f'{os.getenv(\"API_HOST\")}/api/health')\n")
+
+        qualifiers_by_path = _qualifiers_by_path(_endpoint_rows(build, "CALLS_ENDPOINT"))
+
+        self.assertEqual(qualifiers_by_path["/api/health"][0]["resolution_kind"], "template_parameterized")
+
     def test_python_http_client_path_env_placeholder_does_not_emit_host_env_reference(self) -> None:
         build = _extract_python_client("import os\nimport requests\nrequests.get(f'/api/{os.getenv(\"USER_ID\")}')\n")
 
