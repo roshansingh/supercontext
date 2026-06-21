@@ -344,6 +344,107 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(len(coverage), 1)
         self.assertEqual(coverage[0].scope_ref["file_path"], "bad_app.py")
 
+    def test_python_http_client_calls_are_ast_backed(self) -> None:
+        build = _extract_python_client(
+            "import os\n"
+            "import requests as rq\n"
+            "from httpx import Client, get as http_get\n"
+            "import aiohttp\n\n"
+            "API_PATH = '/api/orders'\n\n"
+            "def call(user_id):\n"
+            "    rq.post(API_PATH)\n"
+            "    http_get(f'/api/users/{user_id}')\n"
+            "    client = Client(base_url='https://service.example.com/base')\n"
+            "    client.patch('profiles')\n"
+            "    with aiohttp.ClientSession(base_url=os.getenv('API_HOST')) as session:\n"
+            "        session.put('/events')\n"
+            "    rq.request('DELETE', '/api/old')\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/orders": {"POST"},
+                "/api/users/{user_id}": {"GET"},
+                "/base/profiles": {"PATCH"},
+                "/events": {"PUT"},
+                "/api/old": {"DELETE"},
+            },
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"requests.post"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/users/{user_id}"], {"httpx.get"})
+        self.assertEqual(_source_kinds_by_path(calls)["/base/profiles"], {"httpx.client.patch"})
+        self.assertEqual(_source_kinds_by_path(calls)["/events"], {"aiohttp.client.put"})
+        self.assertEqual(_hosts_by_path(calls)["/base/profiles"], {"service.example.com"})
+        self.assertEqual(_hosts_by_path(calls)["/events"], {"${env:API_HOST}"})
+        self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["route_params"], ["user_id"])
+        self.assertEqual(qualifiers_by_path["/events"][0]["host_resolution_kind"], "env_backed_unresolved")
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_env_backed"], 1)
+
+    def test_python_http_client_calls_fail_closed_for_dynamic_targets_and_methods(self) -> None:
+        build = _extract_python_client(
+            "import requests\n"
+            "url = '/module-url'\n\n"
+            "def call(url, method):\n"
+            "    requests.get(url)\n"
+            "    requests.request(method, '/api/orders')\n"
+            "    requests.post(build_url())\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"ANY"}})
+        self.assertNotIn("/module-url", _methods_by_path(calls))
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_shadowed_binding"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
+
+    def test_python_http_client_template_host_emits_path_candidate(self) -> None:
+        build = _extract_python_client(
+            "import requests\n\n"
+            "def call(service_url, base_uri, email):\n"
+            "    requests.get(f'{service_url}/api/health')\n"
+            "    requests.post(f'{base_uri}/api/users/{email}')\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/health": {"GET"}, "/api/users/{email}": {"POST"}})
+        self.assertEqual(qualifiers_by_path["/api/health"][0]["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(qualifiers_by_path["/api/users/{email}"][0]["route_params"], ["email"])
+        self.assertEqual(
+            _coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"],
+            2,
+        )
+
+    def test_python_http_client_calls_resolve_sessions_and_direct_chains_source_order(self) -> None:
+        build = _extract_python_client(
+            "import requests\n"
+            "import httpx\n\n"
+            "def call():\n"
+            "    session = requests.Session()\n"
+            "    session.delete('/session')\n"
+            "    requests.Session().get('/direct')\n"
+            "    client = httpx.Client(base_url='/api')\n"
+            "    client.post('orders')\n"
+            "    client = object()\n"
+            "    client.get('/not-http-client')\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {"/session": {"DELETE"}, "/direct": {"GET"}, "/api/orders": {"POST"}},
+        )
+        self.assertEqual(_source_kinds_by_path(calls)["/direct"], {"requests.client.get"})
+        self.assertEqual(_source_kinds_by_path(calls)["/api/orders"], {"httpx.client.post"})
+
     def test_static_config_does_not_use_javascript_endpoint_regexes(self) -> None:
         build = _extract_config({"server.ts": "app.post('/orders', handler)\nfetch('/orders')\n"})
 
@@ -2770,6 +2871,21 @@ def _extract_typescript_client_files(files: dict[str, str]):
             owner="test",
             commit_sha="test-sha",
             files_by_language={"python": (), "typescript": tuple(source_paths)},
+        )
+        return extract_repo(repo)
+
+
+def _extract_python_client(source: str):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        source_path = root / "client.py"
+        source_path.write_text(source, encoding="utf-8")
+        repo = RepoSnapshot(
+            root=root,
+            name="python-client",
+            owner="test",
+            commit_sha="test-sha",
+            files_by_language={"python": (source_path,), "typescript": ()},
         )
         return extract_repo(repo)
 

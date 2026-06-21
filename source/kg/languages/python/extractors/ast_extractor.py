@@ -18,6 +18,7 @@ from source.kg.languages.python.extractors.dataflow import (
     module_literal_assignments,
 )
 from source.kg.languages.python.extractors.django_framework import extract_django_framework_facts
+from source.kg.languages.python.extractors.http_client_endpoints import extract_http_client_endpoint_calls
 from source.kg.languages.python.extractors.transport_extractor import (
     extract_transport_events,
     module_transport_context,
@@ -328,6 +329,11 @@ class PythonAstExtractor:
             for symbol in symbols
             if symbol.symbol_kind in {"function", "async_function"} and symbol.qualname in function_defs
         }
+        function_symbols_by_node = {
+            function_defs[symbol.qualname]: symbol
+            for symbol in symbols
+            if symbol.symbol_kind in {"function", "async_function", "method"} and symbol.qualname in function_defs
+        }
         for symbol in symbols:
             build.entities.append(symbol.entity)
             build.evidence.append(self._entity_evidence(repo, symbol.entity, file_path, symbol.line, symbol.end_line))
@@ -373,6 +379,22 @@ class PythonAstExtractor:
             )
         else:
             module_builtin_shadows = set()
+        extract_http_client_endpoint_calls(
+            repo,
+            file_path,
+            tree,
+            module_name,
+            imports,
+            literal_index,
+            service_entity,
+            function_symbols_by_node,
+            build,
+            self.source_system,
+            self._add_entity_evidence,
+            self._add_fact,
+            parsed.source_text,
+            tenant_id=tenant_id,
+        )
         for caller_node in ast.walk(tree):
             if not isinstance(caller_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

@@ -17,6 +17,43 @@ CLIENT_FACTORIES = {
     ("httpx", "AsyncClient"),
     ("aiohttp", "ClientSession"),
 }
+FunctionDefNode = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+@dataclass(frozen=True)
+class HttpClientBinding:
+    module: str
+    factory: str | None = None
+    factory_call: ast.Call | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True)
+class HttpClientCall:
+    path: Path
+    node: ast.Call = field(compare=False)
+    source_kind: str
+    module: str
+    method_name: str
+    url_arg: ast.AST | None = field(default=None, compare=False)
+    method_arg: ast.AST | None = field(default=None, compare=False)
+    client_factory_call: ast.Call | None = field(default=None, compare=False)
+    enclosing_function: FunctionDefNode | None = field(default=None, compare=False)
+    local_binding_names: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class _HttpCallMatch:
+    source_kind: str
+    module: str
+    method_name: str
+    url_arg: ast.AST | None
+    method_arg: ast.AST | None = None
+    client_factory_call: ast.Call | None = None
+
+
+def collect_http_client_calls(repo: RepoSnapshot, path: Path, tree: ast.AST) -> tuple[HttpClientCall, ...]:
+    scanner = _ScopeScanner(repo, path, None)
+    return scanner.scan_module_calls(tree)
 
 
 @dataclass(frozen=True)
@@ -38,7 +75,7 @@ class _Scope:
     parent: "_Scope | None" = None
     module_aliases: dict[str, str] = field(default_factory=dict)
     function_aliases: dict[str, tuple[str, str]] = field(default_factory=dict)
-    client_aliases: dict[str, str] = field(default_factory=dict)
+    client_aliases: dict[str, HttpClientBinding] = field(default_factory=dict)
     shadowed_names: set[str] = field(default_factory=set)
 
     def child(self, shadowed_names: Iterable[str]) -> "_Scope":
@@ -58,7 +95,7 @@ class _Scope:
             return None
         return self.parent.resolve_function(name) if self.parent is not None else None
 
-    def resolve_client(self, name: str) -> str | None:
+    def resolve_client(self, name: str) -> HttpClientBinding | None:
         if name in self.client_aliases:
             return self.client_aliases[name]
         if name in self.shadowed_names:
@@ -77,8 +114,8 @@ class _Scope:
         self.client_aliases.pop(name, None)
         self.shadowed_names.discard(name)
 
-    def bind_client(self, name: str, module: str) -> None:
-        self.client_aliases[name] = module
+    def bind_client(self, name: str, binding: HttpClientBinding) -> None:
+        self.client_aliases[name] = binding
         self.module_aliases.pop(name, None)
         self.function_aliases.pop(name, None)
         self.shadowed_names.discard(name)
@@ -97,6 +134,9 @@ class _ScopeScanner:
     dimension: str | None
 
     def scan_module(self, tree: ast.AST) -> tuple[Opportunity, ...]:
+        return tuple(self.opportunity_for_call(call) for call in self.scan_module_calls(tree))
+
+    def scan_module_calls(self, tree: ast.AST) -> tuple[HttpClientCall, ...]:
         if not isinstance(tree, ast.Module):
             return ()
         return tuple(self._scan_statements(tree.body, _Scope()))
@@ -106,83 +146,182 @@ class _ScopeScanner:
         statements: list[ast.stmt],
         scope: _Scope,
         function_parent_scope: _Scope | None = None,
-    ) -> list[Opportunity]:
-        opportunities: list[Opportunity] = []
+        function_node: FunctionDefNode | None = None,
+        function_binding_names: frozenset[str] = frozenset(),
+    ) -> list[HttpClientCall]:
+        calls: list[HttpClientCall] = []
         for statement in statements:
             if isinstance(statement, (ast.Import, ast.ImportFrom)):
                 self._bind_import(statement, scope)
                 continue
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                opportunities.extend(self._scan_function(statement, function_parent_scope or scope))
+                calls.extend(self._scan_function(statement, function_parent_scope or scope))
                 scope.shadow(statement.name)
                 continue
             if isinstance(statement, ast.ClassDef):
-                opportunities.extend(self._scan_class(statement, scope, function_parent_scope or scope))
+                calls.extend(self._scan_class(statement, scope, function_parent_scope or scope))
                 scope.shadow(statement.name)
                 continue
             if isinstance(statement, (ast.With, ast.AsyncWith)):
                 for item in statement.items:
-                    opportunities.extend(self._opportunities_in_node(item.context_expr, scope))
+                    calls.extend(self._calls_in_node(item.context_expr, scope, function_node, function_binding_names))
                     if item.optional_vars is not None:
-                        self._bind_target(item.optional_vars, scope, _client_factory_module(item.context_expr, scope))
-                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
+                        self._bind_target(item.optional_vars, scope, _client_factory_binding(item.context_expr, scope))
+                calls.extend(
+                    self._scan_statements(
+                        statement.body,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
                 continue
             if isinstance(statement, (ast.For, ast.AsyncFor)):
-                opportunities.extend(self._opportunities_in_node(statement.iter, scope))
+                calls.extend(self._calls_in_node(statement.iter, scope, function_node, function_binding_names))
                 self._bind_target(statement.target, scope, None)
-                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
+                calls.extend(
+                    self._scan_statements(
+                        statement.body,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
+                calls.extend(
+                    self._scan_statements(
+                        statement.orelse,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
                 continue
             if isinstance(statement, ast.If):
-                opportunities.extend(self._opportunities_in_node(statement.test, scope))
-                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
+                calls.extend(self._calls_in_node(statement.test, scope, function_node, function_binding_names))
+                calls.extend(
+                    self._scan_statements(
+                        statement.body,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
+                calls.extend(
+                    self._scan_statements(
+                        statement.orelse,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
                 continue
             if isinstance(statement, ast.While):
-                opportunities.extend(self._opportunities_in_node(statement.test, scope))
-                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
+                calls.extend(self._calls_in_node(statement.test, scope, function_node, function_binding_names))
+                calls.extend(
+                    self._scan_statements(
+                        statement.body,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
+                calls.extend(
+                    self._scan_statements(
+                        statement.orelse,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
                 continue
             if isinstance(statement, ast.Try):
-                opportunities.extend(self._scan_statements(statement.body, scope, function_parent_scope))
+                calls.extend(
+                    self._scan_statements(
+                        statement.body,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
                 for handler in statement.handlers:
                     if handler.type is not None:
-                        opportunities.extend(self._opportunities_in_node(handler.type, scope))
+                        calls.extend(self._calls_in_node(handler.type, scope, function_node, function_binding_names))
                     handler_scope = scope.child({handler.name} if handler.name else ())
-                    opportunities.extend(self._scan_statements(handler.body, handler_scope, function_parent_scope))
-                opportunities.extend(self._scan_statements(statement.orelse, scope, function_parent_scope))
-                opportunities.extend(self._scan_statements(statement.finalbody, scope, function_parent_scope))
+                    calls.extend(
+                        self._scan_statements(
+                            handler.body,
+                            handler_scope,
+                            function_parent_scope,
+                            function_node,
+                            function_binding_names,
+                        )
+                    )
+                calls.extend(
+                    self._scan_statements(
+                        statement.orelse,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
+                calls.extend(
+                    self._scan_statements(
+                        statement.finalbody,
+                        scope,
+                        function_parent_scope,
+                        function_node,
+                        function_binding_names,
+                    )
+                )
                 continue
             if isinstance(statement, ast.Match):
-                opportunities.extend(self._opportunities_in_node(statement.subject, scope))
+                calls.extend(self._calls_in_node(statement.subject, scope, function_node, function_binding_names))
                 for case in statement.cases:
                     case_scope = scope.child(_pattern_names(case.pattern))
                     if case.guard is not None:
-                        opportunities.extend(self._opportunities_in_node(case.guard, case_scope))
-                    opportunities.extend(self._scan_statements(case.body, case_scope, function_parent_scope))
+                        calls.extend(self._calls_in_node(case.guard, case_scope, function_node, function_binding_names))
+                    calls.extend(
+                        self._scan_statements(
+                            case.body,
+                            case_scope,
+                            function_parent_scope,
+                            function_node,
+                            function_binding_names,
+                        )
+                    )
                 continue
-            opportunities.extend(self._opportunities_in_node(statement, scope))
+            calls.extend(self._calls_in_node(statement, scope, function_node, function_binding_names))
             self._bind_statement_targets(statement, scope)
-        return opportunities
+        return calls
 
-    def _scan_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, parent_scope: _Scope) -> list[Opportunity]:
-        opportunities: list[Opportunity] = []
+    def _scan_function(self, node: FunctionDefNode, parent_scope: _Scope) -> list[HttpClientCall]:
+        calls: list[HttpClientCall] = []
         for decorator in node.decorator_list:
-            opportunities.extend(self._opportunities_in_node(decorator, parent_scope))
+            calls.extend(self._calls_in_node(decorator, parent_scope, None, frozenset()))
         for default in (*node.args.defaults, *node.args.kw_defaults):
             if default is not None:
-                opportunities.extend(self._opportunities_in_node(default, parent_scope))
-        child_scope = parent_scope.child(_function_binding_names(node))
-        opportunities.extend(self._scan_statements(node.body, child_scope))
-        return opportunities
+                calls.extend(self._calls_in_node(default, parent_scope, None, frozenset()))
+        binding_names = frozenset(_function_binding_names(node))
+        child_scope = parent_scope.child(binding_names)
+        calls.extend(self._scan_statements(node.body, child_scope, function_node=node, function_binding_names=binding_names))
+        return calls
 
-    def _scan_class(self, node: ast.ClassDef, eval_scope: _Scope, function_parent_scope: _Scope) -> list[Opportunity]:
-        opportunities: list[Opportunity] = []
+    def _scan_class(self, node: ast.ClassDef, eval_scope: _Scope, function_parent_scope: _Scope) -> list[HttpClientCall]:
+        calls: list[HttpClientCall] = []
         for expr in (*node.decorator_list, *node.bases, *node.keywords):
-            opportunities.extend(self._opportunities_in_node(expr, eval_scope))
+            calls.extend(self._calls_in_node(expr, eval_scope, None, frozenset()))
         child_scope = eval_scope.child(())
-        opportunities.extend(self._scan_statements(node.body, child_scope, function_parent_scope))
-        return opportunities
+        calls.extend(self._scan_statements(node.body, child_scope, function_parent_scope))
+        return calls
 
     def _bind_import(self, node: ast.Import | ast.ImportFrom, scope: _Scope) -> None:
         if isinstance(node, ast.Import):
@@ -203,35 +342,61 @@ class _ScopeScanner:
 
     def _bind_statement_targets(self, statement: ast.stmt, scope: _Scope) -> None:
         if isinstance(statement, ast.Assign):
-            client_module = _client_factory_module(statement.value, scope)
+            client_binding = _client_factory_binding(statement.value, scope)
             for target in statement.targets:
-                self._bind_target(target, scope, client_module)
+                self._bind_target(target, scope, client_binding)
         elif isinstance(statement, ast.AnnAssign):
-            client_module = _client_factory_module(statement.value, scope) if statement.value is not None else None
-            self._bind_target(statement.target, scope, client_module)
+            client_binding = _client_factory_binding(statement.value, scope) if statement.value is not None else None
+            self._bind_target(statement.target, scope, client_binding)
         elif isinstance(statement, ast.AugAssign):
             self._bind_target(statement.target, scope, None)
 
-    def _bind_target(self, target: ast.AST, scope: _Scope, client_module: str | None) -> None:
+    def _bind_target(self, target: ast.AST, scope: _Scope, client_binding: HttpClientBinding | None) -> None:
         for name in _target_names(target):
-            if client_module is None:
+            if client_binding is None:
                 scope.shadow(name)
             else:
-                scope.bind_client(name, client_module)
+                scope.bind_client(name, client_binding)
 
-    def _opportunities_in_node(self, node: ast.AST, scope: _Scope) -> list[Opportunity]:
-        visitor = _CallVisitor(self, scope)
+    def _calls_in_node(
+        self,
+        node: ast.AST,
+        scope: _Scope,
+        function_node: FunctionDefNode | None,
+        function_binding_names: frozenset[str],
+    ) -> list[HttpClientCall]:
+        visitor = _CallVisitor(self, scope, function_node, function_binding_names)
         visitor.visit(node)
-        return visitor.opportunities
+        return visitor.calls
 
-    def opportunity_for_call(self, node: ast.Call, source_kind: str) -> Opportunity:
+    def call_for_match(
+        self,
+        node: ast.Call,
+        match: _HttpCallMatch,
+        function_node: FunctionDefNode | None,
+        function_binding_names: frozenset[str],
+    ) -> HttpClientCall:
+        return HttpClientCall(
+            path=self.path,
+            node=node,
+            source_kind=match.source_kind,
+            module=match.module,
+            method_name=match.method_name,
+            url_arg=match.url_arg,
+            method_arg=match.method_arg,
+            client_factory_call=match.client_factory_call,
+            enclosing_function=function_node,
+            local_binding_names=function_binding_names,
+        )
+
+    def opportunity_for_call(self, call: HttpClientCall) -> Opportunity:
         return Opportunity(
             predicate="CALLS_ENDPOINT",
-            source_kind=source_kind,
+            source_kind=call.source_kind,
             language_or_format="python",
             dimension=self.dimension,
             path=str(self.path.relative_to(self.repo.root)),
-            line=getattr(node, "lineno", 1),
+            line=getattr(call.node, "lineno", 1),
         )
 
 
@@ -239,12 +404,16 @@ class _ScopeScanner:
 class _CallVisitor(ast.NodeVisitor):
     scanner: _ScopeScanner
     scope: _Scope
-    opportunities: list[Opportunity] = field(default_factory=list)
+    function_node: FunctionDefNode | None
+    function_binding_names: frozenset[str]
+    calls: list[HttpClientCall] = field(default_factory=list)
 
     def visit_Call(self, node: ast.Call) -> None:
-        source_kind = _http_call_source_kind(node.func, self.scope)
-        if source_kind is not None:
-            self.opportunities.append(self.scanner.opportunity_for_call(node, source_kind))
+        match = _http_call_match(node, self.scope)
+        if match is not None:
+            self.calls.append(
+                self.scanner.call_for_match(node, match, self.function_node, self.function_binding_names)
+            )
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -295,42 +464,90 @@ class _CallVisitor(ast.NodeVisitor):
             self._visit_with_scope(extra_result, comp_scope)
 
     def _visit_with_scope(self, node: ast.AST, scope: _Scope) -> None:
-        visitor = _CallVisitor(self.scanner, scope)
+        visitor = _CallVisitor(self.scanner, scope, self.function_node, self.function_binding_names)
         visitor.visit(node)
-        self.opportunities.extend(visitor.opportunities)
+        self.calls.extend(visitor.calls)
 
 
-def _http_call_source_kind(func: ast.AST, scope: _Scope) -> str | None:
+def _http_call_match(node: ast.Call, scope: _Scope) -> _HttpCallMatch | None:
+    func = node.func
     if isinstance(func, ast.Name):
         resolved = scope.resolve_function(func.id)
         if resolved is None:
             return None
         module, method = resolved
         if method in HTTP_METHODS:
-            return f"{module}.{method}"
+            return _call_match(node, module, method, f"{module}.{method}", None)
         return None
     if not isinstance(func, ast.Attribute) or func.attr not in HTTP_METHODS:
         return None
     root = _attribute_root(func.value)
-    if root is None:
-        return None
-    module = scope.resolve_module(root)
-    if module in {"requests", "httpx"}:
-        return f"{module}.{func.attr}"
-    client_module = scope.resolve_client(root)
-    if client_module in MODULES:
-        return f"{client_module}.client.{func.attr}"
+    if root is not None:
+        module = scope.resolve_module(root)
+        if module in {"requests", "httpx"}:
+            return _call_match(node, module, func.attr, f"{module}.{func.attr}", None)
+        client_binding = scope.resolve_client(root)
+        if client_binding is not None and client_binding.module in MODULES:
+            return _call_match(
+                node,
+                client_binding.module,
+                func.attr,
+                f"{client_binding.module}.client.{func.attr}",
+                client_binding.factory_call,
+            )
+    direct_client = _client_factory_binding(func.value, scope)
+    if direct_client is not None:
+        return _call_match(
+            node,
+            direct_client.module,
+            func.attr,
+            f"{direct_client.module}.client.{func.attr}",
+            direct_client.factory_call,
+        )
     return None
 
 
-def _client_factory_module(node: ast.AST | None, scope: _Scope) -> str | None:
+def _call_match(
+    node: ast.Call,
+    module: str,
+    method: str,
+    source_kind: str,
+    client_factory_call: ast.Call | None,
+) -> _HttpCallMatch:
+    method_name = method.lower()
+    if method_name == "request":
+        method_arg = _call_arg(node, 0, "method")
+        url_arg = _call_arg(node, 1, "url")
+    else:
+        method_arg = None
+        url_arg = _call_arg(node, 0, "url")
+    return _HttpCallMatch(
+        source_kind=source_kind,
+        module=module,
+        method_name=method_name,
+        url_arg=url_arg,
+        method_arg=method_arg,
+        client_factory_call=client_factory_call,
+    )
+
+
+def _call_arg(node: ast.Call, positional_index: int, keyword_name: str) -> ast.AST | None:
+    if len(node.args) > positional_index:
+        return node.args[positional_index]
+    for keyword in node.keywords:
+        if keyword.arg == keyword_name:
+            return keyword.value
+    return None
+
+
+def _client_factory_binding(node: ast.AST | None, scope: _Scope) -> HttpClientBinding | None:
     if not isinstance(node, ast.Call):
         return None
     func = node.func
     if isinstance(func, ast.Name):
         resolved = scope.resolve_function(func.id)
         if resolved is not None and resolved in CLIENT_FACTORIES:
-            return resolved[0]
+            return HttpClientBinding(resolved[0], resolved[1], node)
         return None
     if isinstance(func, ast.Attribute):
         root = _attribute_root(func.value)
@@ -338,7 +555,7 @@ def _client_factory_module(node: ast.AST | None, scope: _Scope) -> str | None:
             return None
         module = scope.resolve_module(root)
         if module is not None and (module, func.attr) in CLIENT_FACTORIES:
-            return module
+            return HttpClientBinding(module, func.attr, node)
     return None
 
 

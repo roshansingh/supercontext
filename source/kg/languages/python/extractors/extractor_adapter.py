@@ -38,6 +38,8 @@ PYTHON_AST_ADAPTER = ExtractorAdapter(
             "IMPORTS",
             "CALLS",
             "EXPOSES_ENDPOINT",
+            "CALLS_ENDPOINT",
+            "REFERENCES_ENV_VAR",
         ),
         produces_support_predicates=(
             "DECLARES_FIELD",
@@ -58,6 +60,7 @@ PYTHON_AST_ADAPTER = ExtractorAdapter(
             "ExternalPackage",
             "ExternalSymbol",
             "Endpoint",
+            "EnvVar",
         ),
         ontology_scope="mixed",
         source_system=PythonAstExtractor.source_system,
