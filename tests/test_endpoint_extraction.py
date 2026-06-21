@@ -354,7 +354,7 @@ class EndpointExtractionTest(unittest.TestCase):
             "def call(user_id):\n"
             "    rq.post(API_PATH)\n"
             "    http_get(f'/api/users/{user_id}')\n"
-            "    client = Client(base_url='https://service.example.com/base')\n"
+            "    client = Client(base_url='https://user:token@service.example.com:8443/base')\n"
             "    client.patch('profiles')\n"
             "    with aiohttp.ClientSession(base_url=os.getenv('API_HOST')) as session:\n"
             "        session.put('/events')\n"
@@ -378,7 +378,7 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_source_kinds_by_path(calls)["/api/users/{user_id}"], {"httpx.get"})
         self.assertEqual(_source_kinds_by_path(calls)["/base/profiles"], {"httpx.client.patch"})
         self.assertEqual(_source_kinds_by_path(calls)["/events"], {"aiohttp.client.put"})
-        self.assertEqual(_hosts_by_path(calls)["/base/profiles"], {"service.example.com"})
+        self.assertEqual(_hosts_by_path(calls)["/base/profiles"], {"service.example.com:8443"})
         self.assertEqual(_hosts_by_path(calls)["/events"], {"${env:API_HOST}"})
         self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["resolution_kind"], "template_parameterized")
         self.assertEqual(qualifiers_by_path["/api/users/{user_id}"][0]["route_params"], ["user_id"])
@@ -404,10 +404,17 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["target_helper_call_deferred"], 1)
 
     def test_python_http_client_external_urls_are_suppressed_not_promoted(self) -> None:
-        build = _extract_python_client("import requests\nrequests.get('https://api.example.com/v1/charges')\n")
+        build = _extract_python_client("import requests\nrequests.get('https://user:token@api.example.com/v1/charges')\n")
 
         self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+
+    def test_python_http_client_env_url_without_path_keeps_env_reference(self) -> None:
+        build = _extract_python_client("import os\nimport requests\nrequests.get(os.getenv('SERVICE_URL'))\n")
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["SERVICE_URL"])
 
     def test_python_http_client_template_host_emits_path_candidate(self) -> None:
         build = _extract_python_client(

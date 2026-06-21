@@ -91,6 +91,19 @@ def extract_http_client_endpoint_calls(
             # Dynamic or intentionally suppressed calls are explicit coverage rows,
             # not extractor-support gaps; metrics use the row to cover the opportunity.
             _add_endpoint_coverage(build, repo, file_path, line, target, source_system, tenant_id, "uninstrumented")
+            if target.env_names:
+                _add_env_var_references(
+                    repo,
+                    file_path,
+                    line,
+                    service_entity,
+                    build,
+                    add_entity_evidence,
+                    add_fact,
+                    tenant_id,
+                    target,
+                    endpoint_method=_method_for_call(call, resolver),
+                )
             continue
 
         endpoint = endpoint_entity(repo, _method_for_call(call, resolver), target.path, host=target.host, tenant_id=tenant_id)
@@ -312,14 +325,15 @@ def _target_from_string(
             env_names=env_names,
         )
     parsed = urlparse(trimmed)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
+    host = _parsed_host(parsed)
+    if parsed.scheme in {"http", "https"} and host:
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
         return EndpointTarget(
             "external",
             path,
-            parsed.netloc,
+            host,
             raw,
             reason="external_endpoint_suppressed",
             resolution_kind=resolution_kind,
@@ -354,8 +368,9 @@ def _base_from_string(value: str, raw: str) -> BaseTarget:
             env_names=(env_name,),
         )
     parsed = urlparse(trimmed)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return BaseTarget("external", parsed.netloc, parsed.path or "", raw)
+    host = _parsed_host(parsed)
+    if parsed.scheme in {"http", "https"} and host:
+        return BaseTarget("external", host, parsed.path or "", raw)
     if trimmed:
         return BaseTarget("external", None, trimmed, raw)
     return BaseTarget("unresolved", None, "", raw, reason="unresolved_target")
@@ -484,6 +499,15 @@ def _add_env_var_references(
     for name in target.env_names:
         env_entity = env_var_entity(repo, name, tenant_id)
         add_entity_evidence(build, repo, env_entity, file_path, line, line)
+        qualifier: JsonObject = {
+            "name": name,
+            "reference_kind": "endpoint_env_host",
+            "endpoint_method": endpoint_method,
+            "raw_target": target.raw_target,
+            "host_resolution_kind": target.host_resolution_kind or "env_backed_unresolved",
+        }
+        if target.path is not None:
+            qualifier["endpoint_path"] = normalize_endpoint_path(target.path)
         add_fact(
             build,
             "REFERENCES_ENV_VAR",
@@ -493,14 +517,7 @@ def _add_env_var_references(
             file_path,
             line,
             line,
-            qualifier={
-                "name": name,
-                "reference_kind": "endpoint_env_host",
-                "endpoint_method": endpoint_method,
-                "endpoint_path": normalize_endpoint_path(target.path or "/"),
-                "raw_target": target.raw_target,
-                "host_resolution_kind": target.host_resolution_kind or "env_backed_unresolved",
-            },
+            qualifier=qualifier,
             derivation_class="deterministic_static",
         )
 
@@ -621,6 +638,21 @@ def _env_placeholder_host(value: str) -> tuple[str, str, str] | None:
     if remainder and not remainder.startswith("/"):
         return None
     return (value[: end + 1], env_name, remainder)
+
+
+def _parsed_host(parsed: object) -> str | None:
+    hostname = getattr(parsed, "hostname", None)
+    if not isinstance(hostname, str) or not hostname:
+        return None
+    try:
+        port = getattr(parsed, "port", None)
+    except ValueError:
+        port = None
+    if not isinstance(port, int):
+        return hostname
+    if ":" in hostname and not hostname.startswith("["):
+        return f"[{hostname}]:{port}"
+    return f"{hostname}:{port}"
 
 
 def _template_host_placeholder(value: str, route_params: tuple[str, ...]) -> tuple[str, tuple[str, ...]] | None:
