@@ -416,6 +416,37 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
         self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["SERVICE_URL"])
 
+    def test_python_http_client_path_env_placeholder_does_not_emit_host_env_reference(self) -> None:
+        build = _extract_python_client("import os\nimport requests\nrequests.get(f'/api/{os.getenv(\"USER_ID\")}')\n")
+
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), [])
+
+    def test_python_http_client_raw_qualifier_values_are_capped(self) -> None:
+        long_segment = "a" * 120
+        build = _extract_python_client(
+            "import os\n"
+            "import requests\n"
+            "from httpx import Client\n"
+            f"requests.get('/api/{long_segment}')\n"
+            f"client = Client(base_url='https://service.example.com/{long_segment}')\n"
+            "client.get('/orders')\n"
+            f"requests.get(os.getenv('SERVICE_URL', 'https://example.com/{long_segment}'))\n"
+        )
+
+        call_qualifiers = [fact.qualifier for fact, _ in _endpoint_rows(build, "CALLS_ENDPOINT")]
+        env_qualifiers = [
+            fact.qualifier
+            for fact in build.facts
+            if fact.predicate == "REFERENCES_ENV_VAR" and fact.qualifier.get("reference_kind") == "endpoint_env_host"
+        ]
+
+        self.assertTrue(call_qualifiers)
+        self.assertTrue(env_qualifiers)
+        self.assertTrue(any("base_url_raw" in qualifier for qualifier in call_qualifiers))
+        self.assertTrue(all(len(str(qualifier.get("raw_target", ""))) <= 80 for qualifier in call_qualifiers))
+        self.assertTrue(all(len(str(qualifier.get("base_url_raw", ""))) <= 80 for qualifier in call_qualifiers))
+        self.assertTrue(all(len(str(qualifier.get("raw_target", ""))) <= 80 for qualifier in env_qualifiers))
+
     def test_python_http_client_template_host_emits_path_candidate(self) -> None:
         build = _extract_python_client(
             "import requests\n\n"

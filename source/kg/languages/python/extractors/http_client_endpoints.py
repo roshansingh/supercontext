@@ -257,7 +257,6 @@ def _target_from_node(
             allow_relative=allow_relative,
             resolution_kind=rendered.resolution_kind,
             route_params=tuple(rendered.route_params),
-            env_names=tuple(rendered.env_names),
         )
     resolved = resolver.resolve_value(node)
     if isinstance(resolved, ResolvedValue) and isinstance(resolved.value, str):
@@ -276,7 +275,6 @@ def _target_from_joined_str(node: ast.JoinedStr, source_text: str, *, allow_rela
         allow_relative=allow_relative,
         resolution_kind="template_parameterized" if rendered.route_params else "literal",
         route_params=tuple(rendered.route_params),
-        env_names=tuple(rendered.env_names),
     )
 
 
@@ -287,7 +285,6 @@ def _target_from_string(
     allow_relative: bool,
     resolution_kind: str | None = None,
     route_params: tuple[str, ...] = (),
-    env_names: tuple[str, ...] = (),
 ) -> EndpointTarget:
     trimmed = value.strip()
     if not trimmed:
@@ -307,7 +304,7 @@ def _target_from_string(
             resolution_kind=resolution_kind,
             host_resolution_kind="env_backed_unresolved",
             route_params=route_params,
-            env_names=_merge_tuple(env_names, (env_name,)),
+            env_names=(env_name,),
         )
     template_host = _template_host_placeholder(trimmed, route_params)
     if template_host is not None:
@@ -322,7 +319,6 @@ def _target_from_string(
             resolution_kind=resolution_kind,
             host_resolution_kind="expression_unresolved",
             route_params=path_params,
-            env_names=env_names,
         )
     parsed = urlparse(trimmed)
     host = _parsed_host(parsed)
@@ -338,7 +334,6 @@ def _target_from_string(
             reason="external_endpoint_suppressed",
             resolution_kind=resolution_kind,
             route_params=route_params,
-            env_names=env_names,
         )
     if trimmed.startswith("/") or allow_relative:
         return EndpointTarget(
@@ -348,7 +343,6 @@ def _target_from_string(
             raw,
             resolution_kind=resolution_kind,
             route_params=route_params,
-            env_names=env_names,
         )
     return EndpointTarget("unresolved", None, None, raw, reason="unresolved_target")
 
@@ -381,7 +375,6 @@ class RenderedString:
     value: str
     resolution_kind: str | None = None
     route_params: tuple[str, ...] = ()
-    env_names: tuple[str, ...] = ()
 
 
 def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_text: str) -> RenderedString | UnresolvedValue:
@@ -400,21 +393,19 @@ def _render_string_expression(node: ast.AST, resolver: ValueResolver, source_tex
             left.value + right.value,
             "concat",
             _merge_tuple(left.route_params, right.route_params),
-            _merge_tuple(left.env_names, right.env_names),
         )
     env_name = _env_name_from_node(node)
     if env_name is not None:
-        return RenderedString(f"${{env:{env_name}}}", "env_reference", env_names=(env_name,))
+        return RenderedString(f"${{env:{env_name}}}", "env_reference")
     resolved = resolver.resolve_value(node)
     if isinstance(resolved, ResolvedValue) and isinstance(resolved.value, str):
-        return RenderedString(resolved.value, resolved.source, env_names=_env_names_from_source(resolved.source))
+        return RenderedString(resolved.value, resolved.source)
     return UnresolvedValue(_coverage_reason(resolved), _raw_node(node, source_text))
 
 
 def _render_joined_str(node: ast.JoinedStr, source_text: str) -> RenderedString | UnresolvedValue:
     parts: list[str] = []
     route_params: list[str] = []
-    env_names: list[str] = []
     for value in node.values:
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             parts.append(value.value)
@@ -424,8 +415,6 @@ def _render_joined_str(node: ast.JoinedStr, source_text: str) -> RenderedString 
         env_name = _env_name_from_node(value.value)
         if env_name is not None:
             parts.append(f"${{env:{env_name}}}")
-            if env_name not in env_names:
-                env_names.append(env_name)
             continue
         param_name = _route_param_name(value.value)
         if param_name is None:
@@ -433,7 +422,7 @@ def _render_joined_str(node: ast.JoinedStr, source_text: str) -> RenderedString 
         parts.append("{" + param_name + "}")
         if param_name not in route_params:
             route_params.append(param_name)
-    return RenderedString("".join(parts), "template_parameterized", tuple(route_params), tuple(env_names))
+    return RenderedString("".join(parts), "template_parameterized", tuple(route_params))
 
 
 def _method_for_call(call: HttpClientCall, resolver: ValueResolver) -> str:
@@ -458,7 +447,7 @@ def _fact_qualifier(
     line = getattr(call.node, "lineno", 1)
     qualifier: JsonObject = {
         "source_kind": call.source_kind,
-        "raw_target": target.raw_target,
+        "raw_target": _cap_raw_text(target.raw_target),
         "path": str(call.path.relative_to(repo.root)),
     }
     if caller is not None:
@@ -473,7 +462,7 @@ def _fact_qualifier(
     if target.route_params:
         qualifier["route_params"] = list(target.route_params)
     if target.base_url_raw is not None:
-        qualifier["base_url_raw"] = target.base_url_raw
+        qualifier["base_url_raw"] = _cap_raw_text(target.base_url_raw)
     line_text = source_line(source_text, line)
     excerpt = source_excerpt(source_text, call.node)
     if line_text is not None:
@@ -503,7 +492,7 @@ def _add_env_var_references(
             "name": name,
             "reference_kind": "endpoint_env_host",
             "endpoint_method": endpoint_method,
-            "raw_target": target.raw_target,
+            "raw_target": _cap_raw_text(target.raw_target),
             "host_resolution_kind": target.host_resolution_kind or "env_backed_unresolved",
         }
         if target.path is not None:
@@ -542,7 +531,7 @@ def _add_endpoint_coverage(
                 "path": str(file_path.relative_to(repo.root)),
                 "line": line,
                 "reason": target.reason or "unresolved_target",
-                "raw_target": target.raw_target[:80],
+                "raw_target": _cap_raw_text(target.raw_target),
             },
             state=state,
             source_system=source_system,
@@ -669,13 +658,6 @@ def _template_host_placeholder(value: str, route_params: tuple[str, ...]) -> tup
     return remainder, path_params
 
 
-def _env_names_from_source(source: str) -> tuple[str, ...]:
-    prefix = "env:"
-    if source.startswith(prefix):
-        return (source[len(prefix) :],)
-    return ()
-
-
 def _coverage_reason(value: ResolvedValue | UnresolvedValue) -> str:
     if isinstance(value, ResolvedValue):
         return "unresolved_target"
@@ -699,6 +681,10 @@ def _raw_node(node: ast.AST | None, source_text: str) -> str:
         return ast.unparse(node)
     except Exception:
         return ""
+
+
+def _cap_raw_text(value: str) -> str:
+    return value[:80]
 
 
 def _join_paths(prefix: str, path: str) -> str:
