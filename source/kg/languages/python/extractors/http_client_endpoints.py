@@ -66,6 +66,13 @@ class BaseTarget:
     env_names: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ResolverBase:
+    imported_modules: dict[str, str]
+    imported_values: dict[str, LiteralRef]
+    module_values: dict[str, ast.AST]
+
+
 def extract_http_client_endpoint_calls(
     repo: RepoSnapshot,
     file_path: Path,
@@ -83,9 +90,10 @@ def extract_http_client_endpoint_calls(
     *,
     tenant_id: str,
 ) -> None:
+    resolver_base = _resolver_base(module_name, literal_index, imports)
     for call in collect_http_client_calls(repo, file_path, tree):
         line = getattr(call.node, "lineno", 1)
-        resolver = _resolver(module_name, literal_index, imports, call)
+        resolver = _resolver(resolver_base, literal_index, call)
         target = _target_for_call(call, resolver, source_text)
         if target.kind in {"unresolved", "external"} or target.path is None:
             # Dynamic or intentionally suppressed calls are explicit coverage rows,
@@ -213,9 +221,19 @@ def _base_from_factory(factory_call: ast.Call | None, resolver: ValueResolver, s
         return _base_from_string(resolved.value, raw)
     if isinstance(base_node, ast.JoinedStr):
         target = _target_from_joined_str(base_node, resolver, source_text, allow_relative=False)
-        if target.kind == "host_unresolved":
+        if target.kind == "host_unresolved" or target.env_names:
             return BaseTarget(
                 "host_unresolved",
+                target.host,
+                target.path or "",
+                raw,
+                reason=target.reason,
+                host_resolution_kind=target.host_resolution_kind,
+                env_names=target.env_names,
+            )
+        if target.kind == "unresolved":
+            return BaseTarget(
+                "unresolved",
                 target.host,
                 target.path or "",
                 raw,
@@ -545,15 +563,22 @@ def _add_endpoint_coverage(
     )
 
 
-def _resolver(
+def _resolver_base(
     module_name: str,
     literal_index: LiteralIndex,
     imports: list[NormalizedImport],
-    call: HttpClientCall,
-) -> ValueResolver:
+) -> ResolverBase:
     imported_modules, imported_values = import_bindings(imports)
     _bind_stdlib_os_imports(imports, imported_modules, imported_values)
-    local_values = _module_values(module_name, literal_index)
+    return ResolverBase(imported_modules, imported_values, _module_values(module_name, literal_index))
+
+
+def _resolver(
+    base: ResolverBase,
+    literal_index: LiteralIndex,
+    call: HttpClientCall,
+) -> ValueResolver:
+    local_values = dict(base.module_values)
     known_local_names: set[str] = set()
     if call.enclosing_function is not None:
         local_literals = local_literal_assignments_before(call.enclosing_function, call.node)
@@ -563,8 +588,8 @@ def _resolver(
     return ValueResolver(
         ValueScope(
             local_values=local_values,
-            imported_modules=imported_modules,
-            imported_values=imported_values,
+            imported_modules=base.imported_modules,
+            imported_values=base.imported_values,
             blocked_names=blocked_names,
         ),
         literal_index,

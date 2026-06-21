@@ -441,6 +441,23 @@ class EndpointExtractionTest(unittest.TestCase):
 
         self.assertEqual(qualifiers_by_path["/api/health"][0]["resolution_kind"], "template_parameterized")
 
+    def test_python_http_client_env_only_template_base_url_keeps_env_reference(self) -> None:
+        build = _extract_python_client(
+            "import os\n"
+            "from httpx import Client\n"
+            "client = Client(base_url=f\"{os.getenv('API_HOST')}\")\n"
+            "client.get('/events')\n"
+        )
+
+        rows = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_hosts_by_path(rows)["/events"], {"${env:API_HOST}"})
+        self.assertEqual(_env_reference_names(build, "endpoint_env_host"), ["API_HOST"])
+        self.assertEqual(
+            _env_reference_qualifiers(build, "endpoint_env_host")[0]["raw_target"],
+            "f\"{os.getenv('API_HOST')}\"",
+        )
+
     def test_python_http_client_path_env_placeholder_does_not_emit_host_env_reference(self) -> None:
         build = _extract_python_client("import os\nimport requests\nrequests.get(f'/api/{os.getenv(\"USER_ID\")}')\n")
 
