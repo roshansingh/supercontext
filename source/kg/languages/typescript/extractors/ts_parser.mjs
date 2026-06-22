@@ -168,6 +168,7 @@ const EXPRESS_ROUTE_METHODS = new Set([...HTTP_METHODS, "all"]);
 const KOA_ROUTE_METHODS = new Set([...EXPRESS_ROUTE_METHODS, "del"]);
 const SOURCE_FILE_DECLARATION_NAMES = new WeakMap();
 const HOISTED_VAR_DECLARATION_NAMES = new WeakMap();
+const SOURCE_FILE_LITERAL_ALIASES = new WeakMap();
 
 function stringLiteralValue(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
@@ -198,6 +199,14 @@ function isSafeRouteParamName(name) {
 
 function uniqueStrings(values) {
   return Array.from(new Set(values));
+}
+
+function objectFromEntriesWithoutPrototype(entries) {
+  const result = Object.create(null);
+  for (const [key, value] of entries) {
+    result[key] = value;
+  }
+  return result;
 }
 
 function hasSafeTemplatePathFrame(value, options = {}) {
@@ -297,6 +306,121 @@ function collectTopLevelLiteralBindings(sourceFile) {
   }
   for (const name of invalid) bindings.delete(name);
   return bindings;
+}
+
+function collectTopLevelConstLiteralBindings(sourceFile) {
+  const bindings = new Map();
+  const invalid = new Set();
+  const declared = new Set();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if (nodeHasDeclareModifier(statement)) continue;
+    if (!(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name)) continue;
+      const name = declaration.name.text;
+      if (declared.has(name)) {
+        invalid.add(name);
+        bindings.delete(name);
+      }
+      declared.add(name);
+      const literal = declaration.initializer ? topLevelLiteralBindingValue(declaration.initializer, bindings, invalid) : null;
+      if (literal == null || invalid.has(name)) continue;
+      bindings.set(name, literal);
+    }
+  }
+  for (const name of invalid) bindings.delete(name);
+  return bindings;
+}
+
+function collectTopLevelLiteralAliases(sourceFile) {
+  const cached = SOURCE_FILE_LITERAL_ALIASES.get(sourceFile);
+  if (cached) return cached;
+  const aliases = new Map();
+  const invalid = new Set();
+  const declared = new Set();
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement)) {
+      if (nodeHasDeclareModifier(statement)) continue;
+      const isConst = Boolean(statement.declarationList.flags & ts.NodeFlags.Const);
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name)) continue;
+        const name = declaration.name.text;
+        if (declared.has(name)) {
+          invalid.add(name);
+          aliases.delete(name);
+        }
+        declared.add(name);
+        if (isConst && declaration.initializer && ts.isIdentifier(declaration.initializer) && !invalid.has(name)) {
+          aliases.set(name, declaration.initializer.text);
+        }
+      }
+      for (const name of aliases.keys()) {
+        if (statementMutatesIdentifier(statement, name)) {
+          invalid.add(name);
+          aliases.delete(name);
+        }
+      }
+      continue;
+    }
+    for (const name of aliases.keys()) {
+      if (statementMutatesIdentifier(statement, name)) {
+        invalid.add(name);
+        aliases.delete(name);
+      }
+    }
+  }
+  for (const name of invalid) aliases.delete(name);
+  const result = objectFromEntriesWithoutPrototype(aliases);
+  SOURCE_FILE_LITERAL_ALIASES.set(sourceFile, result);
+  return result;
+}
+
+function rawIdentifierCanResolveThroughImport(node, sourceFile) {
+  if (!ts.isIdentifier(node)) return false;
+  const targetName = node.text;
+  if (identifierHasLocalScopedDeclaration(node, targetName, sourceFile)) return false;
+  if (sourceFileImportDeclaresName(sourceFile, targetName)) return true;
+  const aliases = collectTopLevelLiteralAliases(sourceFile);
+  const seen = new Set([targetName]);
+  let current = aliases[targetName];
+  while (typeof current === "string" && !seen.has(current)) {
+    if (sourceFileImportDeclaresName(sourceFile, current)) return true;
+    seen.add(current);
+    current = aliases[current];
+  }
+  return false;
+}
+
+function collectLiteralExports(sourceFile) {
+  const literalExports = Object.create(null);
+  const constBindings = collectTopLevelConstLiteralBindings(sourceFile);
+  function addExport(exportName, localName) {
+    if (constBindings.has(localName)) literalExports[exportName] = constBindings.get(localName);
+  }
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement) && statementHasExportModifier(statement) && !nodeHasDeclareModifier(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) addExport(declaration.name.text, declaration.name.text);
+      }
+      continue;
+    }
+
+    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        const localName = (element.propertyName ?? element.name).text;
+        addExport(element.name.text, localName);
+      }
+      continue;
+    }
+
+    if (ts.isExportAssignment(statement)) {
+      const literal = topLevelLiteralBindingValue(statement.expression, constBindings, new Set());
+      if (literal != null) literalExports.default = literal;
+    }
+  }
+  return literalExports;
 }
 
 function declaresNameInBindingName(nameNode, targetName) {
@@ -1621,7 +1745,7 @@ function collectTopLevelAxiosClientInfos(sourceFile, axiosLocals, bindings) {
 
 function collectModuleClients(sourceFile, axiosLocals, bindings) {
   const localClients = collectTopLevelAxiosClientInfos(sourceFile, axiosLocals, bindings);
-  const moduleClients = { default: null, named: {} };
+  const moduleClients = { default: null, named: Object.create(null) };
 
   for (const statement of sourceFile.statements) {
     if (ts.isVariableStatement(statement) && statementHasExportModifier(statement)) {
@@ -1872,6 +1996,9 @@ function addConfigMetadataValue(metadata, key, node, sourceFile, bindings) {
     return;
   }
   metadata[`${key}_raw`] = rawNodeText(node, sourceFile);
+  if (rawIdentifierCanResolveThroughImport(node, sourceFile)) {
+    metadata[`${key}_raw_imported_literal_candidate`] = true;
+  }
 }
 
 function endpointConfigMetadata(configNode, sourceFile, bindings, defaults = {}) {
@@ -2681,7 +2808,7 @@ function collectKafkaEvents(sourceFile) {
   return events;
 }
 
-const output = {};
+const output = Object.create(null);
 for (const relativePath of files) {
   const absolutePath = path.join(repoRoot, relativePath);
   const sourceText = fs.readFileSync(absolutePath, "utf8");
@@ -2701,6 +2828,8 @@ for (const relativePath of files) {
     client_endpoint_calls: collectClientEndpointCalls(sourceFile),
     message_events: [...collectMessageEvents(sourceFile), ...collectKafkaEvents(sourceFile)],
     module_clients: collectModuleClients(sourceFile, axiosLocals, literalBindings),
+    literal_exports: collectLiteralExports(sourceFile),
+    literal_aliases: collectTopLevelLiteralAliases(sourceFile),
     symbols: symbols.map(({ pos, end, ...symbol }) => symbol),
     calls: symbols.flatMap((symbol) =>
       collectCallsForSymbol(sourceFile, symbol).map((call) => ({
