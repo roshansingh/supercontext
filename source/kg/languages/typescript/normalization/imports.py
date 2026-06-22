@@ -23,6 +23,35 @@ from source.kg.languages.typescript.module_resolution import (
 )
 
 
+LOCAL_RESOURCE_IMPORT_SUFFIXES = frozenset(
+    {
+        ".avif",
+        ".bmp",
+        ".css",
+        ".csv",
+        ".eot",
+        ".gif",
+        ".html",
+        ".ico",
+        ".jpeg",
+        ".jpg",
+        ".json",
+        ".less",
+        ".md",
+        ".otf",
+        ".png",
+        ".sass",
+        ".scss",
+        ".svg",
+        ".ttf",
+        ".txt",
+        ".wasm",
+        ".webp",
+        ".woff",
+        ".woff2",
+    }
+)
+
 # Regenerate with:
 # node -e "console.log(require('module').builtinModules.map(m => m.startsWith('node:') ? m.slice(5) : m).sort().join('\n'))"
 FALLBACK_NODE_BUILTINS = {
@@ -162,7 +191,15 @@ class JsImportNormalizer:
 
         if target.startswith("."):
             module_name = self._resolve_relative(target, current_module, current_path)
-            category = "relative_internal_module" if module_name in self.module_names else "unknown"
+            if module_name in self.module_names:
+                category = "relative_internal_module"
+            else:
+                resource_path = self._resolve_relative_resource(target, current_path)
+                if resource_path is not None:
+                    module_name = self._path_to_module(resource_path)
+                    category = "relative_resource_module"
+                else:
+                    category = "unknown"
             return self._normalized(ref, category, module_name, default_root, None, module_name)
 
         alias_match = resolve_typescript_path_alias_match(target, self.module_paths, scope.path_aliases)
@@ -170,11 +207,23 @@ class JsImportNormalizer:
             alias_path, alias_pattern = alias_match
             module_name = self._path_to_module(alias_path)
             return self._normalized(ref, "internal_module", module_name, self._path_alias_root(alias_pattern), None, module_name)
+        resource_alias_match = self._resolve_path_alias_resource_match(target, scope.path_aliases)
+        if resource_alias_match is not None:
+            resource_path, alias_pattern = resource_alias_match
+            module_name = self._path_to_module(resource_path)
+            return self._normalized(ref, "resource_module", module_name, self._path_alias_root(alias_pattern), None, module_name)
 
         if target.startswith("@/"):
             module_path = self._resolve_module_path(f"src/{target[2:]}")
+            resource_path = self._resolve_resource_path(f"src/{target[2:]}")
             module_name = self._path_to_module(module_path or f"src/{target[2:]}")
-            category = "internal_module" if module_path is not None else "unknown"
+            if module_path is not None:
+                category = "internal_module"
+            elif resource_path is not None:
+                module_name = self._path_to_module(resource_path)
+                category = "resource_module"
+            else:
+                category = "unknown"
             return self._normalized(ref, category, module_name, default_root, None, module_name)
 
         node_name = self._node_builtin_name(target, default_root)
@@ -185,6 +234,10 @@ class JsImportNormalizer:
         if local_package_path is not None:
             module_name = self._path_to_module(local_package_path)
             return self._normalized(ref, "internal_module", module_name, default_root, None, module_name)
+        local_package_resource_path = self._resolve_local_package_resource_import(target, default_root)
+        if local_package_resource_path is not None:
+            module_name = self._path_to_module(local_package_resource_path)
+            return self._normalized(ref, "resource_module", module_name, default_root, None, module_name)
 
         distribution_name = self._distribution_name(default_root)
         if distribution_name:
@@ -194,11 +247,19 @@ class JsImportNormalizer:
         if base_url_path is not None:
             module_name = self._path_to_module(base_url_path)
             return self._normalized(ref, "internal_module", module_name, default_root, None, module_name)
+        base_url_resource_path = self._resolve_base_url_resource_import(target, scope.base_urls)
+        if base_url_resource_path is not None:
+            module_name = self._path_to_module(base_url_resource_path)
+            return self._normalized(ref, "resource_module", module_name, default_root, None, module_name)
 
         module_path = self._resolve_module_path(target)
         if module_path is not None:
             module_name = self._path_to_module(module_path)
             return self._normalized(ref, "internal_module", module_name, default_root, None, module_name)
+        resource_path = self._resolve_resource_path(target)
+        if resource_path is not None:
+            module_name = self._path_to_module(resource_path)
+            return self._normalized(ref, "resource_module", module_name, default_root, None, module_name)
 
         root = self._matched_path_alias_root(target, scope.path_aliases) or default_root
         return self._normalized(ref, "unknown", root, root, None, None)
@@ -251,6 +312,14 @@ class JsImportNormalizer:
                 return resolved
         return None
 
+    def _resolve_base_url_resource_import(self, target: str, base_urls: tuple[str, ...]) -> str | None:
+        for base_url in base_urls:
+            candidate = posixpath.join(base_url, target) if base_url else target
+            resolved = self._resolve_resource_path(candidate)
+            if resolved is not None:
+                return resolved
+        return None
+
     def _resolve_local_package_import(self, target: str, import_root: str) -> str | None:
         package = self.local_packages.get(import_root.lower())
         if package is None:
@@ -258,6 +327,17 @@ class JsImportNormalizer:
         subpath = target.removeprefix(import_root).lstrip("/")
         for candidate in self._local_package_candidates(package, subpath):
             resolved = self._resolve_module_path(candidate)
+            if resolved is not None:
+                return resolved
+        return None
+
+    def _resolve_local_package_resource_import(self, target: str, import_root: str) -> str | None:
+        package = self.local_packages.get(import_root.lower())
+        if package is None:
+            return None
+        subpath = target.removeprefix(import_root).lstrip("/")
+        for candidate in self._local_package_candidates(package, subpath):
+            resolved = self._resolve_resource_path(candidate)
             if resolved is not None:
                 return resolved
         return None
@@ -283,6 +363,39 @@ class JsImportNormalizer:
         if normalized == ".":
             return None
         return resolve_typescript_module_path_candidate(normalized, self.module_paths)
+
+    def _resolve_relative_resource(self, target: str, current_path: str | None) -> str | None:
+        if not current_path:
+            return None
+        importer_dir = posixpath.dirname(current_path.replace("\\", "/"))
+        normalized = posixpath.normpath(posixpath.join(importer_dir, target.replace("\\", "/")))
+        return self._resolve_resource_path(normalized)
+
+    def _resolve_path_alias_resource_match(self, target: str, path_aliases: TypeScriptPathAliases) -> tuple[str, str] | None:
+        for pattern, targets in path_aliases:
+            capture = match_typescript_path_pattern(pattern, target)
+            if capture is None:
+                continue
+            pattern_has_wildcard = "*" in pattern
+            for raw_target in targets:
+                if pattern_has_wildcard and raw_target.count("*") > 1:
+                    continue
+                candidate = raw_target.replace("*", capture) if pattern_has_wildcard and "*" in raw_target else raw_target
+                resolved = self._resolve_resource_path(candidate)
+                if resolved is not None:
+                    return resolved, pattern
+        return None
+
+    def _resolve_resource_path(self, target: str) -> str | None:
+        normalized = posixpath.normpath(target.replace("\\", "/"))
+        if not normalized or normalized == "." or normalized.startswith("/") or normalized.startswith("../") or normalized == "..":
+            return None
+        if Path(normalized).suffix.lower() not in LOCAL_RESOURCE_IMPORT_SUFFIXES:
+            return None
+        candidate = self.repo.root / normalized
+        if not self._is_ignored_path(candidate) and candidate.is_file():
+            return normalized
+        return None
 
     def _distribution_name(self, import_root: str) -> str | None:
         return self.declared_dependencies.get(import_root.lower())

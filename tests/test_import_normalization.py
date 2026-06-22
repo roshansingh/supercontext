@@ -295,6 +295,114 @@ class PythonImportNormalizationTest(unittest.TestCase):
             self.assertEqual(dotted.category, "unknown")
             self.assertEqual(root_import.category, "unknown")
 
+    def test_src_layout_package_import_resolves_to_internal_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            init_py = _write(root / "src" / "acme_tool" / "__init__.py", "")
+            app_py = _write(root / "src" / "acme_tool" / "app.py", "import acme_tool.config\n")
+            config_py = _write(root / "src" / "acme_tool" / "config.py", "VALUE = 1\n")
+            repo = _repo_snapshot(root, python_paths=(init_py, app_py, config_py))
+
+            normalizer = PythonImportNormalizer(repo)
+            normalized = normalizer.normalize(
+                ImportRef(
+                    raw_target="acme_tool.config",
+                    line=1,
+                    import_root="acme_tool",
+                    imported_names=(),
+                    alias=None,
+                ),
+                current_module="src.acme_tool.app",
+            )
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.acme_tool.config")
+            self.assertEqual(normalized.module_name, "src.acme_tool.config")
+
+    def test_poetry_src_package_declaration_resolves_internal_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "pyproject.toml",
+                "[tool.poetry]\n"
+                'name = "example"\n'
+                "packages = [{ include = \"acme_tool\", from = \"src\" }]\n",
+            )
+            app_py = _write(root / "src" / "app.py", "import acme_tool.config\n")
+            config_py = _write(root / "src" / "acme_tool" / "config.py", "VALUE = 1\n")
+            repo = _repo_snapshot(root, python_paths=(app_py, config_py))
+
+            normalizer = PythonImportNormalizer(repo)
+            normalized = normalizer.normalize(
+                ImportRef(
+                    raw_target="acme_tool.config",
+                    line=1,
+                    import_root="acme_tool",
+                    imported_names=(),
+                    alias=None,
+                ),
+                current_module="src.app",
+            )
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "src.acme_tool.config")
+
+    def test_poetry_nested_from_package_declaration_resolves_internal_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(
+                root / "pyproject.toml",
+                "[tool.poetry]\n"
+                'name = "example"\n'
+                "packages = [{ include = \"acme_tool\", from = \"lib/src\" }]\n",
+            )
+            app_py = _write(root / "lib" / "src" / "app.py", "import acme_tool.config\n")
+            config_py = _write(root / "lib" / "src" / "acme_tool" / "config.py", "VALUE = 1\n")
+            repo = _repo_snapshot(root, python_paths=(app_py, config_py))
+
+            normalizer = PythonImportNormalizer(repo)
+            normalized = normalizer.normalize(
+                ImportRef(
+                    raw_target="acme_tool.config",
+                    line=1,
+                    import_root="acme_tool",
+                    imported_names=(),
+                    alias=None,
+                ),
+                current_module="lib.src.app",
+            )
+
+            self.assertEqual(normalized.category, "internal_module")
+            self.assertEqual(normalized.target_name, "lib.src.acme_tool.config")
+
+    def test_unproven_python_package_import_stays_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app_py = _write(root / "src" / "app.py", "import acme_tool.config\n")
+            repo = _repo_snapshot(root, python_paths=(app_py,))
+
+            with patch(
+                "source.kg.languages.python.normalization.imports.metadata.packages_distributions",
+                return_value={},
+            ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=None):
+                python_imports._distributions_by_import_root.cache_clear()
+                normalizer = PythonImportNormalizer(repo)
+            python_imports._distributions_by_import_root.cache_clear()
+
+            normalized = normalizer.normalize(
+                ImportRef(
+                    raw_target="acme_tool.config",
+                    line=1,
+                    import_root="acme_tool",
+                    imported_names=(),
+                    alias=None,
+                ),
+                current_module="src.app",
+            )
+
+            self.assertEqual(normalized.category, "unknown")
+            self.assertEqual(normalized.target_name, "acme_tool")
+
 
 class TypeScriptImportNormalizationTest(unittest.TestCase):
     def test_tsconfig_path_alias_resolves_internal_module_with_jsonc_and_fallback_targets(self) -> None:
@@ -487,6 +595,61 @@ class TypeScriptImportNormalizationTest(unittest.TestCase):
             self.assertEqual(normalized.category, "relative_internal_module")
             self.assertEqual(normalized.target_name, "src.app.component")
             self.assertEqual(normalized.module_name, "src.app.component")
+
+    def test_relative_resource_import_resolves_to_local_resource_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = _write(root / "src" / "App.tsx", "import './App.scss';\n")
+            _write(root / "src" / "App.scss", ".root { color: red; }\n")
+            repo = _repo_snapshot(root, typescript_paths=(app,))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("./App.scss"), "src.App", "src/App.tsx")
+
+            self.assertEqual(normalized.category, "relative_resource_module")
+            self.assertEqual(normalized.target_name, "src.App.scss")
+            self.assertEqual(normalized.module_name, "src.App.scss")
+
+    def test_alias_resource_import_resolves_to_local_resource_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"baseUrl":".","paths":{"@assets/*":["src/assets/*"]}}}\n')
+            app = _write(root / "src" / "App.tsx", "import logo from '@assets/logo.svg';\n")
+            _write(root / "src" / "assets" / "logo.svg", "<svg />\n")
+            repo = _repo_snapshot(root, typescript_paths=(app,))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@assets/logo.svg"), "src.App", "src/App.tsx")
+
+            self.assertEqual(normalized.category, "resource_module")
+            self.assertEqual(normalized.target_name, "src.assets.logo.svg")
+            self.assertEqual(normalized.import_root, "@assets")
+
+    def test_missing_alias_resource_import_stays_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write(root / "tsconfig.json", '{"compilerOptions":{"baseUrl":".","paths":{"@assets/*":["src/assets/*"]}}}\n')
+            app = _write(root / "src" / "App.tsx", "import logo from '@assets/missing.svg';\n")
+            repo = _repo_snapshot(root, typescript_paths=(app,))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("@assets/missing.svg"), "src.App", "src/App.tsx")
+
+            self.assertEqual(normalized.category, "unknown")
+            self.assertEqual(normalized.target_name, "@assets")
+
+    def test_resource_import_under_ignored_directory_stays_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = _write(root / "src" / "App.tsx", "import './dist/generated.css';\n")
+            _write(root / "src" / "dist" / "generated.css", ".root {}\n")
+            repo = _repo_snapshot(root, typescript_paths=(app,))
+            normalizer = JsImportNormalizer(repo)
+
+            normalized = normalizer.normalize(_js_ref("./dist/generated.css"), "src.App", "src/App.tsx")
+
+            self.assertEqual(normalized.category, "unknown")
+            self.assertEqual(normalized.target_name, "src.dist.generated.css")
 
     def test_nested_tsconfig_path_alias_is_scoped_to_importing_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

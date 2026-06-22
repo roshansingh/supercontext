@@ -6,7 +6,11 @@ from typing import Iterable
 from source.kg.core.models import JsonObject
 
 
-INTERNAL_IMPORT_CATEGORIES = {"internal_module", "relative_internal_module"}
+# ``top_internal_dependencies`` is a code-dependency ranking, not a local
+# asset/resource ranking. Resource imports still emit CodeModule entities so
+# import evidence is grounded, but they are intentionally excluded here to avoid
+# stylesheets/images/data files dominating modules-importing output.
+INTERNAL_CODE_IMPORT_CATEGORIES = {"internal_module", "relative_internal_module"}
 DERIVATION_PRIORITY = {
     "authoritative_declared": 5,
     "runtime_observed": 4,
@@ -60,7 +64,7 @@ def top_internal_dependencies(
     relative_only: bool = False,
     limit: int = 25,
 ) -> JsonObject:
-    categories = {"relative_internal_module"} if relative_only else INTERNAL_IMPORT_CATEGORIES
+    categories = {"relative_internal_module"} if relative_only else INTERNAL_CODE_IMPORT_CATEGORIES
     rows_by_target: dict[str, JsonObject] = {}
     importers_by_target: dict[str, set[str]] = defaultdict(set)
     facts_by_target: dict[str, list[JsonObject]] = defaultdict(list)
