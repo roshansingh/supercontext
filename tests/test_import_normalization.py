@@ -231,12 +231,12 @@ class PythonImportNormalizationTest(unittest.TestCase):
             ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
-            python_imports._distributions_by_import_root.cache_clear()
 
-            normalized = normalizer.normalize(
-                ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
-                current_module="app",
-            )
+                normalized = normalizer.normalize(
+                    ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
+                    current_module="app",
+                )
+            python_imports._distributions_by_import_root.cache_clear()
 
             self.assertEqual(normalized.category, "unknown")
             self.assertIsNone(normalized.distribution_name)
@@ -256,12 +256,12 @@ class PythonImportNormalizationTest(unittest.TestCase):
             ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
-            python_imports._distributions_by_import_root.cache_clear()
 
-            normalized = normalizer.normalize(
-                ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
-                current_module="app",
-            )
+                normalized = normalizer.normalize(
+                    ImportRef(raw_target="cv2", line=1, import_root="cv2", imported_names=(), alias=None),
+                    current_module="app",
+                )
+            python_imports._distributions_by_import_root.cache_clear()
 
             self.assertEqual(normalized.category, "unknown")
             self.assertIsNone(normalized.distribution_name)
@@ -281,16 +281,16 @@ class PythonImportNormalizationTest(unittest.TestCase):
             ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=object()):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
-            python_imports._distributions_by_import_root.cache_clear()
 
-            dotted = normalizer.normalize(
-                ImportRef(raw_target="google.protobuf", line=1, import_root="google", imported_names=(), alias=None),
-                current_module="app",
-            )
-            root_import = normalizer.normalize(
-                ImportRef(raw_target="google", line=1, import_root="google", imported_names=(), alias=None),
-                current_module="app",
-            )
+                dotted = normalizer.normalize(
+                    ImportRef(raw_target="google.protobuf", line=1, import_root="google", imported_names=(), alias=None),
+                    current_module="app",
+                )
+                root_import = normalizer.normalize(
+                    ImportRef(raw_target="google", line=1, import_root="google", imported_names=(), alias=None),
+                    current_module="app",
+                )
+            python_imports._distributions_by_import_root.cache_clear()
 
             self.assertEqual(dotted.category, "unknown")
             self.assertEqual(root_import.category, "unknown")
@@ -387,18 +387,18 @@ class PythonImportNormalizationTest(unittest.TestCase):
             ), patch("source.kg.languages.python.normalization.imports.util.find_spec", return_value=None):
                 python_imports._distributions_by_import_root.cache_clear()
                 normalizer = PythonImportNormalizer(repo)
-            python_imports._distributions_by_import_root.cache_clear()
 
-            normalized = normalizer.normalize(
-                ImportRef(
-                    raw_target="acme_tool.config",
-                    line=1,
-                    import_root="acme_tool",
-                    imported_names=(),
-                    alias=None,
-                ),
-                current_module="src.app",
-            )
+                normalized = normalizer.normalize(
+                    ImportRef(
+                        raw_target="acme_tool.config",
+                        line=1,
+                        import_root="acme_tool",
+                        imported_names=(),
+                        alias=None,
+                    ),
+                    current_module="src.app",
+                )
+            python_imports._distributions_by_import_root.cache_clear()
 
             self.assertEqual(normalized.category, "unknown")
             self.assertEqual(normalized.target_name, "acme_tool")
