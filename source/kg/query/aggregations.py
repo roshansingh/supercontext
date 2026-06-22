@@ -8,8 +8,8 @@ from source.kg.core.models import JsonObject
 
 # ``top_internal_dependencies`` is a code-dependency ranking, not a local
 # asset/resource ranking. Resource imports still emit CodeModule entities so
-# import evidence is grounded, but they are intentionally excluded here to avoid
-# stylesheets/images/data files dominating modules-importing output.
+# import evidence remains queryable, but they are intentionally excluded here to
+# avoid stylesheets/images/data files dominating this ranking.
 INTERNAL_CODE_IMPORT_CATEGORIES = {"internal_module", "relative_internal_module"}
 DERIVATION_PRIORITY = {
     "authoritative_declared": 5,
