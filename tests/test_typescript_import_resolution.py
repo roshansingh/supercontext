@@ -25,6 +25,7 @@ class TypeScriptImportResolutionExtractorTest(unittest.TestCase):
             app_spec = _write(
                 root / "apps" / "web" / "src" / "app.component.spec.ts",
                 "import { AppComponent } from './app.component';\n"
+                "import './app.component.scss';\n"
                 "import { Widget } from '@acme/widgets';\n"
                 "export const testDeps = [AppComponent, Widget];\n",
             )
@@ -32,6 +33,7 @@ class TypeScriptImportResolutionExtractorTest(unittest.TestCase):
                 root / "apps" / "web" / "src" / "app.component.ts",
                 "export class AppComponent {}\n",
             )
+            _write(root / "apps" / "web" / "src" / "app.component.scss", ".app {}\n")
             widgets = _write(root / "libs" / "widgets" / "src" / "index.ts", "export const Widget = 1;\n")
             repo = RepoSnapshot(
                 root=root,
@@ -48,6 +50,7 @@ class TypeScriptImportResolutionExtractorTest(unittest.TestCase):
             imports_by_raw = {fact.qualifier.get("raw_import"): fact for fact in imports}
 
             relative_import = imports_by_raw["./app.component"]
+            resource_import = imports_by_raw["./app.component.scss"]
             alias_import = imports_by_raw["@acme/widgets"]
 
             self.assertEqual(relative_import.qualifier["category"], "relative_internal_module")
@@ -55,6 +58,12 @@ class TypeScriptImportResolutionExtractorTest(unittest.TestCase):
             self.assertEqual(
                 entities_by_id[relative_import.object_id].identity["module"],
                 "apps.web.src.app.component",
+            )
+            self.assertEqual(resource_import.qualifier["category"], "relative_resource_module")
+            self.assertEqual(entities_by_id[resource_import.object_id].kind, "CodeModule")
+            self.assertEqual(
+                entities_by_id[resource_import.object_id].identity["module"],
+                "apps.web.src.app.component.scss",
             )
             self.assertEqual(alias_import.qualifier["category"], "internal_module")
             self.assertEqual(entities_by_id[alias_import.object_id].kind, "CodeModule")

@@ -58,7 +58,7 @@ class PythonImportNormalizer:
         python_files = repo.files_by_language.get("python", ())
         self.module_names = {self._module_name(path) for path in python_files}
         self.package_modules = {self._module_name(path) for path in python_files if path.name == "__init__.py"}
-        self.package_roots = self._package_roots()
+        self.package_root_modules = self._package_root_modules()
         self.declared_dependencies = self._declared_dependencies()
         self.distributions_by_import_root = _distributions_by_import_root()
         self.stdlib_modules = set(getattr(sys, "stdlib_module_names", set()))
@@ -74,11 +74,13 @@ class PythonImportNormalizer:
         root = target.split(".", 1)[0]
 
         if ref.level:
-            category = "relative_internal_module" if self._is_internal(target) else "unknown"
-            return self._normalized(ref, category, target, root, None, target)
+            module_name = self._resolve_internal_module(target)
+            category = "relative_internal_module" if module_name is not None else "unknown"
+            return self._normalized(ref, category, module_name or target, root, None, module_name or target)
 
-        if self._is_internal(target):
-            return self._normalized(ref, "internal_module", target, root, None, target)
+        module_name = self._resolve_internal_module(target)
+        if module_name is not None:
+            return self._normalized(ref, "internal_module", module_name, root, None, module_name)
 
         if root in self.stdlib_modules:
             return self._normalized(ref, "stdlib", root, root, None, None)
@@ -154,14 +156,21 @@ class PythonImportNormalizer:
             base_parts.extend(target.split("."))
         return ".".join(part for part in base_parts if part)
 
-    def _is_internal(self, module_name: str) -> bool:
+    def _resolve_internal_module(self, module_name: str) -> str | None:
         if not module_name:
-            return False
-        if any(module_name == root or module_name.startswith(f"{root}.") for root in self.package_roots):
-            return True
-        if module_name in self.module_names:
-            return True
-        return any(name.startswith(f"{module_name}.") for name in self.module_names)
+            return None
+        if self._module_exists_or_prefix(module_name):
+            return module_name
+        for import_root, module_root in sorted(self.package_root_modules.items(), key=lambda item: len(item[0]), reverse=True):
+            if module_name != import_root and not module_name.startswith(f"{import_root}."):
+                continue
+            candidate = f"{module_root}{module_name.removeprefix(import_root)}"
+            if self._module_exists_or_prefix(candidate):
+                return candidate
+        return None
+
+    def _module_exists_or_prefix(self, module_name: str) -> bool:
+        return module_name in self.module_names or any(name.startswith(f"{module_name}.") for name in self.module_names)
 
     def _distribution_name(self, target: str, import_root: str) -> str | _DistributionResolution | None:
         normalized_root = import_root.replace("_", "-").lower()
@@ -230,9 +239,19 @@ class PythonImportNormalizer:
         names = {name for name in names if name}
         return {name.replace("_", "-").lower(): name for name in names}
 
-    def _package_roots(self) -> set[str]:
+    def _package_root_modules(self) -> dict[str, str]:
         pyproject = self.repo.root / "pyproject.toml"
-        roots = {self.repo.name}
+        roots = {self.repo.name: self.repo.name}
+        for path in self.repo.files_by_language.get("python", ()):
+            if path.name != "__init__.py":
+                continue
+            relative_parts = path.relative_to(self.repo.root).parts
+            module_name = self._module_name(path)
+            module_parts = module_name.split(".")
+            if module_parts:
+                roots.setdefault(module_parts[0], module_parts[0])
+            if len(relative_parts) >= 3 and relative_parts[0] == "src":
+                roots.setdefault(relative_parts[1], f"src.{relative_parts[1]}")
         if not pyproject.exists():
             return roots
         try:
@@ -240,15 +259,29 @@ class PythonImportNormalizer:
         except tomllib.TOMLDecodeError:
             return roots
         for package in data.get("tool", {}).get("poetry", {}).get("packages", []):
-            include = package.get("include") if isinstance(package, dict) else None
-            if include:
-                roots.add(str(include).split(".", 1)[0])
+            if not isinstance(package, dict):
+                continue
+            include = package.get("include")
+            if not include:
+                continue
+            import_root = str(include).split(".", 1)[0]
+            package_from = package.get("from")
+            package_from_module = _package_from_module(package_from)
+            module_root = f"{package_from_module}.{import_root}" if package_from_module else import_root
+            roots.setdefault(import_root, module_root)
         return roots
 
     def _module_name(self, file_path: Path) -> str:
         relative = file_path.relative_to(self.repo.root).with_suffix("")
         parts = [part for part in relative.parts if part != "__init__"]
         return ".".join(parts) or self.repo.name
+
+
+def _package_from_module(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parts = [part for part in value.replace("\\", "/").split("/") if part and part != "."]
+    return ".".join(parts) or None
 
 
 def _requirement_name(requirement: str) -> str:

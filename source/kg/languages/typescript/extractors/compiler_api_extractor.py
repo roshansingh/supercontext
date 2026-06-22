@@ -13,6 +13,16 @@ from source.kg.extraction.framework.adapter import ExtractionContext
 from source.kg.languages.typescript.extractors.parser_bridge import parse_typescript_repo
 
 
+INTERNAL_IMPORT_CATEGORIES = frozenset(
+    {
+        "internal_module",
+        "relative_internal_module",
+        "resource_module",
+        "relative_resource_module",
+    }
+)
+
+
 @dataclass
 class KgBuild:
     entities: list[Entity] = field(default_factory=list)
@@ -216,7 +226,7 @@ class TypeScriptCompilerApiExtractor:
         return by_local
 
     def _dependency_entity(self, repo: RepoSnapshot, import_ref: NormalizedJsImport, tenant_id: str) -> Entity:
-        if import_ref.category in {"internal_module", "relative_internal_module"}:
+        if import_ref.category in INTERNAL_IMPORT_CATEGORIES:
             return Entity(
                 kind="CodeModule",
                 identity={"tenant_id": tenant_id, "repo": repo.name, "module": import_ref.target_name},
