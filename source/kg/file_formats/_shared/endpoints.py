@@ -489,8 +489,11 @@ def _endpoint_row_metadata(row: dict) -> dict[str, object] | None:
     for key in (
         "service",
         "service_raw",
+        "service_resolution_kind",
         "api_version",
+        "api_version_resolution_kind",
         "client_app_id",
+        "client_app_id_resolution_kind",
         "base_url",
         "host_raw",
         "base_url_raw",
