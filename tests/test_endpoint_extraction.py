@@ -1937,6 +1937,144 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/repeat/{id}/again/{id}"][0]["route_params"], ["id"])
         self.assertFalse(_call_site_coverage(build))
 
+    def test_typescript_local_fetch_leading_dynamic_relative_template_path_parameterizes(self) -> None:
+        build = _extract_typescript_client(
+            "function useFetch() { return fetch; }\n"
+            "function useRouteContext() { return { contextType: 'projects', contextId: 'p1' }; }\n"
+            "async function call(metadataId) {\n"
+            "  const fetch = useFetch();\n"
+            "  const { contextType, contextId } = useRouteContext();\n"
+            "  return fetch(`${contextType}/${contextId}/metadata/${metadataId}`, { method: 'PATCH' });\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/{contextType}/{contextId}/metadata/{metadataId}": {"PATCH"}})
+        self.assertEqual(_hosts_by_path(calls)["/{contextType}/{contextId}/metadata/{metadataId}"], {None})
+        qualifier = qualifiers_by_path["/{contextType}/{contextId}/metadata/{metadataId}"][0]
+        self.assertEqual(qualifier["resolution_kind"], "template_parameterized")
+        self.assertEqual(qualifier["route_params"], ["contextType", "contextId", "metadataId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("template_dynamic_host_position", 0), 0)
+
+    def test_typescript_leading_dynamic_relative_path_keeps_host_like_targets_unresolved(self) -> None:
+        build = _extract_typescript_client(
+            "import { importedHost } from './env';\n"
+            "function useFetch() { return fetch; }\n"
+            "async function call(contextType, contextId, projectId, serviceUrl) {\n"
+            "  const fetch = useFetch();\n"
+            "  fetch(`${serviceUrl}/api/projects/${projectId}`);\n"
+            "  fetch(`${importedHost}/${projectId}/events`);\n"
+            "  fetch(`${serviceUrl}/${projectId}/events`);\n"
+            "  const outer = { contextType, contextId };\n"
+            "  const { contextType: outerType, contextId: outerId } = outer;\n"
+            "  {\n"
+            "    const { contextType: outerType } = { contextType: serviceUrl };\n"
+            "    fetch(`${outerType}/${outerId}/shadowed`);\n"
+            "  }\n"
+            "  const { contextType: siblingType } = outer;\n"
+            "  const { contextId: siblingId } = outer;\n"
+            "  {\n"
+            "    const { contextType: siblingType, contextId: siblingId } = outer;\n"
+            "  }\n"
+            "  fetch(`${siblingType}/${siblingId}/sibling`);\n"
+            "  const { contextType: loopType } = outer;\n"
+            "  const { contextId: loopId } = outer;\n"
+            "  for (const { contextType: loopType, contextId: loopId } of [outer]) {}\n"
+            "  fetch(`${loopType}/${loopId}/for-sibling`);\n"
+            "  const { contextType: caughtType } = outer;\n"
+            "  const { contextId: caughtId } = outer;\n"
+            "  try { throw outer; } catch ({ contextType: caughtType, contextId: caughtId }) {}\n"
+            "  fetch(`${caughtType}/${caughtId}/catch-sibling`);\n"
+            "}\n"
+            "async function globalCall(contextType, contextId) {\n"
+            "  fetch(`${contextType}/${contextId}/metadata`);\n"
+            "}\n"
+            "async function lateLocalFetch(contextType, contextId) {\n"
+            "  fetch(`${contextType}/${contextId}/late-fetch`);\n"
+            "  const fetch = useFetch();\n"
+            "}\n"
+            "async function configCall(cfg) {\n"
+            "  const fetch = useFetch();\n"
+            "  const { serviceUrl, projectId } = cfg;\n"
+            "  fetch(`${serviceUrl}/${projectId}/config-events`);\n"
+            "  const { baseUrl: apiRoot, accountId } = cfg;\n"
+            "  fetch(`${apiRoot}/${accountId}/accounts`);\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/projects/{projectId}": {"ANY"},
+                "/{projectId}/events": {"ANY"},
+                "/{contextId}/metadata": {"ANY"},
+                "/{contextId}/late-fetch": {"ANY"},
+                "/{outerId}/shadowed": {"ANY"},
+                "/{siblingId}/sibling": {"ANY"},
+                "/{loopId}/for-sibling": {"ANY"},
+                "/{caughtId}/catch-sibling": {"ANY"},
+                "/{projectId}/config-events": {"ANY"},
+                "/{accountId}/accounts": {"ANY"},
+            },
+        )
+        service_qualifier = qualifiers_by_path["/api/projects/{projectId}"][0]
+        self.assertEqual(service_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(service_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(service_qualifier["host_raw"], "serviceUrl")
+        self.assertEqual(service_qualifier["route_params"], ["projectId"])
+        unresolved_event_hosts = {row["host_raw"] for row in qualifiers_by_path["/{projectId}/events"]}
+        self.assertEqual(unresolved_event_hosts, {"importedHost", "serviceUrl"})
+        for qualifier in qualifiers_by_path["/{projectId}/events"]:
+            self.assertEqual(qualifier["confidence"], "host_unresolved_path_resolved")
+            self.assertEqual(qualifier["reason"], "template_dynamic_host_position")
+            self.assertEqual(qualifier["route_params"], ["projectId"])
+        global_qualifier = qualifiers_by_path["/{contextId}/metadata"][0]
+        self.assertEqual(global_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(global_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(global_qualifier["host_raw"], "contextType")
+        self.assertEqual(global_qualifier["route_params"], ["contextId"])
+        late_fetch_qualifier = qualifiers_by_path["/{contextId}/late-fetch"][0]
+        self.assertEqual(late_fetch_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(late_fetch_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(late_fetch_qualifier["host_raw"], "contextType")
+        self.assertEqual(late_fetch_qualifier["route_params"], ["contextId"])
+        shadowed_qualifier = qualifiers_by_path["/{outerId}/shadowed"][0]
+        self.assertEqual(shadowed_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(shadowed_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(shadowed_qualifier["host_raw"], "outerType")
+        self.assertEqual(shadowed_qualifier["route_params"], ["outerId"])
+        sibling_qualifier = qualifiers_by_path["/{siblingId}/sibling"][0]
+        self.assertEqual(sibling_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(sibling_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(sibling_qualifier["host_raw"], "siblingType")
+        self.assertEqual(sibling_qualifier["route_params"], ["siblingId"])
+        loop_qualifier = qualifiers_by_path["/{loopId}/for-sibling"][0]
+        self.assertEqual(loop_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(loop_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(loop_qualifier["host_raw"], "loopType")
+        self.assertEqual(loop_qualifier["route_params"], ["loopId"])
+        caught_qualifier = qualifiers_by_path["/{caughtId}/catch-sibling"][0]
+        self.assertEqual(caught_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(caught_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(caught_qualifier["host_raw"], "caughtType")
+        self.assertEqual(caught_qualifier["route_params"], ["caughtId"])
+        config_qualifier = qualifiers_by_path["/{projectId}/config-events"][0]
+        self.assertEqual(config_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(config_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(config_qualifier["host_raw"], "serviceUrl")
+        self.assertEqual(config_qualifier["route_params"], ["projectId"])
+        base_alias_qualifier = qualifiers_by_path["/{accountId}/accounts"][0]
+        self.assertEqual(base_alias_qualifier["confidence"], "host_unresolved_path_resolved")
+        self.assertEqual(base_alias_qualifier["reason"], "template_dynamic_host_position")
+        self.assertEqual(base_alias_qualifier["host_raw"], "apiRoot")
+        self.assertEqual(base_alias_qualifier["route_params"], ["accountId"])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["template_dynamic_host_position"], 11)
+
     def test_typescript_client_unsafe_dynamic_template_segments_fail_closed(self) -> None:
         build = _extract_typescript_client(
             "fetch(`/items/${getId()}`);\n"
