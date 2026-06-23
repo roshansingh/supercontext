@@ -129,7 +129,7 @@ What exists now:
 
 - The local KG harness writes backend-agnostic JSONL snapshots under `data/kg_runs/`: `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - The snapshot shape follows the ADR-0006 Entity + Fact + Evidence + Coverage substrate closely enough to validate extraction and query semantics before choosing final table DDL.
-- Query code reads the JSONL substrate through `source.kg.queries.KgSnapshot`, keeping current CLI behavior independent of AGE/Cypher.
+- Query code reads the JSONL substrate through `source.kg.query.snapshot.KgSnapshot`, keeping current CLI behavior independent of AGE/Cypher.
 
 What is still pending:
 
