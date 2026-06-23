@@ -2485,11 +2485,11 @@ function addResolvedDefault(defaults, key, resolved) {
   if (Array.isArray(resolved.env_names)) defaults[`${key}_env_names`] = uniqueStrings(resolved.env_names);
 }
 
-function classEndpointContext(classNode, sourceFile, bindings) {
-  const defaults = classSuperEndpointDefaults(classNode, sourceFile, bindings) ?? {};
+function classEndpointContext(classNode, sourceFile, bindings, defaults = null) {
+  const resolvedDefaults = defaults ?? classSuperEndpointDefaults(classNode, sourceFile, bindings) ?? {};
   const memberContext = classInstanceMemberContext(classNode, sourceFile, bindings);
   return {
-    defaults,
+    defaults: resolvedDefaults,
     memberValues: memberContext.memberValues,
     inheritedDefaultBlockedMembers: memberContext.inheritedDefaultBlockedMembers,
   };
@@ -2604,8 +2604,9 @@ function thisHttpWrapperCallFromNode(node, sourceFile, bindings, classContext) {
 function collectHttpControllerWrapperCalls(sourceFile, bindings) {
   const calls = [];
   function visitClass(classNode) {
-    const classContext = classEndpointContext(classNode, sourceFile, bindings);
-    if (Object.keys(classContext.defaults).length === 0) return;
+    const defaults = classSuperEndpointDefaults(classNode, sourceFile, bindings);
+    if (defaults == null || Object.keys(defaults).length === 0) return;
+    const classContext = classEndpointContext(classNode, sourceFile, bindings, defaults);
     function visit(node, preserveThisContext = false) {
       if (!preserveThisContext && isThisRebindingFunctionBoundary(node)) return;
       const call = thisHttpWrapperCallFromNode(node, sourceFile, bindings, classContext);
