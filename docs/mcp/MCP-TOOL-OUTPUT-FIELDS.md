@@ -78,7 +78,7 @@ Purpose: find indexed services by name, slug, repo, namespace, or other service 
 Example:
 
 ```json
-{"tool": "search_services", "status": "found", "returned_count": 1, "services": [{"name": "mercury-api", "repo": "mercury_api"}]}
+{"tool": "search_services", "status": "found", "returned_count": 1, "services": [{"name": "orders-api", "repo": "orders_backend"}]}
 ```
 
 Prompt usage: exact service discovery can start here, but broad planning/runtime questions should use `planning_context` first.

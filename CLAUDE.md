@@ -19,23 +19,23 @@ Use `INDEX.md` as the canonical annotated map of project docs, ADRs, debate seed
 
 ## Commands
 
-`pyproject.toml` defines package metadata, optional dependency groups, and console-script entry points. The default verification path is still direct Python module execution:
+`pyproject.toml` defines package metadata, optional dependency groups, and console-script entry points. Use `.venv/bin/python` and `.venv/bin/supercontext-*` when the repo venv exists; fall back to `python3` only if it does not. Do not assume the bare `python` shim or console scripts are on PATH.
 
 ```bash
 # Verify syntax and tests
-python -m compileall -q source tests
-python -m unittest discover -s tests
+.venv/bin/python -m compileall -q source tests
+.venv/bin/python -m unittest discover -s tests
 
 # Build a KG snapshot from a Python or TS/JS repo
-python -m source.scripts.build_kg --repo <path-to-repo> --out data/kg_runs/<name>
+.venv/bin/supercontext-build-kg --repo <path-to-repo> --out data/kg_runs/<name>
 
 # Query the snapshot
-python -m source.scripts.query_kg --snapshot data/kg_runs/<name> summary
-python -m source.scripts.query_kg --snapshot data/kg_runs/<name> find-callers <symbol> --limit 5
-python -m source.scripts.query_kg --snapshot data/kg_runs/<name> modules-importing <package> --limit 5
-python -m source.scripts.query_kg --snapshot data/kg_runs/<name> top-dependencies --limit 10
-python -m source.scripts.query_kg --snapshot data/kg_runs/<name> dependency-info <package>
-python -m source.scripts.query_kg --snapshot data/kg_runs/<name> blast-radius <symbol> --depth 2
+.venv/bin/supercontext-query-kg --snapshot data/kg_runs/<name> summary
+.venv/bin/supercontext-query-kg --snapshot data/kg_runs/<name> find-callers <symbol> --limit 5
+.venv/bin/supercontext-query-kg --snapshot data/kg_runs/<name> modules-importing <package> --limit 5
+.venv/bin/supercontext-query-kg --snapshot data/kg_runs/<name> top-dependencies --limit 10
+.venv/bin/supercontext-query-kg --snapshot data/kg_runs/<name> dependency-info <package>
+.venv/bin/supercontext-query-kg --snapshot data/kg_runs/<name> blast-radius <symbol> --depth 2
 ```
 
 Snapshots write `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json` under the `--out` directory.
@@ -47,15 +47,15 @@ Use the deterministic coverage pipeline for repo or fleet coverage questions; do
 Build or refresh the snapshot first:
 
 ```bash
-python -m source.scripts.build_kg --repo <repo-path> --out <snapshot-dir>
-python -m source.scripts.build_multi_kg --repo <repo-1> --repo <repo-2> --out <snapshot-dir>
+.venv/bin/supercontext-build-kg --repo <repo-path> --out <snapshot-dir>
+.venv/bin/supercontext-build-multi-kg --repo <repo-1> --repo <repo-2> --out <snapshot-dir>
 ```
 
 Then compute metrics and render the standard report:
 
 ```bash
-python -m source.scripts.coverage_metrics --snapshot <snapshot-dir> --expected-repos <N>
-python -m source.scripts.coverage_report \
+.venv/bin/supercontext-coverage-metrics --snapshot <snapshot-dir> --expected-repos <N>
+.venv/bin/supercontext-coverage-report \
   --snapshot <snapshot-dir> \
   --out docs/evaluation/runs/<run-id> \
   --run-id <run-id> \

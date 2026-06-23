@@ -289,13 +289,12 @@ Generate per-service migration PRs across the graph; integrate with release trai
 
 ## 14. Open questions
 
-1. **GitHub repository rename timing.** Product name is "SuperContext"; when should the GitHub repository move from `bettercontext` to `supercontext`?
-2. **First-language priority.** TS/JS, Go, Java/Kotlin all matter. Which does the design partner run? Pick the one that gives us the cleanest demo for inbound prospects.
-3. **Tracing source for the MVP.** Datadog has the largest enterprise footprint but the weakest API for high-volume tail-reads; Tempo and Jaeger are easier. Do we pick one or build all three?
-4. **Pricing model.** Per-seat (matches Cursor/Copilot mental model), per-service (matches Backstage), or platform-team flat fee? Likely a hybrid; defer until two design partners are using it.
-5. **Self-host vs SaaS-first.** Some logos won't sign for SaaS at all. Do we accept losing them in v1 to move faster, or invest in self-host from week one?
-6. **Buyer entry point.** Is the first sale to the platform team (longer sales cycle, larger deal) or bottoms-up to a single feature team (faster, smaller, must convert later)?
-7. **Where does training data go?** Customers will ask. Pre-commit to "we don't use your code or graph for model training, ever" or stay flexible?
+1. **First-language priority.** TS/JS, Go, Java/Kotlin all matter. Which does the design partner run? Pick the one that gives us the cleanest demo for inbound prospects.
+2. **Tracing source for the MVP.** Datadog has the largest enterprise footprint but the weakest API for high-volume tail-reads; Tempo and Jaeger are easier. Do we pick one or build all three?
+3. **Pricing model.** Per-seat (matches Cursor/Copilot mental model), per-service (matches Backstage), or platform-team flat fee? Likely a hybrid; defer until two design partners are using it.
+4. **Self-host vs SaaS-first.** Some logos won't sign for SaaS at all. Do we accept losing them in v1 to move faster, or invest in self-host from week one?
+5. **Buyer entry point.** Is the first sale to the platform team (longer sales cycle, larger deal) or bottoms-up to a single feature team (faster, smaller, must convert later)?
+6. **Where does training data go?** Customers will ask. Pre-commit to "we don't use your code or graph for model training, ever" or stay flexible?
 
 ---
 

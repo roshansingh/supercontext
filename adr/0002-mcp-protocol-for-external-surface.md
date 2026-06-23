@@ -49,7 +49,7 @@ Concretely:
 
 ## Implementation Status (as of 2026-05-16)
 
-This ADR has a local-development MCP server skeleton.
+This ADR has a local read-only MCP implementation for development and pilot use. Hosted transport, auth, pagination, and resource contracts remain follow-up work.
 
 What exists now:
 

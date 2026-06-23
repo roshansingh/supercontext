@@ -254,8 +254,7 @@ This is broader than Product 1's incident metric and better matches the platform
 
 ## 14. Open questions
 
-1. When should the GitHub repository move from `bettercontext` to `supercontext`?
-2. Should the long-term narrative lead with engineering context or broader enterprise context?
-3. Which non-code system should be the first expansion after Product 1: Confluence, Jira, or OneDrive / SharePoint?
-4. How much permission fidelity is required for the first enterprise expansion?
-5. Which initial buyer is most likely to expand from Product 1 into the broader platform: platform engineering, CTO office, or enterprise architecture?
+1. Should the long-term narrative lead with engineering context or broader enterprise context?
+2. Which non-code system should be the first expansion after Product 1: Confluence, Jira, or OneDrive / SharePoint?
+3. How much permission fidelity is required for the first enterprise expansion?
+4. Which initial buyer is most likely to expand from Product 1 into the broader platform: platform engineering, CTO office, or enterprise architecture?
