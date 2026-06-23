@@ -1087,6 +1087,427 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/orders"][0]["client_app_id"], "web")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
 
+    def test_typescript_controller_wrapper_methods_resolve_imported_super_service_literal(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "tsconfig.json": (
+                    "{\n"
+                    '  "compilerOptions": {\n'
+                    '    "baseUrl": ".",\n'
+                    '    "paths": { "@/*": ["src/*"] }\n'
+                    "  }\n"
+                    "}\n"
+                ),
+                "src/constants/services.ts": "export const ordersService = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService as importedService } from '@/constants/services';\n"
+                    "const service = importedService;\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async getOrder(orderId) {\n"
+                    "    return this.get({ path: `/api/orders/${orderId}` });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders/{orderId}": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders/{orderId}"], {"orders-service"})
+        self.assertEqual(qualifiers_by_path["/api/orders/{orderId}"][0]["service"], "orders-service")
+        self.assertNotIn("service_raw", qualifiers_by_path["/api/orders/{orderId}"][0])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_controller_wrapper_methods_resolve_imported_proto_named_literal(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const __proto__ = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { __proto__ as importedService } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service: importedService, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_controller_wrapper_methods_resolve_proto_named_alias(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const ordersService = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService } from './constants';\n"
+                    "const __proto__ = ordersService;\n"
+                    "const service = __proto__;\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_controller_wrapper_methods_do_not_resolve_mutable_import_alias(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const ordersService = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService } from './constants';\n"
+                    "let service = ordersService;\n"
+                    "function reset() { service = 'local-service'; }\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "service")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_keep_mutable_imported_exports_unresolved(self) -> None:
+        cases = {
+            "export_let": "export let ordersService = 'orders-service';\nfunction reset() { ordersService = 'local-service'; }\n",
+            "reexport_var": "var ORDERS_SERVICE = 'orders-service';\nfunction reset() { ORDERS_SERVICE = 'local-service'; }\nexport { ORDERS_SERVICE as ordersService };\n",
+        }
+        for case_name, constants_source in cases.items():
+            with self.subTest(case_name=case_name):
+                build = _extract_typescript_client_files(
+                    {
+                        "src/constants.ts": constants_source,
+                        "src/orders.ts": (
+                            "import { Controller } from '@example/http-client';\n"
+                            "import { ordersService } from './constants';\n"
+                            "export class OrdersService extends Controller {\n"
+                            "  constructor() {\n"
+                            "    super({ service: ordersService, clientAppId: 'web' });\n"
+                            "  }\n"
+                            "  async search() {\n"
+                            "    return this.get({ path: '/api/orders' });\n"
+                            "  }\n"
+                            "}\n"
+                        ),
+                    }
+                )
+
+                calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+                qualifiers_by_path = _qualifiers_by_path(calls)
+
+                self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+                self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+                self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "ordersService")
+                self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_resolve_imported_super_base_url_literal(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "const API_ROOT = 'http://localhost:3000/api';\nexport { API_ROOT as apiRoot };\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { apiRoot } from './constants';\n"
+                    "const baseUrl = apiRoot;\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ baseUrl, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: 'orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"localhost"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["base_url"], "http://localhost:3000/api")
+        self.assertNotIn("base_url_raw", qualifiers_by_path["/api/orders"][0])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_controller_wrapper_methods_resolve_imported_super_host_literal(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const apiHost = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { apiHost } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ host: apiHost, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertNotIn("host_raw", qualifiers_by_path["/api/orders"][0])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_controller_wrapper_methods_suppress_imported_external_base_url_literal(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const apiRoot = 'https://api.example.com/v1';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { apiRoot } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ baseUrl: apiRoot, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: 'orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        self.assertEqual(_endpoint_rows(build, "CALLS_ENDPOINT"), [])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["external_endpoint_suppressed"], 1)
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_controller_wrapper_methods_keep_malformed_imported_base_url_unresolved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const apiRoot = 'http://:3000/api';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { apiRoot } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ baseUrl: apiRoot, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: 'orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/orders"][0]["base_url_raw"], "apiRoot")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_keep_imported_path_prefix_base_url_unresolved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const apiRoot = '/api/v1';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { apiRoot } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ baseUrl: apiRoot, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: 'orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/orders"][0]["base_url_raw"], "apiRoot")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_keep_non_url_imported_base_url_unresolved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const apiRoot = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { apiRoot } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ baseUrl: apiRoot, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: 'orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/orders"][0]["base_url_raw"], "apiRoot")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_keep_dynamic_imported_super_default_unresolved(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const ordersService = makeService();\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service: ordersService, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "ordersService")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_do_not_use_imported_literal_for_shadowed_super_default(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const ordersService = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor(ordersService) {\n"
+                    "    super({ service: ordersService, clientAppId: 'web' });\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "ordersService")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_do_not_use_imported_literal_for_hoisted_var_shadow(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const ordersService = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service: ordersService, clientAppId: 'web' });\n"
+                    "    var ordersService;\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "ordersService")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_controller_wrapper_methods_do_not_use_imported_literal_for_later_block_shadow(self) -> None:
+        build = _extract_typescript_client_files(
+            {
+                "src/constants.ts": "export const ordersService = 'orders-service';\n",
+                "src/orders.ts": (
+                    "import { Controller } from '@example/http-client';\n"
+                    "import { ordersService } from './constants';\n"
+                    "export class OrdersService extends Controller {\n"
+                    "  constructor() {\n"
+                    "    super({ service: ordersService, clientAppId: 'web' });\n"
+                    "    let ordersService = 'local-service';\n"
+                    "  }\n"
+                    "  async search() {\n"
+                    "    return this.get({ path: '/api/orders' });\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "ordersService")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
     def test_typescript_controller_wrapper_methods_require_super_base_context(self) -> None:
         build = _extract_typescript_client(
             "import { Controller } from '@example/http-client';\n"

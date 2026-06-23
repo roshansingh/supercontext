@@ -239,6 +239,8 @@ def extract_typescript_client_endpoint_calls(
     tenant_id: str,
 ) -> None:
     module_clients = _build_module_clients_index(parsed_files)
+    literal_exports = _build_literal_exports_index(parsed_files)
+    literal_aliases = _build_literal_aliases_index(parsed_files)
     path_aliases = _load_typescript_path_aliases(repo.root)
     for relative_path, parsed_file in parsed_files.items():
         if not isinstance(parsed_file, dict):
@@ -249,6 +251,14 @@ def extract_typescript_client_endpoint_calls(
         for row in parsed_file.get("client_endpoint_calls", []):
             if not isinstance(row, dict):
                 continue
+            row = _resolve_typescript_endpoint_imported_base_literals(
+                scanned.relative_path,
+                row,
+                imports_by_local,
+                literal_exports,
+                literal_aliases.get(scanned.relative_path, {}),
+                path_aliases,
+            )
             line_number = int(row.get("line") or 1)
             raw_target = _raw_target(row)
             if row.get("source_kind") == "imported_axios_call":
@@ -481,6 +491,7 @@ def _endpoint_row_metadata(row: dict) -> dict[str, object] | None:
         "service_raw",
         "api_version",
         "client_app_id",
+        "base_url",
         "host_raw",
         "base_url_raw",
         "reason",
@@ -519,6 +530,155 @@ def _build_module_clients_index(parsed_files: dict[str, object]) -> dict[str, di
 
 def build_typescript_module_clients_index(parsed_files: dict[str, object]) -> dict[str, dict[str, object]]:
     return _build_module_clients_index(parsed_files)
+
+
+def _build_literal_exports_index(parsed_files: dict[str, object]) -> dict[str, dict[str, str]]:
+    return _build_string_map_index(parsed_files, "literal_exports")
+
+
+def _build_literal_aliases_index(parsed_files: dict[str, object]) -> dict[str, dict[str, str]]:
+    return _build_string_map_index(parsed_files, "literal_aliases")
+
+
+def _build_string_map_index(parsed_files: dict[str, object], key: str) -> dict[str, dict[str, str]]:
+    index: dict[str, dict[str, str]] = {}
+    for relative_path, parsed_file in parsed_files.items():
+        if not isinstance(relative_path, str) or not isinstance(parsed_file, dict):
+            continue
+        value = parsed_file.get(key)
+        if not isinstance(value, dict):
+            continue
+        strings = {str(name): item for name, item in value.items() if isinstance(name, str) and isinstance(item, str)}
+        if strings:
+            index[relative_path] = strings
+    return index
+
+
+def _resolve_typescript_endpoint_imported_base_literals(
+    importer_path: str,
+    row: dict,
+    imports_by_local: dict[str, dict[str, str]],
+    literal_exports: dict[str, dict[str, str]],
+    literal_aliases: dict[str, str],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
+) -> dict:
+    if row.get("confidence") != "host_unresolved_path_resolved" or row.get("reason") != "host_or_service_unresolved":
+        return row
+    for raw_key in ("service_raw", "host_raw", "base_url_raw"):
+        if row.get(f"{raw_key}_imported_literal_candidate") is not True:
+            continue
+        raw = row.get(raw_key)
+        local_name = _identifier_from_typescript_raw(raw)
+        if local_name is None:
+            continue
+        literal = _resolve_typescript_imported_literal(
+            importer_path,
+            local_name,
+            imports_by_local,
+            literal_exports,
+            literal_aliases,
+            path_aliases,
+            seen=frozenset(),
+        )
+        if literal is None:
+            continue
+        resolved = _endpoint_row_with_resolved_base_literal(row, raw_key, literal)
+        if resolved is not None:
+            return resolved
+    return row
+
+
+def _resolve_typescript_imported_literal(
+    importer_path: str,
+    local_name: str,
+    imports_by_local: dict[str, dict[str, str]],
+    literal_exports: dict[str, dict[str, str]],
+    literal_aliases: dict[str, str],
+    path_aliases: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    seen: frozenset[str],
+) -> str | None:
+    if local_name in seen:
+        return None
+    next_seen = seen | frozenset((local_name,))
+    import_binding = imports_by_local.get(local_name)
+    if import_binding is not None:
+        module_path = resolve_typescript_import_path(
+            importer_path,
+            import_binding["import_source"],
+            literal_exports,
+            path_aliases,
+        )
+        if module_path is None:
+            return None
+        value = literal_exports.get(module_path, {}).get(import_binding["imported_name"])
+        return value if isinstance(value, str) else None
+    alias = literal_aliases.get(local_name)
+    if alias is None:
+        return None
+    return _resolve_typescript_imported_literal(
+        importer_path,
+        alias,
+        imports_by_local,
+        literal_exports,
+        literal_aliases,
+        path_aliases,
+        seen=next_seen,
+    )
+
+
+def _endpoint_row_with_resolved_base_literal(row: dict, raw_key: str, literal: str) -> dict | None:
+    path = row.get("path")
+    if not isinstance(path, str):
+        return None
+    trimmed = literal.strip()
+    if not trimmed or trimmed.startswith("${env:") or trimmed.startswith("/"):
+        return None
+    resolved = dict(row)
+    is_absolute_url = trimmed.startswith(("http://", "https://"))
+    if raw_key == "base_url_raw" and not is_absolute_url:
+        return None
+    if is_absolute_url:
+        split = _split_resolved_endpoint_target(f"{trimmed.rstrip('/')}/{path.lstrip('/')}")
+        if split.get("kind") not in {"external", "resolved"}:
+            return None
+        split_path = split.get("path")
+        split_host = split.get("host")
+        if not isinstance(split_path, str) or not isinstance(split_host, str):
+            return None
+        resolved["path"] = split_path
+        resolved["host"] = split_host
+        if split.get("kind") == "external":
+            resolved["external"] = True
+    else:
+        resolved["host"] = trimmed
+    if raw_key == "service_raw":
+        resolved["service"] = trimmed
+    elif raw_key == "base_url_raw":
+        resolved["base_url"] = trimmed
+    for key in (
+        raw_key,
+        f"{raw_key}_imported_literal_candidate",
+        "confidence",
+        "reason",
+        "host_resolution_kind",
+    ):
+        resolved.pop(key, None)
+    return resolved
+
+
+def _identifier_from_typescript_raw(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    first = raw[0]
+    if not (first.isalpha() or first in {"_", "$"}):
+        return None
+    if all(char.isalnum() or char in {"_", "$"} for char in raw[1:]):
+        return raw
+    return None
 
 
 def _build_imports_by_local(parsed_file: dict) -> dict[str, dict[str, str]]:
@@ -745,6 +905,8 @@ def _split_resolved_endpoint_target(value: str) -> dict[str, object]:
         if not parsed.scheme or not parsed.netloc:
             return {"kind": "unresolved", "path": None, "host": None, "raw_target": trimmed}
         host = parsed.hostname
+        if not isinstance(host, str) or not host:
+            return {"kind": "unresolved", "path": None, "host": None, "raw_target": trimmed}
         external = host is not None and host not in {"localhost", "127.0.0.1"}
         return {
             "kind": "external" if external else "resolved",
