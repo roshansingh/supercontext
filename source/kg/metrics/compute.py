@@ -187,6 +187,7 @@ def _read_package_classifications(root: Path) -> tuple[JsonObject, ...]:
 def _validate_package_classifications(rows: list[JsonObject], root: Path) -> None:
     allowed_buckets = {
         "builtin_or_stdlib",
+        "code_inferred_external",
         "consumer_manifest_external",
         "candidate_internal",
         "candidate_internal_ambiguous",

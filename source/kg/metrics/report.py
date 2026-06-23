@@ -327,7 +327,7 @@ def _package_classification_summary(rows: tuple[JsonObject, ...]) -> JsonObject:
         bucket = row.get("bucket")
         if not isinstance(bucket, str):
             continue
-        if bucket not in {"builtin_or_stdlib", "consumer_manifest_external"}:
+        if bucket not in {"builtin_or_stdlib", "code_inferred_external", "consumer_manifest_external"}:
             continue
         if _classification_actionable_reason(row) is not None:
             continue

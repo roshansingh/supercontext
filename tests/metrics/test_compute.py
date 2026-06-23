@@ -491,6 +491,46 @@ class CoverageMetricsComputeTest(unittest.TestCase):
             self.assertEqual(metric.state, "n_a")
             self.assertEqual(metric.reason, "no candidate internal package dependencies")
 
+    def test_cross_repo_linkage_accepts_code_inferred_external_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            snapshot = root / "snapshot"
+            package = Entity(
+                "ExternalPackage",
+                {"tenant_id": "default", "repo": "repo", "name": "requests"},
+                properties={"category": "third_party", "import_root": "requests", "distribution_name": "requests"},
+            )
+            JsonlKgStore(snapshot).write(
+                entities=[package],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={
+                    "repo_path": str(repo),
+                    "repo_name": "repo",
+                    "commit_sha": "working-tree",
+                    "built_at": "2026-05-17T00:00:00+00:00",
+                    "counts": {"files_by_language": {"python": 1}},
+                },
+            )
+            _write_jsonl(
+                snapshot / "package_classifications.jsonl",
+                [
+                    {
+                        "classification_id": "pkgclass:external",
+                        "entity_id": package.entity_id,
+                        "bucket": "code_inferred_external",
+                    },
+                ],
+            )
+
+            metric = compute_all(snapshot, expected_repos=1)[0].metric_values["M_cross_repo_linkage"]
+
+            self.assertEqual(metric.state, "n_a")
+            self.assertEqual(metric.reason, "no candidate internal package dependencies")
+
     def test_cross_repo_linkage_marks_ambiguous_candidates_partial(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

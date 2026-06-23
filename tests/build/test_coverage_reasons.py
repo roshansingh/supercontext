@@ -50,6 +50,15 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
                             _external_package("consumer", "code-only"),
                             Entity(
                                 kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "requests"},
+                                properties={
+                                    "category": "third_party",
+                                    "import_root": "requests",
+                                    "distribution_name": "requests",
+                                },
+                            ),
+                            Entity(
+                                kind="ExternalPackage",
                                 identity={"tenant_id": "default", "repo": "consumer", "name": "fs"},
                                 properties={"category": "node_builtin", "import_root": "fs"},
                             ),
@@ -73,6 +82,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
         self.assertEqual(reasons["local-missing"], "cross_repo_dependency_no_provider")
         self.assertEqual(reasons["code-only"], "cross_repo_dependency_unknown_category")
         self.assertNotIn("react", reasons)
+        self.assertNotIn("requests", reasons)
         self.assertNotIn("fs", reasons)
         local_missing = next(row for row in result.package_classifications if row["package_name"] == "local-missing")
         self.assertEqual(local_missing["spec_form"], "file_path")
@@ -200,6 +210,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
                         {"classification_id": "c", "entity_id": "ent_c", "package_name": "local-missing", "bucket": "consumer_manifest_external", "reason": "human wording can change", "spec_form": "file_path"},
                         {"classification_id": "d", "entity_id": "ent_d", "package_name": "malformed", "bucket": "consumer_manifest_external", "spec_form": ["file_path"]},
                         {"classification_id": "e", "entity_id": "ent_e", "package_name": "bad-bucket", "bucket": ["consumer_manifest_external"]},
+                        {"classification_id": "f", "entity_id": "ent_f", "package_name": "requests", "bucket": "code_inferred_external"},
                     )
                 )
                 + "\n",
@@ -212,7 +223,7 @@ class PackageLinkageCoverageReasonTest(unittest.TestCase):
         self.assertEqual(report.payload["coverage_gaps"][0]["reason"], "cross_repo_dependency_no_provider")
         self.assertEqual(
             report.payload["package_classification_summary"]["non_actionable_bucket_counts"],
-            {"builtin_or_stdlib": 1, "consumer_manifest_external": 2},
+            {"builtin_or_stdlib": 1, "code_inferred_external": 1, "consumer_manifest_external": 2},
         )
         self.assertEqual(
             report.payload["package_classification_summary"]["actionable_reason_counts"],
