@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import subprocess
 import sys
 import tomllib
@@ -43,6 +44,26 @@ class PackagingMetadataTest(unittest.TestCase):
             package_path = ROOT.joinpath(*package_name.split("."))
             with self.subTest(package=package_name):
                 self.assertTrue((package_path / "__init__.py").exists())
+
+    def test_removed_root_compatibility_wrappers_are_absent(self) -> None:
+        removed_modules = (
+            "source.kg.aggregations",
+            "source.kg.display",
+            "source.kg.llm",
+            "source.kg.models",
+            "source.kg.multi_repo",
+            "source.kg.path_search",
+            "source.kg.pipeline",
+            "source.kg.queries",
+            "source.kg.repo_source",
+            "source.kg.store",
+        )
+
+        for module_name in removed_modules:
+            with self.subTest(module=module_name):
+                module_path = ROOT.joinpath(*module_name.split(".")).with_suffix(".py")
+                self.assertFalse(module_path.exists())
+                self.assertIsNone(importlib.util.find_spec(module_name))
 
     def test_script_modules_render_help(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

@@ -43,7 +43,6 @@ This is the local knowledge-graph implementation used by the SuperContext CLI, J
 - `examples/private-goldset/` contains private scenario plans and local runners that consume the public `source/` package.
 - `source/kg/product/evidence_packet.py` normalizes query results into synthesis-ready evidence packets.
 - `source/kg/product/contract_reconciliation.py` compares two scoped sets of facts using a reusable contract identity key.
-- Root-level `source/kg/*.py` files are compatibility wrappers for older imports; new code should import from the grouped packages above.
 
 ## Product-Validation Flow
 
