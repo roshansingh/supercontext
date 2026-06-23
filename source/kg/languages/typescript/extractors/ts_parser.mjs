@@ -150,6 +150,7 @@ const HTTP_WRAPPER_METHODS = new Map([
 ]);
 const ENDPOINT_CONFIG_TARGET_PROPERTIES = ["path", "url"];
 const ENDPOINT_CONFIG_BASE_URL_PROPERTIES = ["baseURL", "baseUrl", "base_url"];
+const ENDPOINT_HOST_BASE_IDENTIFIER_TOKENS = new Set(["url", "uri", "host", "hostname", "origin"]);
 const ASSIGNMENT_OPERATORS = new Set([
   ts.SyntaxKind.EqualsToken,
   ts.SyntaxKind.PlusEqualsToken,
@@ -243,6 +244,138 @@ function isReferenceLikeExpression(node) {
 function canTreatTemplateSpanAsUnresolvedHost(value, followingText, spanIndex, expression) {
   // The emitted endpoint path is the static suffix after an unknown base/host; confidence and coverage remain low-trust.
   return spanIndex === 0 && value.length === 0 && followingText.startsWith("/") && isReferenceLikeExpression(expression);
+}
+
+function identifierNameTokens(name) {
+  const tokens = [];
+  let current = "";
+  for (let index = 0; index < name.length; index += 1) {
+    const char = name[index];
+    if (char === "_" || char === "-" || char === ".") {
+      if (current.length > 0) tokens.push(current.toLowerCase());
+      current = "";
+      continue;
+    }
+    const isUpper = char >= "A" && char <= "Z";
+    const previous = current[current.length - 1] ?? "";
+    const next = name[index + 1] ?? "";
+    const previousIsLowerOrDigit = (previous >= "a" && previous <= "z") || (previous >= "0" && previous <= "9");
+    const nextIsLower = next >= "a" && next <= "z";
+    if (isUpper && current.length > 0 && (previousIsLowerOrDigit || nextIsLower)) {
+      tokens.push(current.toLowerCase());
+      current = char;
+      continue;
+    }
+    current += char;
+  }
+  if (current.length > 0) tokens.push(current.toLowerCase());
+  return tokens;
+}
+
+function identifierNameLooksLikeEndpointHostBase(name) {
+  return identifierNameTokens(name).some((token) => ENDPOINT_HOST_BASE_IDENTIFIER_TOKENS.has(token));
+}
+
+function bindingPropertyNameText(node) {
+  if (!node) return null;
+  if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) return node.text;
+  return null;
+}
+
+function bindingPropertyNamesForTarget(nameNode, targetName) {
+  const propertyNames = [];
+  function visit(node, inheritedPropertyName = null) {
+    if (ts.isIdentifier(node)) {
+      if (node.text === targetName) propertyNames.push(inheritedPropertyName ?? node.text);
+      return;
+    }
+    if (ts.isObjectBindingPattern(node)) {
+      for (const element of node.elements) {
+        const propertyName = bindingPropertyNameText(element.propertyName) ?? (ts.isIdentifier(element.name) ? element.name.text : null);
+        visit(element.name, propertyName ?? inheritedPropertyName);
+      }
+      return;
+    }
+    if (ts.isArrayBindingPattern(node)) {
+      for (const element of node.elements) {
+        if (ts.isBindingElement(element)) visit(element.name, inheritedPropertyName);
+      }
+    }
+  }
+  visit(nameNode);
+  return propertyNames;
+}
+
+function objectBindingInfoForLocalIdentifierUse(identifier, sourceFile) {
+  if (!ts.isIdentifier(identifier)) return null;
+  const targetName = identifier.text;
+  const useStart = identifier.getStart(sourceFile);
+  function groupForBindingName(nameNode) {
+    if (!ts.isObjectBindingPattern(nameNode)) return null;
+    const propertyNames = bindingPropertyNamesForTarget(nameNode, targetName);
+    if (propertyNames.length === 0) return null;
+    return { group: `${nameNode.getStart(sourceFile)}:${nameNode.getEnd()}`, propertyNames };
+  }
+  function nodeContainsUse(node) {
+    return node.getStart(sourceFile) <= useStart && useStart < node.getEnd();
+  }
+  function isLexicalContainer(node) {
+    return (
+      ts.isBlock(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node) ||
+      ts.isModuleBlock(node) ||
+      ts.isForStatement(node) ||
+      ts.isForInStatement(node) ||
+      ts.isForOfStatement(node) ||
+      ts.isCatchClause(node)
+    );
+  }
+  let found = null;
+  function visit(node) {
+    if (node.getStart(sourceFile) > useStart) return;
+    if (node !== sourceFile && isLexicalContainer(node) && !nodeContainsUse(node)) return;
+    if (node !== sourceFile && (isFunctionBoundary(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
+      if (!nodeContainsUse(node)) return;
+      for (const parameter of node.parameters ?? []) {
+        const group = groupForBindingName(parameter.name);
+        if (group != null) found = group;
+      }
+    }
+    if (ts.isVariableDeclaration(node) && node.getStart(sourceFile) < useStart) {
+      const group = groupForBindingName(node.name);
+      if (group != null) found = group;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return found;
+}
+
+function canTreatTemplateSpanAsLeadingRelativePathParam(value, followingText, spanIndex, expression, templateNode, sourceFile, options = {}) {
+  if (options.leadingDynamicRelativePathAllowed !== true) return false;
+  if (spanIndex !== 0 || value.length !== 0 || followingText !== "/") return false;
+  if (!ts.isIdentifier(expression) || !identifierHasLocalScopedDeclaration(expression, expression.text, sourceFile)) return false;
+  if (rawIdentifierCanResolveThroughImport(expression, sourceFile)) return false;
+  if (templateNode.templateSpans.length < 2) return false;
+  const nextSpan = templateNode.templateSpans[1];
+  if (!ts.isIdentifier(nextSpan.expression)) return false;
+  if (!identifierHasLocalScopedDeclaration(nextSpan.expression, nextSpan.expression.text, sourceFile)) return false;
+  if (rawIdentifierCanResolveThroughImport(nextSpan.expression, sourceFile)) return false;
+  // Local fetch wrappers usually provide the base URL; paired object-context fields are route params, not hosts.
+  const leadingInfo = objectBindingInfoForLocalIdentifierUse(expression, sourceFile);
+  const nextInfo = objectBindingInfoForLocalIdentifierUse(nextSpan.expression, sourceFile);
+  if (leadingInfo == null || nextInfo == null || leadingInfo.group !== nextInfo.group) return false;
+  if (
+    identifierNameLooksLikeEndpointHostBase(expression.text) ||
+    leadingInfo.propertyNames.some((propertyName) => identifierNameLooksLikeEndpointHostBase(propertyName))
+  ) {
+    return false;
+  }
+  return (
+    nextSpan.literal.text.length > 1 &&
+    (nextSpan.literal.text.startsWith("/") || nextSpan.literal.text.startsWith("?") || nextSpan.literal.text.startsWith("#"))
+  );
 }
 
 function topLevelLiteralBindingValue(node, bindings, invalid, depth = 0) {
@@ -1182,7 +1315,19 @@ function resolveEndpointExpression(node, sourceFile, bindings, resolvingNames = 
       } else if (resolved.kind === "resolved") {
         value += resolved.value;
       } else {
-        if (canTreatTemplateSpanAsUnresolvedHost(value, span.literal.text, index, span.expression)) {
+        const leadingRelativePathParam = canTreatTemplateSpanAsLeadingRelativePathParam(
+          value,
+          span.literal.text,
+          index,
+          span.expression,
+          node,
+          sourceFile,
+          options
+        );
+        if (leadingRelativePathParam) {
+          value = "/";
+        }
+        if (!leadingRelativePathParam && canTreatTemplateSpanAsUnresolvedHost(value, span.literal.text, index, span.expression)) {
           hostUnresolved = true;
           unresolvedHostRaw = rawNodeText(span.expression, sourceFile);
         } else {
@@ -1286,8 +1431,8 @@ function splitResolvedEndpointTarget(value) {
   return { kind: "resolved", path: trimmed, host: null, raw_target: trimmed };
 }
 
-function resolveEndpointTarget(node, sourceFile, bindings) {
-  const expression = resolveEndpointExpression(node, sourceFile, bindings);
+function resolveEndpointTarget(node, sourceFile, bindings, options = {}) {
+  const expression = resolveEndpointExpression(node, sourceFile, bindings, new Set(), null, options);
   if (expression.kind === "unresolved" || expression.value == null) {
     return { kind: "unresolved", path: null, host: null, raw_target: expression.raw, reason: expression.reason ?? null };
   }
@@ -2670,7 +2815,9 @@ function clientCallFromNode(node, sourceFile, axiosLocals, axiosClients, axiosCl
         );
       }
     }
-    const target = resolveEndpointTarget(node.arguments[0], sourceFile, bindings);
+    const target = resolveEndpointTarget(node.arguments[0], sourceFile, bindings, {
+      leadingDynamicRelativePathAllowed: identifierIsLocallyShadowed(node.expression, "fetch", sourceFile),
+    });
     const method = node.arguments.length >= 2 ? methodFromOptionsLike(node.arguments[1]) : null;
     return rowFromTarget(target, method, lineOf(sourceFile, node.expression.getStart(sourceFile)), "fetch_call");
   }
