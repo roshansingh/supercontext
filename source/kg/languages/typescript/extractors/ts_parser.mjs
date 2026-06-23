@@ -63,6 +63,10 @@ function isFunctionBoundary(node) {
   );
 }
 
+function isThisRebindingFunctionBoundary(node) {
+  return isFunctionBoundary(node) && !ts.isArrowFunction(node);
+}
+
 function collectImports(sourceFile) {
   const imports = [];
   for (const statement of sourceFile.statements) {
@@ -485,8 +489,12 @@ function sourceFileDeclaresName(sourceFile, targetName) {
   return sourceFileDeclaredNames(sourceFile).has(targetName);
 }
 
+function nodeHasModifier(node, kind) {
+  return Array.from(node.modifiers ?? []).some((modifier) => modifier.kind === kind);
+}
+
 function nodeHasDeclareModifier(node) {
-  return Array.from(node.modifiers ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword);
+  return nodeHasModifier(node, ts.SyntaxKind.DeclareKeyword);
 }
 
 function declarationListIsVar(declarationList) {
@@ -1966,8 +1974,77 @@ function targetWithHostValue(targetNode, hostValue, sourceFile, bindings, envNam
   return carryEndpointExpressionDetails(resolved, target);
 }
 
-function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings, unresolvedBaseRawKey = "host_raw") {
-  const host = resolveEndpointExpression(hostNode, sourceFile, bindings);
+function thisMemberName(node) {
+  const expression = ts.isParenthesizedExpression(node) ? node.expression : node;
+  if (ts.isPropertyAccessExpression(expression) && expression.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    return expression.name.text;
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.expression.kind === ts.SyntaxKind.ThisKeyword &&
+    ts.isStringLiteral(expression.argumentExpression)
+  ) {
+    return expression.argumentExpression.text;
+  }
+  return null;
+}
+
+function resolvedStringExpression(node, sourceFile, bindings, parameterBindings = null) {
+  const resolved = resolveEndpointExpression(node, sourceFile, bindings, new Set(), parameterBindings);
+  if ((resolved.kind === "resolved" || resolved.kind === "env") && typeof resolved.value === "string") return resolved;
+  return null;
+}
+
+function metadataExpressionFromDefaults(defaults, key) {
+  if (!defaults || typeof defaults[key] !== "string") return null;
+  const envNames = Array.isArray(defaults[`${key}_env_names`]) ? defaults[`${key}_env_names`] : [];
+  const result = expressionResult(envNames.length > 0 ? "env" : "resolved", defaults[key], defaults[key], "class_default");
+  if (envNames.length > 0) result.env_names = uniqueStrings(envNames);
+  return result;
+}
+
+function copyClassExpressionWithRaw(expression, raw, resolutionKind) {
+  const copied = copyExpressionWithRaw(expression, raw);
+  copied.resolution_kind = resolutionKind;
+  return copied;
+}
+
+function resolveEndpointExpressionWithClassContext(
+  node,
+  sourceFile,
+  bindings,
+  classContext = null,
+  metadataKey = null,
+  options = {}
+) {
+  const memberName = classContext == null ? null : thisMemberName(node);
+  if (memberName != null) {
+    const raw = rawNodeText(node, sourceFile);
+    const memberValue = classContext.memberValues.get(memberName);
+    if (memberValue != null) return copyClassExpressionWithRaw(memberValue, raw, "class_member");
+    if (metadataKey != null && !classContext.inheritedDefaultBlockedMembers.has(memberName)) {
+      // Base HTTP clients commonly expose the constructor service/base as an inherited member.
+      const defaultValue = metadataExpressionFromDefaults(classContext.defaults, metadataKey);
+      if (defaultValue != null) return copyClassExpressionWithRaw(defaultValue, raw, "class_inherited_default");
+    }
+  }
+  return resolveEndpointExpression(node, sourceFile, bindings, new Set(), null, options);
+}
+
+function metadataKeyForRawKey(rawKey) {
+  if (rawKey === "service_raw") return "service";
+  if (rawKey === "base_url_raw") return "base_url";
+  return "host";
+}
+
+function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings, unresolvedBaseRawKey = "host_raw", classContext = null) {
+  const host = resolveEndpointExpressionWithClassContext(
+    hostNode,
+    sourceFile,
+    bindings,
+    classContext,
+    metadataKeyForRawKey(unresolvedBaseRawKey)
+  );
   if (host.kind === "resolved" || host.kind === "env") {
     return targetWithHostValue(targetNode, host.value, sourceFile, bindings, Array.isArray(host.env_names) ? host.env_names : []);
   }
@@ -1976,23 +2053,26 @@ function targetWithHostLikeBase(targetNode, hostNode, sourceFile, bindings, unre
     sourceFile,
     bindings,
     "host_or_service_unresolved",
-    rawNodeText(hostNode, sourceFile),
+    host.raw ?? rawNodeText(hostNode, sourceFile),
     unresolvedBaseRawKey
   );
 }
 
-function resolvedMetadataValue(node, sourceFile, bindings) {
-  const resolved = resolveEndpointExpression(node, sourceFile, bindings);
+function resolvedMetadataValue(node, sourceFile, bindings, classContext = null, key = null) {
+  const resolved = resolveEndpointExpressionWithClassContext(node, sourceFile, bindings, classContext, key);
   if ((resolved.kind === "resolved" || resolved.kind === "env") && typeof resolved.value === "string") return resolved;
   return null;
 }
 
-function addConfigMetadataValue(metadata, key, node, sourceFile, bindings) {
+function addConfigMetadataValue(metadata, key, node, sourceFile, bindings, classContext = null) {
   if (!node) return;
-  const resolved = resolvedMetadataValue(node, sourceFile, bindings);
+  const resolved = resolvedMetadataValue(node, sourceFile, bindings, classContext, key);
   if (resolved != null) {
     metadata[key] = resolved.value;
     if (Array.isArray(resolved.env_names)) metadata[`${key}_env_names`] = uniqueStrings(resolved.env_names);
+    if (typeof resolved.resolution_kind === "string" && resolved.resolution_kind.startsWith("class_")) {
+      metadata[`${key}_resolution_kind`] = resolved.resolution_kind;
+    }
     return;
   }
   metadata[`${key}_raw`] = rawNodeText(node, sourceFile);
@@ -2001,11 +2081,11 @@ function addConfigMetadataValue(metadata, key, node, sourceFile, bindings) {
   }
 }
 
-function endpointConfigMetadata(configNode, sourceFile, bindings, defaults = {}) {
+function endpointConfigMetadata(configNode, sourceFile, bindings, defaults = {}, classContext = null) {
   const metadata = { ...defaults };
-  addConfigMetadataValue(metadata, "service", objectLiteralProperty(configNode, "service"), sourceFile, bindings);
-  addConfigMetadataValue(metadata, "api_version", objectLiteralProperty(configNode, "apiVersion"), sourceFile, bindings);
-  addConfigMetadataValue(metadata, "client_app_id", objectLiteralProperty(configNode, "clientAppId"), sourceFile, bindings);
+  addConfigMetadataValue(metadata, "service", objectLiteralProperty(configNode, "service"), sourceFile, bindings, classContext);
+  addConfigMetadataValue(metadata, "api_version", objectLiteralProperty(configNode, "apiVersion"), sourceFile, bindings, classContext);
+  addConfigMetadataValue(metadata, "client_app_id", objectLiteralProperty(configNode, "clientAppId"), sourceFile, bindings, classContext);
   return metadata;
 }
 
@@ -2054,7 +2134,7 @@ function endpointDefaultUnresolvedBase(defaults) {
   return null;
 }
 
-function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {}) {
+function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {}, classContext = null) {
   if (!ts.isObjectLiteralExpression(configNode)) return null;
   const targetProperty = endpointConfigTargetProperty(configNode);
   if (!targetProperty) return null;
@@ -2066,7 +2146,7 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
       targetProperty.initializer,
       sourceFile,
       bindings,
-      resolveEndpointExpression(baseUrlProperty.initializer, sourceFile, bindings)
+      resolveEndpointExpressionWithClassContext(baseUrlProperty.initializer, sourceFile, bindings, classContext, "base_url")
     );
   } else {
     const hostProperty = objectLiteralPropertyFromNames(configNode, ["host", "service"]);
@@ -2077,7 +2157,8 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
         hostProperty.initializer,
         sourceFile,
         bindings,
-        `${hostProperty.name}_raw`
+        `${hostProperty.name}_raw`,
+        classContext
       );
     } else if (defaultBase != null) {
       target = targetWithHostValue(targetProperty.initializer, defaultBase.value, sourceFile, bindings, defaultBase.env_names);
@@ -2095,7 +2176,7 @@ function endpointTargetFromConfig(configNode, sourceFile, bindings, defaults = {
       target = resolveEndpointTarget(targetProperty.initializer, sourceFile, bindings);
     }
   }
-  const metadata = endpointConfigMetadata(configNode, sourceFile, bindings, defaults);
+  const metadata = endpointConfigMetadata(configNode, sourceFile, bindings, defaults, classContext);
   return {
     target,
     method: methodFromOptionsLike(configNode),
@@ -2246,7 +2327,157 @@ function importedClientCallFromNode(node, sourceFile, importedBindings, bindings
   };
 }
 
-function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bindings) {
+function classMemberAssignment(node) {
+  if (!ts.isBinaryExpression(node) || !ASSIGNMENT_OPERATORS.has(node.operatorToken.kind)) return null;
+  const name = thisMemberName(node.left);
+  if (name == null) return null;
+  return { name, initializer: node.right, operatorKind: node.operatorToken.kind };
+}
+
+function classMemberUpdateName(node) {
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return thisMemberName(node.operand);
+  }
+  return null;
+}
+
+function classMemberWriteEntry(writes, name) {
+  if (!writes.has(name)) writes.set(name, { total: 0, constructor: 0, nonConstructor: 0 });
+  return writes.get(name);
+}
+
+function collectClassMemberWriteInfo(classNode) {
+  const writes = new Map();
+  const constructorAssignments = [];
+  for (const member of classNode.members) {
+    const inConstructor = ts.isConstructorDeclaration(member);
+    function recordWrite(name) {
+      const entry = classMemberWriteEntry(writes, name);
+      entry.total += 1;
+      if (inConstructor) entry.constructor += 1;
+      else entry.nonConstructor += 1;
+    }
+    function visit(node) {
+      if (node !== member && (ts.isClassDeclaration(node) || ts.isClassExpression(node))) return;
+      if (node !== member && isThisRebindingFunctionBoundary(node)) return;
+      const assignment = classMemberAssignment(node);
+      if (assignment != null) {
+        recordWrite(assignment.name);
+        if (inConstructor && assignment.operatorKind === ts.SyntaxKind.EqualsToken) {
+          constructorAssignments.push({ ...assignment, constructorNode: member });
+        }
+      }
+      const updateName = classMemberUpdateName(node);
+      if (updateName != null) recordWrite(updateName);
+      ts.forEachChild(node, visit);
+    }
+    visit(member);
+  }
+  return { writes, constructorAssignments };
+}
+
+function parameterDeclaresClassProperty(parameter) {
+  return Array.from(parameter.modifiers ?? []).some((modifier) =>
+    [
+      ts.SyntaxKind.PublicKeyword,
+      ts.SyntaxKind.PrivateKeyword,
+      ts.SyntaxKind.ProtectedKeyword,
+      ts.SyntaxKind.ReadonlyKeyword,
+    ].includes(modifier.kind)
+  );
+}
+
+function constructorParameterBindings(constructorNode, sourceFile, bindings) {
+  const parameterBindings = new Map();
+  for (const parameter of constructorNode.parameters ?? []) {
+    if (!ts.isIdentifier(parameter.name) || parameter.initializer == null) continue;
+    const resolved = resolvedStringExpression(parameter.initializer, sourceFile, bindings);
+    if (resolved != null) parameterBindings.set(parameter.name.text, resolved);
+  }
+  return parameterBindings;
+}
+
+function recordClassMemberValue(values, ambiguous, name, expression) {
+  if (ambiguous.has(name)) return;
+  if (values.has(name)) {
+    values.delete(name);
+    ambiguous.add(name);
+    return;
+  }
+  values.set(name, expression);
+}
+
+function classStaticMemberContext(classNode, sourceFile, bindings) {
+  const { writes, constructorAssignments } = collectClassMemberWriteInfo(classNode);
+  const memberValues = new Map();
+  const ambiguous = new Set();
+  const declaredMembers = new Set();
+
+  for (const member of classNode.members) {
+    if (ts.isPropertyDeclaration(member) && !nodeHasModifier(member, ts.SyntaxKind.StaticKeyword)) {
+      const name = propertyNameText(member.name);
+      if (name == null) continue;
+      declaredMembers.add(name);
+      if (member.initializer == null || writes.has(name)) continue;
+      const resolved = resolvedStringExpression(member.initializer, sourceFile, bindings);
+      if (resolved != null) recordClassMemberValue(memberValues, ambiguous, name, resolved);
+    }
+
+    if (!ts.isConstructorDeclaration(member)) continue;
+    for (const parameter of member.parameters ?? []) {
+      if (!parameterDeclaresClassProperty(parameter) || !ts.isIdentifier(parameter.name)) continue;
+      const name = parameter.name.text;
+      declaredMembers.add(name);
+      if (parameter.initializer == null || writes.has(name)) continue;
+      const resolved = resolvedStringExpression(parameter.initializer, sourceFile, bindings);
+      if (resolved != null) recordClassMemberValue(memberValues, ambiguous, name, resolved);
+    }
+  }
+
+  const constructorAssignmentsByName = new Map();
+  for (const assignment of constructorAssignments) {
+    if (!constructorAssignmentsByName.has(assignment.name)) constructorAssignmentsByName.set(assignment.name, []);
+    constructorAssignmentsByName.get(assignment.name).push(assignment);
+  }
+  for (const [name, assignments] of constructorAssignmentsByName.entries()) {
+    const writeInfo = writes.get(name);
+    if (assignments.length !== 1 || writeInfo?.total !== 1 || writeInfo.nonConstructor !== 0 || memberValues.has(name)) {
+      memberValues.delete(name);
+      ambiguous.add(name);
+      continue;
+    }
+    const assignment = assignments[0];
+    const parameterBindings = constructorParameterBindings(assignment.constructorNode, sourceFile, bindings);
+    const resolved = resolvedStringExpression(assignment.initializer, sourceFile, bindings, parameterBindings);
+    if (resolved != null) recordClassMemberValue(memberValues, ambiguous, name, resolved);
+  }
+
+  for (const name of ambiguous) memberValues.delete(name);
+  return {
+    memberValues,
+    inheritedDefaultBlockedMembers: new Set([...declaredMembers, ...writes.keys(), ...ambiguous]),
+  };
+}
+
+function addResolvedDefault(defaults, key, resolved) {
+  defaults[key] = resolved.value;
+  if (Array.isArray(resolved.env_names)) defaults[`${key}_env_names`] = uniqueStrings(resolved.env_names);
+}
+
+function classEndpointContext(classNode, sourceFile, bindings) {
+  const defaults = classSuperEndpointDefaults(classNode, sourceFile, bindings) ?? {};
+  const memberContext = classStaticMemberContext(classNode, sourceFile, bindings);
+  return {
+    defaults,
+    memberValues: memberContext.memberValues,
+    inheritedDefaultBlockedMembers: memberContext.inheritedDefaultBlockedMembers,
+  };
+}
+
+function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bindings, classContext = null) {
   if (!ts.isCallExpression(node) || node.arguments.length < 1 || !ts.isObjectLiteralExpression(node.arguments[0])) return null;
   const configNode = node.arguments[0];
   if (endpointConfigTargetProperty(configNode) == null || !endpointConfigHasWrapperContext(configNode)) return null;
@@ -2271,7 +2502,7 @@ function importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bin
     return null;
   }
 
-  const resolved = endpointTargetFromConfig(configNode, sourceFile, bindings);
+  const resolved = endpointTargetFromConfig(configNode, sourceFile, bindings, {}, classContext);
   if (!resolved) return null;
   if (method == null) return null;
   const metadata = {
@@ -2297,20 +2528,27 @@ function classSuperEndpointDefaults(classNode, sourceFile, bindings) {
     let found = false;
     function visit(node) {
       if (found) return;
+      if (node !== member.body && (ts.isClassDeclaration(node) || ts.isClassExpression(node) || isFunctionBoundary(node))) return;
       if (
         ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.SuperKeyword &&
-        node.arguments.length >= 1 &&
-        ts.isObjectLiteralExpression(node.arguments[0]) &&
-        endpointConfigHasBaseContext(node.arguments[0])
+        node.arguments.length >= 1
       ) {
-        const configNode = node.arguments[0];
-        const metadata = endpointConfigDefaults(configNode, sourceFile, bindings);
-        for (const [key, value] of Object.entries(metadata)) {
-          defaults[key] = value;
+        if (ts.isObjectLiteralExpression(node.arguments[0]) && endpointConfigHasBaseContext(node.arguments[0])) {
+          const configNode = node.arguments[0];
+          const metadata = endpointConfigDefaults(configNode, sourceFile, bindings);
+          for (const [key, value] of Object.entries(metadata)) {
+            defaults[key] = value;
+          }
+          found = true;
+          return;
         }
-        found = true;
-        return;
+        const serviceDefault = resolvedMetadataValue(node.arguments[0], sourceFile, bindings);
+        if (serviceDefault != null) {
+          addResolvedDefault(defaults, "service", serviceDefault);
+          found = true;
+          return;
+        }
       }
       ts.forEachChild(node, visit);
     }
@@ -2319,7 +2557,7 @@ function classSuperEndpointDefaults(classNode, sourceFile, bindings) {
   return Object.keys(defaults).length > 0 ? defaults : null;
 }
 
-function thisHttpWrapperCallFromNode(node, sourceFile, bindings, defaults) {
+function thisHttpWrapperCallFromNode(node, sourceFile, bindings, classContext) {
   if (
     !ts.isCallExpression(node) ||
     node.arguments.length < 1 ||
@@ -2331,7 +2569,7 @@ function thisHttpWrapperCallFromNode(node, sourceFile, bindings, defaults) {
   }
   const method = httpWrapperMethodName(node.expression.name.text);
   if (method == null || endpointConfigTargetProperty(node.arguments[0]) == null) return null;
-  const resolved = endpointTargetFromConfig(node.arguments[0], sourceFile, bindings, defaults);
+  const resolved = endpointTargetFromConfig(node.arguments[0], sourceFile, bindings, classContext.defaults, classContext);
   if (!resolved) return null;
   const metadata = {
     ...resolved.metadata,
@@ -2350,15 +2588,16 @@ function thisHttpWrapperCallFromNode(node, sourceFile, bindings, defaults) {
 function collectHttpControllerWrapperCalls(sourceFile, bindings) {
   const calls = [];
   function visitClass(classNode) {
-    const defaults = classSuperEndpointDefaults(classNode, sourceFile, bindings);
-    if (defaults == null) return;
-    function visit(node) {
-      const call = thisHttpWrapperCallFromNode(node, sourceFile, bindings, defaults);
+    const classContext = classEndpointContext(classNode, sourceFile, bindings);
+    if (Object.keys(classContext.defaults).length === 0) return;
+    function visit(node, preserveThisContext = false) {
+      if (!preserveThisContext && isThisRebindingFunctionBoundary(node)) return;
+      const call = thisHttpWrapperCallFromNode(node, sourceFile, bindings, classContext);
       if (call) calls.push(call);
-      ts.forEachChild(node, visit);
+      ts.forEachChild(node, (child) => visit(child, false));
     }
     for (const member of classNode.members) {
-      if (!ts.isConstructorDeclaration(member)) visit(member);
+      if (!ts.isConstructorDeclaration(member)) visit(member, true);
     }
   }
   function visit(node) {
@@ -2442,17 +2681,24 @@ function collectClientEndpointCalls(sourceFile) {
   const { clients: axiosClients, baseUrls: axiosClientBaseUrls } = collectAxiosClients(sourceFile, axiosLocals, bindings);
   const importedBindings = importedBindingsByLocal(sourceFile);
   const calls = collectHttpControllerWrapperCalls(sourceFile, bindings);
-  function visit(node) {
+  function visit(node, classContext = null, preserveThisContext = false) {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      const nextClassContext = classEndpointContext(node, sourceFile, bindings);
+      ts.forEachChild(node, (child) => visit(child, nextClassContext, true));
+      return;
+    }
+    const effectiveClassContext =
+      classContext != null && !preserveThisContext && isThisRebindingFunctionBoundary(node) ? null : classContext;
     const call = clientCallFromNode(node, sourceFile, axiosLocals, axiosClients, axiosClientBaseUrls, bindings);
     if (call) calls.push(call);
-    const wrapperCall = importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bindings);
+    const wrapperCall = importedHttpWrapperCallFromNode(node, sourceFile, importedBindings, bindings, effectiveClassContext);
     if (wrapperCall) {
       calls.push(wrapperCall);
     } else {
       const importedCall = importedClientCallFromNode(node, sourceFile, importedBindings, bindings);
       if (importedCall) calls.push(importedCall);
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, effectiveClassContext, false));
   }
   visit(sourceFile);
   return calls;

@@ -1564,6 +1564,185 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/profiles"][0]["host_raw"], "makeHost()")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 2)
 
+    def test_typescript_imported_wrapper_calls_resolve_super_string_service_member(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class SpecsController extends Controller {\n"
+            "  constructor() { super('specs-service'); }\n"
+            "  async list() {\n"
+            "    return get({ service: this.serviceName, path: '/api/specs' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/specs": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/specs"], {"specs-service"})
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service"], "specs-service")
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_resolution_kind"], "class_inherited_default")
+        self.assertNotIn("service_raw", qualifiers_by_path["/api/specs"][0])
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_imported_wrapper_calls_marks_inherited_default_for_undeclared_member(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class SpecsController extends Controller {\n"
+            "  constructor() { super('specs-service'); }\n"
+            "  async list() {\n"
+            "    return get({ service: this.inheritedServiceSlot, path: '/api/specs' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_hosts_by_path(calls)["/api/specs"], {"specs-service"})
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service"], "specs-service")
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_resolution_kind"], "class_inherited_default")
+
+    def test_typescript_imported_wrapper_calls_resolve_static_class_service_member(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "const SERVICE_NAME = 'orders-service';\n"
+            "export class OrdersController {\n"
+            "  private readonly service = SERVICE_NAME;\n"
+            "  async list() {\n"
+            "    return get({ service: this.service, path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service"], "orders-service")
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_resolution_kind"], "class_member")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_imported_wrapper_calls_resolve_constructor_assigned_service_member(self) -> None:
+        build = _extract_typescript_client(
+            "import { post } from '@example/http-client';\n"
+            "export class OrdersController {\n"
+            "  private readonly service;\n"
+            "  constructor(service = 'orders-service') { this.service = service; }\n"
+            "  async create() {\n"
+            "    return post({ service: this.service, path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"POST"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service"], "orders-service")
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_resolution_kind"], "class_member")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
+    def test_typescript_imported_wrapper_calls_keep_mutated_service_member_unresolved(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "export class OrdersController {\n"
+            "  private service = 'orders-service';\n"
+            "  reset() { this.service = makeService(); }\n"
+            "  async list() {\n"
+            "    return get({ service: this.service, path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "this.service")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_imported_wrapper_calls_keep_arrow_mutated_service_member_unresolved(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "export class OrdersController {\n"
+            "  private service = 'orders-service';\n"
+            "  init() { [1].forEach(() => { this.service = makeService(); }); }\n"
+            "  async list() {\n"
+            "    return get({ service: this.service, path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "this.service")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_imported_wrapper_calls_do_not_use_class_context_in_nested_function_this(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "export class OrdersController {\n"
+            "  private readonly service = 'orders-service';\n"
+            "  list() {\n"
+            "    function nested() { return get({ service: this.service, path: '/api/orders' }); }\n"
+            "    return nested();\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "this.service")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_imported_wrapper_calls_keep_dynamic_super_service_member_unresolved(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class SpecsController extends Controller {\n"
+            "  constructor() { super(makeService()); }\n"
+            "  async list() {\n"
+            "    return get({ service: this.serviceName, path: '/api/specs' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/specs": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/specs"], {None})
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_raw"], "this.serviceName")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
+    def test_typescript_imported_wrapper_calls_ignore_nested_super_defaults(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class SpecsController extends Controller {\n"
+            "  constructor() {\n"
+            "    class Inner extends Controller { constructor() { super('inner-service'); } }\n"
+            "  }\n"
+            "  async list() {\n"
+            "    return get({ service: this.serviceName, path: '/api/specs' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/specs": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/specs"], {None})
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_raw"], "this.serviceName")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
     def test_typescript_client_calls_emit_env_host_confidence_and_coverage(self) -> None:
         build = _extract_typescript_client(
             "import axios from 'axios';\n"
