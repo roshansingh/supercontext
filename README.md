@@ -2,15 +2,18 @@
 
 SuperContext builds a typed, evidence-backed knowledge graph from local source repositories. The current v0 focuses on change-safety questions for AI coding agents and engineering teams: callers/callees, import dependencies, endpoints, event channels, deploy/config facts, and multi-repo package links.
 
-Status: pre-1.0 local KG harness. The JSONL snapshot store, local MCP server, Streamlit evaluator UI, and validation harness are implemented. Production storage, hosted auth, PR-bot integration, and broad language coverage are still in progress.
+Status: pre-1.0 local pilot. The local JSONL snapshot store, read-only MCP server, direct query CLI, org cache builder, Streamlit evaluator UI, and validation harness are implemented. Production storage, hosted auth, PR-bot integration, and broad language coverage are still in progress.
 
 License: TBD before public OSS release.
 
 ## Requirements
 
 - Python 3.11 or newer.
-- Node.js and `npm ci` for TypeScript/JavaScript indexing.
-- Optional Python extras for specific features: `ui`, `llm`, and `agent`.
+- Node.js for TypeScript/JavaScript indexing.
+- For TypeScript/JavaScript repos, install the target repo's dependencies first when possible, for example `npm ci` in that repo. SuperContext's parser uses the target repo's installed `typescript` package when present.
+- Codex CLI and/or Claude Code CLI if you want host-agent MCP registration and installed host skills.
+- GitHub CLI authenticated with `gh auth login` if you want org-wide GitHub sync.
+- Optional Python extras for specific features: `ui`, `llm`, `agent`, `eval`, and `dotnet`.
 
 ## Quickstart
 
@@ -18,6 +21,12 @@ Install the CLI, register the default local MCP endpoint with available host age
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash
+```
+
+The installer creates `~/.supercontext/venv` and installs CLI scripts under `~/.supercontext/venv/bin`. If `supercontext-init` is not found after install, add that directory to your shell PATH:
+
+```bash
+export PATH="$HOME/.supercontext/venv/bin:$PATH"
 ```
 
 If you previously installed BetterContext, the installer warns about legacy `~/.bettercontext` state; remove old `bettercontext` MCP registrations and stale scripts after verifying `supercontext-init` works.
@@ -45,13 +54,32 @@ supercontext-register-mcp --agent both
 Local editable development:
 
 ```bash
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 npm ci
 
 supercontext-init --repo /path/to/repo
 supercontext-query-kg --snapshot /path/to/repo/.supercontext/kg summary
 supercontext-query-kg --snapshot /path/to/repo/.supercontext/kg top-dependencies --limit 10
 ```
+
+## What Works Today
+
+- Build a local KG snapshot for one repo with `supercontext-init`.
+- Build a multi-repo snapshot from explicitly listed repos.
+- Build and serve an org-wide GitHub cache with `supercontext org sync`, `supercontext org build`, and `supercontext org serve`.
+- Query summaries, dependencies, callers/callees, endpoints, domains, deploy mappings, event channels, and cross-repo package links.
+- Run a local read-only MCP server for Codex or Claude Code as a planning/review head start.
+- Generate coverage reports that expose unsupported languages, unresolved links, and other known gaps.
+
+SuperContext is an evidence router, not an answer oracle. Agents should use it to find better inspection targets, then read source code for high-risk or ambiguous claims.
+
+## Current Limits
+
+- Local-only JSONL storage; no hosted service or production auth yet.
+- MCP server is read-only and intended for loopback local development.
+- Language coverage is strongest for Python and TypeScript/JavaScript; unsupported languages are reported as coverage gaps.
+- Cross-repo links depend on package manifests and static evidence. Dynamic framework behavior may still require source inspection.
+- Org sync requires `gh` auth and local clone/fetch access to the target repositories.
 
 ## Build A KG
 
@@ -75,6 +103,7 @@ supercontext-build-multi-kg \
 Build an org-wide KG from GitHub repos with a managed local cache:
 
 ```bash
+gh auth login
 supercontext org init --provider github --org example-org
 supercontext org sync --org example-org
 supercontext org build --org example-org
@@ -125,11 +154,11 @@ supercontext-query-kg --snapshot ./data/kg_runs/example_org repo-dependencies se
 Compute coverage metrics, then render the stable JSON and Markdown report:
 
 ```bash
-python -m source.scripts.coverage_metrics \
+supercontext-coverage-metrics \
   --snapshot ./data/kg_runs/example_org \
   --expected-repos 2
 
-python -m source.scripts.coverage_report \
+supercontext-coverage-report \
   --snapshot ./data/kg_runs/example_org \
   --out docs/evaluation/runs/example-org \
   --run-id example-org \
@@ -140,37 +169,21 @@ python -m source.scripts.coverage_report \
 
 Read `coverage-run.md` for the human report and `coverage-run.json` for the machine-readable report.
 
-## Evaluation Traces
+## Run The MCP Server
 
-SuperContext evaluation code and trace-analysis skills are intended to be open and reproducible. Raw traces and repo-specific run outputs are private by default.
-
-Local A/B harness records, downloaded LangSmith traces, SDK message streams, and intermediate deltas belong under `data/ab_runs/<run-id>/`. That path is gitignored because traces can contain prompts, final answers, file paths, snippets, model metadata, and tool-call payloads from the evaluated repo.
-
-Checked-in evaluation reports belong under `docs/evaluation/ab-runs/<run-id>/` only when they are generated from public fixtures or have been explicitly sanitized. For private repos, keep the generated report and trace-analysis notes outside git or share only a redacted summary.
-
-The installed host skills may include trace-evaluation guidance for Codex and Claude Code. Those skill files should describe how to analyze `ab-report.md`, `ab-report.json`, `deltas.jsonl`, and LangSmith runs, but they must not embed real trace data or customer-specific examples.
-
-See `docs/evaluation/AB_REPRODUCTION.md` for the reproducible A/B workflow and per-run reproduction notes under `docs/evaluation/ab-runs/<run-id>/`.
-
-## Before Open Sourcing
-
-Remove private evaluation material before publishing this repository publicly. If any private data was committed, remove it from Git history, not only from the latest tree.
-
-Do not publish:
-
-- raw `data/ab_runs/` traces, SDK `messages.jsonl`, final answers, or judge reasoning
-- LangSmith URLs, private run IDs, API keys, `.env`, or local machine paths
-- private KG snapshots or generated artifacts from customer/org repos
-- customer, org, repo, service, or file names that are not cleared for publication
-- internal debates, plans, or private review notes not intended for OSS
-
-Run the local MCP v0 server for a repo:
+Run the local MCP server for a repo:
 
 ```bash
 supercontext-init --serve
 ```
 
 The server is read-only and local-development oriented. `supercontext-init --serve` is loopback-only; advanced public binds must use the MCP server directly with `--allow-public` on a trusted network.
+
+After the server is running, Codex and Claude Code can call the registered local MCP endpoint if their MCP registration succeeded during install. If a host CLI was not installed during the initial install, run:
+
+```bash
+supercontext-register-mcp --agent both
+```
 
 ## What It Extracts
 
@@ -190,6 +203,16 @@ The server is read-only and local-development oriented. `supercontext-init --ser
 - `examples/private-goldset/` contains private validation fixtures and is not part of the public product contract.
 
 See `source/README.md` for lower-level KG module details and command examples.
+
+## Evaluation Traces
+
+SuperContext evaluation code and trace-analysis skills are intended to be reproducible. Raw traces and repo-specific run outputs are private by default.
+
+Local A/B harness records, downloaded LangSmith traces, SDK message streams, and intermediate deltas belong under `data/ab_runs/<run-id>/`. That path is gitignored because traces can contain prompts, final answers, file paths, snippets, model metadata, and tool-call payloads from the evaluated repo.
+
+Checked-in evaluation reports belong under `docs/evaluation/ab-runs/<run-id>/` only when they are generated from public fixtures or have been explicitly sanitized. For private repos, keep the generated report and trace-analysis notes outside git or share only a redacted summary.
+
+See `docs/evaluation/AB_REPRODUCTION.md` for the reproducible A/B workflow and per-run reproduction notes under `docs/evaluation/ab-runs/<run-id>/`.
 
 ## Development
 

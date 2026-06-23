@@ -9,7 +9,13 @@ Current product lens: SuperContext is a source-inspection head start, not a repl
 1. Install SuperContext, default MCP host registration, and global host-agent skills once per machine.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/roshansingh/bettercontext/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/roshansingh/supercontext/main/install.sh | bash
+```
+
+If `supercontext-init` is not found after install, add the installer venv to PATH:
+
+```bash
+export PATH="$HOME/.supercontext/venv/bin:$PATH"
 ```
 
 2. Build a local snapshot for the target repo.

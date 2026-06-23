@@ -1,8 +1,8 @@
 # Source KG Module
 
-Status: first implementation slice.
+Status: local KG and MCP implementation slice.
 
-This is a minimal local knowledge-graph harness for testing the KG shape before Postgres/AGE and MCP are wired in.
+This is the local knowledge-graph implementation used by the SuperContext CLI, JSONL snapshot builder, query commands, validation harness, and read-only MCP server.
 
 ## What It Does
 
@@ -12,7 +12,7 @@ This is a minimal local knowledge-graph harness for testing the KG shape before 
 - Links imported external packages to another indexed repo/service when a unique manifest package-name match exists.
 - Writes `entities.jsonl`, `facts.jsonl`, `evidence.jsonl`, `coverage.jsonl`, and `manifest.json`.
 - Provides small query scripts for summary, callers, blast radius, and imports.
-- Provides a local read-only MCP server skeleton over existing JSONL snapshots.
+- Provides a local read-only MCP server over existing JSONL snapshots.
 - Provides a product-validation runner that converts goldset scenario plans into normalized evidence packets.
 - Provides a canonical validation runner for low/medium smoke checks plus goldset answer judgement.
 
@@ -153,7 +153,9 @@ The local-development server also exposes experimental workflow composition tool
 
 Security note: the local MCP server has no authentication. `supercontext-init --serve` is loopback-only. Do not expose the MCP server with a non-loopback host unless you run the server directly with `--allow-public` on a trusted network.
 
-Recommended install model: install host-agent skills globally once, then build a local KG snapshot per repo. Global skill install:
+Recommended install model: install host-agent skills globally once, then build a local KG snapshot per repo. If installed through `install.sh`, ensure `~/.supercontext/venv/bin` is on PATH when running `supercontext-*` commands.
+
+Global skill install:
 
 ```bash
 supercontext-install-mcp-skills --scope global --agent both
