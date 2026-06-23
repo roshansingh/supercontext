@@ -145,7 +145,7 @@ class ConsumerManifestExtractorTest(unittest.TestCase):
                     (
                         "[options]",
                         "install_requires =",
-                        "    requests>=2",
+                        "    requests>=2  # pinned",
                         "    PyYAML>=6",
                         "[options.extras_require]",
                         "test =",

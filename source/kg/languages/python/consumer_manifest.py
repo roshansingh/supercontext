@@ -194,8 +194,7 @@ class PythonConsumerManifestExtractor:
             line = raw_line.strip()
             if line.startswith("#"):
                 continue
-            if " #" in line:
-                line = line.split(" #", 1)[0].strip()
+            line = _strip_inline_requirement_comment(line)
             if not line or _is_pip_directive(line):
                 continue
             dependency = _dependency_from_requirement(
@@ -300,7 +299,7 @@ def _dependencies_from_requirement_block(
 ) -> list[ConsumerDependency]:
     dependencies: list[ConsumerDependency] = []
     for raw_line in raw_dependencies.splitlines():
-        line = raw_line.strip()
+        line = _strip_inline_requirement_comment(raw_line.strip())
         if not line or line.startswith("#") or _is_pip_directive(line):
             continue
         dependency = _dependency_from_requirement(
@@ -312,6 +311,12 @@ def _dependencies_from_requirement_block(
         if dependency is not None:
             dependencies.append(dependency)
     return dependencies
+
+
+def _strip_inline_requirement_comment(line: str) -> str:
+    if " #" in line:
+        return line.split(" #", 1)[0].strip()
+    return line
 
 
 def _dependency_from_requirement(
