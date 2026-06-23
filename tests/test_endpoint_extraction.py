@@ -1743,7 +1743,7 @@ class EndpointExtractionTest(unittest.TestCase):
     def test_typescript_imported_wrapper_calls_ignore_nested_super_defaults(self) -> None:
         build = _extract_typescript_client(
             "import { Controller, get } from '@example/http-client';\n"
-            "export class SpecsController extends Controller {\n"
+            "export class SpecsController {\n"
             "  constructor() {\n"
             "    class Inner extends Controller { constructor() { super('inner-service'); } }\n"
             "  }\n"
