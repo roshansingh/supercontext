@@ -1721,6 +1721,55 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "this.service")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
 
+    def test_typescript_imported_wrapper_calls_do_not_use_class_context_in_static_members(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class OrdersController extends Controller {\n"
+            "  private readonly service = 'orders-service';\n"
+            "  constructor() { super('orders-service'); }\n"
+            "  static list() {\n"
+            "    get({ service: this.service, path: '/api/orders' });\n"
+            "    return this.get({ path: '/api/controller-orders' });\n"
+            "  }\n"
+            "  static {\n"
+            "    get({ service: this.service, path: '/api/static-orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}, "/api/static-orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {None})
+        self.assertEqual(_hosts_by_path(calls)["/api/static-orders"], {None})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_raw"], "this.service")
+        self.assertEqual(qualifiers_by_path["/api/static-orders"][0]["service_raw"], "this.service")
+        self.assertNotIn("/api/controller-orders", _methods_by_path(calls))
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 2)
+
+    def test_typescript_imported_wrapper_calls_ignore_static_writes_for_instance_member_resolution(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "export class OrdersController {\n"
+            "  private readonly service = 'orders-service';\n"
+            "  static reset() { this.service = makeService(); }\n"
+            "  static { this.service = makeOtherService(); }\n"
+            "  async list() {\n"
+            "    return get({ service: this.service, path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/orders": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service"], "orders-service")
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_resolution_kind"], "class_member")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
+
     def test_typescript_imported_wrapper_calls_keep_dynamic_super_service_member_unresolved(self) -> None:
         build = _extract_typescript_client(
             "import { Controller, get } from '@example/http-client';\n"

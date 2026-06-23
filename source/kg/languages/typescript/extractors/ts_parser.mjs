@@ -493,6 +493,23 @@ function nodeHasModifier(node, kind) {
   return Array.from(node.modifiers ?? []).some((modifier) => modifier.kind === kind);
 }
 
+function isClassStaticBlock(node) {
+  return typeof ts.isClassStaticBlockDeclaration === "function" && ts.isClassStaticBlockDeclaration(node);
+}
+
+function isStaticClassElement(node) {
+  if (isClassStaticBlock(node)) return true;
+  if (
+    ts.isMethodDeclaration(node) ||
+    ts.isPropertyDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  ) {
+    return nodeHasModifier(node, ts.SyntaxKind.StaticKeyword);
+  }
+  return false;
+}
+
 function nodeHasDeclareModifier(node) {
   return nodeHasModifier(node, ts.SyntaxKind.DeclareKeyword);
 }
@@ -2354,6 +2371,7 @@ function collectClassMemberWriteInfo(classNode) {
   const constructorAssignments = [];
   for (const member of classNode.members) {
     const inConstructor = ts.isConstructorDeclaration(member);
+    if (!inConstructor && isStaticClassElement(member)) continue;
     function recordWrite(name) {
       const entry = classMemberWriteEntry(writes, name);
       entry.total += 1;
@@ -2597,7 +2615,7 @@ function collectHttpControllerWrapperCalls(sourceFile, bindings) {
       ts.forEachChild(node, (child) => visit(child, false));
     }
     for (const member of classNode.members) {
-      if (!ts.isConstructorDeclaration(member)) visit(member, true);
+      if (!ts.isConstructorDeclaration(member) && !isStaticClassElement(member)) visit(member, true);
     }
   }
   function visit(node) {
@@ -2684,7 +2702,10 @@ function collectClientEndpointCalls(sourceFile) {
   function visit(node, classContext = null, preserveThisContext = false) {
     if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       const nextClassContext = classEndpointContext(node, sourceFile, bindings);
-      ts.forEachChild(node, (child) => visit(child, nextClassContext, true));
+      ts.forEachChild(node, (child) => {
+        const childClassContext = isStaticClassElement(child) ? null : nextClassContext;
+        visit(child, childClassContext, childClassContext != null);
+      });
       return;
     }
     const effectiveClassContext =
