@@ -1789,6 +1789,28 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_raw"], "this.serviceName")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
 
+    def test_typescript_imported_wrapper_calls_keep_conditional_super_service_member_unresolved(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class SpecsController extends Controller {\n"
+            "  constructor(usePreview) {\n"
+            "    if (usePreview) { super('preview-service'); }\n"
+            "    else { super('specs-service'); }\n"
+            "  }\n"
+            "  async list() {\n"
+            "    return get({ service: this.serviceName, path: '/api/specs' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_methods_by_path(calls), {"/api/specs": {"GET"}})
+        self.assertEqual(_hosts_by_path(calls)["/api/specs"], {None})
+        self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_raw"], "this.serviceName")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 1)
+
     def test_typescript_imported_wrapper_calls_ignore_nested_super_defaults(self) -> None:
         build = _extract_typescript_client(
             "import { Controller, get } from '@example/http-client';\n"

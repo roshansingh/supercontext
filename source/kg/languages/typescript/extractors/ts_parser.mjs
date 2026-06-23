@@ -2543,34 +2543,32 @@ function classSuperEndpointDefaults(classNode, sourceFile, bindings) {
   const defaults = {};
   for (const member of classNode.members) {
     if (!ts.isConstructorDeclaration(member) || !member.body) continue;
-    let found = false;
-    function visit(node) {
-      if (found) return;
-      if (node !== member.body && (ts.isClassDeclaration(node) || ts.isClassExpression(node) || isFunctionBoundary(node))) return;
+    const directSuperCalls = [];
+    for (const statement of member.body.statements ?? []) {
       if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.SuperKeyword &&
-        node.arguments.length >= 1
+        ts.isExpressionStatement(statement) &&
+        ts.isCallExpression(statement.expression) &&
+        statement.expression.expression.kind === ts.SyntaxKind.SuperKeyword
       ) {
-        if (ts.isObjectLiteralExpression(node.arguments[0]) && endpointConfigHasBaseContext(node.arguments[0])) {
-          const configNode = node.arguments[0];
-          const metadata = endpointConfigDefaults(configNode, sourceFile, bindings);
-          for (const [key, value] of Object.entries(metadata)) {
-            defaults[key] = value;
-          }
-          found = true;
-          return;
-        }
-        const serviceDefault = resolvedMetadataValue(node.arguments[0], sourceFile, bindings);
-        if (serviceDefault != null) {
-          addResolvedDefault(defaults, "service", serviceDefault);
-          found = true;
-          return;
-        }
+        directSuperCalls.push(statement.expression);
       }
-      ts.forEachChild(node, visit);
     }
-    visit(member.body);
+    if (directSuperCalls.length !== 1) continue;
+
+    const superCall = directSuperCalls[0];
+    if (superCall.arguments.length < 1) continue;
+    if (ts.isObjectLiteralExpression(superCall.arguments[0]) && endpointConfigHasBaseContext(superCall.arguments[0])) {
+      const configNode = superCall.arguments[0];
+      const metadata = endpointConfigDefaults(configNode, sourceFile, bindings);
+      for (const [key, value] of Object.entries(metadata)) {
+        defaults[key] = value;
+      }
+      continue;
+    }
+    const serviceDefault = resolvedMetadataValue(superCall.arguments[0], sourceFile, bindings);
+    if (serviceDefault != null) {
+      addResolvedDefault(defaults, "service", serviceDefault);
+    }
   }
   return Object.keys(defaults).length > 0 ? defaults : null;
 }
