@@ -1603,7 +1603,25 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/specs"][0]["service"], "specs-service")
         self.assertEqual(qualifiers_by_path["/api/specs"][0]["service_resolution_kind"], "class_inherited_default")
 
-    def test_typescript_imported_wrapper_calls_resolve_static_class_service_member(self) -> None:
+    def test_typescript_imported_wrapper_calls_do_not_apply_super_service_default_to_api_version_member(self) -> None:
+        build = _extract_typescript_client(
+            "import { Controller, get } from '@example/http-client';\n"
+            "export class SpecsController extends Controller {\n"
+            "  constructor() { super('specs-service'); }\n"
+            "  async list() {\n"
+            "    return get({ service: 'explicit-service', apiVersion: this.region, path: '/api/specs' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(_hosts_by_path(calls)["/api/specs"], {"explicit-service"})
+        self.assertNotIn("api_version", qualifiers_by_path["/api/specs"][0])
+        self.assertNotIn("api_version_resolution_kind", qualifiers_by_path["/api/specs"][0])
+
+    def test_typescript_imported_wrapper_calls_resolve_class_field_service_member(self) -> None:
         build = _extract_typescript_client(
             "import { get } from '@example/http-client';\n"
             "const SERVICE_NAME = 'orders-service';\n"

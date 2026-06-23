@@ -2410,7 +2410,7 @@ function recordClassMemberValue(values, ambiguous, name, expression) {
   values.set(name, expression);
 }
 
-function classStaticMemberContext(classNode, sourceFile, bindings) {
+function classInstanceMemberContext(classNode, sourceFile, bindings) {
   const { writes, constructorAssignments } = collectClassMemberWriteInfo(classNode);
   const memberValues = new Map();
   const ambiguous = new Set();
@@ -2469,7 +2469,7 @@ function addResolvedDefault(defaults, key, resolved) {
 
 function classEndpointContext(classNode, sourceFile, bindings) {
   const defaults = classSuperEndpointDefaults(classNode, sourceFile, bindings) ?? {};
-  const memberContext = classStaticMemberContext(classNode, sourceFile, bindings);
+  const memberContext = classInstanceMemberContext(classNode, sourceFile, bindings);
   return {
     defaults,
     memberValues: memberContext.memberValues,
