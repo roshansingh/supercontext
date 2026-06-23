@@ -150,6 +150,85 @@ class RelinkRegistryTest(unittest.TestCase):
         self.assertEqual(buckets["fs"], "builtin_or_stdlib")
         self.assertEqual(buckets["code-only"], "unknown")
 
+    def test_linker_marks_normalizer_proven_third_party_imports_non_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer_repo = root / "owner-a" / "consumer"
+            consumer_repo.mkdir(parents=True)
+
+            result = link_external_packages(
+                (
+                    LinkerInput(
+                        repo=_repo_snapshot(consumer_repo),
+                        repo_identity=_repo_identity(consumer_repo),
+                        entities=(
+                            _repo_entity(consumer_repo),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "requests"},
+                                properties={
+                                    "category": "third_party",
+                                    "import_root": "requests",
+                                    "distribution_name": "requests",
+                                },
+                            ),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "local_alias"},
+                                properties={
+                                    "category": "third_party",
+                                    "import_root": "local_alias",
+                                    "distribution_name": None,
+                                },
+                            ),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "src.config"},
+                                properties={"category": "unknown", "import_root": "src"},
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        buckets = {row["package_name"]: row["bucket"] for row in result.package_classifications}
+        self.assertEqual(buckets["requests"], "code_inferred_external")
+        self.assertEqual(buckets["local_alias"], "unknown")
+        self.assertEqual(buckets["src.config"], "unknown")
+
+    def test_linker_labels_named_python_requirements_manifest_language(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            consumer_repo = root / "owner-a" / "consumer"
+            consumer_repo.mkdir(parents=True)
+            (consumer_repo / "requirements-dev.txt").write_text("requests>=2\n", encoding="utf-8")
+
+            result = link_external_packages(
+                (
+                    LinkerInput(
+                        repo=_repo_snapshot(consumer_repo),
+                        repo_identity=_repo_identity(consumer_repo),
+                        entities=(
+                            _repo_entity(consumer_repo),
+                            Entity(
+                                kind="ExternalPackage",
+                                identity={"tenant_id": "default", "repo": "consumer", "name": "requests"},
+                                properties={
+                                    "category": "third_party",
+                                    "import_root": "requests",
+                                    "distribution_name": "requests",
+                                },
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        [classification] = result.package_classifications
+        self.assertEqual(classification["bucket"], "consumer_manifest_external")
+        self.assertEqual(classification["language"], "python")
+        self.assertTrue(str(classification["manifest_path"]).endswith("requirements-dev.txt"))
+
     def test_linker_dedupes_repeated_nested_manifest_dependencies_for_classification(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -990,6 +990,13 @@ def _classify_external_packages(
             else:
                 bucket = "unknown"
                 reason = "consumer manifest dependency has unknown spec form"
+        elif _is_normalizer_inferred_external_package(entity) and not _has_direct_provider_match(
+            candidate_names,
+            provider_index,
+            consumer_identity,
+        ):
+            bucket = "code_inferred_external"
+            reason = "import normalizer classified package as third-party without a consumer manifest dependency"
         package_name = _non_empty_string(entity.identity.get("name")) or next(iter(sorted(candidate_names)), "")
         classification_id = _package_classification_id(entity, consumer_identity, bucket)
         classifications.append(
@@ -1098,6 +1105,27 @@ def _is_internal_path_spec_form(value: object) -> bool:
     return isinstance(value, str) and value in {"workspace", "file_path", "git_url"}
 
 
+def _is_normalizer_inferred_external_package(package: Entity) -> bool:
+    properties = package.properties
+    category = properties.get("category")
+    distribution_name = _non_empty_string(properties.get("distribution_name"))
+    return category == "third_party" and distribution_name is not None
+
+
+def _has_direct_provider_match(
+    candidate_names: set[str],
+    provider_index: dict[str, set[RepoIdentity]],
+    consumer_identity: RepoIdentity | None,
+) -> bool:
+    for name in candidate_names:
+        matches = provider_index.get(_normalize_package_name(name), set())
+        if consumer_identity is not None:
+            matches = {identity for identity in matches if identity != consumer_identity}
+        if matches:
+            return True
+    return False
+
+
 def _dedupe_coverage(rows: list[Coverage]) -> tuple[Coverage, ...]:
     rows_by_id: dict[str, Coverage] = {}
     for row in rows:
@@ -1142,11 +1170,24 @@ def _display_manifest_path(path: Path, inputs: list[LinkerInput] | tuple[LinkerI
 def _language_from_manifest_path(path: Path) -> str | None:
     if path.name in {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}:
         return "typescript"
-    if path.name in {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"}:
+    if path.name in {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"} or _is_python_requirements_path(path):
         return "python"
     if path.suffix == ".csproj":
         return "dotnet"
     return None
+
+
+def _is_python_requirements_path(path: Path) -> bool:
+    if path.suffix != ".txt":
+        return False
+    if path.parent.name == "requirements":
+        return True
+    return path.name in {
+        "requirements-dev.txt",
+        "dev-requirements.txt",
+        "test-requirements.txt",
+        "requirements-test.txt",
+    }
 
 
 def write_package_classifications(output_dir: str | Path, records: tuple[JsonObject, ...]) -> None:

@@ -122,6 +122,57 @@ class ConsumerManifestExtractorTest(unittest.TestCase):
         self.assertNotIn("python", by_name)
         self.assertEqual(result.issues, ())
 
+    def test_python_extracts_optional_group_setup_cfg_and_named_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requirements_dir = root / "requirements"
+            requirements_dir.mkdir()
+            (root / "pyproject.toml").write_text(
+                "\n".join(
+                    (
+                        "[project.optional-dependencies]",
+                        'dev = ["pytest>=8", "typing-extensions>=4"]',
+                        "[tool.poetry.group.dev.dependencies]",
+                        'ruff = "^0.6.0"',
+                        'local-tool = { path = "../local-tool" }',
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "setup.cfg").write_text(
+                "\n".join(
+                    (
+                        "[options]",
+                        "install_requires =",
+                        "    requests>=2",
+                        "    PyYAML>=6",
+                        "[options.extras_require]",
+                        "test =",
+                        "    pandas>=2",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "requirements-dev.txt").write_text("numpy>=1\n", encoding="utf-8")
+            (requirements_dir / "lint.txt").write_text("mypy>=1\n", encoding="utf-8")
+
+            result = PythonConsumerManifestExtractor().extract(_repo(root))
+
+        by_name = {dependency.declared_name: dependency for dependency in result.dependencies}
+        self.assertEqual(by_name["pytest"].dependency_kind, "project.optional-dependencies.dev")
+        self.assertEqual(by_name["typing-extensions"].dependency_kind, "project.optional-dependencies.dev")
+        self.assertEqual(by_name["ruff"].dependency_kind, "tool.poetry.group.dev.dependencies")
+        self.assertEqual(by_name["local-tool"].spec_form, "file_path")
+        self.assertEqual(by_name["local-tool"].target_url, "../local-tool")
+        self.assertEqual(by_name["requests"].dependency_kind, "setup.cfg:options.install_requires")
+        self.assertEqual(by_name["PyYAML"].dependency_kind, "setup.cfg:options.install_requires")
+        self.assertEqual(by_name["pandas"].dependency_kind, "setup.cfg:options.extras_require.test")
+        self.assertEqual(by_name["numpy"].dependency_kind, "requirements-dev.txt")
+        self.assertEqual(by_name["mypy"].dependency_kind, "requirements/lint.txt")
+        self.assertEqual(result.issues, ())
+
     def test_python_malformed_pyproject_reports_issue(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
