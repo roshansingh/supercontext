@@ -2601,6 +2601,24 @@ function thisHttpWrapperCallFromNode(node, sourceFile, bindings, classContext) {
   );
 }
 
+function visitExecutableClassElement(member, classContext, visit) {
+  if (ts.isConstructorDeclaration(member)) {
+    if (member.body) visit(member.body, classContext, classContext != null);
+    return;
+  }
+  if (ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
+    if (member.body) visit(member.body, classContext, classContext != null);
+    return;
+  }
+  if (ts.isPropertyDeclaration(member)) {
+    if (member.initializer) visit(member.initializer, classContext, classContext != null);
+    return;
+  }
+  if (isClassStaticBlock(member)) {
+    visit(member, null, false);
+  }
+}
+
 function collectHttpControllerWrapperCalls(sourceFile, bindings) {
   const calls = [];
   function visitClass(classNode) {
@@ -2614,7 +2632,11 @@ function collectHttpControllerWrapperCalls(sourceFile, bindings) {
       ts.forEachChild(node, (child) => visit(child, false));
     }
     for (const member of classNode.members) {
-      if (!ts.isConstructorDeclaration(member) && !isStaticClassElement(member)) visit(member, true);
+      if (!ts.isConstructorDeclaration(member) && !isStaticClassElement(member)) {
+        visitExecutableClassElement(member, classContext, (node, _classContext, preserveThisContext) =>
+          visit(node, preserveThisContext)
+        );
+      }
     }
   }
   function visit(node) {
@@ -2701,10 +2723,14 @@ function collectClientEndpointCalls(sourceFile) {
   function visit(node, classContext = null, preserveThisContext = false) {
     if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       const nextClassContext = classEndpointContext(node, sourceFile, bindings);
-      ts.forEachChild(node, (child) => {
-        const childClassContext = isStaticClassElement(child) ? null : nextClassContext;
-        visit(child, childClassContext, childClassContext != null);
-      });
+      for (const decorator of nodeDecorators(node)) visit(decorator, null, false);
+      for (const heritageClause of node.heritageClauses ?? []) visit(heritageClause, null, false);
+      for (const member of node.members) {
+        for (const decorator of nodeDecorators(member)) visit(decorator, null, false);
+        if (member.name && ts.isComputedPropertyName(member.name)) visit(member.name, null, false);
+        const memberClassContext = isStaticClassElement(member) ? null : nextClassContext;
+        visitExecutableClassElement(member, memberClassContext, visit);
+      }
       return;
     }
     const effectiveClassContext =

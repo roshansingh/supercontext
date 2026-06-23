@@ -1770,6 +1770,38 @@ class EndpointExtractionTest(unittest.TestCase):
         self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_resolution_kind"], "class_member")
         self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT").get("host_or_service_unresolved", 0), 0)
 
+    def test_typescript_imported_wrapper_calls_do_not_use_class_context_in_definition_time_regions(self) -> None:
+        build = _extract_typescript_client(
+            "import { get } from '@example/http-client';\n"
+            "@register(get({ service: this.service, path: '/api/decorator-orders' }))\n"
+            "export class OrdersController extends makeBase(get({ service: this.service, path: '/api/heritage-orders' })) {\n"
+            "  private readonly service = 'orders-service';\n"
+            "  [get({ service: this.service, path: '/api/computed-orders' })]() {}\n"
+            "  async list() {\n"
+            "    return get({ service: this.service, path: '/api/orders' });\n"
+            "  }\n"
+            "}\n"
+        )
+
+        calls = _endpoint_rows(build, "CALLS_ENDPOINT")
+        qualifiers_by_path = _qualifiers_by_path(calls)
+
+        self.assertEqual(
+            _methods_by_path(calls),
+            {
+                "/api/computed-orders": {"GET"},
+                "/api/decorator-orders": {"GET"},
+                "/api/heritage-orders": {"GET"},
+                "/api/orders": {"GET"},
+            },
+        )
+        self.assertEqual(_hosts_by_path(calls)["/api/orders"], {"orders-service"})
+        self.assertEqual(qualifiers_by_path["/api/orders"][0]["service_resolution_kind"], "class_member")
+        for path in ["/api/computed-orders", "/api/decorator-orders", "/api/heritage-orders"]:
+            self.assertEqual(_hosts_by_path(calls)[path], {None})
+            self.assertEqual(qualifiers_by_path[path][0]["service_raw"], "this.service")
+        self.assertEqual(_coverage_reason_counts(build, "CALLS_ENDPOINT")["host_or_service_unresolved"], 3)
+
     def test_typescript_imported_wrapper_calls_keep_dynamic_super_service_member_unresolved(self) -> None:
         build = _extract_typescript_client(
             "import { Controller, get } from '@example/http-client';\n"
