@@ -123,7 +123,7 @@ Implementation guardrails:
 
 ## Implementation Status (as of 2026-05-16)
 
-Storage implementation has not reached PostgreSQL + Apache AGE yet.
+Storage implementation has not reached PostgreSQL + Apache AGE yet. As of the local pilot, Postgres + AGE is a deferred platform-storage direction, not a setup dependency for building, querying, or evaluating local snapshots.
 
 What exists now:
 

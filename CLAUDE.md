@@ -8,10 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two layers exist concurrently:
 
-- **Architecture (`docs/`, `adr/`, `BACKLOG.md`)** — fully specified. Eleven accepted ADRs, multiple research notes, an ontology recommendation, and a 55-query acceptance corpus.
+- **Architecture (`docs/`, `adr/`, `BACKLOG.md`)** — accepted direction plus explicit implementation status. Eleven accepted ADRs, multiple research notes, an ontology recommendation, and a 55-query acceptance corpus.
 - **Implementation (`source/`)** — early local slice. JSONL local KG harness for Python and TypeScript repos. No Postgres/AGE or PR bot yet; a local read-only MCP server exists for development.
 
-The architecture is ahead of the implementation by design. Work on either side, but treat ADRs as binding spec when implementing.
+The architecture is ahead of the implementation by design. Work on either side, but read `adr/README.md` first for the current local-pilot status before treating a platform-target ADR as an immediate implementation requirement.
 
 ## Project context index
 
@@ -70,11 +70,11 @@ LLM enrichment is not part of the default KG build path. If used: `source.kg.int
 
 ## Architecture (the load-bearing decisions)
 
-Read ADRs in order; each builds on the prior. Key shape:
+Read `adr/README.md` first for the local-pilot status of each decision, then open the specific ADRs you need. Key shape:
 
-- **ADR-0001** — Internal runtime is **Claude Agent SDK** for both ingestion (Layer A) and server-side reasoning (Layer B). Layer C is whatever IDE the customer uses.
-- **ADR-0002** — Public protocol is **MCP** with eight tools (`search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, `deploy_blockers_for`). Streamable HTTP, OAuth 2.1.
-- **ADR-0003** — Storage is **PostgreSQL + Apache AGE**. Postgres tables = source of truth; AGE = projection.
+- **ADR-0001** — Accepted direction: internal Layer A/B runtime uses **Claude Agent SDK**. Current local-pilot reality: the default KG builder is deterministic and in-process; Claude Agent SDK use is limited to bounded natural-language KG sessions, answer synthesis, and evaluation helpers.
+- **ADR-0002** — Accepted direction: public protocol is **MCP** with eight tools (`search_services`, `get_service_brief`, `find_callers`, `find_callees`, `get_event_consumers`, `get_event_producers`, `blast_radius`, `deploy_blockers_for`). Current local-pilot reality: local read-only MCP exists; streamable HTTP, OAuth 2.1, and final hosted contracts are pending.
+- **ADR-0003** — Accepted platform direction: storage is **PostgreSQL + Apache AGE**. Current local-pilot reality: runnable snapshots are JSONL behind `KgSnapshot`; Postgres/AGE is not required to use or test the pilot.
 - **ADR-0004** — Two-tier graph: **canonical** (high-trust, deterministic / authoritative) + **candidate sidecar** (LLM-inferred, prose-derived, ambiguous).
 - **ADR-0005** — Evidence retrieval = **Mode A** (commit-pinned bytes via `go-git`/`pygit2`, always-on for surfaced facts) + **Mode B** (selective ladder: ripgrep → ast-grep → Claude Explorer subagent).
 - **ADR-0006** — Ontology is **10 node types + 15 relation types**, all tenant-scoped. Storage shape: `entities` + `facts` (with optional `qualifier` for role-bearing relations) + `evidence` (PROV-O qualified pattern, polymorphic to entity or fact, carries `valid_from`/`valid_to`) + `coverage` sidecar. Five derivation classes form a tier: `authoritative_declared` > `manual_override` > `deterministic_static` > `runtime_observed` > `inferred_llm`. Per-edge promotion rules gate `candidate → canonical`.

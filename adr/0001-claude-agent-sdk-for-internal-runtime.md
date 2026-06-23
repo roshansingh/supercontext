@@ -63,7 +63,7 @@ Broad cross-language structural indexing, broad Opengrep flow analysis, and ever
 
 ## Implementation Status (as of 2026-05-16)
 
-This ADR is partially implemented outside the default KG build path.
+This ADR is partially implemented outside the default KG build path. As of the local pilot, Claude Agent SDK is not a prerequisite for building KG snapshots; the SDK-backed pieces are bounded query/evaluation helpers while default extraction stays deterministic and in-process.
 
 What exists now:
 
