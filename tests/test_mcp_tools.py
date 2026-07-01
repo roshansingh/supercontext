@@ -1517,6 +1517,248 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("direct_callers", budgeted["output_budget"]["truncated_sections"])
         self.assertNotIn("omitted_counts", budgeted["output_budget"])
 
+    def test_review_context_budget_preserves_scalar_relation_subject_object(self) -> None:
+        relation_rows = [
+            {
+                "predicate": "CALLS",
+                "depth": 1,
+                "subject": f"pkg.module_{index}.caller",
+                "object": "pkg.target.changed",
+                "evidence": [
+                    {
+                        "bytes_ref": {
+                            "repo": "repo",
+                            "path": f"pkg/module_{index}.py",
+                            "line_start": index,
+                            "line_end": index,
+                        }
+                    }
+                ],
+                "payload": "x" * 800,
+            }
+            for index in range(16)
+        ]
+        review_lead_status = {
+            "coverage_status": "useful",
+            "recommended_action": "use_supercontext_packet",
+            "changed_anchor_count": 0,
+            "changed_symbol_count": 0,
+            "direct_impact_count": 32,
+            "transitive_impact_count": 0,
+            "source_coordinate_count": 0,
+            "file_anchor_count": 0,
+        }
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "repo": "repo",
+            "summary": {"direct_caller_count": 16, "direct_callee_count": 16},
+            "review_lead_status": review_lead_status,
+            "review_answer_packet": {
+                "status": "found",
+                "review_lead_status": review_lead_status,
+                "top_direct_callers": relation_rows,
+                "top_direct_callees": relation_rows,
+            },
+            "review_leads": {
+                "changed_files": ["pkg/module.py"],
+                "changed_symbols": [],
+                "direct_callers": relation_rows,
+                "direct_callees": relation_rows,
+                "transitive_callers": [],
+                "source_coordinates": [],
+            },
+            "direct_callers": relation_rows,
+            "direct_callees": relation_rows,
+            "transitive_callers": [],
+            "source_coordinates": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_review_context_budget(result, max_chars=8_000)
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 8_000)
+        self.assertEqual(budgeted["direct_callers"][0]["subject"], "pkg.module_0.caller")
+        self.assertEqual(budgeted["direct_callers"][0]["object"], "pkg.target.changed")
+        self.assertEqual(budgeted["review_leads"]["direct_callers"][0]["subject"], "pkg.module_0.caller")
+        self.assertEqual(budgeted["review_leads"]["direct_callees"][0]["object"], "pkg.target.changed")
+        self.assertEqual(
+            budgeted["review_answer_packet"]["top_direct_callers"][0]["subject"],
+            "pkg.module_0.caller",
+        )
+        self.assertEqual(
+            budgeted["review_answer_packet"]["top_direct_callees"][0]["object"],
+            "pkg.target.changed",
+        )
+        self.assertNotIn("payload", budgeted["review_answer_packet"]["top_direct_callers"][0])
+        self.assertEqual(
+            budgeted["review_lead_status"]["direct_impact_count"],
+            len(budgeted["review_leads"]["direct_callers"]) + len(budgeted["review_leads"]["direct_callees"]),
+        )
+
+    def test_review_context_budget_hard_caps_nested_answer_packet_rows(self) -> None:
+        relation_rows = [
+            {
+                "predicate": "CALLS",
+                "depth": 1,
+                "caller_symbol": {
+                    "qualified_name": f"pkg.module_{index}.caller",
+                    "repo": "repo",
+                    "path": f"pkg/module_{index}.py",
+                    "line": index,
+                },
+                "callee_symbol": {"qualified_name": "pkg.target.changed"},
+                "evidence": [
+                    {
+                        "bytes_ref": {
+                            "repo": "repo",
+                            "path": f"pkg/module_{index}.py",
+                            "line_start": index,
+                            "line_end": index,
+                        }
+                    }
+                ],
+                "payload": "x" * 900,
+            }
+            for index in range(40)
+        ]
+        broad_rows = [
+            {
+                "predicate": "REFERENCES",
+                "repo": "repo",
+                "path": f"pkg/broad_{index}.py",
+                "evidence": [
+                    {
+                        "bytes_ref": {
+                            "repo": "repo",
+                            "path": f"pkg/broad_{index}.py",
+                            "line_start": index,
+                            "line_end": index,
+                        }
+                    }
+                ],
+                "payload": "z" * 1_200,
+            }
+            for index in range(120)
+        ]
+        review_lead_status = {
+            "coverage_status": "useful",
+            "recommended_action": "use_supercontext_packet",
+            "changed_anchor_count": 0,
+            "changed_symbol_count": 0,
+            "direct_impact_count": 80,
+            "transitive_impact_count": 0,
+            "source_coordinate_count": 0,
+            "file_anchor_count": 0,
+        }
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "repo": "repo",
+            "summary": {"direct_caller_count": 40, "direct_callee_count": 40},
+            "review_lead_status": review_lead_status,
+            "review_answer_packet": {
+                "status": "found",
+                "review_lead_status": review_lead_status,
+                "top_direct_callers": relation_rows,
+                "top_direct_callees": relation_rows,
+                "application_impact": {"runtime_facts": broad_rows},
+                "runtime_surfaces": {"endpoint_consumers": broad_rows},
+                "surface_status": broad_rows,
+            },
+            "review_leads": {
+                "changed_files": ["pkg/module.py"],
+                "changed_symbols": [],
+                "direct_callers": relation_rows,
+                "direct_callees": relation_rows,
+                "transitive_callers": [],
+                "source_coordinates": [],
+            },
+            "direct_callers": relation_rows,
+            "direct_callees": relation_rows,
+            "transitive_callers": [],
+            "application_impact": {"runtime_facts": broad_rows},
+            "runtime_surfaces": {"endpoint_consumers": broad_rows},
+            "source_coordinates": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_review_context_budget(result, max_chars=20_000)
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 20_000)
+        self.assertNotIn("exceeded_after_minimization", budgeted["output_budget"])
+        self.assertNotIn("payload", canonical_json(budgeted["review_answer_packet"]))
+        self.assertLessEqual(
+            len(budgeted["review_answer_packet"]["application_impact"]["runtime_facts"]),
+            COMPACT_RUNTIME_HEADSTART_LIMIT,
+        )
+        self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
+
+    def test_review_context_budget_degrades_to_lead_only_for_non_row_answer_packet_bloat(self) -> None:
+        relation_rows = [
+            {
+                "predicate": "CALLS",
+                "depth": 1,
+                "subject": "pkg.module.caller",
+                "object": "pkg.target.changed",
+                "evidence": [
+                    {
+                        "bytes_ref": {
+                            "repo": "repo",
+                            "path": "pkg/module.py",
+                            "line_start": 10,
+                            "line_end": 10,
+                        }
+                    }
+                ],
+            }
+        ]
+        review_lead_status = {
+            "coverage_status": "useful",
+            "recommended_action": "use_supercontext_packet",
+            "changed_anchor_count": 0,
+            "changed_symbol_count": 0,
+            "direct_impact_count": 1,
+            "transitive_impact_count": 0,
+            "source_coordinate_count": 0,
+            "file_anchor_count": 0,
+        }
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "repo": "repo",
+            "summary": {"direct_caller_count": 1},
+            "review_lead_status": review_lead_status,
+            "review_answer_packet": {
+                "status": "found",
+                "review_lead_status": review_lead_status,
+                "top_direct_callers": relation_rows,
+                "application_impact": {"oversized_non_row_context": "z" * 50_000},
+            },
+            "review_leads": {
+                "changed_files": ["pkg/module.py"],
+                "changed_symbols": [],
+                "direct_callers": relation_rows,
+                "direct_callees": [],
+                "transitive_callers": [],
+                "source_coordinates": [],
+            },
+            "direct_callers": relation_rows,
+            "direct_callees": [],
+            "transitive_callers": [],
+            "source_coordinates": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_review_context_budget(result, max_chars=10_000)
+
+        self.assertLessEqual(len(canonical_json(budgeted)), 10_000)
+        self.assertTrue(budgeted["output_budget"]["lead_only"])
+        self.assertNotIn("exceeded_after_minimization", budgeted["output_budget"])
+        self.assertEqual(budgeted["review_answer_packet"]["packet_mode"], "lead_only")
+        self.assertNotIn("application_impact", budgeted["review_answer_packet"])
+        self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
+
     def test_review_context_budget_preserves_anchor_based_useful_gate(self) -> None:
         file_anchors = [
             {

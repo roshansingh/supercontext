@@ -106,6 +106,28 @@ _BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
     ("related_facts", "symbol_impact", "reverse_impact", "truncated_terminal_symbols"),
     ("related_facts", "symbol_impact", "reverse_impact", "source_inspection_areas"),
 )
+_REVIEW_BUDGET_BACKFILL_LIST_PATHS: tuple[tuple[str, ...], ...] = (
+    ("review_leads", "changed_symbols"),
+    ("review_leads", "direct_callers"),
+    ("review_leads", "direct_callees"),
+    ("review_leads", "transitive_callers"),
+    ("review_leads", "source_coordinates"),
+    ("changed_symbols",),
+    ("changed_file_symbols",),
+    ("direct_callers",),
+    ("direct_callees",),
+    ("direct_callers_of_changed_symbols",),
+    ("direct_callees_from_changed_symbols",),
+    ("transitive_callers",),
+    ("source_coordinates",),
+    ("diff_anchors",),
+    ("review_answer_packet", "top_diff_anchors"),
+    ("review_answer_packet", "top_changed_symbols"),
+    ("review_answer_packet", "changed_file_symbol_inventory"),
+    ("review_answer_packet", "top_direct_callers"),
+    ("review_answer_packet", "top_direct_callees"),
+    ("review_answer_packet", "top_transitive_callers"),
+)
 _PLANNING_BUDGET_ADVICE = (
     "Use runtime_architecture.answer_packet.investigation_brief as the source-inspection head start, then use narrower "
     "planning_context anchors such as repo+service, domain+repo, endpoint, path, or line to retrieve omitted runtime detail."
@@ -159,14 +181,77 @@ def _hard_cap_anchor(result: JsonObject) -> str | None:
     return None
 
 
+def _review_hard_cap_anchor(result: JsonObject) -> str | None:
+    """Pick a structured review anchor for budget ranking without using free-form text."""
+    review_leads = result.get("review_leads")
+    if isinstance(review_leads, dict):
+        for field in ("changed_symbols", "direct_callers", "direct_callees", "transitive_callers"):
+            for row in _list_value(review_leads.get(field)):
+                anchor = _row_anchor_string(row)
+                if anchor:
+                    return anchor
+    diff_anchors = result.get("diff_anchors")
+    for row in _list_value(diff_anchors):
+        anchor = _row_anchor_string(row)
+        if anchor:
+            return anchor
+    for field in ("repo", "requested_repo"):
+        value = result.get(field)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _row_anchor_string(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if not isinstance(value, dict):
+        return None
+    for key in ("qualified_name", "qualname", "display_name", "name", "path", "repo"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    for key in ("caller_symbol", "callee_symbol", "subject", "object", "symbol"):
+        anchor = _row_anchor_string(value.get(key))
+        if anchor:
+            return anchor
+    return None
+
+
 def _planning_signal_hard_cap(result: JsonObject, *, max_chars: int) -> JsonObject:
+    return _signal_hard_cap(
+        result,
+        max_chars=max_chars,
+        anchor=_hard_cap_anchor(result),
+        area="planning_budget_overflow",
+        reason="Lowest-signal planning rows dropped to fit the packet budget; inspect the cited coordinates.",
+    )
+
+
+def _review_signal_hard_cap(result: JsonObject, *, max_chars: int) -> JsonObject:
+    budgeted = _signal_hard_cap(
+        result,
+        max_chars=max_chars,
+        anchor=_review_hard_cap_anchor(result),
+        area="review_budget_overflow",
+        reason="Lowest-signal review rows dropped to fit the packet budget; inspect the cited coordinates.",
+    )
+    _sync_review_lead_status_from_packet(budgeted)
+    return budgeted
+
+
+def _signal_hard_cap(
+    result: JsonObject,
+    *,
+    max_chars: int,
+    anchor: str | None,
+    area: str,
+    reason: str,
+) -> JsonObject:
     result = deepcopy(result)
     overflow: list[JsonObject] = []
     truncated: set[str] = set()
     guard = 0
-    # Rank against the packet's structured anchor so rows matching the queried
-    # symbol/service/endpoint are kept preferentially over unrelated rows of equal strength.
-    anchor = _hard_cap_anchor(result)
     # Reserve room for the overflow inspection area appended after the loop, so adding it
     # never pushes the packet back over the cap.
     target_budget = max(1, max_chars - _HARD_CAP_AREA_RESERVE)
@@ -183,8 +268,8 @@ def _planning_signal_hard_cap(result: JsonObject, *, max_chars: int) -> JsonObje
         truncated.add(label)
     area = _overflow_inspection_area(
         overflow,
-        area="planning_budget_overflow",
-        reason="Lowest-signal planning rows dropped to fit the packet budget; inspect the cited coordinates.",
+        area=area,
+        reason=reason,
         omitted_count=len(overflow),
     )
     if area:
@@ -402,10 +487,26 @@ def enforce_review_context_budget(
             truncated_sections=truncated_sections,
         )
         if len(canonical_json(compact)) <= max_chars:
-            return compact
+            return _backfill_review_context(
+                compact,
+                result,
+                measured_chars=measured,
+                max_chars=max_chars,
+                truncated_sections=truncated_sections,
+            )
     # Even the tightest pass overshot (rare: dominated by non-row content); signal it like
-    # the planning path rather than silently returning an over-budget packet.
-    if isinstance(compact.get("output_budget"), dict):
+    # the planning path by shrinking the largest low-signal row lists before degrading to a
+    # lead-only packet.
+    compact = _review_signal_hard_cap(compact, max_chars=max_chars)
+    if len(canonical_json(compact)) <= max_chars:
+        return compact
+    compact = _review_lead_only_budget_packet(
+        compact,
+        measured_chars=measured,
+        max_chars=max_chars,
+        truncated_sections=truncated_sections,
+    )
+    if isinstance(compact.get("output_budget"), dict) and len(canonical_json(compact)) > max_chars:
         compact["output_budget"]["exceeded_after_minimization"] = True
     return compact
 
@@ -509,13 +610,172 @@ def _sync_compact_review_leads(
     status = original.get("review_lead_status")
     if not isinstance(status, dict):
         return
+    compact["review_lead_status"] = dict(status)
+    _sync_review_lead_status_from_packet(compact)
+
+
+def _backfill_review_context(
+    result: JsonObject,
+    original_result: JsonObject,
+    *,
+    measured_chars: int,
+    max_chars: int,
+    truncated_sections: set[str],
+) -> JsonObject:
+    candidate = deepcopy(result)
+    backfilled_counts: dict[str, int] = {}
+    for path in _REVIEW_BUDGET_BACKFILL_LIST_PATHS:
+        candidate, added = _backfill_review_list_path(
+            candidate,
+            original_result,
+            path,
+            measured_chars=measured_chars,
+            max_chars=max_chars,
+            truncated_sections=truncated_sections,
+            backfilled_counts=backfilled_counts,
+        )
+        if added:
+            backfilled_counts[_path_label(path)] = backfilled_counts.get(_path_label(path), 0) + added
+    _sync_review_lead_status_from_packet(candidate)
+    _attach_detail_budget_metadata(
+        candidate,
+        measured_chars=measured_chars,
+        max_chars=max_chars,
+        advice=_REVIEW_BUDGET_ADVICE,
+        truncated_sections=truncated_sections,
+    )
+    if backfilled_counts and isinstance(candidate.get("output_budget"), dict):
+        candidate["output_budget"]["backfilled_counts"] = {
+            key: value for key, value in sorted(backfilled_counts.items()) if value > 0
+        }
+    return candidate
+
+
+def _backfill_review_list_path(
+    candidate: JsonObject,
+    original_result: JsonObject,
+    path: tuple[str, ...],
+    *,
+    measured_chars: int,
+    max_chars: int,
+    truncated_sections: set[str],
+    backfilled_counts: dict[str, int],
+) -> tuple[JsonObject, int]:
+    source = _nested_list(original_result, path)
+    target = _nested_list(candidate, path)
+    if source is None or target is None or len(target) >= len(source):
+        return candidate, 0
+    added = 0
+    for row in source[len(target) :]:
+        trial_base = deepcopy(candidate)
+        trial_target = _nested_list(trial_base, path)
+        if trial_target is None:
+            break
+        compact_row = _compact_review_backfill_row(path, row)
+        if not compact_row:
+            continue
+        trial_target.append(compact_row)
+        proposed_counts = dict(backfilled_counts)
+        proposed_counts[_path_label(path)] = proposed_counts.get(_path_label(path), 0) + added + 1
+        _sync_review_lead_status_from_packet(trial_base)
+        _attach_detail_budget_metadata(
+            trial_base,
+            measured_chars=measured_chars,
+            max_chars=max_chars,
+            advice=_REVIEW_BUDGET_ADVICE,
+            truncated_sections=truncated_sections,
+        )
+        if proposed_counts and isinstance(trial_base.get("output_budget"), dict):
+            trial_base["output_budget"]["backfilled_counts"] = {
+                key: value for key, value in sorted(proposed_counts.items()) if value > 0
+            }
+        if _current_chars(trial_base) > max_chars:
+            break
+        candidate = trial_base
+        added += 1
+    return candidate, added
+
+
+def _review_lead_only_budget_packet(
+    result: JsonObject,
+    *,
+    measured_chars: int,
+    max_chars: int,
+    truncated_sections: set[str],
+) -> JsonObject:
+    compact, lead_truncated = _compact_review_detail(result, limit=1)
+    truncated_sections = set(truncated_sections) | lead_truncated
+    packet = compact.get("review_answer_packet") if isinstance(compact.get("review_answer_packet"), dict) else {}
+    lead_packet: JsonObject = {
+        "status": packet.get("status", compact.get("status")),
+        "packet_mode": "lead_only",
+        "repo_resolution": packet.get("repo_resolution", compact.get("repo_resolution", {})),
+        "review_lead_status": compact.get("review_lead_status", {}),
+        "summary": packet.get("summary", compact.get("summary", {})),
+        "top_diff_anchors": packet.get("top_diff_anchors", []),
+        "top_changed_symbols": packet.get("top_changed_symbols", []),
+        "top_direct_callers": packet.get("top_direct_callers", []),
+        "top_direct_callees": packet.get("top_direct_callees", []),
+        "top_transitive_callers": packet.get("top_transitive_callers", []),
+    }
+    lead_only: JsonObject = {
+        "tool": compact.get("tool", "review_context"),
+        "status": compact.get("status"),
+        "repo": compact.get("repo"),
+        "requested_repo": compact.get("requested_repo"),
+        "repo_resolution": compact.get("repo_resolution", {}),
+        "summary": compact.get("summary", {}),
+        "review_answer_packet": {key: value for key, value in lead_packet.items() if value not in (None, [], {})},
+        "review_lead_status": compact.get("review_lead_status", {}),
+        "review_leads": compact.get("review_leads", {}),
+        "diff_anchors": compact.get("diff_anchors", []),
+        "changed_symbols": compact.get("changed_symbols", []),
+        "changed_file_symbols": compact.get("changed_file_symbols", []),
+        "direct_callers": compact.get("direct_callers", []),
+        "direct_callees": compact.get("direct_callees", []),
+        "transitive_callers": compact.get("transitive_callers", []),
+        "source_coordinates": compact.get("source_coordinates", []),
+        "answerability": compact.get("answerability", {}),
+        "coverage_warnings": compact.get("coverage_warnings", []),
+        "unsupported_scopes": compact.get("unsupported_scopes", []),
+        "unsupported_review_scopes": compact.get("unsupported_review_scopes", []),
+        "next_actions": compact.get("next_actions", []),
+    }
+    _sync_review_lead_status_from_packet(lead_only)
+    _attach_detail_budget_metadata(
+        lead_only,
+        measured_chars=measured_chars,
+        max_chars=max_chars,
+        advice=_REVIEW_BUDGET_ADVICE,
+        truncated_sections=truncated_sections,
+    )
+    if isinstance(lead_only.get("output_budget"), dict):
+        lead_only["output_budget"]["lead_only"] = True
+    if _current_chars(lead_only) > max_chars:
+        lead_only = _review_signal_hard_cap(lead_only, max_chars=max_chars)
+        if isinstance(lead_only.get("output_budget"), dict):
+            lead_only["output_budget"]["lead_only"] = True
+    return lead_only
+
+
+def _sync_review_lead_status_from_packet(result: JsonObject) -> None:
+    status = result.get("review_lead_status")
+    if not isinstance(status, dict):
+        return
+    review_leads = result.get("review_leads")
+    if not isinstance(review_leads, dict):
+        review_leads = {}
     synced_status = dict(status)
-    changed_symbols = synced.get("changed_symbols") if isinstance(synced.get("changed_symbols"), list) else []
-    direct_callers = synced.get("direct_callers") if isinstance(synced.get("direct_callers"), list) else []
-    direct_callees = synced.get("direct_callees") if isinstance(synced.get("direct_callees"), list) else []
-    transitive_callers = synced.get("transitive_callers") if isinstance(synced.get("transitive_callers"), list) else []
-    source_coordinates = synced.get("source_coordinates") if isinstance(synced.get("source_coordinates"), list) else []
-    diff_anchors = compact.get("diff_anchors") if isinstance(compact.get("diff_anchors"), list) else []
+    changed_symbols = review_leads.get("changed_symbols") if isinstance(review_leads.get("changed_symbols"), list) else []
+    direct_callers = review_leads.get("direct_callers") if isinstance(review_leads.get("direct_callers"), list) else []
+    direct_callees = review_leads.get("direct_callees") if isinstance(review_leads.get("direct_callees"), list) else []
+    transitive_callers = (
+        review_leads.get("transitive_callers") if isinstance(review_leads.get("transitive_callers"), list) else []
+    )
+    source_coordinates = (
+        review_leads.get("source_coordinates") if isinstance(review_leads.get("source_coordinates"), list) else []
+    )
+    diff_anchors = result.get("diff_anchors") if isinstance(result.get("diff_anchors"), list) else []
     kept_changed_anchor_count = sum(
         1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "symbol"
     )
@@ -534,21 +794,19 @@ def _sync_compact_review_leads(
         if isinstance(original_file_anchor_count, int) and not isinstance(original_file_anchor_count, bool)
         else 0,
     )
-    direct_impact_count = len(direct_callers) + len(direct_callees)
-    transitive_impact_count = len(transitive_callers)
     synced_status.update(
         {
             "changed_anchor_count": changed_anchor_count,
             "changed_symbol_count": len(changed_symbols),
-            "direct_impact_count": direct_impact_count,
-            "transitive_impact_count": transitive_impact_count,
+            "direct_impact_count": len(direct_callers) + len(direct_callees),
+            "transitive_impact_count": len(transitive_callers),
             "source_coordinate_count": len(source_coordinates),
             "file_anchor_count": file_anchor_count,
         }
     )
-    compact["review_lead_status"] = synced_status
-    packet = compact.get("review_answer_packet")
-    if isinstance(packet, dict) and isinstance(packet.get("review_lead_status"), dict):
+    result["review_lead_status"] = synced_status
+    packet = result.get("review_answer_packet")
+    if isinstance(packet, dict):
         packet["review_lead_status"] = synced_status
 
 
@@ -861,6 +1119,28 @@ def _compact_nested_detail(
     return compact
 
 
+def _compact_review_answer_nested_detail(
+    value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None, label: str = ""
+) -> JsonObject:
+    compact: JsonObject = {}
+    for key, item in value.items():
+        if isinstance(item, list):
+            kept = [_compact_review_nested_row(row) if isinstance(row, dict) else row for row in item[:limit]]
+            if truncated_sections is not None and len(item) > len(kept):
+                truncated_sections.add(f"{label}.{key}" if label else key)
+            compact[key] = kept
+        elif isinstance(item, dict):
+            compact[key] = _compact_review_answer_nested_detail(
+                item,
+                limit=limit,
+                truncated_sections=truncated_sections,
+                label=f"{label}.{key}" if label else key,
+            )
+        else:
+            compact[key] = item
+    return compact
+
+
 def _compact_review_answer_packet(
     value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None
 ) -> JsonObject:
@@ -883,6 +1163,34 @@ def _compact_review_answer_packet(
             if truncated_sections is not None:
                 _record_truncated(truncated_sections, f"review_answer_packet.{field}", original=len(rows), kept=len(kept))
             compact[field] = kept
+    for field in ("top_direct_callers", "top_direct_callees", "top_transitive_callers"):
+        rows = value.get(field)
+        if isinstance(rows, list):
+            kept_rows = _compact_relation_rows(rows, limit=limit)
+            if truncated_sections is not None:
+                _record_truncated(
+                    truncated_sections,
+                    f"review_answer_packet.{field}",
+                    original=len(rows),
+                    kept=len(kept_rows),
+                )
+            compact[field] = kept_rows
+    for field in ("surface_status", "inspection_areas"):
+        rows = value.get(field)
+        if isinstance(rows, list):
+            kept = [_compact_review_nested_row(row) for row in rows[:limit] if isinstance(row, dict)]
+            if truncated_sections is not None:
+                _record_truncated(truncated_sections, f"review_answer_packet.{field}", original=len(rows), kept=len(kept))
+            compact[field] = kept
+    for field in ("runtime", "runtime_surfaces", "framework_impact", "application_impact"):
+        nested = value.get(field)
+        if isinstance(nested, dict):
+            compact[field] = _compact_review_answer_nested_detail(
+                nested,
+                limit=limit,
+                truncated_sections=truncated_sections,
+                label=f"review_answer_packet.{field}",
+            )
     return compact
 
 
@@ -1596,6 +1904,8 @@ def _search_terms_from_budget_row(row: JsonObject) -> list[str]:
         nested = row.get(key)
         if isinstance(nested, dict):
             terms.extend(_search_terms_from_budget_row(nested))
+        elif isinstance(nested, str) and nested.strip():
+            terms.append(nested.strip())
     return terms
 
 
@@ -1915,10 +2225,10 @@ def _compact_relation_rows(value: object, *, limit: int) -> list[JsonObject]:
             "predicate": row.get("predicate"),
             "depth": row.get("depth"),
             "traversal": row.get("traversal"),
-            "subject": _compact_symbol(row.get("subject")),
-            "object": _compact_symbol(row.get("object")),
-            "caller_symbol": _compact_symbol(row.get("caller_symbol")),
-            "callee_symbol": _compact_symbol(row.get("callee_symbol")),
+            "subject": _compact_relation_endpoint(row.get("subject")),
+            "object": _compact_relation_endpoint(row.get("object")),
+            "caller_symbol": _compact_relation_endpoint(row.get("caller_symbol")),
+            "callee_symbol": _compact_relation_endpoint(row.get("callee_symbol")),
             "source_coordinates": _source_coordinates(row),
         }
         bridge = _compact_constructor_bridge(row.get("via_constructor_bridge"))
@@ -1926,6 +2236,60 @@ def _compact_relation_rows(value: object, *, limit: int) -> list[JsonObject]:
             compact_row["via_constructor_bridge"] = bridge
         rows.append(compact_row)
     return rows
+
+
+def _compact_relation_endpoint(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip() if value.strip() else {}
+    compact = _compact_symbol(value)
+    if compact:
+        return compact
+    compact = _compact_entity_ref(value)
+    if compact:
+        return compact
+    return {}
+
+
+def _compact_review_backfill_row(path: tuple[str, ...], row: object) -> object:
+    if not isinstance(row, dict):
+        return deepcopy(row)
+    if path[-1] in {
+        "direct_callers",
+        "direct_callees",
+        "direct_callers_of_changed_symbols",
+        "direct_callees_from_changed_symbols",
+        "transitive_callers",
+        "top_direct_callers",
+        "top_direct_callees",
+        "top_transitive_callers",
+        "repo_dependencies",
+    }:
+        compacted = _compact_relation_rows([row], limit=1)
+        return compacted[0] if compacted else {}
+    if path[-1] in {"changed_symbols", "changed_file_symbols", "top_changed_symbols", "changed_file_symbol_inventory"}:
+        return _compact_symbol(row)
+    if path[-1] in {"diff_anchors", "top_diff_anchors"}:
+        return _compact_diff_anchor(row)
+    if path[-1] == "source_coordinates":
+        return _compact_coordinate(row)
+    return _compact_review_nested_row(row)
+
+
+def _compact_review_nested_row(row: JsonObject) -> JsonObject:
+    if any(key in row for key in ("subject", "object", "caller_symbol", "callee_symbol")):
+        compacted = _compact_relation_rows([row], limit=1)
+        return compacted[0] if compacted else {}
+    compact = _compact_headstart_or_relation_row(row)
+    if not compact:
+        compact = _compact_symbol(row)
+    if not compact:
+        compact = _compact_entity_ref(row)
+    if not compact:
+        compact = {key: row[key] for key in ("status", "reason", "predicate", "repo", "path", "name") if key in row}
+    coordinates = _source_coordinates(row)
+    if coordinates and "source_coordinates" not in compact:
+        compact["source_coordinates"] = coordinates
+    return compact
 
 
 def _compact_symbol(value: object) -> JsonObject:
