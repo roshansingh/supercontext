@@ -2987,6 +2987,335 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertFalse(any(row["qualname"] == "handle_checkout" for row in result["changed_file_symbols"]))
 
+    def test_review_context_repo_resolution_reports_direct_match_without_rewriting_scope(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["status"], "matched")
+        self.assertEqual(result["repo_resolution"]["basis"], "direct_repo_match")
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_direct_match_uses_canonical_snapshot_repo_key(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "Payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["requested_repo"], "Payments")
+        self.assertEqual(result["repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["status"], "matched")
+        self.assertEqual(result["repo_resolution"]["effective_repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["matched_repos"], ["payments"])
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_owner_repo_suffix_match_requires_safe_alias_overlap(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/payments",
+                    "changed_files": ["elsewhere/missing.py"],
+                    "changed_ranges": [{"path": "elsewhere/missing.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/payments")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_resolves_owner_repo_alias_for_single_repo_checkout_snapshot(self) -> None:
+        with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "local-checkout-repo")
+        self.assertEqual(
+            result["repo_resolution"],
+            {
+                "status": "resolved",
+                "requested_repo": "owner/project",
+                "effective_repo": "local-checkout-repo",
+                "basis": "single_repo_snapshot_changed_file_overlap",
+                "snapshot_repo_count": 1,
+            },
+        )
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_repo_resolution_uses_entity_scope_before_fact_consumer_repos(self) -> None:
+        with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+            kg.facts[0].setdefault("qualifier", {})["consumer_repo"] = "foreign/repo"
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "local-checkout-repo")
+        self.assertEqual(result["repo_resolution"]["status"], "resolved")
+        self.assertEqual(result["repo_resolution"]["snapshot_repo_count"], 1)
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
+
+    def test_review_context_fixture_repo_rewrite_keeps_ids_consistent(self) -> None:
+        with _fixture_snapshot() as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+
+            entity_ids = {str(entity["entity_id"]) for entity in kg.entities}
+            fact_ids = {str(fact["fact_id"]) for fact in kg.facts}
+
+            self.assertEqual(set(kg.entities_by_id), entity_ids)
+            for fact in kg.facts:
+                self.assertIn(fact["subject_id"], entity_ids)
+                self.assertIn(fact["object_id"], entity_ids)
+            for evidence in kg.evidence:
+                if evidence["target_type"] == "entity":
+                    self.assertIn(evidence["target_id"], entity_ids)
+                if evidence["target_type"] == "fact":
+                    self.assertIn(evidence["target_id"], fact_ids)
+
+    def test_review_context_resolves_uppercase_repo_identity_as_single_repo_snapshot(self) -> None:
+        with _fixture_snapshot() as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="Local-Checkout-Repo")
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "local-checkout-repo")
+        self.assertEqual(result["repo_resolution"]["status"], "resolved")
+        self.assertEqual(result["repo_resolution"]["snapshot_repo_count"], 1)
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_does_not_alias_bare_repo_for_single_repo_checkout_snapshot(self) -> None:
+        with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "project",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "project")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "requested_repo_not_owner_qualified")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_does_not_alias_owner_repo_when_changed_files_do_not_overlap_snapshot(self) -> None:
+        with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["elsewhere/missing.py"],
+                    "changed_ranges": [{"path": "elsewhere/missing.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/project")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+        self.assertEqual(result["changed_symbols"], [])
+
+    def test_review_context_does_not_treat_repo_path_traversal_as_changed_file_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_root = root / "snapshot"
+            repo_root = root / "repo"
+            (repo_root / "nested").mkdir(parents=True)
+            (root / "outside.py").write_text("print('outside')\n", encoding="utf-8")
+            JsonlKgStore(snapshot_root).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1, "repo_name": "Local-Checkout-Repo", "repo_path": str(repo_root)},
+            )
+
+            result = call_tool(
+                KgSnapshot(snapshot_root),
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["nested/../../outside.py"],
+                    "changed_ranges": [{"path": "nested/../../outside.py", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/project")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_does_not_strip_leading_traversal_for_repo_path_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_root = root / "snapshot"
+            repo_root = root / "repo"
+            config_path = repo_root / "config" / "settings.yaml"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text("enabled: true\n", encoding="utf-8")
+            JsonlKgStore(snapshot_root).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1, "repo_name": "Local-Checkout-Repo", "repo_path": str(repo_root)},
+            )
+
+            result = call_tool(
+                KgSnapshot(snapshot_root),
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["../config/settings.yaml"],
+                    "changed_ranges": [{"path": "../config/settings.yaml", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/project")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_can_resolve_single_repo_checkout_from_existing_unindexed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_root = root / "snapshot"
+            repo_root = root / "repo"
+            config_path = repo_root / "config" / "settings.yaml"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text("enabled: true\n", encoding="utf-8")
+            JsonlKgStore(snapshot_root).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1, "repo_name": "Local-Checkout-Repo", "repo_path": str(repo_root)},
+            )
+
+            result = call_tool(
+                KgSnapshot(snapshot_root),
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["config/settings.yaml"],
+                    "changed_ranges": [{"path": "config/settings.yaml", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "local-checkout-repo")
+        self.assertEqual(result["repo_resolution"]["status"], "resolved")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_does_not_alias_owner_repo_for_multi_repo_snapshot(self) -> None:
+        with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+            other_repo_module = Entity(
+                kind="CodeModule",
+                identity={"tenant_id": "default", "repo": "other-repo", "module": "other.module"},
+                properties={"path": "other/module.py"},
+            )
+            other_repo_record = other_repo_module.to_record()
+            kg.entities.append(other_repo_record)
+            kg.entities_by_id[other_repo_module.entity_id] = other_repo_record
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/project")
+        self.assertEqual(result["repo_resolution"]["status"], "ambiguous")
+        self.assertEqual(result["repo_resolution"]["reason"], "multiple_snapshot_repos")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+        self.assertEqual(result["changed_symbols"], [])
+
+    def test_review_context_does_not_alias_owner_repo_without_snapshot_repo_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            JsonlKgStore(root).write(entities=[], facts=[], evidence=[], coverage=[], manifest={"version": 1})
+
+            result = call_tool(
+                KgSnapshot(root),
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["src/app.py"],
+                    "changed_ranges": [{"path": "src/app.py", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/project")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_snapshot_repo_identity")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
     def test_repo_dependencies_reject_different_owner_repo_query(self) -> None:
         with _fixture_snapshot() as kg:
             for fact in kg.facts:
@@ -3180,7 +3509,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["summary"]["app_cross_repo_lead_count"], 1)
         self.assertEqual(result["summary"]["source_coordinate_count"], len(result["source_coordinates"]))
         self.assertLessEqual(len(result["source_coordinates"]), result["summary"]["section_limit"])
+        self.assertEqual(result["requested_repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["status"], "matched")
         self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
+        self.assertEqual(result["review_answer_packet"]["repo_resolution"]["status"], "matched")
         self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
         self.assertEqual(result["review_answer_packet"]["application"]["cross_repo_name_leads"], [])
         self.assertTrue(result["review_answer_packet"]["application"]["api"])
@@ -4617,6 +4949,70 @@ class _cross_repo_import_consumer_snapshot:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self._tmpdir.cleanup()
+
+
+def _rewrite_fixture_repo(kg: KgSnapshot, *, old_repo: str, new_repo: str) -> None:
+    entity_id_map: dict[str, str] = {}
+    for entity in kg.entities:
+        identity = entity.get("identity")
+        if isinstance(identity, dict) and identity.get("repo") == old_repo:
+            old_entity_id = str(entity.get("entity_id") or "")
+            identity["repo"] = new_repo
+            rewritten = Entity(
+                kind=str(entity["kind"]),
+                identity=deepcopy(identity),
+                properties=deepcopy(entity.get("properties") or {}),
+                canonical_status=entity.get("canonical_status", "canonical"),
+            ).to_record()
+            entity["entity_id"] = rewritten["entity_id"]
+            entity["urn"] = rewritten["urn"]
+            if old_entity_id and old_entity_id != rewritten["entity_id"]:
+                entity_id_map[old_entity_id] = str(rewritten["entity_id"])
+    kg.entities_by_id = {entity["entity_id"]: entity for entity in kg.entities}
+
+    fact_id_map: dict[str, str] = {}
+    for fact in kg.facts:
+        old_fact_id = str(fact.get("fact_id") or "")
+        subject_id = fact.get("subject_id")
+        if isinstance(subject_id, str) and subject_id in entity_id_map:
+            fact["subject_id"] = entity_id_map[subject_id]
+        object_id = fact.get("object_id")
+        if isinstance(object_id, str) and object_id in entity_id_map:
+            fact["object_id"] = entity_id_map[object_id]
+        qualifier = fact.get("qualifier")
+        if not isinstance(qualifier, dict):
+            qualifier = {}
+            fact["qualifier"] = qualifier
+        if qualifier.get("consumer_repo") == old_repo:
+            qualifier["consumer_repo"] = new_repo
+        consumer_identity = qualifier.get("consumer_repo_identity")
+        if isinstance(consumer_identity, dict) and consumer_identity.get("name") == old_repo:
+            consumer_identity["name"] = new_repo
+        consumer_identities = qualifier.get("consumer_repo_identities")
+        if isinstance(consumer_identities, list):
+            for row in consumer_identities:
+                if isinstance(row, dict) and row.get("name") == old_repo:
+                    row["name"] = new_repo
+        rewritten_fact = Fact(
+            predicate=str(fact["predicate"]),
+            subject_id=str(fact["subject_id"]),
+            object_id=str(fact["object_id"]),
+            qualifier=deepcopy(qualifier),
+            canonical_status=fact.get("canonical_status", "canonical"),
+        ).to_record()
+        fact["fact_id"] = rewritten_fact["fact_id"]
+        if old_fact_id and old_fact_id != rewritten_fact["fact_id"]:
+            fact_id_map[old_fact_id] = str(rewritten_fact["fact_id"])
+
+    for evidence in kg.evidence:
+        target_id = evidence.get("target_id")
+        if isinstance(target_id, str) and target_id in entity_id_map:
+            evidence["target_id"] = entity_id_map[target_id]
+        if isinstance(target_id, str) and target_id in fact_id_map:
+            evidence["target_id"] = fact_id_map[target_id]
+    kg.evidence_by_target.clear()
+    for row in kg.evidence:
+        kg.evidence_by_target[row["target_id"]].append(row)
 
 
 class _fixture_snapshot:
