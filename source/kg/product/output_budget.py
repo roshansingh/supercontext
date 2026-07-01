@@ -477,7 +477,79 @@ def _compact_review_detail(result: JsonObject, *, limit: int) -> tuple[JsonObjec
         compact["review_answer_packet"] = _compact_review_answer_packet(
             answer_packet, limit=limit, truncated_sections=truncated_sections
         )
+    _sync_compact_review_leads(compact, result, truncated_sections=truncated_sections)
     return compact, truncated_sections
+
+
+def _sync_compact_review_leads(
+    compact: JsonObject,
+    original: JsonObject,
+    *,
+    truncated_sections: set[str],
+) -> None:
+    review_leads = original.get("review_leads")
+    if not isinstance(review_leads, dict):
+        return
+    synced = dict(review_leads)
+    for field in ("changed_symbols", "direct_callers", "direct_callees", "transitive_callers", "source_coordinates"):
+        rows = compact.get(field)
+        if isinstance(rows, list):
+            _record_truncated(
+                truncated_sections,
+                f"review_leads.{field}",
+                original=len(review_leads.get(field, [])) if isinstance(review_leads.get(field), list) else 0,
+                kept=len(rows),
+            )
+            synced[field] = rows
+    changed_files = review_leads.get("changed_files")
+    if isinstance(changed_files, list) and len(changed_files) > COMPACT_RUNTIME_SOURCE_CHECK_LIMIT:
+        synced["changed_files"] = changed_files[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT]
+        truncated_sections.add("review_leads.changed_files")
+    compact["review_leads"] = synced
+    status = original.get("review_lead_status")
+    if not isinstance(status, dict):
+        return
+    synced_status = dict(status)
+    changed_symbols = synced.get("changed_symbols") if isinstance(synced.get("changed_symbols"), list) else []
+    direct_callers = synced.get("direct_callers") if isinstance(synced.get("direct_callers"), list) else []
+    direct_callees = synced.get("direct_callees") if isinstance(synced.get("direct_callees"), list) else []
+    transitive_callers = synced.get("transitive_callers") if isinstance(synced.get("transitive_callers"), list) else []
+    source_coordinates = synced.get("source_coordinates") if isinstance(synced.get("source_coordinates"), list) else []
+    diff_anchors = compact.get("diff_anchors") if isinstance(compact.get("diff_anchors"), list) else []
+    kept_changed_anchor_count = sum(
+        1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "symbol"
+    )
+    kept_file_anchor_count = sum(1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "file")
+    original_changed_anchor_count = status.get("changed_anchor_count")
+    original_file_anchor_count = status.get("file_anchor_count")
+    changed_anchor_count = max(
+        kept_changed_anchor_count,
+        original_changed_anchor_count
+        if isinstance(original_changed_anchor_count, int) and not isinstance(original_changed_anchor_count, bool)
+        else 0,
+    )
+    file_anchor_count = max(
+        kept_file_anchor_count,
+        original_file_anchor_count
+        if isinstance(original_file_anchor_count, int) and not isinstance(original_file_anchor_count, bool)
+        else 0,
+    )
+    direct_impact_count = len(direct_callers) + len(direct_callees)
+    transitive_impact_count = len(transitive_callers)
+    synced_status.update(
+        {
+            "changed_anchor_count": changed_anchor_count,
+            "changed_symbol_count": len(changed_symbols),
+            "direct_impact_count": direct_impact_count,
+            "transitive_impact_count": transitive_impact_count,
+            "source_coordinate_count": len(source_coordinates),
+            "file_anchor_count": file_anchor_count,
+        }
+    )
+    compact["review_lead_status"] = synced_status
+    packet = compact.get("review_answer_packet")
+    if isinstance(packet, dict) and isinstance(packet.get("review_lead_status"), dict):
+        packet["review_lead_status"] = synced_status
 
 
 def enforce_reverse_impact_budget(

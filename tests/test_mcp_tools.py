@@ -17,6 +17,7 @@ from source.kg.product.mcp_tools import (
     _planning_context_has_resolved_anchor,
     _planning_context_authz_surface_reference,
     _planning_context_symbol_impact,
+    _review_context_lead_packet,
     _with_default_tool_metadata,
     call_tool,
     tool_definitions,
@@ -1383,19 +1384,49 @@ class McpToolsTest(unittest.TestCase):
             }
             for index in range(60)
         ]
+        changed_symbols = [row["caller_symbol"] for row in caller_rows]
+        source_coordinates = [
+            {
+                "repo": "repo",
+                "path": f"pkg/module_{index}.py",
+                "line_start": index,
+                "line_end": index,
+            }
+            for index in range(60)
+        ]
         result = {
             "tool": "review_context",
             "status": "found",
             "repo": "repo",
             "summary": {
-                "changed_symbol_count": 0,
+                "changed_symbol_count": 60,
                 "changed_file_symbol_count": 60,
                 "diff_anchor_count": 60,
                 "direct_caller_count": 60,
             },
+            "review_lead_status": {
+                "coverage_status": "useful",
+                "recommended_action": "use_supercontext_packet",
+                "changed_anchor_count": 0,
+                "changed_symbol_count": 60,
+                "direct_impact_count": 120,
+                "transitive_impact_count": 0,
+                "source_coordinate_count": 60,
+                "file_anchor_count": 60,
+            },
             "review_answer_packet": {
                 "status": "found",
                 "summary": {"changed_symbol_count": 0, "diff_anchor_count": 60},
+                "review_lead_status": {
+                    "coverage_status": "useful",
+                    "recommended_action": "use_supercontext_packet",
+                    "changed_anchor_count": 0,
+                    "changed_symbol_count": 60,
+                    "direct_impact_count": 120,
+                    "transitive_impact_count": 0,
+                    "source_coordinate_count": 60,
+                    "file_anchor_count": 60,
+                },
                 "top_diff_anchors": [
                     {
                         "repo": "repo",
@@ -1411,6 +1442,14 @@ class McpToolsTest(unittest.TestCase):
             "answerability": {"status": "answerable"},
             "scope_contract": {"changed_symbol_count": 0},
             "claim_contract": {"scope": "bounded static review context for changed files and optional ranges"},
+            "review_leads": {
+                "changed_files": [f"pkg/module_{index}.py" for index in range(60)],
+                "changed_symbols": changed_symbols,
+                "direct_callers": caller_rows,
+                "direct_callees": caller_rows,
+                "transitive_callers": [],
+                "source_coordinates": source_coordinates,
+            },
             "surface_status": [],
             "diff_anchors": [
                 {
@@ -1435,7 +1474,9 @@ class McpToolsTest(unittest.TestCase):
             "direct_callees": caller_rows,
             "direct_callers_of_changed_symbols": caller_rows,
             "direct_callees_from_changed_symbols": caller_rows,
+            "changed_symbols": changed_symbols,
             "changed_file_symbols": [row["caller_symbol"] for row in caller_rows],
+            "source_coordinates": source_coordinates,
             "coverage_warnings": [],
             "unsupported_scopes": [],
             "next_actions": [],
@@ -1452,12 +1493,94 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(budgeted["summary"], original["summary"])
         self.assertLessEqual(len(budgeted["direct_callers"]), 8)
         self.assertLessEqual(len(budgeted["diff_anchors"]), 8)
+        self.assertEqual(budgeted["review_leads"]["changed_symbols"], budgeted["changed_symbols"])
+        self.assertEqual(budgeted["review_leads"]["direct_callers"], budgeted["direct_callers"])
+        self.assertEqual(budgeted["review_leads"]["source_coordinates"], budgeted["source_coordinates"])
+        self.assertEqual(
+            budgeted["review_lead_status"]["changed_symbol_count"],
+            len(budgeted["review_leads"]["changed_symbols"]),
+        )
+        self.assertEqual(
+            budgeted["review_lead_status"]["source_coordinate_count"],
+            len(budgeted["review_leads"]["source_coordinates"]),
+        )
+        self.assertEqual(
+            budgeted["review_answer_packet"]["review_lead_status"],
+            budgeted["review_lead_status"],
+        )
         self.assertIn("diff_anchors", budgeted["output_budget"]["truncated_sections"])
         self.assertIn("review_answer_packet.top_diff_anchors", budgeted["output_budget"]["truncated_sections"])
+        self.assertIn("review_leads.changed_symbols", budgeted["output_budget"]["truncated_sections"])
+        self.assertIn("review_leads.source_coordinates", budgeted["output_budget"]["truncated_sections"])
         self.assertNotIn("payload", budgeted["diff_anchors"][0])
         self.assertNotIn("payload", budgeted["review_answer_packet"]["top_diff_anchors"][0])
         self.assertIn("direct_callers", budgeted["output_budget"]["truncated_sections"])
         self.assertNotIn("omitted_counts", budgeted["output_budget"])
+
+    def test_review_context_budget_preserves_anchor_based_useful_gate(self) -> None:
+        file_anchors = [
+            {
+                "repo": "repo",
+                "path": f"pkg/file_{index}.py",
+                "range": {"start_line": index, "end_line": index},
+                "anchor_type": "file",
+                "match_kind": "changed_range_without_indexed_symbol",
+                "payload": "x" * 500,
+            }
+            for index in range(20)
+        ]
+        symbol_anchors = [
+            {
+                "repo": "repo",
+                "path": f"pkg/symbol_{index}.py",
+                "range": {"start_line": index, "end_line": index},
+                "anchor_type": "symbol",
+                "match_kind": "enclosing_symbol",
+                "symbols": [{"qualname": f"pkg.symbol_{index}", "path": f"pkg/symbol_{index}.py", "line": index}],
+                "payload": "x" * 500,
+            }
+            for index in range(20)
+        ]
+        review_lead_status = {
+            "coverage_status": "useful",
+            "recommended_action": "use_supercontext_packet",
+            "changed_anchor_count": 20,
+            "changed_symbol_count": 0,
+            "direct_impact_count": 0,
+            "transitive_impact_count": 0,
+            "source_coordinate_count": 0,
+            "file_anchor_count": 20,
+        }
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "summary": {"diff_anchor_count": 40, "symbol_anchor_count": 20, "file_anchor_count": 20},
+            "review_lead_status": review_lead_status,
+            "review_leads": {
+                "changed_files": ["pkg/file.py"],
+                "changed_symbols": [],
+                "direct_callers": [],
+                "direct_callees": [],
+                "transitive_callers": [],
+                "source_coordinates": [],
+            },
+            "review_answer_packet": {
+                "review_lead_status": review_lead_status,
+                "top_diff_anchors": [*file_anchors, *symbol_anchors],
+            },
+            "diff_anchors": [*file_anchors, *symbol_anchors],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_review_context_budget(result, max_chars=3_000)
+
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertLessEqual(len(budgeted["diff_anchors"]), 8)
+        self.assertTrue(all(row["anchor_type"] == "file" for row in budgeted["diff_anchors"]))
+        self.assertEqual(budgeted["review_lead_status"]["coverage_status"], "useful")
+        self.assertEqual(budgeted["review_lead_status"]["recommended_action"], "use_supercontext_packet")
+        self.assertEqual(budgeted["review_lead_status"]["changed_anchor_count"], 20)
+        self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
 
     def test_review_context_budget_leaves_small_packet_untouched(self) -> None:
         result = {"tool": "review_context", "status": "found", "summary": {}, "direct_callers": [], "next_actions": []}
@@ -3401,6 +3524,46 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
         self.assertEqual(result["source_coordinates"][0]["line_start"], 10)
 
+    def test_review_context_exposes_compact_lead_gate_for_anchored_review(self) -> None:
+        with _fixture_snapshot(upstream_checkout_caller=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["review_lead_status"]["coverage_status"], "useful")
+        self.assertEqual(result["review_lead_status"]["recommended_action"], "use_supercontext_packet")
+        self.assertEqual(result["review_lead_status"]["changed_anchor_count"], 1)
+        self.assertEqual(result["review_lead_status"]["changed_symbol_count"], 1)
+        self.assertEqual(result["review_lead_status"]["direct_impact_count"], 2)
+        self.assertEqual(result["review_leads"]["changed_symbols"][0]["qualname"], "handle_checkout")
+        self.assertEqual(result["review_leads"]["direct_callers"][0]["subject"], "payments.api.submit_checkout")
+        self.assertEqual(result["review_leads"]["direct_callees"][0]["object"], "payments.gateway.charge_card")
+        self.assertEqual(result["review_answer_packet"]["review_lead_status"], result["review_lead_status"])
+        self.assertNotIn("review_leads", result["review_answer_packet"])
+
+    def test_review_context_lead_gate_treats_symbol_anchor_as_useful(self) -> None:
+        packet = _review_context_lead_packet(
+            changed_files=["payments/checkout.py"],
+            summary={"symbol_anchor_count": 1, "file_anchor_count": 0},
+            changed_symbols=[],
+            direct_callers=[],
+            direct_callees=[],
+            transitive_callers=[],
+            source_coordinates=[],
+        )
+
+        self.assertEqual(packet["review_lead_status"]["coverage_status"], "useful")
+        self.assertEqual(packet["review_lead_status"]["recommended_action"], "use_supercontext_packet")
+        self.assertEqual(packet["review_lead_status"]["changed_anchor_count"], 1)
+        self.assertNotIn("reason", packet["review_lead_status"])
+
     def test_review_context_changed_ranges_use_symbol_evidence_span(self) -> None:
         with _fixture_snapshot(
             symbol_without_end_line=True,
@@ -3513,18 +3676,27 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["repo_resolution"]["status"], "matched")
         self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
         self.assertEqual(result["review_answer_packet"]["repo_resolution"]["status"], "matched")
+        self.assertEqual(result["review_lead_status"]["coverage_status"], "low_coverage")
+        self.assertEqual(result["review_lead_status"]["recommended_action"], "fall_back_to_plain_review")
+        self.assertEqual(
+            result["review_lead_status"]["reason"],
+            "no symbol anchors, changed symbols, or direct/transitive impact edges",
+        )
+        self.assertEqual(result["review_leads"]["changed_files"], ["payments/config.yaml"])
+        self.assertEqual(result["review_lead_status"]["source_coordinate_count"], len(result["source_coordinates"]))
+        self.assertEqual(result["review_leads"]["source_coordinates"], result["source_coordinates"])
+        self.assertEqual(result["review_answer_packet"]["review_lead_status"], result["review_lead_status"])
+        self.assertNotIn("review_leads", result["review_answer_packet"])
         self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
-        self.assertEqual(result["review_answer_packet"]["application"]["cross_repo_name_leads"], [])
-        self.assertTrue(result["review_answer_packet"]["application"]["api"])
-        self.assertTrue(result["review_answer_packet"]["runtime"]["endpoints"])
+        self.assertNotIn("application", result["review_answer_packet"])
+        self.assertNotIn("runtime", result["review_answer_packet"])
         self.assertNotIn("framework", result["review_answer_packet"])
-        self.assertEqual(result["application_impact"]["cross_repo_name_leads"], [])
-        self.assertTrue(result["application_impact"]["same_repo_surfaces"]["api"])
-        self.assertTrue(result["runtime_surfaces"]["endpoints"])
+        self.assertNotIn("application_impact", result)
+        self.assertNotIn("runtime_surfaces", result)
         self.assertNotIn("framework_impact", result)
         self.assertEqual(result["omitted_context"]["counts"]["application_impact.cross_repo_name_leads"], 1)
         self.assertEqual(result["candidate_leads"]["status"], "empty")
-        self.assertLess(len(canonical_json(result)), 15_000)
+        self.assertLess(len(canonical_json(result)), 8_000)
         self.assertTrue(any("include_unlinked_leads=true" in action for action in result["next_actions"]))
 
     def test_review_context_file_anchor_only_can_opt_into_broad_unlinked_leads(self) -> None:
@@ -3543,6 +3715,8 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertIn("application_impact", result)
         self.assertEqual(result["candidate_leads"]["status"], "found")
+        self.assertEqual(result["review_lead_status"]["coverage_status"], "low_coverage")
+        self.assertEqual(result["review_lead_status"]["recommended_action"], "fall_back_to_plain_review")
         self.assertEqual(
             result["review_answer_packet"]["application"]["cross_repo_name_leads"][0]["match_basis"],
             "name_derived_unlinked_lead",
