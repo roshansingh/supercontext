@@ -309,8 +309,8 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | Field | Definition |
 |---|---|
 | `repo` | Review repo anchor. |
-| `summary` | Counts for diff anchors, changed symbols, callers/callees, transitive callers, dependencies, runtime facts, framework/app facts, and section/detail limits. |
-| `review_answer_packet` | Compact first-read review packet with top diff anchors, changed symbols, callers/callees, framework, application, runtime, and surface status. |
+| `summary` | Counts for diff anchors, changed symbols, callers/callees, transitive callers, dependencies, runtime facts, framework/app facts, and section/detail limits. May include `packet_mode = diff_anchor_only` when no changed symbols or direct impact edges were found. |
+| `review_answer_packet` | Compact first-read review packet with top diff anchors and anchored impact rows. In `diff_anchor_only` mode, compact proven rows may remain, while unlinked/broad lead sections and verbose contracts/evidence are omitted by default. |
 | `diff_anchors` | Changed file/range anchors. Symbol anchors use indexed KG symbol spans; file anchors mean no indexed symbol enclosed or overlapped the changed range and the file should be inspected directly. |
 | `changed_symbols` | Exact symbols overlapping changed ranges or changed files. |
 | `changed_file_symbols` | File symbol inventory; context only, not proof every symbol changed. |
@@ -329,6 +329,7 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | `answerability` | Missing review fact families and follow-up checks. |
 | `unsupported_review_scopes` | Alias of unsupported scopes for review-specific consumers. |
 | `evidence` | Evidence rows from changed symbols and related impact facts. |
+| `omitted_context` | Present in `diff_anchor_only` mode. Counts omitted fields such as `runtime_surfaces.candidate_or_unlinked_event_channels`, `application_impact.cross_repo_name_leads`, `scope_contract`, `claim_contract`, or `evidence`, and points to `include_unlinked_leads=true` for explicit opt-in. |
 
 Example:
 
@@ -344,7 +345,7 @@ Example:
 }
 ```
 
-Prompt usage: skills say read `review_answer_packet` first, inspect `top_diff_anchors` / `diff_anchors` as the PR "you are here" markers, keep `changed_symbols` distinct from `changed_file_symbols`, and pass `requested_surfaces` when the user names impact categories.
+Prompt usage: skills say read `review_answer_packet` first, inspect `top_diff_anchors` / `diff_anchors` as the PR "you are here" markers, keep `changed_symbols` distinct from `changed_file_symbols`, and pass `requested_surfaces` when the user names impact categories. If `review_answer_packet.packet_mode` is `diff_anchor_only`, inspect the changed ranges directly; unlinked/broad lead sections plus verbose contracts/evidence are intentionally omitted, with field-path counts in `omitted_context.counts`. Pass `include_unlinked_leads=true` only when broad unlinked namespace/name leads are worth the extra context.
 
 ## Known Duplication / Normalization Notes
 

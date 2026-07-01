@@ -110,6 +110,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(schemas["planning_context"]["properties"]["symbol"]["type"], ["string", "null"])
         self.assertEqual(schemas["review_context"]["properties"]["changed_files"]["type"], "array")
         self.assertEqual(schemas["review_context"]["properties"]["requested_surfaces"]["type"], "array")
+        self.assertEqual(schemas["review_context"]["properties"]["include_unlinked_leads"]["default"], False)
         self.assertNotIn("depth", schemas["review_context"]["properties"])
         self.assertIn("operational_surfaces.evidence_partition", descriptions["get_service_brief"])
         self.assertIn("operational_surfaces.deploy_link_facts", descriptions["get_service_brief"])
@@ -3160,6 +3161,126 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(anchor["source_coordinates"][0]["path"], "config/settings.yaml")
         self.assertTrue(any(row["path"] == "config/settings.yaml" for row in result["source_coordinates"]))
 
+    def test_review_context_file_anchor_only_defaults_to_compact_packet_without_unlinked_leads(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/config.yaml"],
+                    "changed_ranges": [{"path": "payments/config.yaml", "start_line": 4, "end_line": 6}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["summary"]["changed_symbol_count"], 0)
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+        self.assertEqual(result["summary"]["file_anchor_count"], 1)
+        self.assertEqual(result["summary"]["app_cross_repo_lead_count"], 1)
+        self.assertEqual(result["summary"]["source_coordinate_count"], len(result["source_coordinates"]))
+        self.assertLessEqual(len(result["source_coordinates"]), result["summary"]["section_limit"])
+        self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
+        self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
+        self.assertEqual(result["review_answer_packet"]["application"]["cross_repo_name_leads"], [])
+        self.assertTrue(result["review_answer_packet"]["application"]["api"])
+        self.assertTrue(result["review_answer_packet"]["runtime"]["endpoints"])
+        self.assertNotIn("framework", result["review_answer_packet"])
+        self.assertEqual(result["application_impact"]["cross_repo_name_leads"], [])
+        self.assertTrue(result["application_impact"]["same_repo_surfaces"]["api"])
+        self.assertTrue(result["runtime_surfaces"]["endpoints"])
+        self.assertNotIn("framework_impact", result)
+        self.assertEqual(result["omitted_context"]["counts"]["application_impact.cross_repo_name_leads"], 1)
+        self.assertEqual(result["candidate_leads"]["status"], "empty")
+        self.assertLess(len(canonical_json(result)), 15_000)
+        self.assertTrue(any("include_unlinked_leads=true" in action for action in result["next_actions"]))
+
+    def test_review_context_file_anchor_only_can_opt_into_broad_unlinked_leads(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/config.yaml"],
+                    "changed_ranges": [{"path": "payments/config.yaml", "start_line": 4, "end_line": 6}],
+                    "include_unlinked_leads": True,
+                    "limit": 10,
+                },
+            )
+
+        self.assertIn("application_impact", result)
+        self.assertEqual(result["candidate_leads"]["status"], "found")
+        self.assertEqual(
+            result["review_answer_packet"]["application"]["cross_repo_name_leads"][0]["match_basis"],
+            "name_derived_unlinked_lead",
+        )
+
+    def test_review_context_file_anchor_only_requested_surfaces_uses_full_packet(self) -> None:
+        with _fixture_snapshot(app_surface=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/config.yaml"],
+                    "changed_ranges": [{"path": "payments/config.yaml", "start_line": 4, "end_line": 6}],
+                    "requested_surfaces": ["ui_screens"],
+                    "limit": 10,
+                },
+            )
+
+        self.assertNotIn("packet_mode", result["review_answer_packet"])
+        self.assertIn("application_impact", result)
+        self.assertEqual(result["candidate_leads"]["status"], "found")
+
+    def test_review_context_file_anchor_only_bounds_proven_repo_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            entities = []
+            facts = []
+            for index in range(8):
+                package = Entity(
+                    kind="ExternalPackage",
+                    identity={"tenant_id": "default", "repo": "app", "name": f"pkg-{index}"},
+                )
+                provider = Entity(
+                    kind="Repo",
+                    identity={"tenant_id": "default", "host": "local", "owner": "default", "name": f"provider-{index}"},
+                )
+                entities.extend([package, provider])
+                facts.append(
+                    Fact(
+                        "RESOLVES_TO_REPO",
+                        package.entity_id,
+                        provider.entity_id,
+                        {"consumer_repo": "app", "package_name": f"pkg-{index}"},
+                    )
+                )
+            JsonlKgStore(root).write(
+                entities=entities,
+                facts=facts,
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1},
+            )
+
+            result = call_tool(
+                KgSnapshot(root),
+                "review_context",
+                {
+                    "repo": "app",
+                    "changed_files": ["app/config.yaml"],
+                    "changed_ranges": [{"path": "app/config.yaml", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
+        self.assertEqual(result["summary"]["repo_dependency_count"], 8)
+        self.assertEqual(len(result["repo_dependencies"]), result["summary"]["section_limit"])
+        self.assertEqual(len(result["impact"]["repo_dependencies"]), result["summary"]["section_limit"])
+
     def test_review_context_includes_transitive_callers_for_changed_symbols(self) -> None:
         with _fixture_snapshot(upstream_checkout_caller=True, upstream_checkout_grandcaller=True) as kg:
             result = call_tool(
@@ -3299,7 +3420,9 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["changed_symbols"], [])
         self.assertEqual(result["direct_callers"], [])
         self.assertEqual(result["direct_callees"], [])
+        self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
         self.assertEqual({row["predicate"] for row in result["repo_dependencies"]}, {"RESOLVES_TO_REPO"})
+        self.assertNotIn("repo_dependencies", result["omitted_context"]["counts"])
 
     def test_review_context_rejects_unknown_arguments(self) -> None:
         with _fixture_snapshot() as kg:
