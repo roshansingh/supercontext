@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import errno
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Literal
 
 from source.kg.core.models import Coverage, Entity, Evidence, EvidenceDerivationClass, Fact, JsonObject
@@ -78,6 +79,8 @@ def _skipped_config_coverage(
     reason: str,
     exc: OSError,
 ) -> Coverage:
+    error_errno = exc.errno if isinstance(exc.errno, int) else None
+    error_code = errno.errorcode.get(error_errno, type(exc).__name__) if error_errno is not None else type(exc).__name__
     path_is_symlink = False
     try:
         path_is_symlink = path.is_symlink()
@@ -89,7 +92,8 @@ def _skipped_config_coverage(
         "file_path": str(relative),
         "reason": reason,
         "error_type": type(exc).__name__,
-        "error_message": exc.strerror if isinstance(exc.strerror, str) and exc.strerror else type(exc).__name__,
+        "error_errno": error_errno,
+        "error_code": error_code,
         "path_is_symlink": path_is_symlink,
     }
     if path_is_symlink:
@@ -98,8 +102,9 @@ def _skipped_config_coverage(
         except OSError:
             pass
         else:
-            scope_ref["symlink_target_is_absolute"] = os.path.isabs(symlink_target)
-            if not os.path.isabs(symlink_target):
+            target_is_absolute = _is_absolute_symlink_target(symlink_target)
+            scope_ref["symlink_target_is_absolute"] = target_is_absolute
+            if not target_is_absolute:
                 scope_ref["symlink_target"] = symlink_target
 
     return Coverage(
@@ -109,6 +114,10 @@ def _skipped_config_coverage(
         state="uninstrumented",
         source_system=CONFIG_SOURCE_SYSTEM,
     )
+
+
+def _is_absolute_symlink_target(target: str) -> bool:
+    return os.path.isabs(target) or PureWindowsPath(target).is_absolute()
 
 
 def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> ConfigScanResult:
