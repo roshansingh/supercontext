@@ -3037,7 +3037,7 @@ def _review_context_lead_packet(
         "file_anchor_count": int(summary.get("file_anchor_count") or 0),
     }
     if not useful:
-        status["reason"] = "no changed symbols or direct impact edges"
+        status["reason"] = "no symbol anchors, changed symbols, or direct/transitive impact edges"
     leads: JsonObject = {
         "changed_files": changed_files[:PLANNING_CONTEXT_SECTION_LIMIT],
         "changed_symbols": changed_symbols[:PLANNING_CONTEXT_SECTION_LIMIT],
