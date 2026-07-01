@@ -308,7 +308,9 @@ Purpose: composed review packet for a repo and changed files/ranges.
 
 | Field | Definition |
 |---|---|
-| `repo` | Review repo anchor. |
+| `repo` | Effective review repo anchor used for KG lookups. |
+| `requested_repo` | Original repo argument supplied by the caller when it differs from or needs validation against the effective repo. |
+| `repo_resolution` | Repo-scope resolution metadata. For single-repo checkout snapshots, an owner-qualified repo argument may resolve to the snapshot's local repo identity only when changed files overlap the snapshot; multi-repo and no-overlap cases fail closed with `ambiguous` or `unresolved`. |
 | `summary` | Counts for diff anchors, changed symbols, callers/callees, transitive callers, dependencies, runtime facts, framework/app facts, and section/detail limits. May include `packet_mode = diff_anchor_only` when no changed symbols or direct impact edges were found. |
 | `review_answer_packet` | Compact first-read review packet with top diff anchors and anchored impact rows. In `diff_anchor_only` mode, compact proven rows may remain, while unlinked/broad lead sections and verbose contracts/evidence are omitted by default. |
 | `diff_anchors` | Changed file/range anchors. Symbol anchors use indexed KG symbol spans; file anchors mean no indexed symbol enclosed or overlapped the changed range and the file should be inspected directly. |

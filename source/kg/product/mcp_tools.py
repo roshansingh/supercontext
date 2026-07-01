@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from source.kg.core.display import display_entity
@@ -2520,9 +2521,148 @@ def _planning_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     )
 
 
+def _review_context_repo_resolution(
+    kg: KgSnapshot,
+    *,
+    requested_repo: str,
+    changed_files: list[str],
+) -> JsonObject:
+    snapshot_repos = _review_context_snapshot_repos(kg)
+    direct_matches = [repo for repo in snapshot_repos if _repo_text_matches(repo, requested_repo)]
+    if direct_matches:
+        return {
+            "status": "matched",
+            "requested_repo": requested_repo,
+            "effective_repo": requested_repo,
+            "basis": "direct_repo_match",
+            "snapshot_repo_count": len(snapshot_repos),
+            "matched_repos": direct_matches[:PLANNING_CONTEXT_SECTION_LIMIT],
+        }
+    if "/" not in requested_repo:
+        return {
+            "status": "unresolved",
+            "requested_repo": requested_repo,
+            "effective_repo": requested_repo,
+            "basis": "unchanged",
+            "reason": "requested_repo_not_owner_qualified",
+            "snapshot_repo_count": len(snapshot_repos),
+            "candidate_repos": snapshot_repos[:PLANNING_CONTEXT_SECTION_LIMIT],
+        }
+    if len(snapshot_repos) != 1:
+        return {
+            "status": "ambiguous" if snapshot_repos else "unresolved",
+            "requested_repo": requested_repo,
+            "effective_repo": requested_repo,
+            "basis": "unchanged",
+            "reason": "multiple_snapshot_repos" if snapshot_repos else "no_snapshot_repo_identity",
+            "snapshot_repo_count": len(snapshot_repos),
+            "candidate_repos": snapshot_repos[:PLANNING_CONTEXT_SECTION_LIMIT],
+        }
+    effective_repo = snapshot_repos[0]
+    if not _review_context_changed_files_overlap_snapshot(kg, changed_files):
+        return {
+            "status": "unresolved",
+            "requested_repo": requested_repo,
+            "effective_repo": requested_repo,
+            "basis": "unchanged",
+            "reason": "no_changed_file_overlap",
+            "snapshot_repo_count": len(snapshot_repos),
+            "candidate_repos": snapshot_repos[:PLANNING_CONTEXT_SECTION_LIMIT],
+        }
+    return {
+        "status": "resolved",
+        "requested_repo": requested_repo,
+        "effective_repo": effective_repo,
+        "basis": "single_repo_snapshot_changed_file_overlap",
+        "snapshot_repo_count": 1,
+    }
+
+
+def _review_context_snapshot_repos(kg: KgSnapshot) -> list[str]:
+    repos: set[str] = set()
+    manifest_repo = kg.manifest.get("repo_name") if isinstance(kg.manifest, dict) else None
+    manifest_repo_key = _normalize_repo_text(manifest_repo)
+    if manifest_repo_key:
+        repos.add(manifest_repo_key)
+    for entity in kg.entities:
+        repo_key = _normalize_repo_text(_planning_context_entity_repo(entity))
+        if repo_key:
+            repos.add(repo_key)
+    for fact in kg.facts:
+        qualifier = fact.get("qualifier")
+        if not isinstance(qualifier, dict):
+            continue
+        consumer_repo_key = _normalize_repo_text(qualifier.get("consumer_repo"))
+        if consumer_repo_key:
+            repos.add(consumer_repo_key)
+    return sorted(repos)
+
+
+def _review_context_changed_files_overlap_snapshot(kg: KgSnapshot, changed_files: list[str]) -> bool:
+    normalized_changed_files = {
+        _planning_context_normalize_path(path)
+        for path in changed_files
+        if isinstance(path, str) and path.strip()
+    }
+    if not normalized_changed_files:
+        return False
+    snapshot_paths = _review_context_snapshot_paths(kg)
+    if snapshot_paths.intersection(normalized_changed_files):
+        return True
+    repo_path = kg.manifest.get("repo_path") if isinstance(kg.manifest, dict) else None
+    if not isinstance(repo_path, str) or not repo_path.strip():
+        return False
+    root = Path(repo_path).expanduser()
+    try:
+        resolved_root = root.resolve()
+    except (OSError, RuntimeError):
+        return False
+    # Any changed-file overlap is enough only after the resolver has already proved
+    # the snapshot contains exactly one repo identity; multi-repo snapshots fail closed.
+    for changed_file in normalized_changed_files:
+        try:
+            candidate = (root / changed_file).resolve()
+            if not candidate.is_relative_to(resolved_root):
+                continue
+            if candidate.exists():
+                return True
+        except (OSError, RuntimeError):
+            continue
+    return False
+
+
+def _review_context_snapshot_paths(kg: KgSnapshot) -> set[str]:
+    paths: set[str] = set()
+    for entity in kg.entities:
+        properties = entity.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        path = properties.get("path")
+        if isinstance(path, str) and path.strip():
+            paths.add(_planning_context_normalize_path(path))
+    for row in kg.evidence:
+        for key in ("bytes_ref", "source_ref"):
+            ref = row.get(key)
+            if not isinstance(ref, dict):
+                continue
+            path = ref.get("path") or ref.get("file_path")
+            if isinstance(path, str) and path.strip():
+                paths.add(_planning_context_normalize_path(path))
+    for row in kg.coverage:
+        scope_ref = row.get("scope_ref")
+        if not isinstance(scope_ref, dict):
+            continue
+        path = scope_ref.get("path") or scope_ref.get("file_path")
+        if isinstance(path, str) and path.strip():
+            paths.add(_planning_context_normalize_path(path))
+    return paths
+
+
 def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
-    repo = _required_string(arguments, "repo")
+    requested_repo = _required_string(arguments, "repo")
     changed_files = _required_string_list(arguments, "changed_files")
+    repo_resolution = _review_context_repo_resolution(kg, requested_repo=requested_repo, changed_files=changed_files)
+    repo = str(repo_resolution.get("effective_repo") or requested_repo)
     changed_ranges = _optional_changed_ranges(arguments, "changed_ranges")
     limit = _limit(arguments)
     detail_limit = min(limit, REVIEW_CONTEXT_DETAIL_LIMIT)
@@ -2762,9 +2902,12 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         surface_status=surface_status,
         answerability=answerability,
     )
+    review_answer_packet["repo_resolution"] = repo_resolution
     result = {
         "status": status,
         "repo": repo,
+        "requested_repo": requested_repo,
+        "repo_resolution": repo_resolution,
         "summary": summary,
         "review_answer_packet": review_answer_packet,
         "diff_anchors": diff_anchors,
@@ -2889,6 +3032,7 @@ def _review_context_compact_unanchored_result(result: JsonObject) -> JsonObject:
     compact_packet: JsonObject = {
         "status": result.get("status"),
         "packet_mode": "diff_anchor_only",
+        "repo_resolution": result.get("repo_resolution", {}),
         "answerability": answerability,
         "summary": packet_summary,
         "top_diff_anchors": diff_anchors[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -2918,6 +3062,8 @@ def _review_context_compact_unanchored_result(result: JsonObject) -> JsonObject:
     compact_result: JsonObject = {
         "status": result.get("status"),
         "repo": result.get("repo"),
+        "requested_repo": result.get("requested_repo"),
+        "repo_resolution": result.get("repo_resolution", {}),
         "summary": summary,
         "review_answer_packet": compact_packet,
         "diff_anchors": diff_anchors,
@@ -6300,6 +6446,7 @@ _TOOLS: dict[str, McpTool] = {
         description=(
             "Returns bounded review context for one repo plus a changed-file set by composing review_answer_packet, diff_anchors, changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
             "Read review_answer_packet.top_diff_anchors / diff_anchors first as the PR changed-range/file anchors; detailed review rows are capped by summary.detail_limit even when a larger limit is requested. "
+            "Read repo_resolution before interpreting missing anchors; single-repo checkout snapshots may safely resolve owner/repo arguments to a local snapshot repo identity when changed files overlap the snapshot, while ambiguous or no-overlap cases fail closed. "
             "review_answer_packet.top_changed_symbols contains range-overlap symbols only, while review_answer_packet.changed_file_symbol_inventory carries file inventory when no ranges are supplied. "
             "When changed_ranges are omitted, top-level changed_symbols and review_answer_packet.top_changed_symbols are empty and the changed-file symbol inventory is exposed via changed_file_symbols; that inventory is source-inspection context, not proof every symbol changed. Inspect the diff before saying a function was touched. "
             "When changed ranges produce only file anchors and no changed symbols or direct impact edges, review_answer_packet.packet_mode is diff_anchor_only and unlinked/broad lead sections plus verbose contracts/evidence are omitted by default while compact proven rows may remain; pass include_unlinked_leads=true only when broad unlinked namespace/name leads are worth the extra context. "
