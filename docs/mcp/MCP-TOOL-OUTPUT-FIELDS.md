@@ -311,8 +311,10 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | `repo` | Effective review repo anchor used for KG lookups. |
 | `requested_repo` | Original repo argument supplied by the caller when it differs from or needs validation against the effective repo. |
 | `repo_resolution` | Repo-scope resolution metadata. `matched` means the requested repo directly matched the snapshot repo identity; `resolved` means an owner-qualified repo argument safely resolved to a single-repo checkout snapshot identity because changed files overlapped the snapshot; multi-repo, no-identity, and no-overlap cases fail closed with `ambiguous` or `unresolved`. |
+| `review_lead_status` | Compact PR-review usage gate. `useful` means symbol-anchor, changed-symbol, or impact evidence exists and the packet is worth using as review context; `low_coverage` means the reviewer should fall back to direct source review and treat the packet as coordinates/gaps only. |
+| `review_leads` | Small first-read lead packet rooted in changed files/ranges: changed symbols, direct callers/callees, transitive callers, source coordinates, and currently empty placeholders for test/config/runtime leads when no such structured evidence exists. |
 | `summary` | Counts for diff anchors, changed symbols, callers/callees, transitive callers, dependencies, runtime facts, framework/app facts, and section/detail limits. May include `packet_mode = diff_anchor_only` when no changed symbols or direct impact edges were found. |
-| `review_answer_packet` | Compact first-read review packet with top diff anchors and anchored impact rows. In `diff_anchor_only` mode, compact proven rows may remain, while unlinked/broad lead sections and verbose contracts/evidence are omitted by default. |
+| `review_answer_packet` | Compact first-read review packet with top diff anchors, `review_lead_status`, and anchored impact rows. Full `review_leads` stay top-level to avoid duplicating the same rows inside the answer packet. In `diff_anchor_only` mode, broad app/runtime/framework sections are omitted by default and the packet recommends direct source review unless the caller opts into broader leads. |
 | `diff_anchors` | Changed file/range anchors. Symbol anchors use indexed KG symbol spans; file anchors mean no indexed symbol enclosed or overlapped the changed range and the file should be inspected directly. |
 | `changed_symbols` | Exact symbols overlapping changed ranges or changed files. |
 | `changed_file_symbols` | File symbol inventory; context only, not proof every symbol changed. |
@@ -347,7 +349,7 @@ Example:
 }
 ```
 
-Prompt usage: skills say read `review_answer_packet` first, inspect `top_diff_anchors` / `diff_anchors` as the PR "you are here" markers, keep `changed_symbols` distinct from `changed_file_symbols`, and pass `requested_surfaces` when the user names impact categories. If `review_answer_packet.packet_mode` is `diff_anchor_only`, inspect the changed ranges directly; unlinked/broad lead sections plus verbose contracts/evidence are intentionally omitted, with field-path counts in `omitted_context.counts`. Pass `include_unlinked_leads=true` only when broad unlinked namespace/name leads are worth the extra context.
+Prompt usage: skills say read `review_lead_status` and `review_answer_packet` first, then inspect `top_diff_anchors` / `diff_anchors` as the PR "you are here" markers. If `review_lead_status.coverage_status` is `low_coverage`, fall back to direct source review and use `review_leads.source_coordinates` / `diff_anchors` only as inspection coordinates. Keep `changed_symbols` distinct from `changed_file_symbols`, and pass `requested_surfaces` when the user names impact categories. If `review_answer_packet.packet_mode` is `diff_anchor_only`, inspect the changed ranges directly; unlinked/broad lead sections plus verbose contracts/evidence are intentionally omitted, with field-path counts in `omitted_context.counts`. Pass `include_unlinked_leads=true` only when broad unlinked namespace/name leads are worth the extra context.
 
 ## Known Duplication / Normalization Notes
 

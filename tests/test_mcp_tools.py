@@ -17,6 +17,7 @@ from source.kg.product.mcp_tools import (
     _planning_context_has_resolved_anchor,
     _planning_context_authz_surface_reference,
     _planning_context_symbol_impact,
+    _review_context_lead_packet,
     _with_default_tool_metadata,
     call_tool,
     tool_definitions,
@@ -3401,6 +3402,46 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
         self.assertEqual(result["source_coordinates"][0]["line_start"], 10)
 
+    def test_review_context_exposes_compact_lead_gate_for_anchored_review(self) -> None:
+        with _fixture_snapshot(upstream_checkout_caller=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["review_lead_status"]["coverage_status"], "useful")
+        self.assertEqual(result["review_lead_status"]["recommended_action"], "use_supercontext_packet")
+        self.assertEqual(result["review_lead_status"]["changed_anchor_count"], 1)
+        self.assertEqual(result["review_lead_status"]["changed_symbol_count"], 1)
+        self.assertEqual(result["review_lead_status"]["direct_impact_count"], 2)
+        self.assertEqual(result["review_leads"]["changed_symbols"][0]["qualname"], "handle_checkout")
+        self.assertEqual(result["review_leads"]["direct_callers"][0]["subject"], "payments.api.submit_checkout")
+        self.assertEqual(result["review_leads"]["direct_callees"][0]["object"], "payments.gateway.charge_card")
+        self.assertEqual(result["review_answer_packet"]["review_lead_status"], result["review_lead_status"])
+        self.assertNotIn("review_leads", result["review_answer_packet"])
+
+    def test_review_context_lead_gate_treats_symbol_anchor_as_useful(self) -> None:
+        packet = _review_context_lead_packet(
+            changed_files=["payments/checkout.py"],
+            summary={"symbol_anchor_count": 1, "file_anchor_count": 0},
+            changed_symbols=[],
+            direct_callers=[],
+            direct_callees=[],
+            transitive_callers=[],
+            source_coordinates=[],
+        )
+
+        self.assertEqual(packet["review_lead_status"]["coverage_status"], "useful")
+        self.assertEqual(packet["review_lead_status"]["recommended_action"], "use_supercontext_packet")
+        self.assertEqual(packet["review_lead_status"]["changed_anchor_count"], 1)
+        self.assertNotIn("reason", packet["review_lead_status"])
+
     def test_review_context_changed_ranges_use_symbol_evidence_span(self) -> None:
         with _fixture_snapshot(
             symbol_without_end_line=True,
@@ -3513,18 +3554,22 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["repo_resolution"]["status"], "matched")
         self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
         self.assertEqual(result["review_answer_packet"]["repo_resolution"]["status"], "matched")
+        self.assertEqual(result["review_lead_status"]["coverage_status"], "low_coverage")
+        self.assertEqual(result["review_lead_status"]["recommended_action"], "fall_back_to_plain_review")
+        self.assertEqual(result["review_lead_status"]["reason"], "no changed symbols or direct impact edges")
+        self.assertEqual(result["review_leads"]["changed_files"], ["payments/config.yaml"])
+        self.assertEqual(result["review_answer_packet"]["review_lead_status"], result["review_lead_status"])
+        self.assertNotIn("review_leads", result["review_answer_packet"])
         self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
-        self.assertEqual(result["review_answer_packet"]["application"]["cross_repo_name_leads"], [])
-        self.assertTrue(result["review_answer_packet"]["application"]["api"])
-        self.assertTrue(result["review_answer_packet"]["runtime"]["endpoints"])
+        self.assertNotIn("application", result["review_answer_packet"])
+        self.assertNotIn("runtime", result["review_answer_packet"])
         self.assertNotIn("framework", result["review_answer_packet"])
-        self.assertEqual(result["application_impact"]["cross_repo_name_leads"], [])
-        self.assertTrue(result["application_impact"]["same_repo_surfaces"]["api"])
-        self.assertTrue(result["runtime_surfaces"]["endpoints"])
+        self.assertNotIn("application_impact", result)
+        self.assertNotIn("runtime_surfaces", result)
         self.assertNotIn("framework_impact", result)
         self.assertEqual(result["omitted_context"]["counts"]["application_impact.cross_repo_name_leads"], 1)
         self.assertEqual(result["candidate_leads"]["status"], "empty")
-        self.assertLess(len(canonical_json(result)), 15_000)
+        self.assertLess(len(canonical_json(result)), 8_000)
         self.assertTrue(any("include_unlinked_leads=true" in action for action in result["next_actions"]))
 
     def test_review_context_file_anchor_only_can_opt_into_broad_unlinked_leads(self) -> None:
