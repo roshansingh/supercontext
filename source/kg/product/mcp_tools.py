@@ -2526,22 +2526,51 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     range_filters = _changed_ranges_by_path(changed_ranges)
     changed_symbols_by_path: dict[str, list[JsonObject]] = {}
     file_symbols_by_path: dict[str, list[JsonObject]] = {}
+    diff_anchors: list[JsonObject] = []
 
     for changed_file in changed_files:
         symbol_rows = list(kg.symbols_in_file(changed_file, limit=10_000).get("symbols", []))
         symbol_rows = [row for row in symbol_rows if _review_context_repo_matches(row.get("repo"), repo)]
         normalized_changed_file = _planning_context_normalize_path(changed_file)
         file_symbols_by_path[normalized_changed_file] = symbol_rows
-        if changed_ranges:
-            file_ranges = range_filters.get(normalized_changed_file, [])
-            if file_ranges:
-                symbol_rows = [row for row in symbol_rows if _review_context_symbol_overlaps_ranges(row, file_ranges)]
-                symbol_rows = _review_context_most_specific_symbols(symbol_rows)
+        file_ranges = range_filters.get(normalized_changed_file, [])
+        if file_ranges:
+            range_symbols: list[JsonObject] = []
+            for range_start, range_end in file_ranges:
+                anchor, anchor_symbols = _review_context_anchor_for_range(
+                    repo=repo,
+                    path=normalized_changed_file,
+                    range_start=range_start,
+                    range_end=range_end,
+                    symbols=symbol_rows,
+                )
+                diff_anchors.append(anchor)
+                range_symbols.extend(anchor_symbols)
+            symbol_rows = _review_context_dedupe_rows(range_symbols)
+        elif changed_ranges:
+            diff_anchors.append(
+                _review_context_file_anchor(
+                    repo=repo,
+                    path=normalized_changed_file,
+                    match_kind="changed_file_without_range",
+                    symbol_count=len(symbol_rows),
+                )
+            )
+        else:
+            diff_anchors.append(
+                _review_context_file_anchor(
+                    repo=repo,
+                    path=normalized_changed_file,
+                    match_kind="changed_file_inventory",
+                    symbol_count=len(symbol_rows),
+                )
+            )
         for row in symbol_rows:
             changed_symbols.append(row)
         changed_symbols_by_path[normalized_changed_file] = symbol_rows
 
     changed_symbols = _review_context_dedupe_rows(changed_symbols)[:detail_limit]
+    diff_anchors = _review_context_dedupe_rows(diff_anchors)[:detail_limit]
     changed_file_symbols = _review_context_dedupe_rows(
         [row for rows in file_symbols_by_path.values() for row in rows]
     )[:detail_limit]
@@ -2623,6 +2652,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         changed_symbols=changed_symbols,
     )
     source_coordinates = _planning_context_source_coordinates(
+        _review_context_anchor_coordinate_rows(diff_anchors),
         changed_symbols,
         direct_callers,
         direct_callees,
@@ -2683,6 +2713,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         deploy_mappings=public_deploy_mappings,
         source_coordinates=source_coordinates,
         changed_file_symbols=public_changed_file_symbols,
+        diff_anchors=diff_anchors,
         transitive_callers=transitive_callers_in_scope,
         framework_impact=framework_impact,
         application_impact=application_impact,
@@ -2706,6 +2737,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         claim_contract=claim_contract,
         changed_symbols=review_packet_changed_symbols,
         changed_file_symbols=public_changed_file_symbols,
+        diff_anchors=diff_anchors,
         direct_callers=review_packet_direct_callers,
         direct_callees=review_packet_direct_callees,
         transitive_callers=review_packet_transitive_callers,
@@ -2726,6 +2758,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         "repo": repo,
         "summary": summary,
         "review_answer_packet": review_answer_packet,
+        "diff_anchors": diff_anchors,
         "changed_symbols": changed_symbols_in_scope,
         "changed_file_symbols": public_changed_file_symbols,
         "direct_callers": direct_callers_in_scope,
@@ -3212,6 +3245,148 @@ def _review_context_symbol_overlaps_ranges(symbol: JsonObject, ranges: list[tupl
     return False
 
 
+def _review_context_anchor_for_range(
+    *,
+    repo: str,
+    path: str,
+    range_start: int,
+    range_end: int,
+    symbols: list[JsonObject],
+) -> tuple[JsonObject, list[JsonObject]]:
+    enclosing = [
+        symbol
+        for symbol in symbols
+        if (bounds := _review_context_symbol_bounds(symbol)) is not None
+        and bounds[0] <= range_start
+        and range_end <= bounds[1]
+    ]
+    if enclosing:
+        selected = _review_context_most_specific_symbols(enclosing)
+        return (
+            _review_context_symbol_anchor(
+                repo=repo,
+                path=path,
+                range_start=range_start,
+                range_end=range_end,
+                match_kind="enclosing_symbol",
+                symbols=selected,
+            ),
+            selected,
+        )
+
+    overlapping = [
+        symbol
+        for symbol in symbols
+        if _review_context_symbol_overlaps_ranges(symbol, [(range_start, range_end)])
+    ]
+    if overlapping:
+        selected = _review_context_most_specific_symbols(overlapping)
+        return (
+            _review_context_symbol_anchor(
+                repo=repo,
+                path=path,
+                range_start=range_start,
+                range_end=range_end,
+                match_kind="overlapping_symbol",
+                symbols=selected,
+            ),
+            selected,
+        )
+
+    return (
+        _review_context_file_anchor(
+            repo=repo,
+            path=path,
+            match_kind="changed_range_without_indexed_symbol",
+            symbol_count=0,
+            range_start=range_start,
+            range_end=range_end,
+        ),
+        [],
+    )
+
+
+def _review_context_symbol_anchor(
+    *,
+    repo: str,
+    path: str,
+    range_start: int,
+    range_end: int,
+    match_kind: str,
+    symbols: list[JsonObject],
+) -> JsonObject:
+    public_symbols = _review_context_public_symbol_rows(symbols)
+    return {
+        "repo": repo,
+        "path": path,
+        "range": {"start_line": range_start, "end_line": range_end},
+        "anchor_type": "symbol",
+        "match_kind": match_kind,
+        "symbol_count": len(public_symbols),
+        "symbols": public_symbols,
+        "source_coordinates": [
+            {
+                "repo": repo,
+                "path": path,
+                "line_start": range_start,
+                "line_end": range_end,
+                "provenance": "changed_range",
+            }
+        ],
+    }
+
+
+def _review_context_file_anchor(
+    *,
+    repo: str,
+    path: str,
+    match_kind: str,
+    symbol_count: int,
+    range_start: int | None = None,
+    range_end: int | None = None,
+) -> JsonObject:
+    anchor: JsonObject = {
+        "repo": repo,
+        "path": path,
+        "anchor_type": "file",
+        "match_kind": match_kind,
+        "symbol_count": symbol_count,
+        "source_coordinates": [],
+    }
+    if range_start is not None and range_end is not None:
+        anchor["range"] = {"start_line": range_start, "end_line": range_end}
+        anchor["source_coordinates"] = [
+            {
+                "repo": repo,
+                "path": path,
+                "line_start": range_start,
+                "line_end": range_end,
+                "provenance": "changed_range",
+            }
+        ]
+    return anchor
+
+
+def _review_context_anchor_coordinate_rows(diff_anchors: list[JsonObject]) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for anchor in diff_anchors:
+        coordinates = anchor.get("source_coordinates")
+        if not isinstance(coordinates, list):
+            continue
+        for coordinate in coordinates:
+            if not isinstance(coordinate, dict):
+                continue
+            rows.append(
+                {
+                    "repo": coordinate.get("repo"),
+                    "path": coordinate.get("path"),
+                    "line": coordinate.get("line_start"),
+                    "end_line": coordinate.get("line_end"),
+                }
+            )
+    return rows
+
+
 def _review_context_symbol_bounds(symbol: JsonObject) -> tuple[int, int] | None:
     line = symbol.get("line")
     if isinstance(line, bool) or not isinstance(line, int):
@@ -3362,6 +3537,10 @@ def _review_context_scope_contract(
         ),
         "review_answer_packet.changed_file_symbol_inventory": (
             "Bounded symbol inventory for changed files; source-inspection context, not proof of touched symbols."
+        ),
+        "diff_anchors": (
+            "Changed file/range anchors. Symbol anchors come from indexed KG symbol spans; file anchors mean no indexed "
+            "symbol enclosed or overlapped the changed range, so inspect the file directly."
         ),
         "changed_file_symbols": "Bounded symbol inventory for the changed files; these are context, not all changed symbols.",
         "direct_callers_of_changed_symbols": "Incoming CALLS edges for changed_symbols only.",
@@ -3560,6 +3739,7 @@ def _review_context_summary(
     changed_files: list[str],
     changed_symbols: list[JsonObject],
     changed_file_symbols: list[JsonObject],
+    diff_anchors: list[JsonObject],
     direct_callers: list[JsonObject],
     direct_callees: list[JsonObject],
     transitive_callers: list[JsonObject],
@@ -3577,6 +3757,9 @@ def _review_context_summary(
         "changed_file_count": len(changed_files),
         "changed_symbol_count": len(changed_symbols),
         "changed_file_symbol_count": len(changed_file_symbols),
+        "diff_anchor_count": len(diff_anchors),
+        "symbol_anchor_count": sum(1 for anchor in diff_anchors if anchor.get("anchor_type") == "symbol"),
+        "file_anchor_count": sum(1 for anchor in diff_anchors if anchor.get("anchor_type") == "file"),
         "direct_caller_count": len(direct_callers),
         "direct_callee_count": len(direct_callees),
         "transitive_caller_count": len(transitive_callers),
@@ -3615,6 +3798,7 @@ def _review_context_answer_packet(
     claim_contract: JsonObject,
     changed_symbols: list[JsonObject],
     changed_file_symbols: list[JsonObject],
+    diff_anchors: list[JsonObject],
     direct_callers: list[JsonObject],
     direct_callees: list[JsonObject],
     transitive_callers: list[JsonObject],
@@ -3633,6 +3817,9 @@ def _review_context_answer_packet(
         "summary": {
             "changed_symbol_count": len(changed_symbols),
             "changed_file_symbol_count": len(changed_file_symbols),
+            "diff_anchor_count": len(diff_anchors),
+            "symbol_anchor_count": summary["symbol_anchor_count"],
+            "file_anchor_count": summary["file_anchor_count"],
             "direct_caller_count": len(direct_callers),
             "direct_callee_count": len(direct_callees),
             "transitive_caller_count": len(transitive_callers),
@@ -3646,6 +3833,7 @@ def _review_context_answer_packet(
         },
         "scope_contract": scope_contract,
         "claim_contract": claim_contract,
+        "top_diff_anchors": diff_anchors[:PLANNING_CONTEXT_SECTION_LIMIT],
         "top_changed_symbols": changed_symbols[:PLANNING_CONTEXT_SECTION_LIMIT],
         "changed_file_symbol_inventory": changed_file_symbols[:PLANNING_CONTEXT_SECTION_LIMIT],
         "top_direct_callers": direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -5768,8 +5956,8 @@ _TOOLS: dict[str, McpTool] = {
     "review_context": McpTool(
         name="review_context",
         description=(
-            "Returns bounded review context for one repo plus a changed-file set by composing review_answer_packet, changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
-            "Read review_answer_packet first; detailed review rows are capped by summary.detail_limit even when a larger limit is requested. "
+            "Returns bounded review context for one repo plus a changed-file set by composing review_answer_packet, diff_anchors, changed_surface, changed_file_symbols, exact changed_symbols, direct callers/callees, transitive_callers, runtime_surfaces, framework_impact, application_impact, source_coordinates, and answerability metadata. "
+            "Read review_answer_packet.top_diff_anchors / diff_anchors first as the PR changed-range/file anchors; detailed review rows are capped by summary.detail_limit even when a larger limit is requested. "
             "review_answer_packet.top_changed_symbols contains range-overlap symbols only, while review_answer_packet.changed_file_symbol_inventory carries file inventory when no ranges are supplied. "
             "When changed_ranges are omitted, top-level changed_symbols and review_answer_packet.top_changed_symbols are empty and the changed-file symbol inventory is exposed via changed_file_symbols; that inventory is source-inspection context, not proof every symbol changed. Inspect the diff before saying a function was touched. "
             "When the prompt names impact categories, pass requested_surfaces such as ui_screens, scheduled_jobs, sqs_consumers, delivery_workers, tracking_paths, schemas, or contracts so surface_status can separate inventory_context, unlinked_lead, and missing evidence. "

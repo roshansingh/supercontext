@@ -1386,12 +1386,50 @@ class McpToolsTest(unittest.TestCase):
             "tool": "review_context",
             "status": "found",
             "repo": "repo",
-            "summary": {"changed_symbol_count": 0, "changed_file_symbol_count": 60, "direct_caller_count": 60},
-            "review_answer_packet": {"status": "found", "summary": {"changed_symbol_count": 0}},
+            "summary": {
+                "changed_symbol_count": 0,
+                "changed_file_symbol_count": 60,
+                "diff_anchor_count": 60,
+                "direct_caller_count": 60,
+            },
+            "review_answer_packet": {
+                "status": "found",
+                "summary": {"changed_symbol_count": 0, "diff_anchor_count": 60},
+                "top_diff_anchors": [
+                    {
+                        "repo": "repo",
+                        "path": f"pkg/module_{index}.py",
+                        "range": {"start_line": index, "end_line": index},
+                        "anchor_type": "file",
+                        "match_kind": "changed_range_without_indexed_symbol",
+                        "payload": "x" * 800,
+                    }
+                    for index in range(60)
+                ],
+            },
             "answerability": {"status": "answerable"},
             "scope_contract": {"changed_symbol_count": 0},
             "claim_contract": {"scope": "bounded static review context for changed files and optional ranges"},
             "surface_status": [],
+            "diff_anchors": [
+                {
+                    "repo": "repo",
+                    "path": f"pkg/module_{index}.py",
+                    "range": {"start_line": index, "end_line": index},
+                    "anchor_type": "file",
+                    "match_kind": "changed_range_without_indexed_symbol",
+                    "source_coordinates": [
+                        {
+                            "repo": "repo",
+                            "path": f"pkg/module_{index}.py",
+                            "line_start": index,
+                            "line_end": index,
+                        }
+                    ],
+                    "payload": "x" * 800,
+                }
+                for index in range(60)
+            ],
             "direct_callers": caller_rows,
             "direct_callees": caller_rows,
             "direct_callers_of_changed_symbols": caller_rows,
@@ -1412,6 +1450,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("review_answer_packet", budgeted)
         self.assertEqual(budgeted["summary"], original["summary"])
         self.assertLessEqual(len(budgeted["direct_callers"]), 8)
+        self.assertLessEqual(len(budgeted["diff_anchors"]), 8)
+        self.assertIn("diff_anchors", budgeted["output_budget"]["truncated_sections"])
+        self.assertIn("review_answer_packet.top_diff_anchors", budgeted["output_budget"]["truncated_sections"])
+        self.assertNotIn("payload", budgeted["diff_anchors"][0])
+        self.assertNotIn("payload", budgeted["review_answer_packet"]["top_diff_anchors"][0])
         self.assertIn("direct_callers", budgeted["output_budget"]["truncated_sections"])
         self.assertNotIn("omitted_counts", budgeted["output_budget"])
 
@@ -3016,6 +3059,17 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(
             any(row["qualname"] == "bootstrap_checkout" for row in result["review_answer_packet"]["changed_file_symbol_inventory"])
         )
+        self.assertEqual(result["summary"]["diff_anchor_count"], 1)
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
+        self.assertEqual(result["summary"]["file_anchor_count"], 0)
+        anchor = result["diff_anchors"][0]
+        self.assertEqual(anchor["anchor_type"], "symbol")
+        self.assertEqual(anchor["match_kind"], "enclosing_symbol")
+        self.assertEqual(anchor["range"], {"start_line": 10, "end_line": 10})
+        self.assertEqual([row["qualname"] for row in anchor["symbols"]], ["handle_checkout"])
+        self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
+        self.assertEqual(result["source_coordinates"][0]["path"], "payments/checkout.py")
+        self.assertEqual(result["source_coordinates"][0]["line_start"], 10)
 
     def test_review_context_changed_ranges_use_symbol_evidence_span(self) -> None:
         with _fixture_snapshot(
@@ -3035,6 +3089,38 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["status"], "found")
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
 
+    def test_review_context_changed_ranges_mark_partial_overlap_symbol_anchor(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 5, "end_line": 25}],
+                },
+            )
+
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+        self.assertEqual(result["diff_anchors"][0]["match_kind"], "overlapping_symbol")
+        self.assertEqual([row["qualname"] for row in result["diff_anchors"][0]["symbols"]], ["handle_checkout"])
+
+    def test_review_context_changed_ranges_prefer_enclosing_symbol_over_broad_overlap(self) -> None:
+        with _fixture_snapshot(containing_checkout_class=True) as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 1, "end_line": 30}],
+                },
+            )
+
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["CheckoutHandler"])
+        self.assertEqual([row["qualname"] for row in result["diff_anchors"][0]["symbols"]], ["CheckoutHandler"])
+        self.assertEqual(result["diff_anchors"][0]["match_kind"], "enclosing_symbol")
+
     def test_review_context_changed_ranges_keep_most_specific_nested_symbol(self) -> None:
         with _fixture_snapshot(containing_checkout_class=True) as kg:
             result = call_tool(
@@ -3049,6 +3135,30 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["CheckoutHandler.handle_checkout"])
         self.assertTrue(any(row["qualname"] == "CheckoutHandler" for row in result["changed_file_symbols"]))
+
+    def test_review_context_changed_ranges_emit_file_anchor_when_no_symbol_exists(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "payments",
+                    "changed_files": ["config/settings.yaml"],
+                    "changed_ranges": [{"path": "config/settings.yaml", "start_line": 4, "end_line": 6}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["summary"]["diff_anchor_count"], 1)
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+        self.assertEqual(result["summary"]["file_anchor_count"], 1)
+        self.assertEqual(result["changed_symbols"], [])
+        anchor = result["diff_anchors"][0]
+        self.assertEqual(anchor["anchor_type"], "file")
+        self.assertEqual(anchor["match_kind"], "changed_range_without_indexed_symbol")
+        self.assertEqual(anchor["range"], {"start_line": 4, "end_line": 6})
+        self.assertEqual(anchor["source_coordinates"][0]["path"], "config/settings.yaml")
+        self.assertTrue(any(row["path"] == "config/settings.yaml" for row in result["source_coordinates"]))
 
     def test_review_context_includes_transitive_callers_for_changed_symbols(self) -> None:
         with _fixture_snapshot(upstream_checkout_caller=True, upstream_checkout_grandcaller=True) as kg:
@@ -3134,6 +3244,11 @@ class McpToolsTest(unittest.TestCase):
             {row["qualname"] for row in result["changed_symbols"]},
             {"handle_checkout", "charge_card"},
         )
+        anchors_by_path = {row["path"]: row for row in result["diff_anchors"]}
+        self.assertEqual(anchors_by_path["payments/checkout.py"]["match_kind"], "enclosing_symbol")
+        self.assertEqual(anchors_by_path["payments/gateway.py"]["anchor_type"], "file")
+        self.assertEqual(anchors_by_path["payments/gateway.py"]["match_kind"], "changed_file_without_range")
+        self.assertEqual(anchors_by_path["payments/gateway.py"]["symbol_count"], 1)
 
     def test_review_context_missing_changed_file_still_returns_repo_dependencies(self) -> None:
         with _fixture_snapshot() as kg:
