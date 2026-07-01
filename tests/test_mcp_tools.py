@@ -1778,6 +1778,58 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("review_leads.direct_callers", truncated_sections)
         self.assertNotIn("review_answer_packet.top_direct_callers", truncated_sections)
 
+    def test_review_backfill_trial_metadata_drops_restored_sections_before_measuring(self) -> None:
+        from source.kg.product.output_budget import _backfill_review_list_path
+
+        compact_row = {
+            "predicate": "CALLS",
+            "depth": 1,
+            "subject": "pkg.module.caller",
+            "object": "pkg.target.changed",
+        }
+        source_rows = [
+            {
+                **compact_row,
+                "evidence": [
+                    {
+                        "bytes_ref": {
+                            "repo": "repo",
+                            "path": f"pkg/module_{index}.py",
+                            "line_start": index,
+                            "line_end": index,
+                        }
+                    }
+                ],
+                "payload": "x" * 200,
+            }
+            for index in range(2)
+        ]
+        candidate = {
+            "tool": "review_context",
+            "status": "found",
+            "direct_callers": [compact_row],
+            "review_leads": {"direct_callers": [compact_row]},
+            "next_actions": [],
+        }
+        original = {
+            "direct_callers": source_rows,
+            "review_leads": {"direct_callers": source_rows},
+        }
+
+        budgeted, added = _backfill_review_list_path(
+            candidate,
+            original,
+            ("direct_callers",),
+            measured_chars=20_000,
+            max_chars=20_000,
+            truncated_sections={"direct_callers", "review_leads.direct_callers"},
+            backfilled_counts={},
+        )
+
+        self.assertEqual(added, 1)
+        self.assertNotIn("direct_callers", budgeted["output_budget"]["truncated_sections"])
+        self.assertIn("review_leads.direct_callers", budgeted["output_budget"]["truncated_sections"])
+
     def test_review_context_budget_degrades_to_lead_only_for_non_row_answer_packet_bloat(self) -> None:
         relation_rows = [
             {

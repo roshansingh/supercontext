@@ -697,12 +697,17 @@ def _backfill_review_list_path(
         proposed_counts = dict(backfilled_counts)
         proposed_counts[_path_label(path)] = proposed_counts.get(_path_label(path), 0) + added + 1
         _sync_review_lead_status_from_packet(trial_base)
+        trial_truncated_sections = _review_truncated_sections_after_backfill(
+            trial_base,
+            original_result,
+            truncated_sections,
+        )
         _attach_detail_budget_metadata(
             trial_base,
             measured_chars=measured_chars,
             max_chars=max_chars,
             advice=_REVIEW_BUDGET_ADVICE,
-            truncated_sections=truncated_sections,
+            truncated_sections=trial_truncated_sections,
         )
         if proposed_counts and isinstance(trial_base.get("output_budget"), dict):
             trial_base["output_budget"]["backfilled_counts"] = {
