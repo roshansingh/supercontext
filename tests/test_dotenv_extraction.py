@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from source.kg.core.repo_source import RepoSnapshot
 from source.kg.file_formats._shared.common import ScannedFile, is_dotenv_file, scan_config_files
@@ -69,6 +71,148 @@ class DotenvExtractionTest(unittest.TestCase):
             result = scan_config_files(repo)
 
         self.assertEqual([scanned.relative_path for scanned in result.files], ["CNAME"])
+
+    def test_config_scan_skips_broken_dotenv_symlink_with_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prisma = root / "packages" / "prisma"
+            prisma.mkdir(parents=True)
+            try:
+                (prisma / ".env").symlink_to("../../.env")
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="calcom-like-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            result = scan_config_files(repo)
+
+        self.assertEqual([scanned.relative_path for scanned in result.files], ["CNAME"])
+        rows = [
+            row
+            for row in result.coverage
+            if row.predicate == "CONFIG_SCAN"
+            and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+        ]
+        self.assertEqual(len(rows), 1)
+        scope = rows[0].scope_ref
+        self.assertEqual(scope["repo"], "calcom-like-app")
+        self.assertEqual(scope["file_path"], "packages/prisma/.env")
+        self.assertEqual(scope["error_type"], "FileNotFoundError")
+        self.assertEqual(scope["error_errno"], errno.ENOENT)
+        self.assertEqual(scope["error_code"], "ENOENT")
+        self.assertNotIn(str(root), str(scope))
+        self.assertTrue(scope["path_is_symlink"])
+        self.assertFalse(scope["symlink_target_is_absolute"])
+        self.assertEqual(scope["symlink_target"], "../../.env")
+
+    def test_config_scan_does_not_store_absolute_symlink_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prisma = root / "packages" / "prisma"
+            prisma.mkdir(parents=True)
+            try:
+                (prisma / ".env").symlink_to(root / "missing.env")
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            repo = RepoSnapshot(
+                root=root,
+                name="absolute-symlink-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            result = scan_config_files(repo)
+
+        rows = [
+            row
+            for row in result.coverage
+            if row.predicate == "CONFIG_SCAN"
+            and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+        ]
+        self.assertEqual(len(rows), 1)
+        scope = rows[0].scope_ref
+        self.assertTrue(scope["path_is_symlink"])
+        self.assertTrue(scope["symlink_target_is_absolute"])
+        self.assertNotIn("symlink_target", scope)
+        self.assertNotIn(str(root), str(scope))
+
+    def test_config_scan_does_not_store_windows_absolute_symlink_targets_on_posix(self) -> None:
+        for target in ("C:\\Users\\example\\missing.env", "\\\\server\\share\\missing.env"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                prisma = root / "packages" / "prisma"
+                prisma.mkdir(parents=True)
+                try:
+                    (prisma / ".env").symlink_to(target)
+                except OSError as exc:
+                    self.skipTest(f"symlink creation unavailable: {exc}")
+                repo = RepoSnapshot(
+                    root=root,
+                    name="windows-symlink-app",
+                    owner="test",
+                    commit_sha="sha",
+                    files_by_language={"python": (), "typescript": ()},
+                )
+
+                result = scan_config_files(repo)
+
+                rows = [
+                    row
+                    for row in result.coverage
+                    if row.predicate == "CONFIG_SCAN"
+                    and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+                ]
+                self.assertEqual(len(rows), 1)
+                scope = rows[0].scope_ref
+                self.assertTrue(scope["path_is_symlink"])
+                self.assertTrue(scope["symlink_target_is_absolute"])
+                self.assertNotIn("symlink_target", scope)
+                self.assertNotIn(target, str(scope))
+
+    def test_config_scan_skips_file_that_fails_during_read_with_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_path = root / ".env"
+            env_path.write_text("API_URL=https://api.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="read-failure-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+            original_read_text = Path.read_text
+
+            def fail_env_read(path: Path, *args: object, **kwargs: object) -> str:
+                if path == env_path:
+                    raise PermissionError(errno.EACCES, "Permission denied", str(path))
+                return original_read_text(path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", fail_env_read):
+                result = scan_config_files(repo)
+
+        self.assertEqual(result.files, ())
+        rows = [
+            row
+            for row in result.coverage
+            if row.predicate == "CONFIG_SCAN"
+            and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+        ]
+        self.assertEqual(len(rows), 1)
+        scope = rows[0].scope_ref
+        self.assertEqual(scope["file_path"], ".env")
+        self.assertEqual(scope["error_type"], "PermissionError")
+        self.assertEqual(scope["error_errno"], errno.EACCES)
+        self.assertEqual(scope["error_code"], "EACCES")
+        self.assertFalse(scope["path_is_symlink"])
+        self.assertNotIn(str(root), str(scope))
 
     def test_static_config_extracts_static_site_cname_domain(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
