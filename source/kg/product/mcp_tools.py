@@ -2531,10 +2531,11 @@ def _review_context_repo_resolution(
     requested_repo_key = _normalize_repo_text(requested_repo)
     direct_matches = [repo for repo in snapshot_repos if repo == requested_repo_key]
     if direct_matches:
+        effective_repo = direct_matches[0]
         return {
             "status": "matched",
             "requested_repo": requested_repo,
-            "effective_repo": requested_repo,
+            "effective_repo": effective_repo,
             "basis": "direct_repo_match",
             "snapshot_repo_count": len(snapshot_repos),
             "matched_repos": direct_matches[:PLANNING_CONTEXT_SECTION_LIMIT],
@@ -2604,9 +2605,11 @@ def _review_context_snapshot_repos(kg: KgSnapshot) -> list[str]:
 
 def _review_context_changed_files_overlap_snapshot(kg: KgSnapshot, changed_files: list[str]) -> bool:
     normalized_changed_files = {
-        _planning_context_normalize_path(path)
+        normalized_path
         for path in changed_files
         if isinstance(path, str) and path.strip()
+        for normalized_path in [_review_context_normalize_changed_file(path)]
+        if normalized_path is not None
     }
     if not normalized_changed_files:
         return False
@@ -2635,6 +2638,18 @@ def _review_context_changed_files_overlap_snapshot(kg: KgSnapshot, changed_files
         except (OSError, RuntimeError):
             continue
     return False
+
+
+def _review_context_normalize_changed_file(path: str) -> str | None:
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("/"):
+        return None
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    return "/".join(parts)
 
 
 def _review_context_snapshot_paths(kg: KgSnapshot) -> set[str]:

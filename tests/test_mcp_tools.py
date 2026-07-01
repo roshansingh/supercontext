@@ -3005,6 +3005,26 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["repo_resolution"]["basis"], "direct_repo_match")
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
 
+    def test_review_context_direct_match_uses_canonical_snapshot_repo_key(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "Payments",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["requested_repo"], "Payments")
+        self.assertEqual(result["repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["status"], "matched")
+        self.assertEqual(result["repo_resolution"]["effective_repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["matched_repos"], ["payments"])
+        self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
     def test_review_context_owner_repo_suffix_match_requires_safe_alias_overlap(self) -> None:
         with _fixture_snapshot() as kg:
             result = call_tool(
@@ -3157,6 +3177,38 @@ class McpToolsTest(unittest.TestCase):
                     "repo": "owner/project",
                     "changed_files": ["nested/../../outside.py"],
                     "changed_ranges": [{"path": "nested/../../outside.py", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/project")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_does_not_strip_leading_traversal_for_repo_path_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_root = root / "snapshot"
+            repo_root = root / "repo"
+            config_path = repo_root / "config" / "settings.yaml"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text("enabled: true\n", encoding="utf-8")
+            JsonlKgStore(snapshot_root).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1, "repo_name": "Local-Checkout-Repo", "repo_path": str(repo_root)},
+            )
+
+            result = call_tool(
+                KgSnapshot(snapshot_root),
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["../config/settings.yaml"],
+                    "changed_ranges": [{"path": "../config/settings.yaml", "start_line": 1, "end_line": 1}],
                     "limit": 10,
                 },
             )
