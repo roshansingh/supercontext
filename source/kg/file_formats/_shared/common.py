@@ -69,6 +69,48 @@ class ConfigScanResult:
     coverage: tuple[Coverage, ...]
 
 
+def _skipped_config_coverage(
+    repo: RepoSnapshot,
+    tenant_id: str,
+    path: Path,
+    relative: Path,
+    *,
+    reason: str,
+    exc: OSError,
+) -> Coverage:
+    path_is_symlink = False
+    try:
+        path_is_symlink = path.is_symlink()
+    except OSError:
+        pass
+
+    scope_ref: JsonObject = {
+        "repo": repo.name,
+        "file_path": str(relative),
+        "reason": reason,
+        "error_type": type(exc).__name__,
+        "error_message": exc.strerror if isinstance(exc.strerror, str) and exc.strerror else type(exc).__name__,
+        "path_is_symlink": path_is_symlink,
+    }
+    if path_is_symlink:
+        try:
+            symlink_target = os.readlink(path)
+        except OSError:
+            pass
+        else:
+            scope_ref["symlink_target_is_absolute"] = os.path.isabs(symlink_target)
+            if not os.path.isabs(symlink_target):
+                scope_ref["symlink_target"] = symlink_target
+
+    return Coverage(
+        tenant_id=tenant_id,
+        predicate="CONFIG_SCAN",
+        scope_ref=scope_ref,
+        state="uninstrumented",
+        source_system=CONFIG_SOURCE_SYSTEM,
+    )
+
+
 def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> ConfigScanResult:
     resolved_tenant_id = resolve_tenant_id(tenant_id)
     files: list[ScannedFile] = []
@@ -86,7 +128,20 @@ def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> Confi
 
     for path in sorted(candidates, key=lambda candidate: str(candidate.relative_to(repo.root))):
         relative = path.relative_to(repo.root)
-        size_bytes = path.stat().st_size
+        try:
+            size_bytes = path.stat().st_size
+        except OSError as exc:
+            coverage.append(
+                _skipped_config_coverage(
+                    repo,
+                    resolved_tenant_id,
+                    path,
+                    relative,
+                    reason="missing_or_unreadable_config_file",
+                    exc=exc,
+                )
+            )
+            continue
         if size_bytes > MAX_SCAN_BYTES:
             coverage.append(
                 Coverage(
@@ -104,7 +159,20 @@ def scan_config_files(repo: RepoSnapshot, tenant_id: str | None = None) -> Confi
                 )
             )
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            coverage.append(
+                _skipped_config_coverage(
+                    repo,
+                    resolved_tenant_id,
+                    path,
+                    relative,
+                    reason="missing_or_unreadable_config_file",
+                    exc=exc,
+                )
+            )
+            continue
         files.append(ScannedFile(path=path, relative_path=str(relative), text=text, lines=tuple(text.splitlines())))
     return ConfigScanResult(files=tuple(files), coverage=tuple(coverage))
 

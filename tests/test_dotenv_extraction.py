@@ -70,6 +70,76 @@ class DotenvExtractionTest(unittest.TestCase):
 
         self.assertEqual([scanned.relative_path for scanned in result.files], ["CNAME"])
 
+    def test_config_scan_skips_broken_dotenv_symlink_with_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prisma = root / "packages" / "prisma"
+            prisma.mkdir(parents=True)
+            try:
+                (prisma / ".env").symlink_to("../../.env")
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="calcom-like-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            result = scan_config_files(repo)
+
+        self.assertEqual([scanned.relative_path for scanned in result.files], ["CNAME"])
+        rows = [
+            row
+            for row in result.coverage
+            if row.predicate == "CONFIG_SCAN"
+            and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+        ]
+        self.assertEqual(len(rows), 1)
+        scope = rows[0].scope_ref
+        self.assertEqual(scope["repo"], "calcom-like-app")
+        self.assertEqual(scope["file_path"], "packages/prisma/.env")
+        self.assertEqual(scope["error_type"], "FileNotFoundError")
+        self.assertEqual(scope["error_message"], "No such file or directory")
+        self.assertNotIn(str(root), scope["error_message"])
+        self.assertTrue(scope["path_is_symlink"])
+        self.assertFalse(scope["symlink_target_is_absolute"])
+        self.assertEqual(scope["symlink_target"], "../../.env")
+
+    def test_config_scan_does_not_store_absolute_symlink_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prisma = root / "packages" / "prisma"
+            prisma.mkdir(parents=True)
+            try:
+                (prisma / ".env").symlink_to(root / "missing.env")
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            repo = RepoSnapshot(
+                root=root,
+                name="absolute-symlink-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            result = scan_config_files(repo)
+
+        rows = [
+            row
+            for row in result.coverage
+            if row.predicate == "CONFIG_SCAN"
+            and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+        ]
+        self.assertEqual(len(rows), 1)
+        scope = rows[0].scope_ref
+        self.assertTrue(scope["path_is_symlink"])
+        self.assertTrue(scope["symlink_target_is_absolute"])
+        self.assertNotIn("symlink_target", scope)
+        self.assertNotIn(str(root), str(scope))
+
     def test_static_config_extracts_static_site_cname_domain(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

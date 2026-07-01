@@ -699,6 +699,37 @@ class AdapterFrameworkTest(unittest.TestCase):
             self.assertTrue(CONFIG_CNAME_ADAPTER.applies_to(repo, ExtractionContext()))
             self.assertFalse(CONFIG_CNAME_ADAPTER.applies_to(empty_repo, ExtractionContext()))
 
+    def test_config_adapter_selection_survives_broken_dotenv_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prisma = root / "packages" / "prisma"
+            prisma.mkdir(parents=True)
+            try:
+                (prisma / ".env").symlink_to("../../.env")
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            (root / "CNAME").write_text("developer.example.com\n", encoding="utf-8")
+            repo = RepoSnapshot(
+                root=root,
+                name="calcom-like-app",
+                owner="test",
+                commit_sha="sha",
+                files_by_language={"python": (), "typescript": ()},
+            )
+
+            self.assertTrue(CONFIG_CNAME_ADAPTER.applies_to(repo, ExtractionContext()))
+            build = extract_repo(repo)
+
+        rows = [
+            row
+            for row in build.coverage
+            if row.predicate == "CONFIG_SCAN"
+            and row.scope_ref.get("reason") == "missing_or_unreadable_config_file"
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].scope_ref["file_path"], "packages/prisma/.env")
+        self.assertTrue(any(fact.predicate == "REFERENCES_DOMAIN" for fact in build.facts))
+
     def test_config_split_adapters_share_one_config_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
