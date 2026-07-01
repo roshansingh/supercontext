@@ -3558,6 +3558,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["review_lead_status"]["recommended_action"], "fall_back_to_plain_review")
         self.assertEqual(result["review_lead_status"]["reason"], "no changed symbols or direct impact edges")
         self.assertEqual(result["review_leads"]["changed_files"], ["payments/config.yaml"])
+        self.assertEqual(result["review_lead_status"]["source_coordinate_count"], len(result["source_coordinates"]))
+        self.assertEqual(result["review_leads"]["source_coordinates"], result["source_coordinates"])
         self.assertEqual(result["review_answer_packet"]["review_lead_status"], result["review_lead_status"])
         self.assertNotIn("review_leads", result["review_answer_packet"])
         self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
@@ -3584,10 +3586,12 @@ class McpToolsTest(unittest.TestCase):
                     "include_unlinked_leads": True,
                     "limit": 10,
                 },
-            )
+        )
 
         self.assertIn("application_impact", result)
         self.assertEqual(result["candidate_leads"]["status"], "found")
+        self.assertEqual(result["review_lead_status"]["coverage_status"], "low_coverage")
+        self.assertEqual(result["review_lead_status"]["recommended_action"], "fall_back_to_plain_review")
         self.assertEqual(
             result["review_answer_packet"]["application"]["cross_repo_name_leads"][0]["match_basis"],
             "name_derived_unlinked_lead",

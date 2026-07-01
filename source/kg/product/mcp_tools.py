@@ -3035,7 +3035,6 @@ def _review_context_lead_packet(
         "transitive_impact_count": transitive_impact_count,
         "source_coordinate_count": len(source_coordinates),
         "file_anchor_count": int(summary.get("file_anchor_count") or 0),
-        "test_or_config_lead_count": 0,
     }
     if not useful:
         status["reason"] = "no changed symbols or direct impact edges"
@@ -3045,8 +3044,6 @@ def _review_context_lead_packet(
         "direct_callers": direct_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
         "direct_callees": direct_callees[:PLANNING_CONTEXT_SECTION_LIMIT],
         "transitive_callers": transitive_callers[:PLANNING_CONTEXT_SECTION_LIMIT],
-        "tests_to_inspect": [],
-        "config_or_runtime_leads": [],
         "source_coordinates": source_coordinates[:PLANNING_CONTEXT_SECTION_LIMIT],
     }
     return {"review_lead_status": status, "review_leads": leads}
@@ -3092,8 +3089,21 @@ def _review_context_compact_unanchored_result(result: JsonObject) -> JsonObject:
     summary["source_coordinate_count"] = len(source_coordinates)
     answerability = result.get("answerability") if isinstance(result.get("answerability"), dict) else {}
     packet = result.get("review_answer_packet") if isinstance(result.get("review_answer_packet"), dict) else {}
-    review_lead_status = result.get("review_lead_status") if isinstance(result.get("review_lead_status"), dict) else {}
-    review_leads = result.get("review_leads") if isinstance(result.get("review_leads"), dict) else {}
+    existing_review_leads = result.get("review_leads") if isinstance(result.get("review_leads"), dict) else {}
+    changed_files = [
+        path for path in existing_review_leads.get("changed_files", []) if isinstance(path, str) and path.strip()
+    ]
+    review_lead_packet = _review_context_lead_packet(
+        changed_files=changed_files,
+        summary=summary,
+        changed_symbols=[],
+        direct_callers=[],
+        direct_callees=[],
+        transitive_callers=[],
+        source_coordinates=source_coordinates,
+    )
+    review_lead_status = review_lead_packet["review_lead_status"]
+    review_leads = review_lead_packet["review_leads"]
     omitted_counts = _review_context_omitted_context_counts(result)
     packet_summary = dict(packet.get("summary", {})) if isinstance(packet.get("summary"), dict) else {}
     packet_summary["packet_mode"] = "diff_anchor_only"
