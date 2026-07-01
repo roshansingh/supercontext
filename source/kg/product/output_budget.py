@@ -349,6 +349,7 @@ _REVIEW_RELATION_DETAIL_FIELDS = (
     "repo_dependencies",
 )
 _REVIEW_SYMBOL_DETAIL_FIELDS = ("changed_symbols", "changed_file_symbols")
+_REVIEW_ANCHOR_DETAIL_FIELDS = ("diff_anchors",)
 _DETAIL_BUDGET_COUNT_RULE = (
     " summary.*_count fields remain the authoritative totals and output_budget.truncated_sections lists which detail arrays "
     "were sampled. Inspect source for the rows not shown; never add the sampled-away rows to the summary totals."
@@ -422,6 +423,12 @@ def _compact_review_detail(result: JsonObject, *, limit: int) -> tuple[JsonObjec
         rows = result.get(field)
         if isinstance(rows, list):
             kept = [_compact_symbol(row) for row in rows[:limit] if isinstance(row, dict)]
+            _record_truncated(truncated_sections, field, original=len(rows), kept=len(kept))
+            compact[field] = kept
+    for field in _REVIEW_ANCHOR_DETAIL_FIELDS:
+        rows = result.get(field)
+        if isinstance(rows, list):
+            kept = [_compact_diff_anchor(row) for row in rows[:limit] if isinstance(row, dict)]
             _record_truncated(truncated_sections, field, original=len(rows), kept=len(kept))
             compact[field] = kept
     for dict_field in ("impact", "runtime_surfaces"):
@@ -786,6 +793,17 @@ def _compact_review_answer_packet(
     value: JsonObject, *, limit: int, truncated_sections: set[str] | None = None
 ) -> JsonObject:
     compact = dict(value)
+    anchors = value.get("top_diff_anchors")
+    if isinstance(anchors, list):
+        kept_anchors = [_compact_diff_anchor(row) for row in anchors[:limit] if isinstance(row, dict)]
+        if truncated_sections is not None:
+            _record_truncated(
+                truncated_sections,
+                "review_answer_packet.top_diff_anchors",
+                original=len(anchors),
+                kept=len(kept_anchors),
+            )
+        compact["top_diff_anchors"] = kept_anchors
     for field in ("changed_file_symbol_inventory", "top_changed_symbols"):
         rows = value.get(field)
         if isinstance(rows, list):
@@ -2209,6 +2227,25 @@ def _compact_source_check(row: JsonObject) -> JsonObject:
 def _compact_coordinate(row: JsonObject) -> JsonObject:
     keys = ("repo", "path", "line_start", "line_end")
     return {key: row[key] for key in keys if key in row}
+
+
+def _compact_diff_anchor(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    compact = {
+        key: value[key]
+        for key in ("repo", "path", "range", "anchor_type", "match_kind", "symbol_count")
+        if key in value
+    }
+    symbols = value.get("symbols")
+    if isinstance(symbols, list):
+        compact["symbols"] = [_compact_symbol(row) for row in symbols[:COMPACT_RUNTIME_HEADSTART_LIMIT] if isinstance(row, dict)]
+    coordinates = value.get("source_coordinates")
+    if isinstance(coordinates, list):
+        compact["source_coordinates"] = [
+            _compact_coordinate(row) for row in coordinates[:COMPACT_RUNTIME_SOURCE_CHECK_LIMIT] if isinstance(row, dict)
+        ]
+    return compact
 
 
 def _investigation_brief_anchor_count(value: object) -> int:

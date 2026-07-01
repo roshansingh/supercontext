@@ -309,8 +309,9 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | Field | Definition |
 |---|---|
 | `repo` | Review repo anchor. |
-| `summary` | Counts for changed symbols, callers/callees, transitive callers, dependencies, runtime facts, framework/app facts, and section/detail limits. |
-| `review_answer_packet` | Compact first-read review packet with top changed symbols, callers/callees, framework, application, runtime, and surface status. |
+| `summary` | Counts for diff anchors, changed symbols, callers/callees, transitive callers, dependencies, runtime facts, framework/app facts, and section/detail limits. |
+| `review_answer_packet` | Compact first-read review packet with top diff anchors, changed symbols, callers/callees, framework, application, runtime, and surface status. |
+| `diff_anchors` | Changed file/range anchors. Symbol anchors use indexed KG symbol spans; file anchors mean no indexed symbol enclosed or overlapped the changed range and the file should be inspected directly. |
 | `changed_symbols` | Exact symbols overlapping changed ranges or changed files. |
 | `changed_file_symbols` | File symbol inventory; context only, not proof every symbol changed. |
 | `direct_callers`, `direct_callers_of_changed_symbols` | Direct callers of changed symbols. |
@@ -335,12 +336,15 @@ Example:
 {
   "tool": "review_context",
   "status": "found",
-  "summary": {"changed_symbol_count": 2, "transitive_caller_count": 5},
-  "review_answer_packet": {"surface_status": [{"surface": "api_surfaces", "status": "known"}]}
+  "summary": {"diff_anchor_count": 2, "changed_symbol_count": 2, "transitive_caller_count": 5},
+  "review_answer_packet": {
+    "top_diff_anchors": [{"path": "api/routes.py", "anchor_type": "symbol", "match_kind": "enclosing_symbol"}],
+    "surface_status": [{"surface": "api_surfaces", "status": "known"}]
+  }
 }
 ```
 
-Prompt usage: skills say read `review_answer_packet` first, keep `changed_symbols` distinct from `changed_file_symbols`, and pass `requested_surfaces` when the user names impact categories.
+Prompt usage: skills say read `review_answer_packet` first, inspect `top_diff_anchors` / `diff_anchors` as the PR "you are here" markers, keep `changed_symbols` distinct from `changed_file_symbols`, and pass `requested_surfaces` when the user names impact categories.
 
 ## Known Duplication / Normalization Notes
 
