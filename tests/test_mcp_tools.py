@@ -3093,6 +3093,23 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["repo_resolution"]["snapshot_repo_count"], 1)
         self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
 
+    def test_review_context_fixture_repo_rewrite_keeps_ids_consistent(self) -> None:
+        with _fixture_snapshot() as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+
+            entity_ids = {str(entity["entity_id"]) for entity in kg.entities}
+            fact_ids = {str(fact["fact_id"]) for fact in kg.facts}
+
+            self.assertEqual(set(kg.entities_by_id), entity_ids)
+            for fact in kg.facts:
+                self.assertIn(fact["subject_id"], entity_ids)
+                self.assertIn(fact["object_id"], entity_ids)
+            for evidence in kg.evidence:
+                if evidence["target_type"] == "entity":
+                    self.assertIn(evidence["target_id"], entity_ids)
+                if evidence["target_type"] == "fact":
+                    self.assertIn(evidence["target_id"], fact_ids)
+
     def test_review_context_resolves_uppercase_repo_identity_as_single_repo_snapshot(self) -> None:
         with _fixture_snapshot() as kg:
             _rewrite_fixture_repo(kg, old_repo="payments", new_repo="Local-Checkout-Repo")
@@ -4935,14 +4952,37 @@ class _cross_repo_import_consumer_snapshot:
 
 
 def _rewrite_fixture_repo(kg: KgSnapshot, *, old_repo: str, new_repo: str) -> None:
+    entity_id_map: dict[str, str] = {}
     for entity in kg.entities:
         identity = entity.get("identity")
         if isinstance(identity, dict) and identity.get("repo") == old_repo:
+            old_entity_id = str(entity.get("entity_id") or "")
             identity["repo"] = new_repo
+            rewritten = Entity(
+                kind=str(entity["kind"]),
+                identity=deepcopy(identity),
+                properties=deepcopy(entity.get("properties") or {}),
+                canonical_status=entity.get("canonical_status", "canonical"),
+            ).to_record()
+            entity["entity_id"] = rewritten["entity_id"]
+            entity["urn"] = rewritten["urn"]
+            if old_entity_id and old_entity_id != rewritten["entity_id"]:
+                entity_id_map[old_entity_id] = str(rewritten["entity_id"])
+    kg.entities_by_id = {entity["entity_id"]: entity for entity in kg.entities}
+
+    fact_id_map: dict[str, str] = {}
     for fact in kg.facts:
+        old_fact_id = str(fact.get("fact_id") or "")
+        subject_id = fact.get("subject_id")
+        if isinstance(subject_id, str) and subject_id in entity_id_map:
+            fact["subject_id"] = entity_id_map[subject_id]
+        object_id = fact.get("object_id")
+        if isinstance(object_id, str) and object_id in entity_id_map:
+            fact["object_id"] = entity_id_map[object_id]
         qualifier = fact.get("qualifier")
         if not isinstance(qualifier, dict):
-            continue
+            qualifier = {}
+            fact["qualifier"] = qualifier
         if qualifier.get("consumer_repo") == old_repo:
             qualifier["consumer_repo"] = new_repo
         consumer_identity = qualifier.get("consumer_repo_identity")
@@ -4953,6 +4993,26 @@ def _rewrite_fixture_repo(kg: KgSnapshot, *, old_repo: str, new_repo: str) -> No
             for row in consumer_identities:
                 if isinstance(row, dict) and row.get("name") == old_repo:
                     row["name"] = new_repo
+        rewritten_fact = Fact(
+            predicate=str(fact["predicate"]),
+            subject_id=str(fact["subject_id"]),
+            object_id=str(fact["object_id"]),
+            qualifier=deepcopy(qualifier),
+            canonical_status=fact.get("canonical_status", "canonical"),
+        ).to_record()
+        fact["fact_id"] = rewritten_fact["fact_id"]
+        if old_fact_id and old_fact_id != rewritten_fact["fact_id"]:
+            fact_id_map[old_fact_id] = str(rewritten_fact["fact_id"])
+
+    for evidence in kg.evidence:
+        target_id = evidence.get("target_id")
+        if isinstance(target_id, str) and target_id in entity_id_map:
+            evidence["target_id"] = entity_id_map[target_id]
+        if isinstance(target_id, str) and target_id in fact_id_map:
+            evidence["target_id"] = fact_id_map[target_id]
+    kg.evidence_by_target.clear()
+    for row in kg.evidence:
+        kg.evidence_by_target[row["target_id"]].append(row)
 
 
 class _fixture_snapshot:
