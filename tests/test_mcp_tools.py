@@ -1638,6 +1638,10 @@ class McpToolsTest(unittest.TestCase):
                     }
                 ],
                 "payload": "z" * 1_200,
+                "subject": f"pkg.runtime_{index}",
+                "object": "pkg.target.changed",
+                "qualifier": {"source": "static_reference"},
+                "match_basis": "same_repo_surface",
             }
             for index in range(120)
         ]
@@ -1696,6 +1700,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertLessEqual(
             len(budgeted["review_answer_packet"]["framework"]["changed_models"]),
             COMPACT_RUNTIME_HEADSTART_LIMIT,
+        )
+        self.assertEqual(
+            budgeted["review_answer_packet"]["application"]["runtime_facts"][0]["qualifier"],
+            {"source": "static_reference"},
+        )
+        self.assertEqual(
+            budgeted["review_answer_packet"]["application"]["runtime_facts"][0]["match_basis"],
+            "same_repo_surface",
         )
         self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
 

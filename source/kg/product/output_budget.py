@@ -2297,7 +2297,7 @@ def _compact_review_backfill_row(path: tuple[str, ...], row: object) -> object:
 
 
 def _compact_review_nested_row(row: JsonObject) -> JsonObject:
-    if any(key in row for key in ("subject", "object", "caller_symbol", "callee_symbol")):
+    if _is_call_graph_relation_row(row):
         compacted = _compact_relation_rows([row], limit=1)
         return compacted[0] if compacted else {}
     compact = _compact_headstart_or_relation_row(row)
@@ -2311,6 +2311,13 @@ def _compact_review_nested_row(row: JsonObject) -> JsonObject:
     if coordinates and "source_coordinates" not in compact:
         compact["source_coordinates"] = coordinates
     return compact
+
+
+def _is_call_graph_relation_row(row: JsonObject) -> bool:
+    return any(
+        key in row and row[key] is not None
+        for key in ("caller_symbol", "callee_symbol", "depth", "traversal", "via_constructor_bridge")
+    )
 
 
 def _compact_symbol(value: object) -> JsonObject:
