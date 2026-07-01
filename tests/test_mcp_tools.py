@@ -1517,6 +1517,71 @@ class McpToolsTest(unittest.TestCase):
         self.assertIn("direct_callers", budgeted["output_budget"]["truncated_sections"])
         self.assertNotIn("omitted_counts", budgeted["output_budget"])
 
+    def test_review_context_budget_preserves_anchor_based_useful_gate(self) -> None:
+        file_anchors = [
+            {
+                "repo": "repo",
+                "path": f"pkg/file_{index}.py",
+                "range": {"start_line": index, "end_line": index},
+                "anchor_type": "file",
+                "match_kind": "changed_range_without_indexed_symbol",
+                "payload": "x" * 500,
+            }
+            for index in range(20)
+        ]
+        symbol_anchors = [
+            {
+                "repo": "repo",
+                "path": f"pkg/symbol_{index}.py",
+                "range": {"start_line": index, "end_line": index},
+                "anchor_type": "symbol",
+                "match_kind": "enclosing_symbol",
+                "symbols": [{"qualname": f"pkg.symbol_{index}", "path": f"pkg/symbol_{index}.py", "line": index}],
+                "payload": "x" * 500,
+            }
+            for index in range(20)
+        ]
+        review_lead_status = {
+            "coverage_status": "useful",
+            "recommended_action": "use_supercontext_packet",
+            "changed_anchor_count": 20,
+            "changed_symbol_count": 0,
+            "direct_impact_count": 0,
+            "transitive_impact_count": 0,
+            "source_coordinate_count": 0,
+            "file_anchor_count": 20,
+        }
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "summary": {"diff_anchor_count": 40, "symbol_anchor_count": 20, "file_anchor_count": 20},
+            "review_lead_status": review_lead_status,
+            "review_leads": {
+                "changed_files": ["pkg/file.py"],
+                "changed_symbols": [],
+                "direct_callers": [],
+                "direct_callees": [],
+                "transitive_callers": [],
+                "source_coordinates": [],
+            },
+            "review_answer_packet": {
+                "review_lead_status": review_lead_status,
+                "top_diff_anchors": [*file_anchors, *symbol_anchors],
+            },
+            "diff_anchors": [*file_anchors, *symbol_anchors],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_review_context_budget(result, max_chars=3_000)
+
+        self.assertTrue(budgeted["output_budget"]["truncated"])
+        self.assertLessEqual(len(budgeted["diff_anchors"]), 8)
+        self.assertTrue(all(row["anchor_type"] == "file" for row in budgeted["diff_anchors"]))
+        self.assertEqual(budgeted["review_lead_status"]["coverage_status"], "useful")
+        self.assertEqual(budgeted["review_lead_status"]["recommended_action"], "use_supercontext_packet")
+        self.assertEqual(budgeted["review_lead_status"]["changed_anchor_count"], 20)
+        self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
+
     def test_review_context_budget_leaves_small_packet_untouched(self) -> None:
         result = {"tool": "review_context", "status": "found", "summary": {}, "direct_callers": [], "next_actions": []}
         self.assertIs(enforce_review_context_budget(result), result)

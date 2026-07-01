@@ -516,8 +516,24 @@ def _sync_compact_review_leads(
     transitive_callers = synced.get("transitive_callers") if isinstance(synced.get("transitive_callers"), list) else []
     source_coordinates = synced.get("source_coordinates") if isinstance(synced.get("source_coordinates"), list) else []
     diff_anchors = compact.get("diff_anchors") if isinstance(compact.get("diff_anchors"), list) else []
-    changed_anchor_count = sum(1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "symbol")
-    file_anchor_count = sum(1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "file")
+    kept_changed_anchor_count = sum(
+        1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "symbol"
+    )
+    kept_file_anchor_count = sum(1 for row in diff_anchors if isinstance(row, dict) and row.get("anchor_type") == "file")
+    original_changed_anchor_count = status.get("changed_anchor_count")
+    original_file_anchor_count = status.get("file_anchor_count")
+    changed_anchor_count = max(
+        kept_changed_anchor_count,
+        original_changed_anchor_count
+        if isinstance(original_changed_anchor_count, int) and not isinstance(original_changed_anchor_count, bool)
+        else 0,
+    )
+    file_anchor_count = max(
+        kept_file_anchor_count,
+        original_file_anchor_count
+        if isinstance(original_file_anchor_count, int) and not isinstance(original_file_anchor_count, bool)
+        else 0,
+    )
     direct_impact_count = len(direct_callers) + len(direct_callees)
     transitive_impact_count = len(transitive_callers)
     useful = bool(changed_anchor_count or changed_symbols or direct_impact_count or transitive_impact_count)
