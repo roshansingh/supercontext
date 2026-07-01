@@ -1384,19 +1384,49 @@ class McpToolsTest(unittest.TestCase):
             }
             for index in range(60)
         ]
+        changed_symbols = [row["caller_symbol"] for row in caller_rows]
+        source_coordinates = [
+            {
+                "repo": "repo",
+                "path": f"pkg/module_{index}.py",
+                "line_start": index,
+                "line_end": index,
+            }
+            for index in range(60)
+        ]
         result = {
             "tool": "review_context",
             "status": "found",
             "repo": "repo",
             "summary": {
-                "changed_symbol_count": 0,
+                "changed_symbol_count": 60,
                 "changed_file_symbol_count": 60,
                 "diff_anchor_count": 60,
                 "direct_caller_count": 60,
             },
+            "review_lead_status": {
+                "coverage_status": "useful",
+                "recommended_action": "use_supercontext_packet",
+                "changed_anchor_count": 0,
+                "changed_symbol_count": 60,
+                "direct_impact_count": 120,
+                "transitive_impact_count": 0,
+                "source_coordinate_count": 60,
+                "file_anchor_count": 60,
+            },
             "review_answer_packet": {
                 "status": "found",
                 "summary": {"changed_symbol_count": 0, "diff_anchor_count": 60},
+                "review_lead_status": {
+                    "coverage_status": "useful",
+                    "recommended_action": "use_supercontext_packet",
+                    "changed_anchor_count": 0,
+                    "changed_symbol_count": 60,
+                    "direct_impact_count": 120,
+                    "transitive_impact_count": 0,
+                    "source_coordinate_count": 60,
+                    "file_anchor_count": 60,
+                },
                 "top_diff_anchors": [
                     {
                         "repo": "repo",
@@ -1412,6 +1442,14 @@ class McpToolsTest(unittest.TestCase):
             "answerability": {"status": "answerable"},
             "scope_contract": {"changed_symbol_count": 0},
             "claim_contract": {"scope": "bounded static review context for changed files and optional ranges"},
+            "review_leads": {
+                "changed_files": [f"pkg/module_{index}.py" for index in range(60)],
+                "changed_symbols": changed_symbols,
+                "direct_callers": caller_rows,
+                "direct_callees": caller_rows,
+                "transitive_callers": [],
+                "source_coordinates": source_coordinates,
+            },
             "surface_status": [],
             "diff_anchors": [
                 {
@@ -1436,7 +1474,9 @@ class McpToolsTest(unittest.TestCase):
             "direct_callees": caller_rows,
             "direct_callers_of_changed_symbols": caller_rows,
             "direct_callees_from_changed_symbols": caller_rows,
+            "changed_symbols": changed_symbols,
             "changed_file_symbols": [row["caller_symbol"] for row in caller_rows],
+            "source_coordinates": source_coordinates,
             "coverage_warnings": [],
             "unsupported_scopes": [],
             "next_actions": [],
@@ -1453,8 +1493,25 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(budgeted["summary"], original["summary"])
         self.assertLessEqual(len(budgeted["direct_callers"]), 8)
         self.assertLessEqual(len(budgeted["diff_anchors"]), 8)
+        self.assertEqual(budgeted["review_leads"]["changed_symbols"], budgeted["changed_symbols"])
+        self.assertEqual(budgeted["review_leads"]["direct_callers"], budgeted["direct_callers"])
+        self.assertEqual(budgeted["review_leads"]["source_coordinates"], budgeted["source_coordinates"])
+        self.assertEqual(
+            budgeted["review_lead_status"]["changed_symbol_count"],
+            len(budgeted["review_leads"]["changed_symbols"]),
+        )
+        self.assertEqual(
+            budgeted["review_lead_status"]["source_coordinate_count"],
+            len(budgeted["review_leads"]["source_coordinates"]),
+        )
+        self.assertEqual(
+            budgeted["review_answer_packet"]["review_lead_status"],
+            budgeted["review_lead_status"],
+        )
         self.assertIn("diff_anchors", budgeted["output_budget"]["truncated_sections"])
         self.assertIn("review_answer_packet.top_diff_anchors", budgeted["output_budget"]["truncated_sections"])
+        self.assertIn("review_leads.changed_symbols", budgeted["output_budget"]["truncated_sections"])
+        self.assertIn("review_leads.source_coordinates", budgeted["output_budget"]["truncated_sections"])
         self.assertNotIn("payload", budgeted["diff_anchors"][0])
         self.assertNotIn("payload", budgeted["review_answer_packet"]["top_diff_anchors"][0])
         self.assertIn("direct_callers", budgeted["output_budget"]["truncated_sections"])

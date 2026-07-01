@@ -325,9 +325,9 @@ Purpose: composed review packet for a repo and changed files/ranges.
 | `changed_surface` | Changed-file/range scope explanation. |
 | `scope_contract` | Contract separating changed symbols from file inventory. |
 | `impact` | Compact grouping of callers, callees, transitive callers, and dependencies. |
-| `runtime_surfaces` | Bounded endpoints, endpoint consumers, known linked event channels, candidate/unlinked event-channel leads, and deploy mappings. |
-| `framework_impact` | Parser-backed framework facts such as Django/Celery model fields, relations, serializers, views, and tasks. |
-| `application_impact` | App/package namespace surfaces, runtime facts, and cross-repo name leads. |
+| `runtime_surfaces` | Bounded endpoints, endpoint consumers, known linked event channels, candidate/unlinked event-channel leads, and deploy mappings. May be absent in default low-coverage `diff_anchor_only` packets. |
+| `framework_impact` | Parser-backed framework facts such as Django/Celery model fields, relations, serializers, views, and tasks. May be absent in default low-coverage `diff_anchor_only` packets. |
+| `application_impact` | App/package namespace surfaces, runtime facts, and cross-repo name leads. May be absent in default low-coverage `diff_anchor_only` packets. |
 | `surface_status` | Requested review surface status: known, unlinked, missing, or unsupported. |
 | `source_coordinates` | Coordinates from changed and related rows. |
 | `answerability` | Missing review fact families and follow-up checks. |
