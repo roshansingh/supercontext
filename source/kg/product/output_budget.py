@@ -536,11 +536,8 @@ def _sync_compact_review_leads(
     )
     direct_impact_count = len(direct_callers) + len(direct_callees)
     transitive_impact_count = len(transitive_callers)
-    useful = bool(changed_anchor_count or changed_symbols or direct_impact_count or transitive_impact_count)
     synced_status.update(
         {
-            "coverage_status": "useful" if useful else "low_coverage",
-            "recommended_action": "use_supercontext_packet" if useful else "fall_back_to_plain_review",
             "changed_anchor_count": changed_anchor_count,
             "changed_symbol_count": len(changed_symbols),
             "direct_impact_count": direct_impact_count,
@@ -549,10 +546,6 @@ def _sync_compact_review_leads(
             "file_anchor_count": file_anchor_count,
         }
     )
-    if useful:
-        synced_status.pop("reason", None)
-    else:
-        synced_status["reason"] = "no symbol anchors, changed symbols, or direct/transitive impact edges"
     compact["review_lead_status"] = synced_status
     packet = compact.get("review_answer_packet")
     if isinstance(packet, dict) and isinstance(packet.get("review_lead_status"), dict):
