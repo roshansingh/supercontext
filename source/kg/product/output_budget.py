@@ -636,19 +636,38 @@ def _backfill_review_context(
         )
         if added:
             backfilled_counts[_path_label(path)] = backfilled_counts.get(_path_label(path), 0) + added
+    final_truncated_sections = _review_truncated_sections_after_backfill(
+        candidate,
+        original_result,
+        truncated_sections,
+    )
     _sync_review_lead_status_from_packet(candidate)
     _attach_detail_budget_metadata(
         candidate,
         measured_chars=measured_chars,
         max_chars=max_chars,
         advice=_REVIEW_BUDGET_ADVICE,
-        truncated_sections=truncated_sections,
+        truncated_sections=final_truncated_sections,
     )
     if backfilled_counts and isinstance(candidate.get("output_budget"), dict):
         candidate["output_budget"]["backfilled_counts"] = {
             key: value for key, value in sorted(backfilled_counts.items()) if value > 0
         }
     return candidate
+
+
+def _review_truncated_sections_after_backfill(
+    candidate: JsonObject,
+    original_result: JsonObject,
+    truncated_sections: set[str],
+) -> set[str]:
+    remaining = set(truncated_sections)
+    for path in _REVIEW_BUDGET_BACKFILL_LIST_PATHS:
+        source = _nested_list(original_result, path)
+        target = _nested_list(candidate, path)
+        if source is not None and target is not None and len(target) >= len(source):
+            remaining.discard(_path_label(path))
+    return remaining
 
 
 def _backfill_review_list_path(

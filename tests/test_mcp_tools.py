@@ -1699,6 +1699,73 @@ class McpToolsTest(unittest.TestCase):
         )
         self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
 
+    def test_review_context_budget_clears_truncated_sections_after_backfill_restores_list(self) -> None:
+        relation_rows = [
+            {
+                "predicate": "CALLS",
+                "depth": 1,
+                "subject": f"pkg.module_{index}.caller",
+                "object": "pkg.target.changed",
+                "evidence": [
+                    {
+                        "bytes_ref": {
+                            "repo": "repo",
+                            "path": f"pkg/module_{index}.py",
+                            "line_start": index,
+                            "line_end": index,
+                        }
+                    }
+                ],
+                "payload": "x" * 1_000,
+            }
+            for index in range(10)
+        ]
+        review_lead_status = {
+            "coverage_status": "useful",
+            "recommended_action": "use_supercontext_packet",
+            "changed_anchor_count": 0,
+            "changed_symbol_count": 0,
+            "direct_impact_count": 10,
+            "transitive_impact_count": 0,
+            "source_coordinate_count": 0,
+            "file_anchor_count": 0,
+        }
+        result = {
+            "tool": "review_context",
+            "status": "found",
+            "repo": "repo",
+            "summary": {"direct_caller_count": 10},
+            "review_lead_status": review_lead_status,
+            "review_answer_packet": {
+                "status": "found",
+                "review_lead_status": review_lead_status,
+                "top_direct_callers": relation_rows,
+            },
+            "review_leads": {
+                "changed_files": ["pkg/module.py"],
+                "changed_symbols": [],
+                "direct_callers": relation_rows,
+                "direct_callees": [],
+                "transitive_callers": [],
+                "source_coordinates": [],
+            },
+            "direct_callers": relation_rows,
+            "direct_callees": [],
+            "transitive_callers": [],
+            "source_coordinates": [],
+            "next_actions": [],
+        }
+
+        budgeted = enforce_review_context_budget(result, max_chars=20_000)
+
+        self.assertEqual(len(budgeted["direct_callers"]), len(relation_rows))
+        self.assertEqual(len(budgeted["review_leads"]["direct_callers"]), len(relation_rows))
+        self.assertEqual(len(budgeted["review_answer_packet"]["top_direct_callers"]), len(relation_rows))
+        truncated_sections = set(budgeted["output_budget"]["truncated_sections"])
+        self.assertNotIn("direct_callers", truncated_sections)
+        self.assertNotIn("review_leads.direct_callers", truncated_sections)
+        self.assertNotIn("review_answer_packet.top_direct_callers", truncated_sections)
+
     def test_review_context_budget_degrades_to_lead_only_for_non_row_answer_packet_bloat(self) -> None:
         relation_rows = [
             {
