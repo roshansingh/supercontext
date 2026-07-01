@@ -794,6 +794,8 @@ def _sync_review_lead_status_from_packet(result: JsonObject) -> None:
         if isinstance(original_file_anchor_count, int) and not isinstance(original_file_anchor_count, bool)
         else 0,
     )
+    # Budgeted review_lead_status counts describe the lead rows still shown in the packet.
+    # The authoritative unbounded totals remain in summary.*_count fields.
     synced_status.update(
         {
             "changed_anchor_count": changed_anchor_count,
@@ -1182,7 +1184,7 @@ def _compact_review_answer_packet(
             if truncated_sections is not None:
                 _record_truncated(truncated_sections, f"review_answer_packet.{field}", original=len(rows), kept=len(kept))
             compact[field] = kept
-    for field in ("runtime", "runtime_surfaces", "framework_impact", "application_impact"):
+    for field in ("runtime", "framework", "application", "runtime_surfaces", "framework_impact", "application_impact"):
         nested = value.get(field)
         if isinstance(nested, dict):
             compact[field] = _compact_review_answer_nested_detail(

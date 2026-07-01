@@ -1662,8 +1662,9 @@ class McpToolsTest(unittest.TestCase):
                 "review_lead_status": review_lead_status,
                 "top_direct_callers": relation_rows,
                 "top_direct_callees": relation_rows,
-                "application_impact": {"runtime_facts": broad_rows},
-                "runtime_surfaces": {"endpoint_consumers": broad_rows},
+                "framework": {"changed_models": broad_rows},
+                "application": {"runtime_facts": broad_rows},
+                "runtime": {"endpoint_consumers": broad_rows},
                 "surface_status": broad_rows,
             },
             "review_leads": {
@@ -1689,7 +1690,11 @@ class McpToolsTest(unittest.TestCase):
         self.assertNotIn("exceeded_after_minimization", budgeted["output_budget"])
         self.assertNotIn("payload", canonical_json(budgeted["review_answer_packet"]))
         self.assertLessEqual(
-            len(budgeted["review_answer_packet"]["application_impact"]["runtime_facts"]),
+            len(budgeted["review_answer_packet"]["application"]["runtime_facts"]),
+            COMPACT_RUNTIME_HEADSTART_LIMIT,
+        )
+        self.assertLessEqual(
+            len(budgeted["review_answer_packet"]["framework"]["changed_models"]),
             COMPACT_RUNTIME_HEADSTART_LIMIT,
         )
         self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
@@ -1733,7 +1738,7 @@ class McpToolsTest(unittest.TestCase):
                 "status": "found",
                 "review_lead_status": review_lead_status,
                 "top_direct_callers": relation_rows,
-                "application_impact": {"oversized_non_row_context": "z" * 50_000},
+                "application": {"oversized_non_row_context": "z" * 50_000},
             },
             "review_leads": {
                 "changed_files": ["pkg/module.py"],
@@ -1756,7 +1761,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(budgeted["output_budget"]["lead_only"])
         self.assertNotIn("exceeded_after_minimization", budgeted["output_budget"])
         self.assertEqual(budgeted["review_answer_packet"]["packet_mode"], "lead_only")
-        self.assertNotIn("application_impact", budgeted["review_answer_packet"])
+        self.assertNotIn("application", budgeted["review_answer_packet"])
         self.assertEqual(budgeted["review_answer_packet"]["review_lead_status"], budgeted["review_lead_status"])
 
     def test_review_context_budget_preserves_anchor_based_useful_gate(self) -> None:
