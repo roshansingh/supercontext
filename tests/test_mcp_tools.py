@@ -3005,6 +3005,24 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["repo_resolution"]["basis"], "direct_repo_match")
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
 
+    def test_review_context_owner_repo_suffix_match_requires_safe_alias_overlap(self) -> None:
+        with _fixture_snapshot() as kg:
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/payments",
+                    "changed_files": ["elsewhere/missing.py"],
+                    "changed_ranges": [{"path": "elsewhere/missing.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "owner/payments")
+        self.assertEqual(result["repo_resolution"]["status"], "unresolved")
+        self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
     def test_review_context_resolves_owner_repo_alias_for_single_repo_checkout_snapshot(self) -> None:
         with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
             _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
@@ -3033,6 +3051,27 @@ class McpToolsTest(unittest.TestCase):
         )
         self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
         self.assertEqual([row["qualname"] for row in result["changed_symbols"]], ["handle_checkout"])
+
+    def test_review_context_repo_resolution_uses_entity_scope_before_fact_consumer_repos(self) -> None:
+        with _fixture_snapshot(symbol_repo="local-checkout-repo") as kg:
+            _rewrite_fixture_repo(kg, old_repo="payments", new_repo="local-checkout-repo")
+            kg.facts[0].setdefault("qualifier", {})["consumer_repo"] = "foreign/repo"
+
+            result = call_tool(
+                kg,
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["payments/checkout.py"],
+                    "changed_ranges": [{"path": "payments/checkout.py", "start_line": 10, "end_line": 10}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "local-checkout-repo")
+        self.assertEqual(result["repo_resolution"]["status"], "resolved")
+        self.assertEqual(result["repo_resolution"]["snapshot_repo_count"], 1)
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 1)
 
     def test_review_context_resolves_uppercase_repo_identity_as_single_repo_snapshot(self) -> None:
         with _fixture_snapshot() as kg:
@@ -3125,6 +3164,37 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["repo"], "owner/project")
         self.assertEqual(result["repo_resolution"]["status"], "unresolved")
         self.assertEqual(result["repo_resolution"]["reason"], "no_changed_file_overlap")
+        self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
+
+    def test_review_context_can_resolve_single_repo_checkout_from_existing_unindexed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_root = root / "snapshot"
+            repo_root = root / "repo"
+            config_path = repo_root / "config" / "settings.yaml"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text("enabled: true\n", encoding="utf-8")
+            JsonlKgStore(snapshot_root).write(
+                entities=[],
+                facts=[],
+                evidence=[],
+                coverage=[],
+                manifest={"version": 1, "repo_name": "Local-Checkout-Repo", "repo_path": str(repo_root)},
+            )
+
+            result = call_tool(
+                KgSnapshot(snapshot_root),
+                "review_context",
+                {
+                    "repo": "owner/project",
+                    "changed_files": ["config/settings.yaml"],
+                    "changed_ranges": [{"path": "config/settings.yaml", "start_line": 1, "end_line": 1}],
+                    "limit": 10,
+                },
+            )
+
+        self.assertEqual(result["repo"], "local-checkout-repo")
+        self.assertEqual(result["repo_resolution"]["status"], "resolved")
         self.assertEqual(result["summary"]["symbol_anchor_count"], 0)
 
     def test_review_context_does_not_alias_owner_repo_for_multi_repo_snapshot(self) -> None:
@@ -3370,7 +3440,10 @@ class McpToolsTest(unittest.TestCase):
         self.assertEqual(result["summary"]["app_cross_repo_lead_count"], 1)
         self.assertEqual(result["summary"]["source_coordinate_count"], len(result["source_coordinates"]))
         self.assertLessEqual(len(result["source_coordinates"]), result["summary"]["section_limit"])
+        self.assertEqual(result["requested_repo"], "payments")
+        self.assertEqual(result["repo_resolution"]["status"], "matched")
         self.assertEqual(result["review_answer_packet"]["packet_mode"], "diff_anchor_only")
+        self.assertEqual(result["review_answer_packet"]["repo_resolution"]["status"], "matched")
         self.assertEqual(result["review_answer_packet"]["top_diff_anchors"], result["diff_anchors"])
         self.assertEqual(result["review_answer_packet"]["application"]["cross_repo_name_leads"], [])
         self.assertTrue(result["review_answer_packet"]["application"]["api"])

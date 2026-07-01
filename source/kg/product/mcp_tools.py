@@ -2528,7 +2528,8 @@ def _review_context_repo_resolution(
     changed_files: list[str],
 ) -> JsonObject:
     snapshot_repos = _review_context_snapshot_repos(kg)
-    direct_matches = [repo for repo in snapshot_repos if _repo_text_matches(repo, requested_repo)]
+    requested_repo_key = _normalize_repo_text(requested_repo)
+    direct_matches = [repo for repo in snapshot_repos if repo == requested_repo_key]
     if direct_matches:
         return {
             "status": "matched",
@@ -2588,13 +2589,16 @@ def _review_context_snapshot_repos(kg: KgSnapshot) -> list[str]:
         repo_key = _normalize_repo_text(_planning_context_entity_repo(entity))
         if repo_key:
             repos.add(repo_key)
+    fact_repos: set[str] = set()
     for fact in kg.facts:
         qualifier = fact.get("qualifier")
         if not isinstance(qualifier, dict):
             continue
         consumer_repo_key = _normalize_repo_text(qualifier.get("consumer_repo"))
         if consumer_repo_key:
-            repos.add(consumer_repo_key)
+            fact_repos.add(consumer_repo_key)
+    if not repos:
+        repos.update(fact_repos)
     return sorted(repos)
 
 
@@ -2619,6 +2623,8 @@ def _review_context_changed_files_overlap_snapshot(kg: KgSnapshot, changed_files
         return False
     # Any changed-file overlap is enough only after the resolver has already proved
     # the snapshot contains exactly one repo identity; multi-repo snapshots fail closed.
+    # This fallback intentionally depends on the serving host having the checkout at
+    # manifest.repo_path, so indexed snapshot paths remain the deterministic first check.
     for changed_file in normalized_changed_files:
         try:
             candidate = (root / changed_file).resolve()
