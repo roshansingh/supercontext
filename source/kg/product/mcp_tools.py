@@ -2316,6 +2316,14 @@ def _review_context_properties() -> JsonObject:
             ),
         },
         "include_deploy_blockers": {"type": "boolean", "default": False},
+        "include_unlinked_leads": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Opt in to broad unlinked namespace/name leads when changed ranges cannot be anchored to symbols. "
+                "By default, file-anchor-only PR-review packets stay compact and point back to source inspection."
+            ),
+        },
     }
 
 
@@ -2521,6 +2529,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
     requested_surfaces = _optional_review_surfaces(arguments, "requested_surfaces")
     requested_review_sections = _optional_review_section_aliases(arguments, "requested_surfaces")
     include_deploy_blockers = _optional_bool(arguments, "include_deploy_blockers", default=False)
+    include_unlinked_leads = _optional_bool(arguments, "include_unlinked_leads", default=False)
 
     changed_symbols: list[JsonObject] = []
     range_filters = _changed_ranges_by_path(changed_ranges)
@@ -2753,7 +2762,7 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         surface_status=surface_status,
         answerability=answerability,
     )
-    return {
+    result = {
         "status": status,
         "repo": repo,
         "summary": summary,
@@ -2812,6 +2821,339 @@ def _review_context(kg: KgSnapshot, arguments: JsonObject) -> JsonObject:
         ),
         "next_actions": next_actions,
     }
+    if _review_context_should_compact_unanchored(
+        changed_ranges=changed_ranges,
+        include_unlinked_leads=include_unlinked_leads,
+        include_deploy_blockers=include_deploy_blockers,
+        requested_surfaces=requested_surfaces,
+        requested_review_sections=requested_review_sections,
+        summary=summary,
+        direct_callers=direct_callers_in_scope,
+        direct_callees=direct_callees_in_scope,
+        transitive_callers=transitive_callers_in_scope,
+    ):
+        return _review_context_compact_unanchored_result(result)
+    return result
+
+
+def _review_context_should_compact_unanchored(
+    *,
+    changed_ranges: list[JsonObject],
+    include_unlinked_leads: bool,
+    include_deploy_blockers: bool,
+    requested_surfaces: list[str],
+    requested_review_sections: list[str],
+    summary: JsonObject,
+    direct_callers: list[JsonObject],
+    direct_callees: list[JsonObject],
+    transitive_callers: list[JsonObject],
+) -> bool:
+    if (
+        not changed_ranges
+        or include_unlinked_leads
+        or include_deploy_blockers
+        or requested_surfaces
+        or requested_review_sections
+    ):
+        return False
+    return (
+        summary.get("changed_symbol_count") == 0
+        and summary.get("symbol_anchor_count") == 0
+        and not direct_callers
+        and not direct_callees
+        and not transitive_callers
+    )
+
+
+def _review_context_compact_unanchored_result(result: JsonObject) -> JsonObject:
+    summary = dict(result.get("summary", {}))
+    summary["packet_mode"] = "diff_anchor_only"
+    diff_anchors = [row for row in result.get("diff_anchors", []) if isinstance(row, dict)]
+    repo_dependencies = [
+        row for row in result.get("repo_dependencies", []) if isinstance(row, dict)
+    ][:PLANNING_CONTEXT_SECTION_LIMIT]
+    source_coordinates = _review_context_diff_anchor_source_coordinates(diff_anchors)
+    summary["source_coordinate_count"] = len(source_coordinates)
+    answerability = result.get("answerability") if isinstance(result.get("answerability"), dict) else {}
+    packet = result.get("review_answer_packet") if isinstance(result.get("review_answer_packet"), dict) else {}
+    compact_runtime = _review_context_compact_runtime_surfaces(result.get("runtime_surfaces"))
+    compact_application = _review_context_compact_application_impact(result.get("application_impact"))
+    compact_framework = _review_context_compact_framework_impact(result.get("framework_impact"))
+    omitted_counts = _review_context_omitted_context_counts(result)
+    packet_summary = dict(packet.get("summary", {})) if isinstance(packet.get("summary"), dict) else {}
+    packet_summary["packet_mode"] = "diff_anchor_only"
+    packet_summary["omitted_context_counts"] = omitted_counts
+    compact_packet_application = _review_context_compact_answer_application(compact_application)
+    compact_packet_runtime = _review_context_compact_answer_runtime(compact_runtime)
+    compact_packet_framework = _review_context_compact_answer_framework(compact_framework)
+    compact_packet: JsonObject = {
+        "status": result.get("status"),
+        "packet_mode": "diff_anchor_only",
+        "answerability": answerability,
+        "summary": packet_summary,
+        "top_diff_anchors": diff_anchors[:PLANNING_CONTEXT_SECTION_LIMIT],
+        "top_changed_symbols": [],
+        "top_direct_callers": [],
+        "top_direct_callees": [],
+        "top_transitive_callers": [],
+    }
+    if compact_packet_application:
+        compact_packet["application"] = compact_packet_application
+    if compact_packet_runtime:
+        compact_packet["runtime"] = compact_packet_runtime
+    if compact_packet_framework:
+        compact_packet["framework"] = compact_packet_framework
+    next_actions = [
+        *[str(action) for action in result.get("next_actions", []) if str(action).strip()],
+        (
+            "Inspect diff_anchors/source_coordinates directly; pass include_unlinked_leads=true only when broad "
+            "unlinked namespace/name leads are worth the extra context."
+        ),
+    ]
+    changed_surface = result.get("changed_surface") if isinstance(result.get("changed_surface"), dict) else {}
+    compact_changed_surface = {
+        "files": changed_surface.get("files", []) if isinstance(changed_surface.get("files"), list) else [],
+        "symbols": [],
+    }
+    compact_result: JsonObject = {
+        "status": result.get("status"),
+        "repo": result.get("repo"),
+        "summary": summary,
+        "review_answer_packet": compact_packet,
+        "diff_anchors": diff_anchors,
+        "changed_symbols": [],
+        "changed_file_symbols": [],
+        "direct_callers": [],
+        "direct_callees": [],
+        "direct_callers_of_changed_symbols": [],
+        "direct_callees_from_changed_symbols": [],
+        "transitive_callers": [],
+        "changed_surface": compact_changed_surface,
+        "impact": {
+            "direct_callers": [],
+            "direct_callees": [],
+            "transitive_callers": [],
+            "repo_dependencies": repo_dependencies,
+        },
+        "repo_dependencies": repo_dependencies,
+        "runtime_surfaces": compact_runtime,
+        "application_impact": compact_application,
+        "source_coordinates": source_coordinates,
+        "answerability": answerability,
+        "coverage_warnings": result.get("coverage_warnings", []),
+        "unsupported_scopes": result.get("unsupported_scopes", []),
+        "unsupported_review_scopes": result.get("unsupported_review_scopes", []),
+        "omitted_context": {
+            "reason": "No changed symbols or direct impact edges were found for the supplied changed ranges.",
+            "counts": omitted_counts,
+            "opt_in_argument": {"include_unlinked_leads": True},
+        },
+        "packet_contract": {
+            "tool": "review_context",
+            "positioning": "Compact diff-anchor-only packet; inspect changed ranges directly before making review claims.",
+            "common_fields": {
+                "diff_anchors": "Changed file/range coordinates.",
+                "omitted_context": "Counts of broad context omitted by default.",
+                "answerability": "Remaining source checks.",
+            },
+            "claim_rule": "Omitted counts and unlinked leads are not proven impact.",
+        },
+        "next_actions": _dedupe_strings(next_actions),
+    }
+    if compact_framework:
+        compact_result["framework_impact"] = compact_framework
+    return compact_result
+
+
+COMPACT_REVIEW_SOURCE_COORDINATE_LIMIT = PLANNING_CONTEXT_SECTION_LIMIT
+
+
+def _review_context_compact_runtime_surfaces(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    compact: JsonObject = {}
+    for key in ("endpoints", "endpoint_consumers", "event_channels", "deploy_mappings"):
+        rows = value.get(key)
+        if isinstance(rows, list) and rows:
+            compact[key] = rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+    return compact
+
+
+def _review_context_compact_application_impact(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        return {}
+    same_repo_surfaces = value.get("same_repo_surfaces")
+    if not isinstance(same_repo_surfaces, dict):
+        same_repo_surfaces = {}
+    compact_same_repo: JsonObject = {}
+    for key in ("api", "models", "serializers", "workers", "scheduled_jobs"):
+        rows = same_repo_surfaces.get(key)
+        if isinstance(rows, list) and rows:
+            compact_same_repo[key] = rows[:PLANNING_CONTEXT_SECTION_LIMIT]
+    runtime_facts = value.get("runtime_facts")
+    compact_runtime_facts = (
+        runtime_facts[:PLANNING_CONTEXT_SECTION_LIMIT] if isinstance(runtime_facts, list) and runtime_facts else []
+    )
+    if not compact_same_repo and not compact_runtime_facts:
+        return {}
+    summary = value.get("summary") if isinstance(value.get("summary"), dict) else {}
+    compact_summary = {
+        key: summary.get(key, 0)
+        for key in (
+            "same_repo_entity_count",
+            "api_surface_count",
+            "model_surface_count",
+            "serializer_surface_count",
+            "worker_surface_count",
+            "scheduled_job_surface_count",
+            "runtime_fact_count",
+        )
+        if isinstance(summary.get(key, 0), int) and not isinstance(summary.get(key, 0), bool)
+    }
+    anchors = value.get("anchors")
+    return {
+        "status": value.get("status"),
+        "summary": compact_summary,
+        "anchors": anchors[:PLANNING_CONTEXT_SECTION_LIMIT] if isinstance(anchors, list) else [],
+        "same_repo_surfaces": compact_same_repo,
+        "runtime_facts": compact_runtime_facts,
+        "cross_repo_name_leads": [],
+    }
+
+
+def _review_context_compact_framework_impact(value: object) -> JsonObject:
+    if not isinstance(value, dict) or _review_context_nested_list_count(value) == 0:
+        return {}
+    compact: JsonObject = {}
+    for key in (
+        "status",
+        "summary",
+        "changed_models",
+        "model_fields",
+        "model_relations",
+        "relationship_paths",
+        "serializers",
+        "views",
+        "tasks",
+    ):
+        item = value.get(key)
+        if isinstance(item, list):
+            compact[key] = item[:PLANNING_CONTEXT_SECTION_LIMIT]
+        elif item:
+            compact[key] = item
+    return compact
+
+
+def _review_context_compact_answer_application(compact_application: JsonObject) -> JsonObject:
+    if not compact_application:
+        return {}
+    same_repo_surfaces = compact_application.get("same_repo_surfaces")
+    if not isinstance(same_repo_surfaces, dict):
+        same_repo_surfaces = {}
+    return {
+        "api": same_repo_surfaces.get("api", []),
+        "models": same_repo_surfaces.get("models", []),
+        "serializers": same_repo_surfaces.get("serializers", []),
+        "workers": same_repo_surfaces.get("workers", []),
+        "scheduled_jobs": same_repo_surfaces.get("scheduled_jobs", []),
+        "runtime_facts": compact_application.get("runtime_facts", []),
+        "cross_repo_name_leads": [],
+    }
+
+
+def _review_context_compact_answer_runtime(compact_runtime: JsonObject) -> JsonObject:
+    if not compact_runtime:
+        return {}
+    return {
+        "endpoints": compact_runtime.get("endpoints", []),
+        "endpoint_consumers": compact_runtime.get("endpoint_consumers", []),
+        "event_channels": compact_runtime.get("event_channels", []),
+        "candidate_or_unlinked_event_channels": [],
+        "deploy_mappings": compact_runtime.get("deploy_mappings", []),
+    }
+
+
+def _review_context_compact_answer_framework(compact_framework: JsonObject) -> JsonObject:
+    if not compact_framework:
+        return {}
+    return {
+        "changed_models": compact_framework.get("changed_models", []),
+        "model_fields": compact_framework.get("model_fields", []),
+        "model_relations": compact_framework.get("model_relations", []),
+        "relationship_paths": compact_framework.get("relationship_paths", []),
+        "serializers": compact_framework.get("serializers", []),
+        "views": compact_framework.get("views", []),
+        "tasks": compact_framework.get("tasks", []),
+    }
+
+
+def _review_context_omitted_context_counts(result: JsonObject) -> JsonObject:
+    counts: JsonObject = {}
+    for field in ("surface_status", "evidence", "scope_contract", "claim_contract"):
+        value = result.get(field)
+        count = 1 if field in {"scope_contract", "claim_contract"} and isinstance(value, dict) and value else (
+            _review_context_omitted_value_count(value)
+        )
+        if count:
+            counts[field] = count
+    runtime_surfaces = result.get("runtime_surfaces")
+    if isinstance(runtime_surfaces, dict):
+        candidate_events = runtime_surfaces.get("candidate_or_unlinked_event_channels")
+        count = _review_context_omitted_value_count(candidate_events)
+        if count:
+            counts["runtime_surfaces.candidate_or_unlinked_event_channels"] = count
+    application_impact = result.get("application_impact")
+    if isinstance(application_impact, dict):
+        cross_repo_name_leads = application_impact.get("cross_repo_name_leads")
+        count = _review_context_omitted_value_count(cross_repo_name_leads)
+        if count:
+            counts["application_impact.cross_repo_name_leads"] = count
+    return counts
+
+
+def _review_context_omitted_value_count(value: object) -> int:
+    if isinstance(value, list):
+        return len([row for row in value if row])
+    return 0
+
+
+def _review_context_nested_list_count(value: object) -> int:
+    if isinstance(value, list):
+        return len([row for row in value if row])
+    if isinstance(value, dict):
+        return sum(_review_context_nested_list_count(item) for item in value.values())
+    return 0
+
+
+def _review_context_diff_anchor_source_coordinates(diff_anchors: list[JsonObject]) -> list[JsonObject]:
+    coordinates: list[JsonObject] = []
+    seen: set[tuple[object, object, object, object]] = set()
+    for anchor in diff_anchors:
+        values = anchor.get("source_coordinates")
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            path = value.get("path")
+            line_start = value.get("line_start")
+            line_end = value.get("line_end")
+            key = (value.get("repo"), path, line_start, line_end)
+            if key in seen:
+                continue
+            seen.add(key)
+            coordinates.append(
+                {
+                    "repo": value.get("repo"),
+                    "path": path,
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "provenance": value.get("provenance") or "changed_range",
+                }
+            )
+            if len(coordinates) >= COMPACT_REVIEW_SOURCE_COORDINATE_LIMIT:
+                return coordinates
+    return coordinates
 
 
 def _planning_context_from_query(kg: KgSnapshot, *, query: str, limit: int) -> JsonObject:
@@ -5960,13 +6302,14 @@ _TOOLS: dict[str, McpTool] = {
             "Read review_answer_packet.top_diff_anchors / diff_anchors first as the PR changed-range/file anchors; detailed review rows are capped by summary.detail_limit even when a larger limit is requested. "
             "review_answer_packet.top_changed_symbols contains range-overlap symbols only, while review_answer_packet.changed_file_symbol_inventory carries file inventory when no ranges are supplied. "
             "When changed_ranges are omitted, top-level changed_symbols and review_answer_packet.top_changed_symbols are empty and the changed-file symbol inventory is exposed via changed_file_symbols; that inventory is source-inspection context, not proof every symbol changed. Inspect the diff before saying a function was touched. "
+            "When changed ranges produce only file anchors and no changed symbols or direct impact edges, review_answer_packet.packet_mode is diff_anchor_only and unlinked/broad lead sections plus verbose contracts/evidence are omitted by default while compact proven rows may remain; pass include_unlinked_leads=true only when broad unlinked namespace/name leads are worth the extra context. "
             "When the prompt names impact categories, pass requested_surfaces such as ui_screens, scheduled_jobs, sqs_consumers, delivery_workers, tracking_paths, schemas, or contracts so surface_status can separate inventory_context, unlinked_lead, and missing evidence. "
             "Broad categories such as services and deployables are covered by other review packet sections; owner/maintainer requests are reported as ownership_context coverage gaps pointing to planning_context.ownership_context. "
             "Top-level direct_callers, direct_callees, and repo_dependencies remain available for compatibility. "
             "runtime_surfaces includes bounded path-shape-matched endpoint_consumers for endpoints exposed by the review repo when static CALLS_ENDPOINT facts exist. "
             "framework_impact includes parser-backed support facts for Django/Celery model fields, model relations, serializers, view/model bindings, tasks, and bounded model relationship paths when present. "
             "authz_surface is available from planning_context/get_service_brief for endpoint-to-handler permission evidence; use source inspection for dynamic middleware or framework defaults not represented in the packet. "
-            "application_impact groups changed app/package namespace surfaces into API/model/serializer/worker/scheduled-job sections, app-scoped runtime facts, and unlinked cross-repo name leads that require separate verification. "
+            "application_impact groups changed app/package namespace surfaces into API/model/serializer/worker/scheduled-job sections, app-scoped runtime facts, and unlinked cross-repo name leads that require separate verification when those sections are present or explicitly requested. "
             "Use it when you know the changed files and need deterministic static review context before drilling into narrower MCP tools. "
             "Large packets are bounded: when output_budget is present the detail rows were compacted to a coordinate-bearing head start, so inspect source coordinates or call narrower changed_ranges/exact tools for omitted detail. "
             "Does not infer deploy blockers unless explicitly requested, summarize diffs with an LLM, or invent cross-repo and runtime-only impact."
